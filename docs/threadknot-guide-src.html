@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Threadknot — User Guide</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+    background: #0b0d12; color: #e8e4da;
+    font-size: 12.5px; line-height: 1.62;
+  }
+  .page {
+    width: 210mm; height: 296mm;
+    padding: 20mm 18mm;
+    page-break-after: always;
+    position: relative;
+    background: #0b0d12;
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+
+  /* ---------- shared type ---------- */
+  h1 { font-size: 30px; color: #f2c98a; letter-spacing: 1px; font-weight: 650; }
+  h2 { font-size: 21px; color: #f2c98a; margin-bottom: 4mm; font-weight: 620;
+       letter-spacing: 0.4px; }
+  h3 { font-size: 14px; color: #43c9a5; margin: 5mm 0 1.5mm; font-weight: 600; }
+  p  { margin-bottom: 2.6mm; color: #d9d4c8; }
+  .lead { font-size: 14px; color: #eee9dd; }
+  ul { margin: 0 0 3mm 5mm; }
+  li { margin-bottom: 1.6mm; color: #d9d4c8; }
+  b, strong { color: #f0ece2; }
+  .accent { color: #43c9a5; }
+  .brass  { color: #d9a35c; }
+
+  .kicker {
+    font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase;
+    color: #8b93a7; margin-bottom: 1.5mm;
+  }
+  .rule { height: 2px; width: 34mm; margin: 3mm 0 6mm;
+          background: linear-gradient(90deg, #d9a35c, rgba(217,163,92,0)); }
+
+  .footer {
+    position: absolute; bottom: 9mm; left: 18mm; right: 18mm;
+    display: flex; justify-content: space-between;
+    font-size: 9px; color: #6b7285; letter-spacing: 1.2px;
+  }
+  .footer .fbrand { color: #9aa2b5; }
+
+  .card {
+    background: #10141d; border: 1px solid #232a3a;
+    border-radius: 10px; padding: 5mm 6mm; margin: 3mm 0;
+  }
+  .card.tip { border-left: 3px solid #43c9a5; }
+  .card.warn { border-left: 3px solid #d9a35c; }
+  .card .cap { font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+               color: #8b93a7; margin-bottom: 1mm; }
+
+  .steps { counter-reset: step; margin: 2mm 0; }
+  .step { display: flex; gap: 4mm; margin-bottom: 2.8mm; align-items: flex-start; }
+  .stepn {
+    counter-increment: step; flex: none;
+    width: 7mm; height: 7mm; border-radius: 50%;
+    background: rgba(217,163,92,0.15); border: 1px solid #d9a35c;
+    color: #f2c98a; font-weight: 700; font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .stepn::before { content: counter(step); }
+  .stept { padding-top: 0.6mm; }
+
+  table.glossary { width: 100%; border-collapse: collapse; margin-top: 3mm; }
+  table.glossary td {
+    border-top: 1px solid #232a3a; padding: 2.6mm 2mm; vertical-align: top;
+  }
+  table.glossary td:first-child {
+    color: #f2c98a; font-weight: 600; width: 34mm; white-space: nowrap;
+  }
+
+  .two-col { display: flex; gap: 8mm; }
+  .two-col > div { flex: 1; }
+
+  figure { margin: 4mm 0; text-align: center; }
+  figcaption { font-size: 10px; color: #8b93a7; margin-top: 1.5mm;
+               letter-spacing: 0.5px; }
+
+  /* ---------- cover ---------- */
+  .cover { display: flex; flex-direction: column; }
+  .cover-art { margin-top: 26mm; text-align: center; }
+  .cover-art img { width: 52mm; filter: drop-shadow(0 6px 30px rgba(217,163,92,0.35)); }
+  .cover-title { text-align: center; margin-top: 10mm; }
+  .cover-title .word {
+    font-size: 54px; letter-spacing: 14px; color: #f2c98a; font-weight: 700;
+    text-indent: 14px;
+  }
+  .cover-title .sub {
+    margin-top: 4mm; font-size: 16px; color: #cfd4e0; letter-spacing: 0.5px;
+  }
+  .cover-title .sub2 { margin-top: 1mm; font-size: 12.5px; color: #8b93a7; }
+  .cover-badges { margin-top: 16mm; display: flex; justify-content: center; gap: 5mm; }
+  .badge {
+    border: 1px solid #2a3247; background: #10141d; color: #cfd4e0;
+    padding: 2.2mm 5mm; border-radius: 20px; font-size: 11px; letter-spacing: 0.6px;
+  }
+  .badge b { color: #43c9a5; font-weight: 600; }
+  .cover-foot {
+    position: absolute; bottom: 14mm; left: 0; right: 0; text-align: center;
+    color: #6b7285; font-size: 10px; letter-spacing: 2px;
+  }
+
+  .toc { margin-top: 4mm; }
+  .toc-row { display: flex; align-items: baseline; margin-bottom: 3.2mm; font-size: 13.5px; }
+  .toc-row .n { color: #d9a35c; width: 10mm; font-weight: 700; }
+  .toc-row .t { color: #e8e4da; }
+  .toc-row .dots { flex: 1; border-bottom: 1px dotted #2a3247; margin: 0 3mm; }
+  .toc-row .pg { color: #8b93a7; }
+</style>
+</head>
+<body>
+
+<!-- ================= COVER ================= -->
+<div class="page cover">
+  <div class="cover-art">
+    <img src="file:///srv/projects/t3port/threadknot/public/threadknot-logo.png" alt="Threadknot logo">
+  </div>
+  <div class="cover-title">
+    <div class="word">THREADKNOT</div>
+    <div class="sub">Your fleet of AI agents — on every machine you own.</div>
+    <div class="sub2">The friendly guide to how it all works</div>
+  </div>
+  <div class="cover-badges">
+    <span class="badge"><b>●</b> Chat with AI agents</span>
+    <span class="badge"><b>●</b> Any machine, one place</span>
+    <span class="badge"><b>●</b> Phone included</span>
+  </div>
+  <div class="cover-foot">SMITH NETWORK SOLUTIONS &nbsp;·&nbsp; USER GUIDE &nbsp;·&nbsp; JULY 2026</div>
+</div>
+
+<!-- ================= TOC ================= -->
+<div class="page">
+  <div class="kicker">Threadknot · User Guide</div>
+  <h2>What's inside</h2>
+  <div class="rule"></div>
+  <div class="toc">
+    <div class="toc-row"><span class="n">1</span><span class="t">What is Threadknot?</span><span class="dots"></span><span class="pg">3</span></div>
+    <div class="toc-row"><span class="n">2</span><span class="t">A tour of the app</span><span class="dots"></span><span class="pg">4</span></div>
+    <div class="toc-row"><span class="n">3</span><span class="t">Workspaces — one project, many places</span><span class="dots"></span><span class="pg">5</span></div>
+    <div class="toc-row"><span class="n">4</span><span class="t">Connecting your machines together</span><span class="dots"></span><span class="pg">6</span></div>
+    <div class="toc-row"><span class="n">5</span><span class="t">Working across machines, day to day</span><span class="dots"></span><span class="pg">7</span></div>
+    <div class="toc-row"><span class="n">6</span><span class="t">How your request travels (and why it's safe)</span><span class="dots"></span><span class="pg">8</span></div>
+    <div class="toc-row"><span class="n">7</span><span class="t">Threadknot on your phone</span><span class="dots"></span><span class="pg">9</span></div>
+    <div class="toc-row"><span class="n">8</span><span class="t">Everyday recipes</span><span class="dots"></span><span class="pg">10</span></div>
+    <div class="toc-row"><span class="n">9</span><span class="t">Words Threadknot uses (glossary)</span><span class="dots"></span><span class="pg">11</span></div>
+  </div>
+
+  <div class="card tip" style="margin-top: 14mm;">
+    <div class="cap">Who this guide is for</div>
+    <p style="margin:0">Anyone. No programming knowledge is needed to read it. Where a
+    technical word is unavoidable, it's explained in plain English the first time it
+    appears — and again in the glossary at the back.</p>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>2</span></div>
+</div>
+
+<!-- ================= 1. WHAT IS THREADKNOT ================= -->
+<div class="page">
+  <div class="kicker">Section 1</div>
+  <h2>What is Threadknot?</h2>
+  <div class="rule"></div>
+
+  <p class="lead">Threadknot is an app for putting AI assistants to work on your projects —
+  and keeping every one of those conversations organized in a single place.</p>
+
+  <p>Instead of typing commands into a black terminal window, you simply <b>chat</b>.
+  You pick a project, type what you want done — "tidy up the homepage", "find out why
+  the report is empty", "write a summary of these files" — and an AI agent gets to
+  work. You watch it think, see every file it touches, and approve anything sensitive
+  before it happens.</p>
+
+  <h3>Three kinds of agents, one window</h3>
+  <ul>
+    <li><b>Claude Code</b> — Anthropic's coding agent.</li>
+    <li><b>Codex</b> — OpenAI's coding agent.</li>
+    <li><b>Hermes</b> — remote helper agents running on other hardware you've connected.</li>
+  </ul>
+  <p>You can switch agents <i>mid-conversation</i> — the new agent picks up right where
+  the previous one left off.</p>
+
+  <h3>Where does it run?</h3>
+  <p>Entirely on <b>your own computers</b>. Threadknot is not a cloud service: there's no
+  account to create and your projects never pass through anyone else's servers. Each
+  machine runs its own copy of Threadknot, and — as you'll see in Section 4 — those copies
+  can be joined into one <b>fleet</b>.</p>
+
+  <figure>
+  <svg width="600" height="180" viewBox="0 0 600 180">
+    <defs>
+      <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#f2c98a"/><stop offset="1" stop-color="#d9a35c"/>
+      </linearGradient>
+    </defs>
+    <!-- you -->
+    <circle cx="80" cy="90" r="26" fill="#10141d" stroke="#43c9a5" stroke-width="2"/>
+    <circle cx="80" cy="82" r="8" fill="#43c9a5"/>
+    <path d="M64 104 q16 -14 32 0" fill="#43c9a5"/>
+    <text x="80" y="136" text-anchor="middle" fill="#cfd4e0" font-size="12">You</text>
+    <!-- arrow -->
+    <line x1="118" y1="90" x2="196" y2="90" stroke="#d9a35c" stroke-width="2"/>
+    <polygon points="196,90 187,85 187,95" fill="#d9a35c"/>
+    <text x="157" y="80" text-anchor="middle" fill="#8b93a7" font-size="10">you chat</text>
+    <!-- threadknot box -->
+    <rect x="205" y="45" width="180" height="90" rx="12" fill="#10141d" stroke="url(#gold)" stroke-width="2"/>
+    <text x="295" y="80" text-anchor="middle" fill="#f2c98a" font-size="15" font-weight="bold" letter-spacing="3">THREADKNOT</text>
+    <text x="295" y="100" text-anchor="middle" fill="#8b93a7" font-size="10">on your computer</text>
+    <!-- arrow -->
+    <line x1="393" y1="90" x2="468" y2="90" stroke="#d9a35c" stroke-width="2"/>
+    <polygon points="468,90 459,85 459,95" fill="#d9a35c"/>
+    <text x="430" y="80" text-anchor="middle" fill="#8b93a7" font-size="10">agents work</text>
+    <!-- agents -->
+    <rect x="477" y="30" width="100" height="34" rx="8" fill="#10141d" stroke="#2a3247"/>
+    <text x="527" y="51" text-anchor="middle" fill="#e8e4da" font-size="11">Claude Code</text>
+    <rect x="477" y="73" width="100" height="34" rx="8" fill="#10141d" stroke="#2a3247"/>
+    <text x="527" y="94" text-anchor="middle" fill="#e8e4da" font-size="11">Codex</text>
+    <rect x="477" y="116" width="100" height="34" rx="8" fill="#10141d" stroke="#2a3247"/>
+    <text x="527" y="137" text-anchor="middle" fill="#e8e4da" font-size="11">Hermes</text>
+  </svg>
+  <figcaption>The idea in one picture: you talk to Threadknot, Threadknot drives the agents.</figcaption>
+  </figure>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>3</span></div>
+</div>
+
+<!-- ================= 2. TOUR ================= -->
+<div class="page">
+  <div class="kicker">Section 2</div>
+  <h2>A tour of the app</h2>
+  <div class="rule"></div>
+
+  <figure>
+  <svg width="620" height="270" viewBox="0 0 620 270">
+    <!-- window -->
+    <rect x="10" y="10" width="600" height="250" rx="10" fill="#0e111a" stroke="#2a3247" stroke-width="1.5"/>
+    <!-- sidebar -->
+    <rect x="10" y="10" width="150" height="250" rx="10" fill="#10141d"/>
+    <rect x="24" y="28" width="90" height="12" rx="4" fill="#d9a35c" opacity="0.85"/>
+    <rect x="24" y="52" width="122" height="10" rx="4" fill="#2a3247"/>
+    <rect x="34" y="70" width="104" height="8" rx="4" fill="#20283a"/>
+    <rect x="34" y="84" width="104" height="8" rx="4" fill="#20283a"/>
+    <rect x="24" y="104" width="122" height="10" rx="4" fill="#2a3247"/>
+    <rect x="34" y="122" width="104" height="8" rx="4" fill="#20283a"/>
+    <circle cx="28" cy="126" r="3" fill="#43c9a5"/>
+    <rect x="24" y="146" width="122" height="10" rx="4" fill="#2a3247"/>
+    <!-- chat -->
+    <rect x="175" y="26" width="250" height="30" rx="6" fill="#141a28"/>
+    <rect x="185" y="36" width="140" height="10" rx="4" fill="#3a4460"/>
+    <rect x="205" y="70" width="220" height="24" rx="8" fill="#1b2334"/>
+    <rect x="175" y="104" width="250" height="60" rx="8" fill="#121826"/>
+    <rect x="185" y="114" width="200" height="8" rx="4" fill="#2e3852"/>
+    <rect x="185" y="128" width="228" height="8" rx="4" fill="#2e3852"/>
+    <rect x="185" y="142" width="160" height="8" rx="4" fill="#2e3852"/>
+    <rect x="175" y="210" width="250" height="34" rx="8" fill="#10141d" stroke="#2a3247"/>
+    <rect x="185" y="222" width="120" height="9" rx="4" fill="#2a3247"/>
+    <!-- side panel -->
+    <rect x="440" y="10" width="170" height="250" rx="10" fill="#10141d"/>
+    <rect x="452" y="26" width="30" height="12" rx="4" fill="#43c9a5" opacity="0.9"/>
+    <rect x="487" y="26" width="30" height="12" rx="4" fill="#2a3247"/>
+    <rect x="522" y="26" width="30" height="12" rx="4" fill="#2a3247"/>
+    <rect x="557" y="26" width="40" height="12" rx="4" fill="#2a3247"/>
+    <rect x="452" y="52" width="146" height="8" rx="4" fill="#20283a"/>
+    <rect x="462" y="66" width="136" height="8" rx="4" fill="#20283a"/>
+    <rect x="462" y="80" width="136" height="8" rx="4" fill="#20283a"/>
+    <rect x="452" y="94" width="146" height="8" rx="4" fill="#20283a"/>
+    <rect x="452" y="120" width="146" height="120" rx="6" fill="#0b0d12" stroke="#20283a"/>
+    <text x="460" y="140" fill="#43c9a5" font-size="9" font-family="monospace">$ npm run dev</text>
+    <text x="460" y="154" fill="#5b657f" font-size="9" font-family="monospace">ready in 320ms</text>
+    <!-- labels -->
+    <text x="85" y="252" text-anchor="middle" fill="#f2c98a" font-size="11" font-weight="bold">① Sidebar</text>
+    <text x="300" y="188" text-anchor="middle" fill="#f2c98a" font-size="11" font-weight="bold">② Chat</text>
+    <text x="525" y="252" text-anchor="middle" fill="#f2c98a" font-size="11" font-weight="bold">③ Workspace panel</text>
+  </svg>
+  <figcaption>The three areas you'll use every day.</figcaption>
+  </figure>
+
+  <h3>① The sidebar — your fleet at a glance</h3>
+  <p>Every <b>workspace</b> (a named container for related work — more in Section 3)
+  lists its conversations, newest first. Colored dots show what's busy, waiting for
+  you, or idle. The search box finds any conversation by name.</p>
+
+  <h3>② The chat — where the work happens</h3>
+  <p>Type a message and press send. Above the message box you choose <b>which agent</b>
+  and <b>which model</b>, how much freedom it has (<span class="accent">read&nbsp;only /
+  edits / full access</span>), and whether it should <b>plan first</b> or
+  <b>build right away</b>. When an agent wants to do something sensitive, a card
+  appears asking you to allow or deny it.</p>
+
+  <h3>③ The workspace panel — look around the project</h3>
+  <ul>
+    <li><b>Files</b> — browse and preview everything in the project folder.</li>
+    <li><b>Git</b> — see what changed, save (commit) and share (push) work.</li>
+    <li><b>Artifacts</b> — documents the agents produced for you: PDFs, images, reports.</li>
+    <li><b>Terminal</b> — a real command line, for when you want direct control.</li>
+  </ul>
+
+  <div class="card tip">
+    <div class="cap">Also worth knowing</div>
+    <p style="margin:0"><b>Scheduled runs</b> let an agent do a job on a timer (every
+    morning, every hour…). <b>Archive</b> tucks finished conversations away — they can
+    always be restored later from Settings.</p>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>4</span></div>
+</div>
+
+<!-- ================= 3. WORKSPACES ================= -->
+<div class="page">
+  <div class="kicker">Section 3</div>
+  <h2>Workspaces — one project, many places</h2>
+  <div class="rule"></div>
+
+  <p class="lead">A workspace is a named home for one effort — a client, a product,
+  a hobby — no matter where the actual folders live.</p>
+
+  <p>Say you run a project called <b>Lighthouse</b>. The website code lives on your
+  desk machine, and the marketing material lives on your Mac. In Threadknot, that's
+  <i>one workspace</i> with <i>two folders</i> — and every conversation about
+  Lighthouse, on either machine, appears in the same list in your sidebar.</p>
+
+  <figure>
+  <svg width="620" height="230" viewBox="0 0 620 230">
+    <!-- workspace container -->
+    <rect x="20" y="15" width="580" height="200" rx="14" fill="none" stroke="#d9a35c" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="44" y="42" fill="#f2c98a" font-size="15" font-weight="bold">“Lighthouse”  — one workspace</text>
+    <!-- machine 1 -->
+    <rect x="50" y="62" width="240" height="130" rx="10" fill="#10141d" stroke="#2a3247"/>
+    <text x="170" y="84" text-anchor="middle" fill="#e8e4da" font-size="12" font-weight="bold">🖥  Dev machine</text>
+    <rect x="70" y="98" width="200" height="34" rx="7" fill="#161c2b" stroke="#43c9a5"/>
+    <text x="170" y="119" text-anchor="middle" fill="#cfd4e0" font-size="11">📁 lighthouse-website</text>
+    <rect x="70" y="140" width="200" height="40" rx="7" fill="#121826"/>
+    <text x="80" y="156" fill="#8b93a7" font-size="10">💬 Fix checkout bug</text>
+    <text x="80" y="171" fill="#8b93a7" font-size="10">💬 Speed up image loading</text>
+    <!-- machine 2 -->
+    <rect x="330" y="62" width="240" height="130" rx="10" fill="#10141d" stroke="#2a3247"/>
+    <text x="450" y="84" text-anchor="middle" fill="#e8e4da" font-size="12" font-weight="bold">💻  Mac</text>
+    <rect x="350" y="98" width="200" height="34" rx="7" fill="#161c2b" stroke="#43c9a5"/>
+    <text x="450" y="119" text-anchor="middle" fill="#cfd4e0" font-size="11">📁 lighthouse-seo</text>
+    <rect x="350" y="140" width="200" height="40" rx="7" fill="#121826"/>
+    <text x="360" y="156" fill="#8b93a7" font-size="10">💬 Draft July blog posts</text>
+    <text x="360" y="171" fill="#8b93a7" font-size="10">💬 Keyword research</text>
+  </svg>
+  <figcaption>One workspace, two machines, four conversations — all in one sidebar list.</figcaption>
+  </figure>
+
+  <h3>The three simple rules</h3>
+  <ul>
+    <li>A <b>workspace</b> holds folders and conversations. Rename it any time
+        (right-click → <i>Rename workspace</i>) — the new name appears on every
+        connected machine.</li>
+    <li>A <b>folder</b> always lives on exactly one machine. Threadknot never copies or
+        moves your files between machines.</li>
+    <li>A <b>conversation</b> (thread) starts in one folder on one machine and stays
+        there for good — so its history, files and results are always exactly where
+        the work happened.</li>
+  </ul>
+
+  <div class="card">
+    <div class="cap">Where did “projects” go?</div>
+    <p style="margin:0">If you used Threadknot before workspaces existed: nothing was lost.
+    Each of your projects simply became a workspace of the same name, with its folder
+    and all its conversations intact.</p>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>5</span></div>
+</div>
+
+<!-- ================= 4. CONNECTING MACHINES ================= -->
+<div class="page">
+  <div class="kicker">Section 4</div>
+  <h2>Connecting your machines together</h2>
+  <div class="rule"></div>
+
+  <p class="lead">Pairing two machines takes one copy-paste. After that, they trust
+  each other completely and find each other automatically.</p>
+
+  <div class="steps">
+    <div class="step"><span class="stepn"></span><div class="stept">On the <b>other</b> machine, open Threadknot → Settings and copy its <b>LAN&nbsp;URL</b> (a web address that includes its secret key).</div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">On <b>this</b> machine, open Settings → <b>machines</b> → <b>pair</b>, paste the address, and click <b>pair machines</b>.</div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">Done. Both machines now show each other with a green “online” dot. You never have to do this again for that pair.</div></div>
+  </div>
+
+  <figure>
+  <svg width="620" height="150" viewBox="0 0 620 150">
+    <rect x="40" y="30" width="200" height="90" rx="12" fill="#10141d" stroke="#43c9a5" stroke-width="2"/>
+    <text x="140" y="66" text-anchor="middle" fill="#e8e4da" font-size="13" font-weight="bold">🖥  Dev machine</text>
+    <text x="140" y="90" text-anchor="middle" fill="#8b93a7" font-size="10">gives its key ↔ keeps Mac's key</text>
+    <rect x="380" y="30" width="200" height="90" rx="12" fill="#10141d" stroke="#43c9a5" stroke-width="2"/>
+    <text x="480" y="66" text-anchor="middle" fill="#e8e4da" font-size="13" font-weight="bold">💻  Mac</text>
+    <text x="480" y="90" text-anchor="middle" fill="#8b93a7" font-size="10">gives its key ↔ keeps Dev's key</text>
+    <line x1="245" y1="62" x2="375" y2="62" stroke="#d9a35c" stroke-width="2"/>
+    <polygon points="375,62 366,57 366,67" fill="#d9a35c"/>
+    <line x1="375" y1="88" x2="245" y2="88" stroke="#d9a35c" stroke-width="2"/>
+    <polygon points="245,88 254,83 254,93" fill="#d9a35c"/>
+    <text x="310" y="52" text-anchor="middle" fill="#f2c98a" font-size="10">one paste…</text>
+    <text x="310" y="104" text-anchor="middle" fill="#f2c98a" font-size="10">…trust flows both ways</text>
+  </svg>
+  <figcaption>Pairing is mutual: paste once, both sides can talk to each other.</figcaption>
+  </figure>
+
+  <h3>They find each other on their own</h3>
+  <p>Home routers reshuffle network addresses from time to time. Threadknot doesn't care:
+  each machine has a permanent identity (like a fingerprint), and machines
+  <b>announce themselves</b> on your network and <b>recognize each other by identity,
+  never by address</b>. If a machine comes back at a new address — or even a new
+  port — its partners re-find it in seconds, automatically. Unpaired Threadknots on your
+  network politely show up as “found on LAN”, one click from pairing.</p>
+
+  <h3>What pairing does <span class="brass">not</span> do</h3>
+  <ul>
+    <li>It does <b>not</b> copy files between machines.</li>
+    <li>It does <b>not</b> send anything over the internet — traffic stays on your network.</li>
+    <li>It does <b>not</b> let anyone without a key in. Keys are stored privately on
+        each machine and are never shown to browsers or phones.</li>
+  </ul>
+
+  <div class="card warn">
+    <div class="cap">Good to know</div>
+    <p style="margin:0">Paired machines trust each other <b>fully</b> — pairing is for
+    computers that are all yours. To end the relationship, click <b>remove</b> next to
+    the machine in Settings.</p>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>6</span></div>
+</div>
+
+<!-- ================= 5. WORKING ACROSS MACHINES ================= -->
+<div class="page">
+  <div class="kicker">Section 5</div>
+  <h2>Working across machines, day to day</h2>
+  <div class="rule"></div>
+
+  <p class="lead">Once machines are paired, “where the work runs” becomes a simple
+  question Threadknot asks you at the right moment.</p>
+
+  <h3>Starting a conversation somewhere else</h3>
+  <p>Click <b>+</b> on a workspace. If there's a real choice to make, a little menu
+  appears:</p>
+
+  <figure>
+  <svg width="620" height="170" viewBox="0 0 620 170">
+    <rect x="30" y="20" width="150" height="34" rx="8" fill="#161c2b" stroke="#d9a35c"/>
+    <text x="105" y="42" text-anchor="middle" fill="#f2c98a" font-size="12" font-weight="bold">＋  New thread</text>
+    <line x1="182" y1="37" x2="240" y2="37" stroke="#8b93a7" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="245" y="12" width="330" height="146" rx="10" fill="#10141d" stroke="#2a3247" stroke-width="1.5"/>
+    <text x="262" y="36" fill="#8b93a7" font-size="10" letter-spacing="2">WHERE SHOULD THIS RUN?</text>
+    <rect x="258" y="46" width="304" height="26" rx="6" fill="#161c2b"/>
+    <text x="270" y="63" fill="#e8e4da" font-size="11">📁 lighthouse-website · <tspan fill="#43c9a5">this machine</tspan></text>
+    <rect x="258" y="78" width="304" height="26" rx="6" fill="#161c2b"/>
+    <text x="270" y="95" fill="#e8e4da" font-size="11">📁 lighthouse-seo · <tspan fill="#43c9a5">Mac</tspan></text>
+    <rect x="258" y="110" width="304" height="26" rx="6" fill="#161c2b" stroke="#2a3247" stroke-dasharray="4 3"/>
+    <text x="270" y="127" fill="#cfd4e0" font-size="11">＋ Set up on <tspan fill="#f2c98a">office-pc</tspan>… <tspan fill="#5b657f">(pick a folder there)</tspan></text>
+  </svg>
+  <figcaption>The new-thread menu: existing folders first, then machines you haven't used in this workspace yet.</figcaption>
+  </figure>
+
+  <ul>
+    <li>Pick an <b>existing folder</b> and the conversation starts there instantly.</li>
+    <li>Pick <b>“Set up on …”</b> and Threadknot shows you that machine's folders — choose
+        one, and it joins the workspace with your new conversation ready to go.</li>
+  </ul>
+
+  <h3>Everything streams live</h3>
+  <p>A conversation running on another machine looks and feels local. The agent's
+  progress streams to your screen as it happens; you can approve requests, interrupt,
+  rename — all from where you're sitting. A small <b>machine tag</b> on each
+  conversation shows where it lives.</p>
+
+  <ul>
+    <li><b>Files</b> tab → browse the remote folder, preview images and PDFs.</li>
+    <li><b>Git</b> tab → see changes and commit on the remote machine.</li>
+    <li><b>Terminal</b> tab → a live command line <i>on that machine</i>. What you type
+        here runs there.</li>
+    <li><b>Artifacts</b> tab → open and download documents the remote agent produced.</li>
+  </ul>
+
+  <div class="card tip">
+    <div class="cap">If a machine is asleep or unplugged</div>
+    <p style="margin:0">Its tag goes grey and its options are disabled — nothing breaks.
+    The moment it's back on the network, the dot turns green and everything resumes.</p>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>7</span></div>
+</div>
+
+<!-- ================= 6. HOW A REQUEST TRAVELS ================= -->
+<div class="page">
+  <div class="kicker">Section 6</div>
+  <h2>How your request travels (and why it's safe)</h2>
+  <div class="rule"></div>
+
+  <p class="lead">One rule explains everything: <b>the machine that owns the folder
+  does the work and keeps the records.</b> Every other machine is just a window
+  onto it.</p>
+
+  <figure>
+  <svg width="620" height="215" viewBox="0 0 620 215">
+    <!-- you -->
+    <circle cx="60" cy="80" r="22" fill="#10141d" stroke="#43c9a5" stroke-width="2"/>
+    <circle cx="60" cy="73" r="7" fill="#43c9a5"/>
+    <path d="M46 92 q14 -12 28 0" fill="#43c9a5"/>
+    <text x="60" y="120" text-anchor="middle" fill="#cfd4e0" font-size="11">You</text>
+    <!-- your machine -->
+    <rect x="130" y="45" width="170" height="70" rx="10" fill="#10141d" stroke="#2a3247" stroke-width="1.5"/>
+    <text x="215" y="73" text-anchor="middle" fill="#e8e4da" font-size="12" font-weight="bold">Your machine</text>
+    <text x="215" y="93" text-anchor="middle" fill="#8b93a7" font-size="10">the window</text>
+    <!-- owner -->
+    <rect x="400" y="30" width="190" height="100" rx="10" fill="#10141d" stroke="#d9a35c" stroke-width="2"/>
+    <text x="495" y="56" text-anchor="middle" fill="#f2c98a" font-size="12" font-weight="bold">Owner machine</text>
+    <text x="495" y="76" text-anchor="middle" fill="#8b93a7" font-size="10">runs the agent</text>
+    <text x="495" y="92" text-anchor="middle" fill="#8b93a7" font-size="10">touches the files</text>
+    <text x="495" y="108" text-anchor="middle" fill="#8b93a7" font-size="10">keeps the history</text>
+    <!-- arrows -->
+    <line x1="88" y1="72" x2="126" y2="72" stroke="#43c9a5" stroke-width="2"/>
+    <polygon points="126,72 118,68 118,76" fill="#43c9a5"/>
+    <line x1="302" y1="65" x2="396" y2="65" stroke="#d9a35c" stroke-width="2"/>
+    <polygon points="396,65 387,60 387,70" fill="#d9a35c"/>
+    <text x="349" y="55" text-anchor="middle" fill="#8b93a7" font-size="10">“please do this”</text>
+    <line x1="396" y1="98" x2="302" y2="98" stroke="#43c9a5" stroke-width="2"/>
+    <polygon points="302,98 311,93 311,103" fill="#43c9a5"/>
+    <text x="349" y="115" text-anchor="middle" fill="#8b93a7" font-size="10">live progress streams back</text>
+    <!-- lock -->
+    <rect x="335" y="150" width="250" height="48" rx="9" fill="#0e111a" stroke="#2a3247"/>
+    <text x="352" y="170" fill="#f2c98a" font-size="12">🔒</text>
+    <text x="372" y="170" fill="#cfd4e0" font-size="10">Keys travel only between the two Threadknots —</text>
+    <text x="372" y="186" fill="#cfd4e0" font-size="10">never to browsers or phones.</text>
+    <!-- home network -->
+    <rect x="30" y="150" width="280" height="48" rx="9" fill="#0e111a" stroke="#2a3247"/>
+    <text x="47" y="170" fill="#43c9a5" font-size="12">🏠</text>
+    <text x="67" y="170" fill="#cfd4e0" font-size="10">Everything happens inside your home/office</text>
+    <text x="67" y="186" fill="#cfd4e0" font-size="10">network — no cloud in the middle.</text>
+  </svg>
+  <figcaption>Your machine forwards the request; the owner does the work; results stream home.</figcaption>
+  </figure>
+
+  <h3>Why this design is nice</h3>
+  <ul>
+    <li><b>Nothing is duplicated.</b> A conversation's history lives in exactly one
+        place — with the files it worked on.</li>
+    <li><b>Any machine can be the window.</b> Sit at any computer (or use your phone)
+        and drive the whole fleet.</li>
+    <li><b>Impersonation doesn't work.</b> Before trusting a connection, Threadknot always
+        checks the other side's permanent identity — an address alone is never enough.</li>
+    <li><b>A machine going offline is boring.</b> The rest of the fleet carries on;
+        that machine's work waits safely for its return.</li>
+  </ul>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>8</span></div>
+</div>
+
+<!-- ================= 7. PHONE ================= -->
+<div class="page">
+  <div class="kicker">Section 7</div>
+  <h2>Threadknot on your phone</h2>
+  <div class="rule"></div>
+
+  <p class="lead">Kick off a job at your desk, approve its questions from the sofa,
+  and get a buzz when it's done.</p>
+
+  <div class="two-col">
+    <div>
+      <h3>Two ways to connect</h3>
+      <p><b>Any browser:</b> open the LAN&nbsp;URL from Settings on your phone's
+      browser. That's it — the full app, sized for a phone.</p>
+      <p><b>The Threadknot mobile app:</b> the nicer everyday option. It adds:</p>
+      <ul>
+        <li><b>Face/fingerprint lock</b> — the app locks itself and opens with a glance.</li>
+        <li><b>Push notifications</b> — “finished”, “needs your approval”, “hit an
+            error” arrive as normal phone notifications, even with the app closed.</li>
+        <li><b>Multiple servers</b> — keep every Threadknot machine in one list and switch
+            with a tap.</li>
+        <li><b>Its own key</b> — the phone gets a private, revocable pass. Lost the
+            phone? Revoke it from the desktop in one click; nothing else changes.</li>
+      </ul>
+      <h3>And because of Section 5…</h3>
+      <p>Your phone connects to <i>one</i> machine, but that machine can reach the
+      whole fleet. Phone → desk machine → Mac works exactly like sitting at the desk.</p>
+    </div>
+    <div style="flex: 0 0 62mm;">
+      <figure>
+      <svg width="230" height="330" viewBox="0 0 230 330">
+        <!-- phone -->
+        <rect x="55" y="10" width="120" height="230" rx="18" fill="#10141d" stroke="#2a3247" stroke-width="2"/>
+        <rect x="95" y="20" width="40" height="6" rx="3" fill="#2a3247"/>
+        <rect x="67" y="36" width="96" height="16" rx="5" fill="#161c2b"/>
+        <rect x="74" y="40" width="50" height="8" rx="3" fill="#d9a35c" opacity="0.8"/>
+        <rect x="67" y="60" width="96" height="42" rx="6" fill="#121826"/>
+        <rect x="74" y="68" width="70" height="6" rx="3" fill="#2e3852"/>
+        <rect x="74" y="80" width="82" height="6" rx="3" fill="#2e3852"/>
+        <rect x="74" y="92" width="56" height="6" rx="3" fill="#2e3852"/>
+        <rect x="67" y="108" width="96" height="30" rx="6" fill="#161c2b" stroke="#43c9a5"/>
+        <text x="115" y="127" text-anchor="middle" fill="#43c9a5" font-size="9">Allow  ·  Deny</text>
+        <rect x="67" y="196" width="96" height="26" rx="7" fill="#161c2b"/>
+        <text x="115" y="213" text-anchor="middle" fill="#8b93a7" font-size="9">Type a message…</text>
+        <!-- notification -->
+        <rect x="20" y="252" width="190" height="34" rx="9" fill="#161c2b" stroke="#d9a35c"/>
+        <text x="34" y="266" fill="#f2c98a" font-size="9" font-weight="bold">⚓ THREADKNOT</text>
+        <text x="34" y="279" fill="#cfd4e0" font-size="9">“Fix checkout bug” — Done ✓</text>
+        <!-- face id -->
+        <rect x="20" y="296" width="190" height="26" rx="9" fill="#0e111a" stroke="#2a3247"/>
+        <text x="34" y="313" fill="#cfd4e0" font-size="9">🔒 Unlocks with Face&nbsp;ID / fingerprint</text>
+      </svg>
+      <figcaption>The mobile app: chat, approve, get notified.</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card tip">
+    <div class="cap">Pairing your phone</div>
+    <p style="margin:0">In the mobile app, tap <b>Add server</b> and paste the same
+    LAN&nbsp;URL from desktop Settings. The app trades that for its own private pass
+    and forgets the master key immediately.</p>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>9</span></div>
+</div>
+
+<!-- ================= 8. RECIPES ================= -->
+<div class="page">
+  <div class="kicker">Section 8</div>
+  <h2>Everyday recipes</h2>
+  <div class="rule"></div>
+
+  <h3>Pair a new machine</h3>
+  <div class="steps">
+    <div class="step"><span class="stepn"></span><div class="stept">Install and open Threadknot on the new machine.</div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">Copy its LAN&nbsp;URL from Settings there.</div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">On your main machine: Settings → machines → <b>pair</b> → paste → <b>pair machines</b>.</div></div>
+  </div>
+
+  <h3>Start a conversation on another machine</h3>
+  <div class="steps" style="counter-reset: step;">
+    <div class="step"><span class="stepn"></span><div class="stept">Click <b>+</b> on the workspace.</div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">Pick one of its folders — or <b>“Set up on &lt;machine&gt;…”</b> and choose a folder there.</div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">Chat normally. The machine tag reminds you where it's running.</div></div>
+  </div>
+
+  <h3>Bring another machine's folder into a workspace</h3>
+  <div class="steps" style="counter-reset: step;">
+    <div class="step"><span class="stepn"></span><div class="stept">Right-click the workspace → <b>Machines &amp; folders…</b></div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">Under <i>add a folder</i>, pick the machine, then browse to the folder.</div></div>
+    <div class="step"><span class="stepn"></span><div class="stept">It appears as part of the workspace on every connected machine.</div></div>
+  </div>
+
+  <div class="two-col" style="margin-top: 4mm;">
+    <div>
+      <h3>Rename a workspace</h3>
+      <p>Right-click it → <b>Rename workspace</b>. The name updates on every machine
+      in the workspace.</p>
+      <h3>Remove a folder from a workspace</h3>
+      <p>Right-click → <b>Machines &amp; folders…</b> → <b>remove</b>. Nothing is
+      deleted — the folder simply becomes its own workspace on its machine.</p>
+    </div>
+    <div>
+      <h3>Finish a conversation</h3>
+      <p>Hover it → <b>⋯</b> → <b>Archive</b> to file it away (restorable from
+      Settings → archives), or <b>Delete</b> to remove it for good.</p>
+      <h3>Rename this machine</h3>
+      <p>Settings → machines → <b>rename</b> next to “this machine”. That's the name
+      other machines (and machine tags) show.</p>
+    </div>
+  </div>
+
+  <div class="card warn" style="margin-top: 5mm;">
+    <div class="cap">If something looks stuck</div>
+    <p style="margin:0">Check Settings → machines first: a grey dot means that machine
+    is off or unreachable. Wake it and everything resumes by itself — reconnection is
+    automatic, always.</p>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>10</span></div>
+</div>
+
+<!-- ================= 9. GLOSSARY ================= -->
+<div class="page">
+  <div class="kicker">Section 9</div>
+  <h2>Words Threadknot uses</h2>
+  <div class="rule"></div>
+
+  <table class="glossary">
+    <tr><td>Agent</td><td>An AI assistant that can actually do things — read and edit files, run commands, produce documents. Threadknot drives Claude Code, Codex and Hermes agents.</td></tr>
+    <tr><td>Workspace</td><td>A named container in the sidebar for one effort. Holds folders (possibly on several machines) and all their conversations.</td></tr>
+    <tr><td>Thread</td><td>One conversation with an agent, in one folder, on one machine. Stays on that machine forever.</td></tr>
+    <tr><td>Folder</td><td>A real directory on one of your machines where an agent works. Threadknot never moves it or copies it elsewhere.</td></tr>
+    <tr><td>Machine</td><td>Any computer running Threadknot. Paired machines form your fleet.</td></tr>
+    <tr><td>Pairing</td><td>The one-time paste that makes two machines trust each other, both ways.</td></tr>
+    <tr><td>LAN&nbsp;URL</td><td>The private web address (with built-in key) a Threadknot machine shows in Settings. Used to connect phones and to pair machines.</td></tr>
+    <tr><td>Machine tag</td><td>The small label on a conversation showing which machine it lives on. Grey means that machine is currently offline.</td></tr>
+    <tr><td>Artifact</td><td>A document an agent produced for you — a PDF, image, spreadsheet, report. Kept safe even if the original file later changes.</td></tr>
+    <tr><td>Archive</td><td>Where finished conversations rest. They're out of the sidebar but fully restorable, including their history.</td></tr>
+    <tr><td>Plan / Build</td><td>Two ways to start: <i>Plan</i> makes the agent propose an approach for your approval first; <i>Build</i> lets it get straight to work.</td></tr>
+    <tr><td>Access level</td><td>How much freedom the agent has: read only, allowed to edit, or full access. You choose per conversation.</td></tr>
+  </table>
+
+  <div style="position:absolute; bottom: 26mm; left: 18mm; right: 18mm; text-align:center;">
+    <img src="file:///srv/projects/t3port/threadknot/public/threadknot-logo.png" style="width: 18mm; opacity: 0.9;" alt="">
+    <div style="margin-top: 2mm; color:#8b93a7; font-size: 10px; letter-spacing: 2px;">THREADKNOT · SMITH NETWORK SOLUTIONS</div>
+    <div style="margin-top: 1mm; color:#5b657f; font-size: 9px;">Your fleet. Your files. Your network.</div>
+  </div>
+
+  <div class="footer"><span class="fbrand">THREADKNOT</span><span>11</span></div>
+</div>
+
+</body>
+</html>

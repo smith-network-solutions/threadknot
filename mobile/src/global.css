@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Threadknot fleet-console theme (dark only), mapped from threadknot/src/styles.css.
+   The app forces the dark scheme, so :root and .dark carry the same values. */
+@layer base {
+  :root,
+  .dark:root {
+    --background: 223 25% 6%; /* #0b0d12 deep navy graphite */
+    --foreground: 222 28% 88%; /* #d8dde9 */
+    --card: 222 29% 9%; /* #10141d panel */
+    --card-foreground: 222 28% 88%;
+    --popover: 223 31% 11%; /* #141926 */
+    --popover-foreground: 222 28% 88%;
+    --primary: 34 62% 61%; /* #d9a35c brass */
+    --primary-foreground: 223 25% 6%;
+    --secondary: 223 31% 11%;
+    --secondary-foreground: 222 28% 88%;
+    --muted: 224 30% 15%; /* #1a2030 */
+    --muted-foreground: 224 15% 60%; /* #8b93a9 */
+    --accent: 224 30% 15%;
+    --accent-foreground: 222 28% 88%;
+    --destructive: 3 68% 63%; /* #e0655f */
+    --destructive-foreground: 0 0% 98%;
+    --border: 222 26% 16%;
+    --input: 224 30% 15%;
+    --ring: 34 62% 61%;
+  }
+}

@@ -1,0 +1,728 @@
+/* Project file browser + viewer. Lives inside .ws-pane (absolute, flex column).
+   Dark naval theme — reuses the :root custom props from styles.css. */
+
+.files-pane,
+.files-viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  color: var(--text, #d8dde9);
+  font-family: var(--font-ui, system-ui, sans-serif);
+}
+
+/* ---- tree header ---------------------------------------------------- */
+
+.files-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  flex: 0 0 auto;
+}
+
+.files-head-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.files-count {
+  font-size: 12.5px;
+  color: var(--dim, #8b93a9);
+}
+
+.files-partial {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--amber, #e5b567);
+  border: 1px solid var(--amber, #e5b567);
+  border-radius: 999px;
+  padding: 1px 7px;
+  opacity: 0.85;
+}
+
+.files-refresh {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dim, #8b93a9);
+  background: none;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  padding: 4px 12px;
+  min-height: 30px;
+  cursor: pointer;
+}
+
+.files-refresh:hover:not(:disabled) {
+  color: var(--text, #d8dde9);
+  border-color: var(--brass, #d9a35c);
+}
+
+.files-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.files-refresh.on {
+  color: var(--text, #d8dde9);
+  border-color: var(--brass, #d9a35c);
+  background: rgba(217, 163, 92, 0.12);
+}
+
+.files-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  min-height: 38px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: var(--radius, 10px);
+  background: var(--panel-2, #141926);
+  color: var(--dim, #8b93a9);
+}
+
+.files-filter:focus-within {
+  border-color: var(--brass, #d9a35c);
+}
+
+.files-filter input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text, #d8dde9);
+}
+
+.files-filter input::placeholder {
+  color: var(--faint, #5c6478);
+}
+
+.files-filter-clear {
+  border: none;
+  background: none;
+  color: var(--dim, #8b93a9);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.files-filter-clear:hover {
+  color: var(--text, #d8dde9);
+}
+
+/* ---- tree ----------------------------------------------------------- */
+
+.files-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 4px calc(10px + var(--safe-b, 0px));
+  -webkit-overflow-scrolling: touch;
+}
+
+.files-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: var(--text, #d8dde9);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 7px;
+}
+
+.files-row:hover {
+  background: var(--panel-3, #1a2030);
+}
+
+.files-row:active {
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+}
+
+.files-row svg {
+  flex: 0 0 auto;
+}
+
+.files-dir .files-chevron svg {
+  color: var(--dim, #8b93a9);
+}
+
+.files-dir > svg {
+  color: var(--brass, #d9a35c);
+}
+
+.files-file svg {
+  color: var(--faint, #5c6478);
+}
+
+.files-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-size {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--faint, #5c6478);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Artifact rows split opening and deletion into adjacent controls. Keeping the
+   trash action visible (but quiet) makes cleanup fast on both mouse and touch. */
+.artifact-list-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border-radius: 7px;
+  transition: background 0.12s ease;
+}
+
+.artifact-list-row:hover,
+.artifact-list-row:focus-within {
+  background: var(--panel-3, #1a2030);
+}
+
+.artifact-list-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  border-radius: 7px 0 0 7px;
+}
+
+.artifact-list-open:hover,
+.artifact-list-open:active {
+  background: transparent;
+}
+
+.artifact-list-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint, #5c6478);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease,
+    background 0.12s ease;
+}
+
+.artifact-list-row:hover .artifact-list-delete,
+.artifact-list-delete:focus-visible,
+.artifact-list-delete.armed {
+  opacity: 1;
+}
+
+.artifact-list-delete:hover:not(:disabled),
+.artifact-list-delete.armed {
+  color: var(--red, #e0655f);
+  border-color: rgba(224, 101, 95, 0.35);
+  background: rgba(224, 101, 95, 0.08);
+}
+
+.artifact-list-delete:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.files-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--dim, #8b93a9);
+  transition: transform 0.12s ease;
+}
+
+.files-chevron.open {
+  transform: rotate(90deg);
+}
+
+.files-chevron-spacer {
+  display: inline-block;
+  width: 14px;
+  flex: 0 0 auto;
+}
+
+.files-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--dim, #8b93a9);
+  font-size: 13px;
+}
+
+.files-error {
+  color: var(--red, #e0655f);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- viewer --------------------------------------------------------- */
+
+.files-viewer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  flex: 0 0 auto;
+}
+
+.files-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--dim, #8b93a9);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 4px;
+  flex: 0 0 auto;
+}
+
+.files-back:hover {
+  color: var(--text, #d8dde9);
+}
+
+.files-back svg {
+  transform: rotate(180deg);
+}
+
+.files-crumb {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--dim, #8b93a9);
+}
+
+.files-viewer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.files-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dim, #8b93a9);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 9px;
+  min-height: 30px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.files-action:hover:not(:disabled) {
+  color: var(--text, #d8dde9);
+  border-color: var(--line-2, rgba(155, 170, 210, 0.18));
+  background: var(--panel-3, #1a2030);
+}
+
+.files-action.copied {
+  color: #8bc99a;
+  border-color: rgba(139, 201, 154, 0.35);
+  background: rgba(139, 201, 154, 0.09);
+}
+
+.files-action.error {
+  color: var(--red, #e0655f);
+  border-color: rgba(224, 101, 95, 0.35);
+  background: rgba(224, 101, 95, 0.08);
+}
+
+.files-action:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.files-dl {
+  color: var(--brass-hi, #f2c98a);
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+}
+
+.files-dl:hover:not(:disabled) {
+  border-color: var(--brass, #d9a35c);
+}
+
+.files-delete:hover:not(:disabled),
+.files-delete.armed {
+  color: var(--red, #e0655f);
+  border-color: rgba(224, 101, 95, 0.35);
+  background: rgba(224, 101, 95, 0.08);
+}
+
+.files-viewer-sub {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  flex: 0 0 auto;
+}
+
+.files-seg {
+  display: inline-flex;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.files-seg button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--dim, #8b93a9);
+  background: none;
+  border: none;
+  padding: 5px 14px;
+  min-height: 30px;
+  cursor: pointer;
+}
+
+.files-seg button.on {
+  color: var(--text, #d8dde9);
+  background: var(--panel-3, #1a2030);
+}
+
+.files-notice {
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--amber, #e5b567);
+  background: rgba(229, 181, 103, 0.08);
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  flex: 0 0 auto;
+}
+
+.files-viewer-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+}
+
+/* code */
+.files-code {
+  margin: 0;
+  padding: 12px 14px calc(14px + var(--safe-b, 0px));
+  min-width: 100%;
+  width: max-content;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.files-code code {
+  background: none;
+  padding: 0;
+  white-space: pre;
+}
+
+/* markdown */
+.files-md {
+  padding: 14px 16px calc(16px + var(--safe-b, 0px));
+  max-width: 860px;
+}
+
+/* Sandboxed HTML document preview. The white page is intentional: authored
+   documents should control their own canvas rather than inherit Threadknot's UI. */
+.files-html-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  border: 0;
+  background: #fff;
+}
+
+/* media (image) */
+.files-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.02) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.02) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.02) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.02) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
+
+.files-media img,
+.files-media video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.files-media video {
+  /* A recorded walkthrough is the point of the pane it sits in, so let it take
+     the width it can get rather than shrink-wrapping to intrinsic size. */
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+}
+
+/* pdf */
+.files-pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #171a20;
+}
+
+.files-pdf-toolbar {
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: var(--panel-2, #141926);
+}
+
+.files-pdf-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.files-pdf-tool,
+.files-pdf-zoom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--dim, #8b93a9);
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.files-pdf-tool:hover:not(:disabled),
+.files-pdf-zoom:hover:not(:disabled) {
+  color: var(--brass-hi, #f2c98a);
+  border-color: var(--line-2, rgba(155, 170, 210, 0.18));
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+}
+
+.files-pdf-tool:disabled,
+.files-pdf-zoom:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.files-pdf-page,
+.files-pdf-zoom {
+  color: var(--dim, #8b93a9);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.files-pdf-page {
+  min-width: 58px;
+  text-align: center;
+}
+
+.files-pdf-zoom {
+  min-width: 82px;
+  padding: 0 7px;
+}
+
+.files-pdf-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 0, rgba(217, 163, 92, 0.05), transparent 38%),
+    #171a20;
+  scrollbar-gutter: stable both-edges;
+}
+
+.files-pdf-stage canvas {
+  display: inline-block;
+  max-width: none;
+  vertical-align: top;
+  background: #fff;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transition: opacity 0.1s ease;
+}
+
+.files-pdf-stage canvas.is-rendering {
+  opacity: 0.5;
+}
+
+.files-pdf-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  max-width: calc(100% - 36px);
+  padding: 8px 12px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  color: var(--dim, #8b93a9);
+  background: rgba(12, 15, 22, 0.88);
+  font-size: 12px;
+  line-height: 1.4;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+}
+
+.files-pdf-status.files-error {
+  color: var(--red, #e0655f);
+}
+
+@media (max-width: 520px) {
+  .files-viewer-head { gap: 4px; padding-inline: 6px; }
+  .files-back span { display: none; }
+  .files-action { min-width: 30px; padding-inline: 7px; }
+  .files-action-label { display: none; }
+  .files-pdf-toolbar { padding-inline: 6px; }
+  .files-pdf-page { min-width: 50px; }
+  .files-pdf-zoom { min-width: 70px; }
+  .files-pdf-stage { padding: 12px; }
+}
+
+/* download prompt (binary / unknown) */
+.files-download-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 100%;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.files-dp-title {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text, #d8dde9);
+}
+
+.files-dp-sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--dim, #8b93a9);
+  font-variant-numeric: tabular-nums;
+}
+
+.files-dl-big {
+  margin-top: 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--brass-hi, #f2c98a);
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+  border: 1px solid var(--brass, #d9a35c);
+  border-radius: var(--radius, 10px);
+  padding: 9px 22px;
+  cursor: pointer;
+}
+
+.files-dl-big:hover:not(:disabled) {
+  background: rgba(217, 163, 92, 0.22);
+}
+
+.files-dl-big:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Filter states: dim the list while the debounced query catches up. */
+.files-tree.filtering {
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+}
+
+.files-more {
+  padding: 10px 12px;
+  color: var(--dim, #8b93a9);
+  font-size: 12px;
+  border-top: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+}
+
+/* ===== light theme overrides ===== */
+/* The code viewer renders highlight.js markup and the app imports github-dark
+   globally, so it must stay dark in BOTH themes; pin its surface + base text
+   to the dark palette so tokens keep their intended contrast. */
+:root[data-family="light"] .files-code {
+  background: #10141d;
+  color: #d8dde9;
+}
+/* Non-code chrome themes normally: soften the dark-tuned hardcoded tints. */
+:root[data-family="light"] .files-notice {
+  background: rgba(176, 115, 34, 0.10);
+}
+:root[data-family="light"] .files-media {
+  background:
+    linear-gradient(45deg, rgba(20, 30, 60, 0.04) 25%, transparent 25%, transparent 75%, rgba(20, 30, 60, 0.04) 75%),
+    linear-gradient(45deg, rgba(20, 30, 60, 0.04) 25%, transparent 25%, transparent 75%, rgba(20, 30, 60, 0.04) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
+:root[data-family="light"] .files-dl-big:hover:not(:disabled) {
+  background: rgba(176, 115, 34, 0.20);
+}

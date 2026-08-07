@@ -1,0 +1,311 @@
+/* TerminalPane styles — owned by the terminal feature. */
+
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg, #0b0d12);
+  color: var(--text, #d8dde9);
+}
+
+.terminal-pane.ws-stub {
+  align-items: center;
+  justify-content: center;
+  color: var(--dim, #8b93a9);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Tab strip */
+.term-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 6px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: var(--panel, #10141d);
+  flex: 0 0 auto;
+}
+.term-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.term-tab {
+  display: flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: var(--dim, #8b93a9);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.term-tab.on {
+  background: var(--bg, #0b0d12);
+  border-color: var(--line-2, rgba(155, 170, 210, 0.18));
+  color: var(--text, #d8dde9);
+}
+
+.term-tab-label {
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 7px 8px 7px 11px;
+  cursor: pointer;
+}
+
+/* Inline rename box (double-click a tab label). */
+.term-tab-edit {
+  border: 1px solid var(--brass, #d9a35c);
+  background: var(--bg, #0b0d12);
+  color: var(--text, #d8dde9);
+  font: inherit;
+  border-radius: 5px;
+  padding: 5px 7px;
+  margin: 2px 2px 2px 6px;
+  width: 9ch;
+  outline: none;
+}
+
+/* Faint dot marking a tab whose shell has exited. */
+.term-tab-dead {
+  color: var(--faint, #5c6478);
+}
+
+.term-tab-x {
+  border: none;
+  background: none;
+  color: var(--faint, #5c6478);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 8px 0 2px;
+  cursor: pointer;
+}
+.term-tab-x:hover {
+  color: var(--red, #e0655f);
+}
+
+.term-tab-add {
+  border: none;
+  background: none;
+  color: var(--dim, #8b93a9);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 10px;
+  cursor: pointer;
+  align-self: center;
+}
+.term-tab-add:hover {
+  color: var(--brass-hi, #f2c98a);
+}
+
+/* Terminal stack (all tabs mounted; hidden ones keep their socket) */
+.term-stack {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.term-instance {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.term-instance[hidden] {
+  display: none;
+}
+
+.term-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 6px 8px;
+  overflow: hidden;
+}
+.term-host .xterm {
+  height: 100%;
+}
+.term-host .xterm-viewport {
+  overflow-y: auto;
+}
+
+/* Manual paste fallback for insecure LAN browsers. The Expo shell reads the
+   native clipboard directly; this stays available when a browser refuses
+   clipboard reads over HTTP. */
+.term-paste-sheet {
+  display: grid;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px;
+  border-top: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: var(--panel-2, #141926);
+}
+.term-paste-sheet label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text, #d8dde9);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 12px;
+  font-weight: 650;
+}
+.term-paste-sheet label span {
+  color: var(--faint, #5c6478);
+  font-size: 10.5px;
+  font-weight: 400;
+  text-align: right;
+}
+.term-paste-sheet textarea {
+  width: 100%;
+  min-height: 68px;
+  resize: vertical;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  outline: none;
+  padding: 9px 10px;
+  background: var(--bg, #0b0d12);
+  color: var(--text, #d8dde9);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.term-paste-sheet textarea:focus {
+  border-color: var(--brass, #d9a35c);
+  box-shadow: 0 0 0 2px var(--brass-dim, rgba(217, 163, 92, 0.14));
+}
+.term-paste-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.term-paste-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 7px;
+  background: var(--panel-3, #1a2030);
+  color: var(--dim, #8b93a9);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 12px;
+}
+.term-paste-actions button.primary {
+  border-color: rgba(217, 163, 92, 0.45);
+  color: var(--brass-hi, #f2c98a);
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+}
+.term-paste-actions button:disabled {
+  opacity: 0.45;
+}
+
+/* Right-click context menu (xterm's selection isn't a DOM selection, so the
+   webview's native Copy is always grayed — this replaces it). */
+.term-ctx {
+  position: fixed;
+  z-index: 40;
+  min-width: 132px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 9px;
+  background: var(--panel-2, #141926);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.term-ctx button {
+  border: none;
+  background: none;
+  color: var(--text, #d8dde9);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 12.5px;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.term-ctx button:hover:not(:disabled) {
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+  color: var(--brass-hi, #f2c98a);
+}
+.term-ctx button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Mobile accessory key row */
+.term-keys {
+  display: none;
+  gap: 4px;
+  padding: 5px 6px calc(5px + var(--safe-b, 0px));
+  border-top: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: var(--panel-2, #141926);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 0 0 auto;
+}
+.term-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.term-keys button {
+  flex: 0 0 auto;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  background: var(--panel-3, #1a2030);
+  color: var(--text, #d8dde9);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.term-keys button:active {
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+}
+.term-keys button:disabled {
+  opacity: 0.6;
+}
+.term-keys button.on {
+  border-color: var(--brass, #d9a35c);
+  color: var(--brass-hi, #f2c98a);
+  background: var(--brass-dim, rgba(217, 163, 92, 0.14));
+}
+.term-keys .term-key-danger {
+  color: var(--red, #e0655f);
+}
+
+/* Show the accessory row wherever the keyboard is a soft one (no Esc/Ctrl/
+   arrows there). Width alone missed tablets — an iPad in landscape (or a 12.9"
+   in portrait) is ≥1024px yet has no physical keys — so also key off the input
+   device. Touch-only is spelled as hover:none AND pointer:coarse (both, so one
+   flaky value in a desktop webview can't pop the row up there), and it's
+   `pointer`, not `any-pointer`: a touchscreen laptop steers with a trackpad and
+   has real Esc/Ctrl keys, so it keeps the row hidden. */
+@media (max-width: 1023px), (hover: none) and (pointer: coarse) {
+  .term-keys {
+    display: flex;
+  }
+}
+
+/* ===== light theme overrides ===== */
+/* The xterm canvas palette flips to its light theme (bg #ffffff) in TSX. The
+   pixel area it draws into must match that exactly, so pin the host + the
+   active tab (which blends into the terminal body) to #ffffff. The tab strip
+   and accessory key row are chrome and theme normally through the vars. */
+:root[data-family="light"] .term-host {
+  background: #ffffff;
+}
+:root[data-family="light"] .term-tab.on {
+  background: #ffffff;
+}

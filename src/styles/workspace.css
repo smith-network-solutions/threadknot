@@ -1,0 +1,150 @@
+/* Workspace side panel shell (Files / Browser / Terminal). Pane internals live
+   in files.css / browser.css / terminal.css — keep this file to the shell. */
+
+.workspace-panel {
+  flex: 0 0 clamp(360px, 42%, 640px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  background: var(--panel, rgba(14, 18, 26, 0.6));
+}
+
+.workspace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+}
+
+/* The tabs don't shrink below their labels, so on a narrow panel (phone
+   overlay especially) this strip must SCROLL rather than overflow its flex
+   box — an overflowing strip paints straight over the orient/close buttons
+   sitting after it, which is why the × was unreachable. */
+.workspace-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Keep the header's trailing controls out of the scroller and un-squeezable. */
+.workspace-head > .icon-btn {
+  flex: 0 0 auto;
+}
+
+.ws-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg-dim, #9aa4b2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.ws-tab:hover {
+  color: var(--fg, #e6e9ef);
+}
+
+.ws-tab.on {
+  color: var(--fg, #e6e9ef);
+  border-color: var(--line, rgba(255, 255, 255, 0.1));
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.workspace-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.ws-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ws-pane[hidden] {
+  display: none;
+}
+
+.ws-stub {
+  margin: auto;
+  color: var(--fg-dim, #9aa4b2);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Header toggle buttons (live in ThreadView header). */
+.ws-toggles {
+  display: flex;
+  gap: 2px;
+}
+
+.ws-toggles .icon-btn.on {
+  color: var(--brass, #d9a35c);
+}
+
+@media (max-width: 1023px) {
+  .workspace-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    flex: none;
+    border-left: none;
+    background: var(--bg, #0b0e14);
+  }
+  /* Tighter tabs so the five of them come closer to fitting a phone width
+     (they still scroll if not), leaving the close button on screen. */
+  .workspace-head {
+    gap: 4px;
+    padding: 8px;
+  }
+  .ws-tab {
+    gap: 5px;
+    padding: 6px 7px;
+  }
+}
+
+/* Touch-only device: give the header buttons a real tap target. */
+@media (hover: none) and (pointer: coarse) {
+  .workspace-head > .icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/* ===== light theme overrides ===== */
+/* --fg / --fg-dim are undefined, so their dark-tuned fallbacks (#e6e9ef,
+   #9aa4b2) leak into light mode and vanish on the white panel. Repoint the
+   tab + stub text at the themed vars, and swap the white selection tint. */
+:root[data-family="light"] .ws-tab {
+  color: var(--dim);
+}
+:root[data-family="light"] .ws-tab:hover,
+:root[data-family="light"] .ws-tab.on {
+  color: var(--text);
+}
+:root[data-family="light"] .ws-tab.on {
+  background: rgba(35, 50, 90, 0.06);
+}
+:root[data-family="light"] .ws-stub {
+  color: var(--dim);
+}

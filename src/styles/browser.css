@@ -1,0 +1,898 @@
+/* Shared browser cockpit — live CDP screencast, human input, and agent presence. */
+
+.browser-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg, #0b0d12);
+}
+
+/* ---- compact browser chrome --------------------------------------------- */
+
+.browser-chrome {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: color-mix(in srgb, var(--panel, #10141d) 94%, #17242a);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+}
+
+.browser-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--dim, #8b93a9);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: none;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.browser-btn:hover:not(:disabled):not([aria-disabled="true"]),
+.browser-btn.on {
+  color: var(--text, #d8dde9);
+  border-color: var(--line-2, rgba(155, 170, 210, 0.18));
+  background: var(--panel-3, #1a2030);
+}
+
+.browser-btn:focus-visible,
+.browser-rescan:focus-visible,
+.browser-panel-close:focus-visible {
+  outline: 2px solid var(--brass, #d9a35c);
+  outline-offset: 1px;
+}
+
+.browser-btn:disabled,
+.browser-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+.browser-url {
+  flex: 1 1 180px;
+  min-width: 90px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  background: var(--bg-raise, #0e111a);
+  color: var(--text, #d8dde9);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  outline: none;
+}
+
+.browser-url:focus {
+  border-color: var(--brass, #d9a35c);
+  box-shadow: 0 0 0 2px rgba(217, 163, 92, 0.09);
+}
+
+.browser-url::placeholder {
+  color: var(--faint, #5c6478);
+}
+
+.browser-device {
+  flex: 0 0 auto;
+  height: 34px;
+  max-width: 82px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  background: var(--bg-raise, #0e111a);
+  color: var(--dim, #8b93a9);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  outline: none;
+}
+
+/* Signed-in profile picker. A browser holding a real login should never look
+   like an anonymous one, so the attached state is visibly marked. */
+.browser-profile {
+  flex: 0 0 auto;
+  height: 34px;
+  max-width: 150px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  background: var(--bg-raise, #0e111a);
+  color: var(--dim, #8b93a9);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  outline: none;
+}
+
+.browser-profile.on {
+  border-color: rgba(120, 200, 255, 0.55);
+  color: #9fd4ff;
+  background: rgba(70, 140, 210, 0.14);
+}
+
+.browser-signin-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: rgba(70, 140, 210, 0.1);
+  color: #9fd4ff;
+  font-size: 11.5px;
+}
+
+.browser-signin-note b {
+  font-weight: 600;
+}
+
+.browser-signin-note span {
+  color: var(--dim, #8b93a9);
+}
+
+.browser-connection {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0 7px;
+  border: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  border-radius: 999px;
+  color: var(--faint, #5c6478);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.browser-connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.browser-connection.live {
+  color: #6fd5bd;
+  border-color: rgba(111, 213, 189, 0.24);
+  background: rgba(53, 154, 132, 0.08);
+}
+
+.browser-connection.live .browser-connection-dot {
+  box-shadow: 0 0 0 3px rgba(111, 213, 189, 0.09), 0 0 8px rgba(111, 213, 189, 0.48);
+}
+
+.browser-connection.connecting .browser-connection-dot,
+.browser-connection.retrying .browser-connection-dot {
+  animation: browser-pulse 1.15s ease-in-out infinite;
+}
+
+.browser-activity-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--brass, #d9a35c);
+  color: #17100a;
+  font: 700 8px/13px var(--font-mono, ui-monospace, monospace);
+}
+
+/* ---- shared tab strip --------------------------------------------------- */
+
+.browser-tabs {
+  position: relative;
+  z-index: 25;
+  display: flex;
+  align-items: stretch;
+  min-height: 31px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: var(--bg-raise, #0e111a);
+}
+
+.browser-tabs-scroll {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.browser-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.browser-tab {
+  flex: 0 1 180px;
+  display: flex;
+  align-items: center;
+  min-width: 82px;
+  max-width: 210px;
+  border-right: 1px solid rgba(155, 170, 210, 0.075);
+  border-top: 2px solid transparent;
+  color: var(--faint, #687188);
+  background: transparent;
+}
+
+.browser-tab.active {
+  border-top-color: #6fd5bd;
+  color: var(--text, #d8dde9);
+  background: color-mix(in srgb, var(--panel, #10141d) 90%, #24423f);
+}
+
+.browser-tab-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 29px;
+  padding: 0 3px 0 9px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.browser-tab-main:focus-visible,
+.browser-tab-close:focus-visible,
+.browser-new-tab:focus-visible {
+  outline: 1px solid var(--brass, #d9a35c);
+  outline-offset: -2px;
+}
+
+.browser-tab-state {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.58;
+}
+
+.browser-tab.active .browser-tab-state {
+  border-color: #6fd5bd;
+  background: #6fd5bd;
+  box-shadow: 0 0 7px rgba(111, 213, 189, 0.42);
+  opacity: 1;
+}
+
+.browser-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+}
+
+.browser-tab-close,
+.browser-new-tab {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 25px;
+  height: 25px;
+  margin: 2px 3px 2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--faint, #687188);
+  font: 16px/1 sans-serif;
+  cursor: pointer;
+}
+
+.browser-tab-close:hover,
+.browser-new-tab:hover {
+  color: var(--text, #d8dde9);
+  background: var(--panel-3, #1a2030);
+}
+
+.browser-new-tab {
+  width: 29px;
+  margin-right: 4px;
+  font-size: 18px;
+}
+
+/* ---- screencast stage ---------------------------------------------------- */
+
+.browser-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.browser-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(43, 67, 72, 0.16), transparent 46%),
+    var(--bg, #0b0d12);
+}
+
+/* Keep the browser's real aspect ratio. Input and agent overlays are both
+   translated between this scaled rectangle and frame-native CDP coordinates. */
+.browser-canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #fff;
+  outline: none;
+  touch-action: none;
+  cursor: default;
+  box-shadow: 0 0 0 1px rgba(155, 170, 210, 0.1), 0 18px 45px rgba(0, 0, 0, 0.24);
+}
+
+.browser-canvas:focus-visible {
+  box-shadow: 0 0 0 2px var(--brass, #d9a35c), 0 18px 45px rgba(0, 0, 0, 0.24);
+}
+
+/* ---- live agent presence ------------------------------------------------- */
+
+.browser-agent-hud {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100% - 24px);
+  min-height: 28px;
+  padding: 4px 9px 4px 5px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(111, 213, 189, 0.28);
+  border-radius: 7px;
+  background: rgba(7, 15, 20, 0.86);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+  color: #c9d8db;
+  font-size: 11.5px;
+  line-height: 1.2;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.browser-agent-hud.completed {
+  border-color: rgba(155, 170, 210, 0.16);
+  opacity: 0.76;
+}
+
+.browser-agent-hud.failed {
+  border-color: rgba(230, 111, 111, 0.45);
+}
+
+.browser-agent-mark,
+.browser-eyebrow {
+  color: #6fd5bd;
+  font: 700 8.5px/1 var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.13em;
+}
+
+.browser-agent-mark {
+  padding: 5px 6px;
+  border-radius: 4px;
+  background: rgba(111, 213, 189, 0.1);
+}
+
+.browser-agent-failed {
+  color: #ef8b8b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.browser-agent-target {
+  position: absolute;
+  z-index: 6;
+  min-width: 5px;
+  min-height: 5px;
+  border: 2px solid rgba(111, 213, 189, 0.95);
+  border-radius: 3px;
+  background: rgba(111, 213, 189, 0.08);
+  box-shadow: 0 0 0 2px rgba(6, 13, 18, 0.65), 0 0 18px rgba(111, 213, 189, 0.42);
+  pointer-events: none;
+  /* Hold, then fade rather than blink out: the marker is unmounted on a timer
+     (MARKER_TTL_MS) or on navigation, so the tail of this animation is what the
+     viewer actually reads as "that action is finished". */
+  animation: browser-target-in 0.18s ease-out, browser-target-out 0.45s ease-in 1.75s forwards;
+}
+
+.browser-agent-target.completed {
+  border-color: rgba(111, 213, 189, 0.46);
+  box-shadow: 0 0 0 1px rgba(6, 13, 18, 0.4);
+}
+
+.browser-agent-target.failed {
+  border-color: #ef7777;
+  background: rgba(239, 119, 119, 0.09);
+}
+
+.browser-agent-cursor {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  align-items: flex-start;
+  color: #6fd5bd;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.65));
+  pointer-events: none;
+  transition: left 70ms linear, top 70ms linear, opacity 0.18s;
+  /* Fades on the same schedule as the target box so the pair disappears
+     together instead of the cursor outliving the outline it belongs to. */
+  animation: browser-target-out 0.45s ease-in 1.75s forwards;
+}
+
+.browser-agent-cursor span {
+  margin: 16px 0 0 -2px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #3da58d;
+  color: #07110f;
+  font: 700 8px/1.35 var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.browser-agent-cursor.completed {
+  opacity: 0.62;
+}
+
+.browser-agent-cursor.failed {
+  color: #ef7777;
+}
+
+/* ---- agent activity drawer --------------------------------------------- */
+
+.browser-activity-panel {
+  position: absolute;
+  z-index: 12;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  width: min(350px, calc(100% - 16px));
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 11px;
+  overflow: hidden;
+  background: rgba(13, 17, 25, 0.94);
+  box-shadow: -10px 14px 38px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(13px);
+  animation: browser-panel-in 0.16s ease-out;
+}
+
+.browser-activity-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 13px 11px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: linear-gradient(135deg, rgba(111, 213, 189, 0.07), transparent 55%);
+}
+
+.browser-activity-panel h3 {
+  margin: 4px 0 0;
+  color: var(--text, #d8dde9);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.browser-panel-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim, #8b93a9);
+  cursor: pointer;
+  font: 22px/1 sans-serif;
+}
+
+.browser-panel-close:hover {
+  background: var(--panel-3, #1a2030);
+  color: var(--text, #d8dde9);
+}
+
+.browser-activity-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 5px 0 10px;
+}
+
+.browser-activity-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: start;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(155, 170, 210, 0.055);
+}
+
+.browser-activity-row strong {
+  display: block;
+  color: var(--text, #d8dde9);
+  font-size: 11.5px;
+  font-weight: 580;
+}
+
+.browser-activity-row p {
+  margin: 3px 0 0;
+  color: var(--faint, #687188);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.browser-activity-row time {
+  margin-top: 1px;
+  color: var(--faint, #5c6478);
+  font: 9px/1.2 var(--font-mono, ui-monospace, monospace);
+}
+
+.browser-activity-status {
+  width: 7px;
+  height: 7px;
+  margin-top: 3px;
+  border: 1px solid rgba(111, 213, 189, 0.7);
+  border-radius: 50%;
+}
+
+.browser-activity-row.started .browser-activity-status,
+.browser-activity-row.targeting .browser-activity-status {
+  background: #6fd5bd;
+  box-shadow: 0 0 8px rgba(111, 213, 189, 0.55);
+  animation: browser-pulse 1.1s ease-in-out infinite;
+}
+
+.browser-activity-row.completed .browser-activity-status {
+  background: rgba(111, 213, 189, 0.28);
+}
+
+.browser-activity-row.failed .browser-activity-status {
+  border-color: #ef7777;
+  background: #ef7777;
+}
+
+.browser-activity-empty {
+  margin: 0;
+  padding: 18px 14px;
+  color: var(--faint, #5c6478);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* ---- JavaScript dialogs ------------------------------------------------- */
+
+.browser-dialog-shade {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 8, 12, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.browser-dialog-card {
+  width: min(420px, 100%);
+  padding: 17px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 12px;
+  background: var(--panel, #10141d);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.52);
+}
+
+.browser-dialog-card p {
+  margin: 12px 0;
+  color: var(--text, #d8dde9);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.browser-dialog-card input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 7px;
+  outline: none;
+  background: var(--bg-raise, #0e111a);
+  color: var(--text, #d8dde9);
+  font: 12px var(--font-mono, ui-monospace, monospace);
+}
+
+.browser-dialog-card input:focus {
+  border-color: var(--brass, #d9a35c);
+}
+
+.browser-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.browser-dialog-actions button {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 7px;
+  background: var(--panel-2, #141926);
+  color: var(--text, #d8dde9);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.browser-dialog-actions button.primary {
+  border-color: rgba(217, 163, 92, 0.6);
+  background: var(--brass, #d9a35c);
+  color: #1a1209;
+  font-weight: 650;
+}
+
+/* ---- empty state / dev-server discovery -------------------------------- */
+
+.browser-empty {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  overflow: auto;
+  padding: 18px;
+  background:
+    linear-gradient(rgba(155, 170, 210, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(155, 170, 210, 0.025) 1px, transparent 1px),
+    radial-gradient(circle at 80% 10%, rgba(111, 213, 189, 0.09), transparent 38%),
+    var(--bg, #0b0d12);
+  background-size: 24px 24px, 24px 24px, auto, auto;
+}
+
+.browser-empty-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.browser-empty-head h3 {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 620;
+  color: var(--text, #d8dde9);
+}
+
+.browser-rescan {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  background: var(--panel-2, #141926);
+  color: var(--text, #d8dde9);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.browser-rescan:hover:not(:disabled) {
+  border-color: var(--brass, #d9a35c);
+}
+
+.browser-rescan:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.browser-ports {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.browser-port {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  border-radius: var(--radius, 10px);
+  background: rgba(16, 20, 29, 0.86);
+  color: var(--text, #d8dde9);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, transform 0.12s;
+}
+
+.browser-port:hover {
+  border-color: rgba(111, 213, 189, 0.42);
+  background: var(--panel-2, #141926);
+  transform: translateX(2px);
+}
+
+.browser-port-num {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  color: var(--brass-hi, #f2c98a);
+}
+
+.browser-port-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--dim, #8b93a9);
+}
+
+.browser-empty-hint {
+  margin: 7px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--faint, #5c6478);
+}
+
+@keyframes browser-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes browser-target-in {
+  from {
+    opacity: 0;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes browser-target-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes browser-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+
+/* ---- narrow panels / mobile -------------------------------------------- */
+
+@media (max-width: 720px) {
+  .browser-chrome {
+    flex-wrap: wrap;
+  }
+
+  .browser-url {
+    order: 2;
+    flex-basis: calc(100% - 92px);
+  }
+
+  .browser-device {
+    order: 2;
+  }
+
+  .browser-connection-label {
+    display: none;
+  }
+
+  /* Signed-in profile picker. A browser holding a real login should never look
+   like an anonymous one, so the attached state is visibly marked. */
+.browser-profile {
+  flex: 0 0 auto;
+  height: 34px;
+  max-width: 150px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  background: var(--bg-raise, #0e111a);
+  color: var(--dim, #8b93a9);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  outline: none;
+}
+
+.browser-profile.on {
+  border-color: rgba(120, 200, 255, 0.55);
+  color: #9fd4ff;
+  background: rgba(70, 140, 210, 0.14);
+}
+
+.browser-signin-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  background: rgba(70, 140, 210, 0.1);
+  color: #9fd4ff;
+  font-size: 11.5px;
+}
+
+.browser-signin-note b {
+  font-weight: 600;
+}
+
+.browser-signin-note span {
+  color: var(--dim, #8b93a9);
+}
+
+.browser-connection {
+    width: 26px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 1023px) {
+  .browser-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .browser-url,
+  .browser-device {
+    height: 40px;
+  }
+
+  .browser-activity-panel {
+    top: 6px;
+    right: 6px;
+    bottom: 6px;
+    width: min(390px, calc(100% - 12px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-agent-cursor,
+  .browser-port {
+    transition: none;
+  }
+
+  .browser-agent-target,
+  .browser-activity-panel,
+  .browser-connection-dot,
+  .browser-activity-status {
+    animation: none !important;
+  }
+}

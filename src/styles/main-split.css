@@ -1,0 +1,106 @@
+/* Chat pane + workspace panel split. Handles the resizable divider and the
+   side-vs-stacked orientation. Mobile keeps the workspace as a full-screen
+   overlay (see workspace.css), so the divider/sizing here are desktop-only. */
+
+/* Work-area mount. .work-pane takes the leftover width in the .app flex row and
+   clips it; .main-split fills that box. NOTHING here zooms: the interface zoom
+   scales the message feed alone (see .feed-inner in styles.css), so every pane
+   in the work area keeps its true screen size and its true client rects. */
+.work-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.main-split {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  position: relative;
+}
+
+/* While dragging, block pointer events on iframes/terminals inside the panes so
+   the divider keeps receiving move events, and kill text selection flicker. */
+.main-split.dragging {
+  user-select: none;
+}
+
+.ws-drag-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+.ws-drag-mask.side {
+  cursor: col-resize;
+}
+.ws-drag-mask.stacked {
+  cursor: row-resize;
+}
+
+@media (min-width: 1024px) {
+  /* Side-by-side: workspace takes a fraction of the width, chat takes the rest. */
+  .main-split.side.ws-open .workspace-panel {
+    flex: 0 0 calc(var(--ws-frac, 0.42) * 100%);
+    min-width: 240px;
+    max-width: 82%;
+  }
+
+  /* Stacked: switch the split to a column; workspace sits below the chat. */
+  .main-split.stacked.ws-open {
+    flex-direction: column;
+  }
+  .main-split.stacked .thread-pane {
+    min-height: 0;
+  }
+  .main-split.stacked.ws-open .workspace-panel {
+    flex: 0 0 calc(var(--ws-frac, 0.42) * 100%);
+    min-height: 160px;
+    max-height: 82%;
+    border-left: none;
+    border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  }
+
+  /* Divider: a thin hairline with a comfortable drag target around it. */
+  .ws-divider {
+    flex: 0 0 7px;
+    position: relative;
+    z-index: 40;
+    background: transparent;
+  }
+  .ws-divider::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    background: var(--line, rgba(255, 255, 255, 0.08));
+    transition: background 0.12s ease;
+  }
+  .ws-divider:hover::after,
+  .main-split.dragging .ws-divider::after {
+    background: var(--brass, #d9a35c);
+  }
+  .main-split.side .ws-divider {
+    cursor: col-resize;
+  }
+  .main-split.side .ws-divider::after {
+    width: 1px;
+    height: 100%;
+  }
+  .main-split.stacked .ws-divider {
+    cursor: row-resize;
+  }
+  .main-split.stacked .ws-divider::after {
+    height: 1px;
+    width: 100%;
+  }
+}
+
+/* Mobile: workspace is a full-screen overlay — no divider, no orientation. */
+@media (max-width: 1023px) {
+  .ws-divider,
+  .ws-orient {
+    display: none;
+  }
+}
