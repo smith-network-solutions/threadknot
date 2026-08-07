@@ -6,8 +6,12 @@
 
 A Tauri (Rust) desktop app that drives Claude Code, OpenAI Codex, and Kimi Code
 natively over their wire protocols — no terminal wrapping, no Node server — and
-serves the same UI to any browser on your LAN, so you can drive your agents
-from your phone.
+serves the same UI to any browser on your LAN.
+
+Pair your machines and they become one mesh: launch a thread on your desktop
+from your laptop, watch three agents work on three different computers at once,
+and drive the whole thing from your phone. No cloud, no account — your machines
+talk to each other directly.
 
 <p align="center">
   <img src="docs/media/hero-phone.gif" width="300"
@@ -67,6 +71,57 @@ You also need at least one agent CLI installed and already logged in — see
 
 Protocol contract: [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Codex app-server
 schemas vendored in [`docs/protocol/`](docs/protocol/).
+
+## One phone, every machine
+
+Pair two or more machines and they form a **symmetric mesh** — no hub, no cloud,
+no account. Whichever Threadknot you happen to be looking at drives all of them,
+and that includes the one in your phone's browser.
+
+```
+        phone · laptop · any browser on the LAN
+                        │
+             connect to ANY one machine…
+                        ▼
+   ┌───────────────┐         ┌───────────────┐
+   │    desktop    │◀───────▶│    macbook    │
+   │   claude ▶▶   │  peer   │   codex  ▶▶   │
+   └───────┬───────┘         └───────┬───────┘
+           │                         │
+      peer │      ┌───────────────┐  │ peer
+           └─────▶│    homelab    │◀─┘
+                  │    kimi ▶▶    │
+                  └───────────────┘
+
+          …and you are driving all three.
+```
+
+A **workspace** groups threads that live on different machines under a single
+sidebar entry. Starting a thread means picking which machine, and which of that
+machine's registered folders, it runs in. From then on the thread is pinned
+there — and its events stream to every paired device.
+
+```
+Workspace "ServiceStorm"
+ ├─ desktop   ~/projects/storefront   ← Claude, mid-refactor
+ ├─ macbook   ~/work/servicestorm-seo              ← Codex, running tests
+ └─ homelab   /srv/servicestorm                    ← Kimi, on a long build
+```
+
+Three agents, on three machines, working at once. Open a new thread on any of
+them, or interrupt a turn you don't like, from whichever device is in your hand.
+
+- **Discovery is mDNS plus explicit pairing.** Identity is the machine id, so a
+  DHCP lease change never breaks the mesh; IP addresses are disposable hints.
+- **No cloud plane.** Peers talk directly over your LAN or tailnet. There is no
+  sync service, no account, and nothing to sign up for.
+- **Nothing is copied around.** A thread is pinned to the machine that owns it
+  and runs against that machine's real filesystem. Git stays the only channel
+  for code.
+
+Still machine-local: git panes, terminals, and artifact bytes are served only by
+the machine owning the thread, and push notifications don't yet fire for remote
+threads. Details and the remaining work: [`docs/MULTI-MACHINE.md`](docs/MULTI-MACHINE.md).
 
 ## Controls (per thread)
 
