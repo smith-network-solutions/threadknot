@@ -1,9 +1,13 @@
-# Threadknot 🧵
+<p align="center">
+  <img src="docs/media/threadknot-wordmark.png" width="520" alt="Threadknot">
+</p>
 
-**Every coding agent on one thread.** A Tauri (Rust) desktop app that drives
-Claude Code, OpenAI Codex, and Kimi Code natively over their wire protocols —
-no terminal wrapping, no Node server — and serves the same UI to any browser
-on your LAN, so you can drive your agents from your phone.
+<p align="center"><strong>Every coding agent on one thread.</strong></p>
+
+A Tauri (Rust) desktop app that drives Claude Code, OpenAI Codex, and Kimi Code
+natively over their wire protocols — no terminal wrapping, no Node server — and
+serves the same UI to any browser on your LAN, so you can drive your agents
+from your phone.
 
 <p align="center">
   <img src="docs/media/hero-phone.gif" width="300"
