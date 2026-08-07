@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Access, Agent, Cadence, Schedule, ThreadSettings } from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID } from "../lib/protocol";
+import { isAgentVisible } from "../lib/agentVisibility";
 import { cadenceLabel, DAY_CHIP, nextOccurrence, untilLabel } from "../lib/schedule";
 import { timeAgo } from "../lib/format";
 import { effortForModel, findThread, useStore } from "../state/store";
@@ -452,9 +453,10 @@ function ScheduleForm({
 export function SchedulesPanel({ onClose }: { onClose: () => void }) {
   const { state } = useStore();
   const [form, setForm] = useState<FormState | null>(null);
+  const visibleSchedules = state.schedules.filter((s) => isAgentVisible(s.agent));
 
   function blankForm(): FormState {
-    const agents = state.hello?.agents ?? [];
+    const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
     const preferred = agents.find((a) => a.available) ?? agents[0];
     const realProjects = state.projects.filter((p) => p.id !== HERMES_HOME_PROJECT_ID);
     const contextProjectId =
@@ -519,7 +521,7 @@ export function SchedulesPanel({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             <div className="sched-list">
-              {state.schedules.length === 0 && (
+              {visibleSchedules.length === 0 && (
                 <div className="sched-empty">
                   <ClockIcon size={22} />
                   <p>
@@ -529,7 +531,7 @@ export function SchedulesPanel({ onClose }: { onClose: () => void }) {
                   </p>
                 </div>
               )}
-              {state.schedules.map((s) => (
+              {visibleSchedules.map((s) => (
                 <ScheduleRow
                   key={s.id}
                   schedule={s}

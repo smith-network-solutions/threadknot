@@ -358,9 +358,12 @@ const A_DEFAULT: Appearance = {
 };
 const S_DEFAULT: SidebarPrefs = {
   autoSettleDays: AUTOSETTLE_DEFAULT,
-  // The layout Threadknot has always had, so an update never rearranges the
-  // sidebar under someone who liked it.
-  projectLayout: "sections",
+  // The rail is the layout the app is built around now: every project stays on
+  // screen and badgeable, switching costs one tap, and the chat list gets the
+  // full sidebar width instead of sharing it with a stack of headers. Only new
+  // installs land here — anyone who has already touched a sidebar preference
+  // has `projectLayout` written to localStorage and keeps whatever they chose.
+  projectLayout: "rail",
 };
 const T_DEFAULT: TermPrefs = {
   fontSize: 13,

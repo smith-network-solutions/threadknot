@@ -218,6 +218,15 @@ pub struct Workspace {
     /// are equivalent, so it is skipped when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favorite: Option<bool>,
+    /// Whether the user has stashed this workspace out of the sidebar. Lives on
+    /// the workspace rather than on a `Project` because a workspace is the thing
+    /// that spans machines: hiding "ServiceStorm" has to take its Mac root and
+    /// its dev-machine root with it, and a workspace whose only root is on an
+    /// offline peer must still be hideable from here. Replicated whole like
+    /// `favorite`, so a project put away on one machine is put away on all of
+    /// them. Absent/false are equivalent, so it is skipped when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
     #[serde(default)]
     pub members: Vec<WorkspaceMember>,
 }

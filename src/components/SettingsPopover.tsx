@@ -18,8 +18,10 @@ import { pickAvatarImage } from "../lib/sidebarImage";
 import { MachineAvatar, machineLook } from "./MachineAvatar";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { hermesPresence } from "./HermesPresence";
+import { isAgentVisible, SHOW_HERMES_AGENTS } from "../lib/agentVisibility";
 import { CustomizeProfileModal } from "./CustomizeProfileModal";
 import { ConfirmRemoveMachineModal } from "./ConfirmRemoveMachineModal";
+import { PairPhoneModal } from "./PairPhoneModal";
 import { DirPicker } from "./DirPicker";
 import { LibrarySettings } from "./LibrarySettings";
 import {
@@ -965,6 +967,7 @@ function MobileDevices() {
   const [devices, setDevices] = useState<
     import("../lib/protocol").MobileDeviceInfo[] | null
   >(null);
+  const [pairing, setPairing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -983,12 +986,33 @@ function MobileDevices() {
 
   return (
     <div className="settings-block">
-      <div className="settings-label">paired phones</div>
+      <div className="settings-row">
+        <span className="settings-label">paired phones</span>
+        <button
+          type="button"
+          className="settings-toggle primary"
+          title="Show a QR code for the Threadknot mobile app to scan"
+          onClick={() => setPairing(true)}
+        >
+          pair a phone
+        </button>
+      </div>
       {(!devices || devices.length === 0) && (
         <div className="settings-value dim">
-          none yet — in the Threadknot mobile app, tap “Add server” and paste the
-          LAN URL above
+          none yet — tap “pair a phone” and scan the QR from the Threadknot app,
+          or paste the LAN URL above into it
         </div>
+      )}
+      {pairing && (
+        <PairPhoneModal
+          knownDeviceIds={(devices ?? []).map((d) => d.id)}
+          onPaired={(d) =>
+            setDevices((prev) =>
+              prev?.some((x) => x.id === d.id) ? prev : [...(prev ?? []), d],
+            )
+          }
+          onClose={() => setPairing(false)}
+        />
       )}
       {(devices ?? []).map((d) => (
         <div key={d.id} className="settings-row">
@@ -1431,6 +1455,7 @@ function ArchivesSettings({ onClose }: { onClose: () => void }) {
 
   const key = keyFor(selected);
   const list = state.archives[key];
+  const visibleList = list?.filter((a) => isAgentVisible(a.agent));
   const st = status[key];
   const loading = st === "loading" && list === undefined;
   const failed = st === "error" && list === undefined;
@@ -1439,7 +1464,7 @@ function ArchivesSettings({ onClose }: { onClose: () => void }) {
     : state.peers.find((p) => p.machineId === selected)?.name ?? "that machine";
 
   const chip = (sel: string | undefined, name: string, online: boolean) => {
-    const count = state.archives[keyFor(sel)]?.length;
+    const count = state.archives[keyFor(sel)]?.filter((a) => isAgentVisible(a.agent)).length;
     const on = sel === undefined ? isLocal : selected === sel;
     return (
       <button
@@ -1504,12 +1529,12 @@ function ArchivesSettings({ onClose }: { onClose: () => void }) {
               retry
             </button>
           </div>
-        ) : (list ?? []).length === 0 ? (
+        ) : (visibleList ?? []).length === 0 ? (
           <div className="archive-empty">
             no archived sessions on {selectedName}
           </div>
         ) : (
-          (list ?? []).map((a) => (
+          (visibleList ?? []).map((a) => (
             <ArchiveRow key={a.id} a={a} machineId={selected} onRestored={onClose} />
           ))
         )}
@@ -1594,7 +1619,7 @@ function AgentsSettings() {
       {hello && (
         <div className="settings-block">
           <div className="settings-label">agents on this machine</div>
-          {hello.agents.map((a) => (
+          {hello.agents.filter((a) => isAgentVisible(a.id)).map((a) => (
             <div key={a.id} className="settings-row">
               <span className="settings-value settings-agent">
                 <AgentMark agent={a.id} size={12} />
@@ -1607,7 +1632,7 @@ function AgentsSettings() {
           ))}
         </div>
       )}
-      <HermesAgents />
+      {SHOW_HERMES_AGENTS && <HermesAgents />}
       <ClaudexProfiles />
     </>
   );
@@ -2739,7 +2764,7 @@ const SETTINGS_SECTIONS = [
   { id: "notifications", label: "Notifications", blurb: "alerts & sound" },
   { id: "machines", label: "Machines", blurb: "your fleet" },
   { id: "phone", label: "Phone & access", blurb: "LAN URL, devices" },
-  { id: "agents", label: "Agents", blurb: "Claude, Codex, Hermes" },
+  { id: "agents", label: "Agents", blurb: "Claude, Codex, Kimi, Claudex" },
   { id: "library", label: "Library", blurb: "skills & MCP tools" },
   { id: "browser", label: "Browser logins", blurb: "stay signed in" },
   { id: "terminal", label: "Terminal", blurb: "font & cursor" },

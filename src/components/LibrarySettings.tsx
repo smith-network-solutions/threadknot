@@ -18,6 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "../state/store";
+import { isAgentVisible } from "../lib/agentVisibility";
 import { SKILL_TARGETS } from "../lib/protocol";
 import type {
   CatalogMcp,
@@ -574,7 +575,7 @@ function McpShelf({
                 {server.agents.length === 0 ? (
                   <span className="lib-badge all">all agents</span>
                 ) : (
-                  server.agents.map((a) => (
+                  server.agents.filter(isAgentVisible).map((a) => (
                     <span key={a} className="lib-badge">
                       {a}
                     </span>

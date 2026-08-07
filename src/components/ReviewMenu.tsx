@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Access, Agent, ReviewerPersona, Thread } from "../lib/protocol";
 import { threadParticipants } from "../lib/protocol";
+import { isAgentVisible } from "../lib/agentVisibility";
 import { effortForModel, useStore } from "../state/store";
 import { effortLabel } from "./Composer";
 import { AgentMark, PencilIcon, ShieldIcon, XIcon } from "./icons";
@@ -111,11 +112,13 @@ function fallbackPersonas(agents: { id: Agent; name: string; available: boolean 
 
 function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void }) {
   const { state, actions } = useStore();
-  const agents = state.hello?.agents ?? [];
+  const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
   const lanes = threadParticipants(thread);
   const builder = lanes.find((p) => p.role === "builder") ?? lanes[0];
   const personas = useMemo(() => {
-    const fromServer = state.hello?.personas ?? [];
+    const fromServer = (state.hello?.personas ?? []).filter((p) =>
+      isAgentVisible(p.agent),
+    );
     return fromServer.length > 0 ? fromServer : fallbackPersonas(agents);
   }, [state.hello?.personas, agents]);
 
@@ -468,7 +471,7 @@ function PersonaEditor({
   onDelete: (id: string) => void;
 }) {
   const { state, actions } = useStore();
-  const agents = state.hello?.agents ?? [];
+  const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
   const [name, setName] = useState(persona?.name ?? "");
   const [agent, setAgent] = useState<Agent>(
     persona?.agent ?? agents.find((a) => a.available)?.id ?? "claude",

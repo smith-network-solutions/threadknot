@@ -270,6 +270,18 @@ export const BellIcon = (p: IconProps & { muted?: boolean }) =>
     p,
   );
 
+// Open eye for "bring this project back", struck through for "put it away".
+// The `off` slash reuses the BellIcon convention so the two menus read alike.
+export const EyeIcon = (p: IconProps & { off?: boolean }) =>
+  svg(
+    <>
+      <path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z" />
+      <circle cx="12" cy="12" r="2.9" />
+      {p.off && <path d="M4.2 4.2l15.6 15.6" />}
+    </>,
+    p,
+  );
+
 export const ClockIcon = (p: IconProps) =>
   svg(
     <>

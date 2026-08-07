@@ -2,7 +2,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { ApiError, normalizeServerUrl, pairServer, probeServer, sendTestPush, unpairDevice } from './api';
+import {
+  ApiError,
+  normalizeServerUrl,
+  pairServer,
+  pairServerWithCode,
+  parsePairingPayload,
+  probeServer,
+  sendTestPush,
+  unpairDevice,
+} from './api';
 import { deviceLabel, registerPushForServer } from './push';
 import type { ServerProfile } from './types';
 
@@ -33,6 +42,8 @@ export interface ServersValue {
   /** In-memory device credentials keyed by profile id (from SecureStore). */
   credentials: Record<string, string>;
   addServer(input: string, nickname?: string): Promise<ServerProfile>;
+  /** Add (or re-pair) a server from a scanned `threadknot://pair?…` QR. */
+  addServerByScan(payload: string, nickname?: string): Promise<ServerProfile>;
   removeServer(id: string): Promise<void>;
   renameServer(id: string, name: string): Promise<void>;
   /** Point an existing profile at a new URL (same serverId), re-pairing if the
@@ -156,6 +167,53 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
         };
         setCredentials((c) => ({ ...c, [id]: pair.credential }));
         commit([...profilesRef.current, profile], id);
+        void registerPushForServer(profile, pair.credential).catch(() => undefined);
+        return profile;
+      },
+
+      async addServerByScan(payload: string, nickname?: string) {
+        const { baseUrl, code } = parsePairingPayload(payload);
+        // The code is single-use, so unlike the pasted-URL path we cannot probe
+        // for a duplicate first — redeeming it IS how we learn which server
+        // this is. That makes re-scanning a configured server the natural way
+        // to re-pair a phone whose credential was revoked or lost.
+        const pair = await pairServerWithCode(baseUrl, code, deviceLabel(), Platform.OS);
+        const existing = profilesRef.current.find((p) => p.serverId === pair.serverId);
+        const id = existing?.id ?? uid();
+
+        if (existing) {
+          // Retire the stale registration so the desktop's paired-phones list
+          // doesn't accumulate a dead entry per re-pair.
+          const oldCred = credsRef.current[id];
+          if (oldCred) void unpairDevice(existing.baseUrl, oldCred).catch(() => undefined);
+        }
+
+        await SecureStore.setItemAsync(credKey(id), pair.credential, {
+          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+        });
+        const profile: ServerProfile = {
+          id,
+          serverId: pair.serverId,
+          name:
+            nickname?.trim() ||
+            existing?.name ||
+            pair.serverName ||
+            baseUrl.replace(/^https?:\/\//, ''),
+          serverName: pair.serverName,
+          version: pair.version,
+          baseUrl,
+          deviceId: pair.deviceId,
+          notificationsEnabled: existing?.notificationsEnabled ?? true,
+          createdAt: existing?.createdAt ?? nowIso(),
+          updatedAt: nowIso(),
+        };
+        setCredentials((c) => ({ ...c, [id]: pair.credential }));
+        commit(
+          existing
+            ? profilesRef.current.map((p) => (p.id === id ? profile : p))
+            : [...profilesRef.current, profile],
+          id
+        );
         void registerPushForServer(profile, pair.credential).catch(() => undefined);
         return profile;
       },

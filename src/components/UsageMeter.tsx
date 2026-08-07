@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ProviderUsage, RateWindow } from "../lib/protocol";
+import { isAgentVisible } from "../lib/agentVisibility";
 import { useStore } from "../state/store";
 import { AgentMark } from "./icons";
 
@@ -141,7 +142,7 @@ export function UsageMeter() {
   // disappear while that provider remains connected to Threadknot.
   const connectedAgents = new Set(
     (state.hello?.agents ?? [])
-      .filter((agent) => agent.available)
+      .filter((agent) => agent.available && isAgentVisible(agent.id))
       .map((agent) => agent.id),
   );
   const usage = state.usage.filter((u) => connectedAgents.has(u.agent));

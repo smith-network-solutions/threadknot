@@ -7,7 +7,7 @@ import { Text } from '@/components/ui/text';
 import { normalizeServerUrl } from '@/lib/api';
 import { useServers } from '@/lib/servers';
 import { useRouter } from 'expo-router';
-import { Anchor, ChevronLeft, ShieldAlert } from 'lucide-react-native';
+import { Anchor, ChevronLeft, QrCode, ShieldAlert } from 'lucide-react-native';
 import * as React from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -71,12 +71,25 @@ export default function AddServer() {
           </Text>
           <Text className="text-center text-muted-foreground">
             {firstRun
-              ? 'Connect your first Threadknot server. On the desktop app, open Settings and copy the LAN URL — or use a Tailscale / ngrok URL that reaches it.'
-              : 'Paste the full URL from that server’s Settings (it includes ?token=…).'}
+              ? 'Connect your first Threadknot server. Scan the QR from the desktop app’s Settings — or paste a LAN / Tailscale / ngrok URL that reaches it.'
+              : 'Scan the QR from that server’s Settings, or paste its full URL (it includes ?token=…).'}
           </Text>
         </View>
 
         <View className="gap-5">
+          {/* Scanning is the path we want people on: the QR carries a one-time
+              code, so the master token never lands on the phone at all. */}
+          <Button size="lg" onPress={() => router.push('/servers/scan')}>
+            <Icon as={QrCode} className="size-5 text-primary-foreground" />
+            <Text>Scan QR code</Text>
+          </Button>
+
+          <View className="flex-row items-center gap-3">
+            <View className="h-px flex-1 bg-border" />
+            <Text className="text-xs uppercase tracking-widest text-muted-foreground">or</Text>
+            <View className="h-px flex-1 bg-border" />
+          </View>
+
           <View className="gap-2">
             <Label>Server URL</Label>
             <Input
@@ -116,12 +129,13 @@ export default function AddServer() {
             </Alert>
           )}
 
-          <Button size="lg" onPress={() => void onSubmit()} disabled={busy || url.trim().length === 0}>
-            {busy ? (
-              <ActivityIndicator color="#0b0d12" />
-            ) : (
-              <Text>Connect & pair</Text>
-            )}
+          <Button
+            size="lg"
+            variant="outline"
+            onPress={() => void onSubmit()}
+            disabled={busy || url.trim().length === 0}
+          >
+            {busy ? <ActivityIndicator /> : <Text>Connect & pair</Text>}
           </Button>
 
           <Text className="text-center text-xs text-muted-foreground">

@@ -53,6 +53,9 @@ gethostname = "1"
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 mdns-sd = "0.13"
 urlencoding = "2"
+# QR rendering for phone pairing. SVG only — the `image` feature would drag in
+# the whole `image` crate to produce a raster we never use.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [profile.release]
 strip = true

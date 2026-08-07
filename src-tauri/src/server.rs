@@ -47,6 +47,49 @@ impl ServerState {
     pub fn server_name(&self) -> String {
         gethostname::gethostname().to_string_lossy().into_owned()
     }
+
+    /// Origin only — the LAN URL with its `?token=…` stripped. This is what a
+    /// QR pairing payload carries, so scanning a screen never leaks the master
+    /// token the way photographing the printed LAN URL would.
+    pub fn lan_origin(&self) -> String {
+        self.lan_url
+            .split('?')
+            .next()
+            .unwrap_or(&self.lan_url)
+            .trim_end_matches('/')
+            .to_string()
+    }
+}
+
+/// The deep link a pairing QR encodes. `threadknot://` (the Expo app's scheme)
+/// rather than an http URL: an http QR would be opened by any camera app as a
+/// web page, and this payload is only meaningful to the mobile app.
+pub fn pairing_payload(origin: &str, code: &str) -> String {
+    format!(
+        "threadknot://pair?u={}&c={}",
+        urlencoding::encode(origin),
+        urlencoding::encode(code)
+    )
+}
+
+/// Render `payload` as a standalone SVG QR. Returned as markup rather than a
+/// raster so it stays crisp at whatever size the settings dialog gives it.
+fn pairing_qr_svg(payload: &str) -> anyhow::Result<String> {
+    use qrcode::render::svg;
+    use qrcode::{EcLevel, QrCode};
+    // Medium EC: a screen is a clean scanning surface, and the extra data
+    // capacity keeps the module count (and so the density) low.
+    let code = QrCode::with_error_correction_level(payload.as_bytes(), EcLevel::M)
+        .context("encode pairing QR")?;
+    Ok(code
+        .render()
+        .min_dimensions(240, 240)
+        .quiet_zone(true)
+        // Light-on-dark would invert the code; scanners want dark modules on a
+        // light field, so the QR keeps its own colors regardless of the theme.
+        .dark_color(svg::Color("#0b0d12"))
+        .light_color(svg::Color("#ffffff"))
+        .build())
 }
 
 pub fn lan_url(port: u16, token: &str) -> String {
@@ -732,20 +775,38 @@ async fn peer_pair_handler(
     }
 }
 
-/// `POST /api/mobile/pair` — master token in, revocable device credential out.
-/// The phone stores only the device credential and discards the master token.
+/// `POST /api/mobile/pair` — proof of physical access in, revocable device
+/// credential out. That proof is either the master token (pasted LAN URL) or a
+/// one-time `pairingCode` scanned off the desktop's QR. The phone stores only
+/// the device credential; with the QR path it never sees the master token at all.
 async fn mobile_pair_handler(
     State(state): State<ServerState>,
     headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
-    let Some(token) = bearer_or_field(&headers, &body, "token") else {
-        return (StatusCode::UNAUTHORIZED, "missing token").into_response();
-    };
-    if state.authenticate(&token) != Some(Principal::Master) {
-        return (StatusCode::UNAUTHORIZED, "pairing requires the server's master token")
-            .into_response();
+    let scanned = body.get("pairingCode").and_then(|v| v.as_str());
+    match scanned {
+        Some(code) => {
+            if !state.mobile.redeem_pairing(code) {
+                // One message for wrong/expired/already-used: which one it was
+                // is not something an unauthenticated caller should learn.
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    "that pairing code is expired or already used — show a fresh QR",
+                )
+                    .into_response();
+            }
+        }
+        None => {
+            let Some(token) = bearer_or_field(&headers, &body, "token") else {
+                return (StatusCode::UNAUTHORIZED, "missing token").into_response();
+            };
+            if state.authenticate(&token) != Some(Principal::Master) {
+                return (StatusCode::UNAUTHORIZED, "pairing requires the server's master token")
+                    .into_response();
+            }
+        }
     }
     let name = body
         .get("deviceName")
@@ -1660,6 +1721,15 @@ async fn handle_request(
             replicate_workspace(state, &ws).await;
             Ok(serde_json::to_value(ws)?)
         }
+        "workspace.setHidden" => {
+            let ws = store.set_workspace_hidden(
+                field(&p, "workspaceId")?,
+                bool_field(&p, "hidden")?,
+            )?;
+            hub.broadcast_state("workspaces", None);
+            replicate_workspace(state, &ws).await;
+            Ok(serde_json::to_value(ws)?)
+        }
         "workspace.setImage" => {
             let image = optional_sidebar_image(&p, "image")?;
             let ws = store.set_workspace_image(field(&p, "workspaceId")?, image)?;
@@ -1956,6 +2026,35 @@ async fn handle_request(
                 .profile(field(&p, "profileId")?)
                 .ok_or_else(|| anyhow::anyhow!("unknown Claudex profile"))?;
             Ok(json!({ "sidecar": hub.claudex_sidecars.status(&profile).await }))
+        }
+        // Minting a pairing code creates a fresh path to a device credential,
+        // so it is an authority change: master-only, exactly like revoking one.
+        // A paired phone must not be able to bring in more phones.
+        "mobile.pair.begin" => {
+            anyhow::ensure!(
+                *principal == Principal::Master,
+                "showing a pairing QR requires this machine's master token"
+            );
+            let code = state.mobile.begin_pairing();
+            let origin = state.lan_origin();
+            let payload = pairing_payload(&origin, &code);
+            Ok(json!({
+                "payload": payload,
+                "qrSvg": pairing_qr_svg(&payload)?,
+                "code": crate::mobile::format_pairing_code(&code),
+                "url": origin,
+                "ttlSeconds": crate::mobile::PAIRING_TTL.as_secs(),
+            }))
+        }
+        // The dialog closed (or the countdown ran out client-side): stop
+        // honoring what was on screen now rather than at the TTL.
+        "mobile.pair.cancel" => {
+            anyhow::ensure!(
+                *principal == Principal::Master,
+                "pairing management requires this machine's master token"
+            );
+            state.mobile.cancel_pairings();
+            Ok(json!({ "ok": true }))
         }
         "mobile.device.list" => {
             anyhow::ensure!(

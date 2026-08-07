@@ -22,6 +22,7 @@ import {
 import { createPortal } from "react-dom";
 import type { Project, Thread, Workspace } from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID } from "../lib/protocol";
+import { SHOW_HERMES_AGENTS } from "../lib/agentVisibility";
 import { timeAgo } from "../lib/format";
 import {
   findThread,
@@ -65,6 +66,7 @@ import {
   CheckIcon,
   ChevronIcon,
   ClockIcon,
+  EyeIcon,
   FilterIcon,
   FolderIcon,
   GearIcon,
@@ -330,14 +332,20 @@ function projectAccent(id: string): string {
 
 function ProjectRail({
   workspaces,
+  hidden,
   threadsByWorkspace,
   shownId,
   onPick,
   onMenu,
+  onStash,
   onReorder,
   reorderEnabled,
 }: {
   workspaces: Workspace[];
+  /** Every stashed workspace, whether or not the view toggle is currently
+   *  showing them inline — the stash button is how you get them back, so it has
+   *  to know about them even when nothing above it does. */
+  hidden: Workspace[];
   threadsByWorkspace: Map<string, Thread[]>;
   shownId: string | null;
   onPick: (id: string) => void;
@@ -347,6 +355,9 @@ function ProjectRail({
    *  spends its hold on drag-to-reorder, and the bar below opens the same menu
    *  for the shown project. */
   onMenu: (point: MenuPoint, workspace: Workspace) => void;
+  /** The stash button was pressed — the Sidebar owns the menu listing what is
+   *  in there, alongside every other portaled menu. */
+  onStash: (point: MenuPoint) => void;
   /** New top-to-bottom order after a drag. */
   onReorder: (ids: string[]) => void;
   reorderEnabled: boolean;
@@ -360,6 +371,17 @@ function ProjectRail({
     onCommit: onReorder,
     enabled: reorderEnabled,
   });
+  // The loudest thing happening behind the stash button, so what is in there
+  // can still ask for you. Same precedence as a tile: needing you outranks
+  // merely working.
+  const stashActivity: ProjectActivity = hidden.reduce<ProjectActivity>(
+    (worst, w) => {
+      if (worst === "attention") return worst;
+      const a = projectActivity(state, threadsByWorkspace.get(w.id) ?? []);
+      return a === "attention" ? a : (worst ?? a);
+    },
+    null,
+  );
   return (
     <nav className="project-rail" aria-label="Projects" ref={railRef}>
       {workspaces.map((w) => {
@@ -374,17 +396,19 @@ function ProjectRail({
             data-drop={drag.dropId === w.id ? drag.dropSide : undefined}
             className={`rail-item${on ? " on" : ""}${
               activity ? ` rail-${activity}` : ""
-            }${drag.draggingId === w.id ? " dragging" : ""}`}
+            }${drag.draggingId === w.id ? " dragging" : ""}${
+              w.hidden ? " hidden-ws" : ""
+            }`}
             {...drag.handleProps(w.id)}
             aria-current={on ? "true" : undefined}
-            aria-label={`${w.name}${
+            aria-label={`${w.name}${w.hidden ? " — hidden" : ""}${
               activity === "attention"
                 ? " — needs you"
                 : activity === "working"
                   ? " — working"
                   : ""
             }`}
-            title={w.name}
+            title={w.hidden ? `${w.name} (hidden)` : w.name}
             aria-haspopup="menu"
             onClick={() => onPick(w.id)}
             onContextMenu={(e) => {
@@ -428,6 +452,46 @@ function ProjectRail({
           </button>
         );
       })}
+      {/* The way back. Only mounted once something is actually stashed, so an
+          empty rail stays empty — and it sits BELOW the tiles rather than in
+          the view popover because that is where the projects it holds used to
+          be, and the popover is three taps away on a phone.
+
+          It keeps its own status light: a project you put away is still running
+          agents, and going silent about a turn that finished (or an approval
+          waiting) is how "hidden" would turn into "lost". */}
+      {hidden.length > 0 && (
+        <button
+          type="button"
+          className={`rail-item rail-stash${
+            stashActivity ? ` rail-${stashActivity}` : ""
+          }`}
+          aria-haspopup="menu"
+          aria-label={`${hidden.length} hidden project${
+            hidden.length === 1 ? "" : "s"
+          }${stashActivity === "attention" ? " — one needs you" : ""}`}
+          title={`${hidden.length} hidden project${
+            hidden.length === 1 ? "" : "s"
+          }`}
+          // Anchored to the tile, not the pointer, like the picker bar's menu:
+          // the list flies out beside the button it came from, and a keyboard
+          // activation (clientX/clientY of 0) doesn't drop it in the corner.
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            onStash({ x: r.right + 6, y: r.top });
+          }}
+        >
+          <span className="rail-pip" aria-hidden />
+          <span className="rail-stash-face" aria-hidden>
+            <EyeIcon size={15} off />
+            <span className="rail-stash-count">{hidden.length}</span>
+          </span>
+          <span
+            className={`rail-dot${stashActivity === "attention" ? " lit" : ""}`}
+            aria-hidden
+          />
+        </button>
+      )}
     </nav>
   );
 }
@@ -1363,7 +1427,9 @@ function WorkspaceSection({
     >
       {hideHeader ? null : (
       <div
-        className="project-head long-press-menu"
+        className={`project-head long-press-menu${
+          workspace.hidden ? " hidden-ws" : ""
+        }`}
         {...longPress}
         // The row's own drag pops the project out into its own window, which
         // is a different gesture from the grip's reorder — never both at once.
@@ -1439,6 +1505,12 @@ function WorkspaceSection({
             <span className="project-name">{workspace.name}</span>
             {workspace.favorite && (
               <StarIcon size={11} filled className="project-fav-star" />
+            )}
+            {/* Only reachable while "show hidden" is on (or a search pulled it
+                back): says WHY this row is greyed, so a revealed shelf reads as
+                stashed rather than broken. */}
+            {workspace.hidden && (
+              <EyeIcon size={11} off className="project-hidden-mark" />
             )}
             <ProjectPulse activity={activity} count={attentionCount} />
             {/* Counts what is actually in play. The shelf carries its own
@@ -1987,11 +2059,14 @@ function WorkspaceRootsModal({
 function SidebarViewPopover({
   anchorRef,
   layout,
+  hiddenCount,
   update,
   onClose,
 }: {
   anchorRef: React.RefObject<HTMLButtonElement>;
   layout: SidebarLayout;
+  /** How many workspaces are stashed. Zero means the reveal row is not drawn. */
+  hiddenCount: number;
   update: (patch: Partial<SidebarLayout>) => void;
   onClose: () => void;
 }) {
@@ -2103,6 +2178,22 @@ function SidebarViewPopover({
         <span>Keep this machine on top</span>
         <span className="sidebar-view-switch" />
       </button>
+      {/* Only offered once there is something to reveal — a switch that can
+          only ever do nothing is worse than no switch. The rail has its own
+          one-tap stash; this is how the OTHER three layouts (and anyone who
+          wants the whole shelf back in place at once) reach the same thing. */}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={layout.showHidden}
+          className={`sidebar-view-row${layout.showHidden ? " on" : ""}`}
+          onClick={() => update({ showHidden: !layout.showHidden })}
+        >
+          <span>Show hidden projects ({hiddenCount})</span>
+          <span className="sidebar-view-switch" />
+        </button>
+      )}
     </div>,
     document.body,
   );
@@ -2187,6 +2278,7 @@ export function Sidebar({
   const [filterOpen, setFilterOpen] = useState(false);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
   const [view, setView] = useState<SidebarView>(() => {
+    if (!SHOW_HERMES_AGENTS) return "fleet";
     try {
       return localStorage.getItem(LS_SIDEBAR_VIEW) === "agents"
         ? "agents"
@@ -2326,11 +2418,11 @@ export function Sidebar({
   const localId = state.hello?.machineId ?? "";
   // Solo windows are project-dedicated — the agents view only exists in the
   // fleet window.
-  const agentsView = view === "agents" && !soloId;
+  const agentsView = SHOW_HERMES_AGENTS && view === "agents" && !soloId;
   // Hermes chats asking to be looked at — badges the fleet-view button so a
   // finished turn / pending approval is visible without leaving the workspaces.
   const hermesAttention = useMemo(
-    () => hermesAttentionThreads(state).length,
+    () => (SHOW_HERMES_AGENTS ? hermesAttentionThreads(state).length : 0),
     [state],
   );
   // A newer master exists than the build that is running. Pulses regardless of
@@ -2455,7 +2547,7 @@ export function Sidebar({
     const pool = soloId
       ? sections.filter((w) => w.members.some((m) => m.projectId === soloId))
       : sections;
-    const visible = !filter
+    const shown = !filter
       ? pool
       : pool.filter((w) => {
           if (w.name.toLowerCase().includes(filter)) return true;
@@ -2463,6 +2555,18 @@ export function Sidebar({
             threadMatches(t, filter, contentMatches),
           );
         });
+
+    // Stashed projects drop out — unless you asked to see them, or a search is
+    // running. A search is an explicit request for a named thing, and quietly
+    // returning "no results" for a chat that exists in a project you put away
+    // months ago is how you conclude the chat is gone. Hidden matches come back
+    // marked (`.hidden-ws`), not silently.
+    // A solo window is already scoped to one project and has no rail or filter
+    // popover to unhide from, so hiding never applies there.
+    const visible =
+      soloId || filter || layout.showHidden
+        ? shown
+        : shown.filter((w) => !w.hidden);
 
     // (3) Float workspaces that have a root on this machine above purely-remote
     // ones. A member counts as local when its machineId matches ours or is ""
@@ -2481,7 +2585,16 @@ export function Sidebar({
 
     // (1) Manual drag order last, so it wins: ids listed in workspaceOrder come
     // first in that order; ids absent from it keep the float order above.
-    return applyProjectOrder(byFavorite, layout.workspaceOrder);
+    const ordered = applyProjectOrder(byFavorite, layout.workspaceOrder);
+
+    // (0) A revealed stash sinks, and this outranks even the manual order:
+    // "show hidden" asks to SEE the shelf, not to put the shelf back in the
+    // list. Everything you actually work in stays exactly where it was and the
+    // projects you put away collect at the bottom. Search results are left
+    // interleaved — there the ordering that matters is the match, not the list.
+    return filter
+      ? ordered
+      : [...ordered].sort((a, b) => (a.hidden ? 1 : 0) - (b.hidden ? 1 : 0));
   }, [
     filter,
     soloId,
@@ -2489,8 +2602,23 @@ export function Sidebar({
     sectionData,
     contentMatches,
     layout.pinLocal,
+    layout.showHidden,
     layout.workspaceOrder,
   ]);
+
+  /** Everything currently stashed, in the order the sidebar would list it.
+   *  Drives the rail's stash tile and its bring-back menu; empty means the
+   *  affordance never renders, so nobody who has hidden nothing sees it. */
+  const hiddenWorkspaces = useMemo(
+    () =>
+      soloId
+        ? []
+        : applyProjectOrder(
+            sections.filter((w) => w.hidden),
+            layout.workspaceOrder,
+          ),
+    [sections, soloId, layout.workspaceOrder],
+  );
 
   // A search hides projects, and a solo window shows one slice of one — in
   // neither case is what is on screen the list being ordered, so dragging is
@@ -2536,6 +2664,9 @@ export function Sidebar({
   // opening Threadknot lands you where you were working, not on an arbitrary one.
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [pickerMenu, setPickerMenu] = useState<MenuPoint | null>(null);
+  /** Where the rail's stash tile was clicked; non-null renders the bring-back
+   *  menu. Portaled from here with the sidebar's other menus. */
+  const [stashMenu, setStashMenu] = useState<MenuPoint | null>(null);
   const activeWorkspaceId = useMemo(() => {
     const active = state.activeThreadId
       ? findThread(state, state.activeThreadId)
@@ -2593,6 +2724,29 @@ export function Sidebar({
     else dispatch({ type: "closeActive" });
   }
 
+  /** Put a project away. Nothing is deleted — its roots, chats and running
+   *  agents are untouched — but if it is the one on screen the sidebar is about
+   *  to stop listing it, and leaving its chat filling the pane is the same
+   *  "rail says one thing, pane shows another" mismatch `pickRailProject`
+   *  exists to prevent. So hand over to the first project still showing. */
+  function hideWorkspace(id: string) {
+    void actions.setWorkspaceHidden(id, true);
+    if (layout.showHidden || id !== shownWorkspaceId) return;
+    const next = visibleWorkspaces.find((w) => w.id !== id && !w.hidden);
+    if (next) pickRailProject(next.id);
+    else {
+      setPickedId(null);
+      dispatch({ type: "closeActive" });
+    }
+  }
+
+  /** Bring one back and go straight to it — you asked for it by name, so
+   *  landing anywhere else would mean hunting for it again. */
+  function unhideWorkspace(id: string) {
+    void actions.setWorkspaceHidden(id, false);
+    pickRailProject(id);
+  }
+
   // Shared by the per-project header's + button and by the picker/rail bar.
   // Those two layouts hide the header, and the + lived only there — so
   // "new thread" was unreachable from inside a workspace in either one.
@@ -2625,6 +2779,7 @@ export function Sidebar({
       {railMode && (
         <ProjectRail
           workspaces={visibleWorkspaces}
+          hidden={hiddenWorkspaces}
           threadsByWorkspace={threadsByWorkspace}
           shownId={shownWorkspaceId}
           onPick={pickRailProject}
@@ -2636,6 +2791,7 @@ export function Sidebar({
               primary: sectionData.get(workspace.id)?.projects[0],
             })
           }
+          onStash={setStashMenu}
           onReorder={commitOrder}
           reorderEnabled={reorderEnabled}
         />
@@ -2677,6 +2833,7 @@ export function Sidebar({
         <SidebarViewPopover
           anchorRef={filterBtnRef}
           layout={layout}
+          hiddenCount={hiddenWorkspaces.length}
           update={updateLayout}
           onClose={() => setFilterOpen(false)}
         />
@@ -2915,7 +3072,7 @@ export function Sidebar({
               )}
             </button>
           )}
-        {!soloId && !agentsView && (
+        {SHOW_HERMES_AGENTS && !soloId && !agentsView && (
           <button
             className={`add-project hermes-entry${hermesAttention > 0 ? " has-attention" : ""}`}
             onClick={() => switchView("agents")}
@@ -3030,6 +3187,36 @@ export function Sidebar({
                   !menu.workspace.favorite,
                 ),
             },
+            // Not offered in a solo window: it is already one project, and it
+            // has no rail or view popover to bring anything back from.
+            ...(!state.solo
+              ? [
+                  {
+                    label: menu.workspace.hidden
+                      ? "Unhide workspace"
+                      : "Hide workspace",
+                    icon: <EyeIcon size={13} off={!menu.workspace.hidden} />,
+                    onSelect: () =>
+                      menu.workspace.hidden
+                        ? unhideWorkspace(menu.workspace.id)
+                        : hideWorkspace(menu.workspace.id),
+                  },
+                ]
+              : []),
+            {
+              // Deliberately not `danger`: this is a shelf, not a delete. The
+              // wording says what it costs to undo, because the flag rides the
+              // mesh replica — put a project away here and it is away on every
+              // machine you have paired, phone included.
+              label: menu.workspace.hidden
+                ? "Show project again"
+                : "Hide project everywhere",
+              icon: <EyeIcon size={13} off={!menu.workspace.hidden} />,
+              onSelect: () =>
+                menu.workspace.hidden
+                  ? unhideWorkspace(menu.workspace.id)
+                  : hideWorkspace(menu.workspace.id),
+            },
             {
               label: "Rename workspace",
               icon: <PencilIcon size={13} />,
@@ -3070,6 +3257,49 @@ export function Sidebar({
                     label: "Machines & folders…",
                     icon: <FolderIcon size={13} />,
                     onSelect: () => setRootsModal(menu.workspace),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
+
+      {/* The rail's stash, opened from the tile at the foot of the column.
+          Every hidden project by name and avatar — the rail is avatars-only, so
+          a list that says what each one IS is the whole point of the menu —
+          and one click both unhides it and takes you there. The trailing
+          "unhide all" only appears when there is more than one to save, since
+          for a single project it would just duplicate the row above it. */}
+      {stashMenu && hiddenWorkspaces.length > 0 && (
+        <ContextMenu
+          x={stashMenu.x}
+          y={stashMenu.y}
+          title={`Hidden (${hiddenWorkspaces.length})`}
+          onClose={() => setStashMenu(null)}
+          items={[
+            ...hiddenWorkspaces.map((w) => ({
+              label: w.name,
+              icon: (
+                <MachineAvatar
+                  image={w.image}
+                  color={projectAccent(w.id)}
+                  name={w.name}
+                  size={16}
+                  preview={false}
+                />
+              ),
+              onSelect: () => unhideWorkspace(w.id),
+            })),
+            ...(hiddenWorkspaces.length > 1
+              ? [
+                  {
+                    label: "Unhide all",
+                    icon: <EyeIcon size={13} />,
+                    onSelect: () => {
+                      for (const w of hiddenWorkspaces) {
+                        void actions.setWorkspaceHidden(w.id, false);
+                      }
+                    },
                   },
                 ]
               : []),

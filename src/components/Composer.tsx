@@ -8,6 +8,7 @@ import type {
   Thread,
   ThreadSettings,
 } from "../lib/protocol";
+import { isAgentVisible } from "../lib/agentVisibility";
 import { HERMES_HOME_PROJECT_ID } from "../lib/protocol";
 import { effortForModel, useStore } from "../state/store";
 import type { FeedItem } from "../state/feed";
@@ -158,7 +159,7 @@ export function AgentSelect({
       </button>
       {open && (
         <div className={`agent-menu${direction === "down" ? " down" : ""}`} role="listbox">
-          {agents.map((a) => (
+          {agents.filter((a) => isAgentVisible(a.id)).map((a) => (
             <button
               type="button"
               key={a.id}

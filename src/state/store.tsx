@@ -25,6 +25,7 @@ import type {
   Workspace,
 } from "../lib/protocol";
 import type { ConnState } from "../lib/ws";
+import { isAgentVisible } from "../lib/agentVisibility";
 import { applyEvent, type FeedItem } from "./feed";
 
 export const LS_LAST_THREAD = "threadknot.lastThread";
@@ -821,6 +822,10 @@ export interface ThreadknotActions {
   deleteBrowserProfile: (profileId: string, machineId?: string) => Promise<void>;
   listMobileDevices: () => Promise<import("../lib/protocol").MobileDeviceInfo[]>;
   revokeMobileDevice: (deviceId: string) => Promise<void>;
+  /** Mint a one-time pairing code + QR for the phone to scan. */
+  beginMobilePairing: () => Promise<import("../lib/protocol").PairingQr>;
+  /** Kill outstanding pairing codes the moment the QR is dismissed. */
+  cancelMobilePairing: () => Promise<void>;
   listHermesAgents: () => Promise<import("../lib/protocol").HermesAgentInfo[]>;
   /** Probes the gateway before storing; rejects with a readable error. */
   addHermesAgent: (
@@ -870,6 +875,9 @@ export interface ThreadknotActions {
   refreshWorkspaces: () => Promise<void>;
   renameWorkspace: (workspaceId: string, name: string) => Promise<void>;
   setWorkspaceFavorite(workspaceId: string, favorite: boolean): Promise<void>;
+  /** Stash a workspace out of the sidebar, or bring it back. Nothing is
+   *  deleted: its roots, chats and running agents are untouched. */
+  setWorkspaceHidden(workspaceId: string, hidden: boolean): Promise<void>;
   setWorkspaceImage: (workspaceId: string, image?: string) => Promise<void>;
   /** Reload paired peers + LAN-discovered machines into state. */
   refreshPeers: () => Promise<void>;
@@ -1220,7 +1228,7 @@ export function defaultDraft(
   projectId: string,
   machineId?: string,
 ): DraftThread {
-  const agents = state.hello?.agents ?? [];
+  const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
   const stored = storedNewThreadSettings(projectId);
   const active = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
   const recent =

@@ -35,6 +35,7 @@ import type {
   ThreadSettings,
 } from "./lib/protocol";
 import { HERMES_HOME_PROJECT_ID } from "./lib/protocol";
+import { isAgentVisible } from "./lib/agentVisibility";
 import { ThreadknotClient } from "./lib/ws";
 import {
   defaultDraft,
@@ -234,6 +235,13 @@ function makeActions(
         "thread.get",
         machineId ? { threadId, machineId } : { threadId },
       );
+      if (!isAgentVisible(thread.agent)) {
+        if (!preserveFeed) {
+          localStorage.removeItem(lastThreadKey(getState().solo));
+          dispatch({ type: "closeActive" });
+        }
+        return;
+      }
       dispatch({ type: "feedLoaded", threadId, thread, events });
       // Repo summaries power the per-repo badges on chat diff cards — load
       // them once per project without waiting for the Git tab to be opened
@@ -275,7 +283,11 @@ function makeActions(
   const selectThread = (
     threadId: string,
     options?: { preserveFeed?: boolean },
-  ) => selectThreadRouted(threadId, routeFor(threadId), options?.preserveFeed);
+  ) => {
+    const thread = findThread(getState(), threadId);
+    if (thread && !isAgentVisible(thread.agent)) return Promise.resolve();
+    return selectThreadRouted(threadId, routeFor(threadId), options?.preserveFeed);
+  };
 
   const noteError = (threadId: string, message: string) => {
     dispatch({
@@ -375,6 +387,14 @@ function makeActions(
       });
     },
 
+    async setWorkspaceHidden(workspaceId: string, hidden: boolean) {
+      const ws = await client.request("workspace.setHidden", { workspaceId, hidden });
+      dispatch({
+        type: "workspaces",
+        workspaces: getState().workspaces.map((w) => (w.id === ws.id ? ws : w)),
+      });
+    },
+
     async setWorkspaceImage(workspaceId: string, image?: string) {
       const ws = await client.request("workspace.setImage", {
         workspaceId,
@@ -468,6 +488,14 @@ function makeActions(
     async listMobileDevices() {
       const { devices } = await client.request("mobile.device.list", {});
       return devices;
+    },
+
+    async beginMobilePairing() {
+      return await client.request("mobile.pair.begin", {});
+    },
+
+    async cancelMobilePairing() {
+      await client.request("mobile.pair.cancel", {});
     },
 
     async revokeMobileDevice(deviceId: string) {
@@ -1384,6 +1412,7 @@ function maybeNotify(
   const prefs = getNotifyPrefs();
   if (!prefs.enabled) return;
   const evThread = findThread(state, frame.threadId);
+  if (evThread && !isAgentVisible(evThread.agent)) return;
   // Per-client workspace subscriptions: two people sharing one Threadknot each
   // narrow this to their own work, and neither hears the other's agents.
   if (!wantsWorkspace(prefs, workspaceIdForProject(state, evThread?.projectId))) return;

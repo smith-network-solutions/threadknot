@@ -48,6 +48,11 @@ export interface Workspace {
   updatedAt: string;
   /** Whether the user has starred this workspace in the sidebar; absent = false. */
   favorite?: boolean;
+  /** Whether the user has stashed this workspace out of the sidebar; absent =
+   *  false. Set on the workspace, not on a project, so it takes every root with
+   *  it — including roots on machines that are offline right now — and it rides
+   *  the mesh replica, so a project put away here is put away everywhere. */
+  hidden?: boolean;
   members: WorkspaceMember[];
 }
 
@@ -1062,6 +1067,21 @@ export interface MobileDeviceInfo {
   lastSeenAt?: string;
 }
 
+/** A one-time pairing code rendered as a QR for the mobile app to scan. The
+ *  payload carries the code, never the master token — see `mobile.rs`. */
+export interface PairingQr {
+  /** `threadknot://pair?u=…&c=…` — what the QR actually encodes. */
+  payload: string;
+  /** Standalone SVG markup for the code. */
+  qrSvg: string;
+  /** Human-readable `XXXXX-XXXXX` fallback if the camera won't cooperate. */
+  code: string;
+  /** This server's origin, shown so it's clear which machine is on offer. */
+  url: string;
+  /** Seconds the code stays redeemable from when it was minted. */
+  ttlSeconds: number;
+}
+
 export interface RequestMap {
   hello: { payload: Record<string, never>; data: HelloData };
   "app.changelog": {
@@ -1135,6 +1155,11 @@ export interface RequestMap {
     payload: { serverId: string; machineId?: string };
     data: Record<string, never>;
   };
+  /** Mint a one-time pairing code + its QR. Master-only: a paired phone must
+   *  not be able to bring in more phones. */
+  "mobile.pair.begin": { payload: Record<string, never>; data: PairingQr };
+  /** Invalidate outstanding codes when the QR leaves the screen. */
+  "mobile.pair.cancel": { payload: Record<string, never>; data: { ok: boolean } };
   "mobile.device.list": {
     payload: Record<string, never>;
     data: { devices: MobileDeviceInfo[] };
@@ -1220,6 +1245,10 @@ export interface RequestMap {
   "workspace.rename": { payload: { workspaceId: string; name: string }; data: Workspace };
   "workspace.setFavorite": {
     payload: { workspaceId: string; favorite: boolean };
+    data: Workspace;
+  };
+  "workspace.setHidden": {
+    payload: { workspaceId: string; hidden: boolean };
     data: Workspace;
   };
   "workspace.setImage": {

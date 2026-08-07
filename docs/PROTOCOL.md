@@ -42,6 +42,7 @@ Server → client:
 | `workspace.list` | `{}` | `{ workspaces: Workspace[] }` — sidebar top-level containers |
 | `workspace.rename` | `{ workspaceId, name }` | `Workspace` — bumps `updatedAt` (the LWW clock for cross-machine reconciliation); replicated to every paired machine |
 | `workspace.setFavorite` | `{ workspaceId, favorite }` | `Workspace` — stars or unstars the workspace (`favorite` omitted when false), bumps `updatedAt`, and replicates the record like a rename so the flag syncs mesh-wide |
+| `workspace.setHidden` | `{ workspaceId, hidden }` | `Workspace` — stashes the workspace out of the sidebar or brings it back (`hidden` omitted when false), bumps `updatedAt`, and replicates like `setFavorite`. Nothing is deleted or detached: roots, chats and running agents are untouched and the flag is presentation only. Set on the **workspace**, not a project, so it takes every root with it (including roots on peers that are offline) and a project put away on one machine is put away on all of them |
 | `workspace.setImage` | `{ workspaceId, image }` | `Workspace` — sets or clears (`null`) the compact sidebar image data URL, bumps `updatedAt`, and replicates it with the workspace |
 | `workspace.attachRoot` | `{ workspaceId, machineId, path }` | `{ workspace, project }` — creates/reuses a project at `path` on `machineId` (locally or via the peer's `mesh.createProject`), adds the member (with `name`/`path` display snapshots), replicates the record to every paired machine; master only |
 | `workspace.detachRoot` | `{ workspaceId, machineId, projectId }` | `Workspace` — removes the member (founding root and last root are protected) and re-wraps the project into its own workspace on its owner so it stays visible; master only |
@@ -809,10 +810,15 @@ seen persisted seq; deltas always apply).
 ## Mobile companion (summary)
 
 The Expo app in `mobile/` authenticates with revocable per-device credentials
-(`amd_…`) minted by `POST /api/mobile/pair` (master token required). Device
+(`amd_…`) minted by `POST /api/mobile/pair`. That call takes **either** the
+master token **or** a one-time `pairingCode` scanned off a QR — the desktop
+mints one with `mobile.pair.begin` and drops it with `mobile.pair.cancel`
+(both master-only, like the device admin requests). The code is single-use,
+expires in 180s, lives only in memory, and is what the QR encodes, so a screen
+showing a pairing QR never leaks this machine's master token. Device
 credentials are accepted everywhere the master token is (`/ws`, asset routes,
 terminals, browser) but cannot run `mobile.device.list` / `mobile.device.revoke`
-(master-only; surfaced in desktop Settings). `hello` additionally returns
+/ `mobile.pair.*` (master-only; surfaced in desktop Settings). `hello` additionally returns
 `serverId` and `serverName`. The Rust server pushes `turn_completed`,
 `approval_request`, `question_request` (and opt-in `error`) through the Expo
 Push API with data `{version, serverId, projectId, threadId, eventKind}`.

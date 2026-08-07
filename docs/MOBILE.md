@@ -10,7 +10,7 @@ Threadknot server A ─┐
 Threadknot server B ─┼─ Expo Push Service ──→ Threadknot Mobile (Expo, threadknot/mobile)
 Threadknot server C ─┘                          ├─ biometric/privacy gate (expo-local-authentication)
       ▲                                     ├─ server profiles (AsyncStorage) + credentials (SecureStore)
-      │ pair once with master token         ├─ notification → server → project → thread routing
+      │ pair once by QR scan or token       ├─ notification → server → project → thread routing
       └─ revocable device credentials       └─ warm WebView pool (LRU 3) → existing web UI
 ```
 
@@ -19,11 +19,22 @@ Threadknot server C ─┘                          ├─ biometric/privacy gat
 ### Server side (Rust, `src-tauri/src/`)
 
 - **`mobile.rs`** — paired-device registry (`~/.threadknot/mobile.json`). Pairing
-  exchanges the master token for a revocable `amd_…` device credential; only a
-  sha256 hash is stored. `ServerState::authenticate` accepts master token OR
-  device credential on every endpoint (`/ws`, `/attachment`, `/file`, `/term`,
-  `/browser`, …), returning a `Principal` (device principals cannot run
-  `mobile.device.*` admin requests).
+  exchanges *proof of physical access* for a revocable `amd_…` device
+  credential; only a sha256 hash is stored. `ServerState::authenticate` accepts
+  master token OR device credential on every endpoint (`/ws`, `/attachment`,
+  `/file`, `/term`, `/browser`, …), returning a `Principal` (device principals
+  cannot run `mobile.device.*` / `mobile.pair.*` admin requests).
+- **QR pairing codes** (`mobile.rs`, in-memory only) — the proof can also be a
+  one-time code scanned off a QR. 10 chars of Crockford base32 (no I/L/O/U, so
+  it can be read aloud), 50 bits, **single use**, 3-minute TTL, at most 4 live
+  at once, and `mobile.pair.cancel` kills them the instant the dialog closes.
+  Deliberately never persisted: a pairing code must die with the process.
+  The QR encodes `threadknot://pair?u=<origin>&c=<code>` — **the origin and the
+  code, never the master token**. That is the whole point: a screen showing a
+  QR is passively readable by anyone in the room, in a screenshot, or on a
+  shared display, and a master token leaked that way is permanent and silent,
+  whereas a scanned code is worthless seconds later. The pasted-LAN-URL path is
+  unchanged and still works.
 - **`push.rs`** — Expo push dispatcher. `Hub::emit` mirrors `turn_completed`,
   `approval_request`, `question_request` (+ opt-in `error`) into a bounded
   queue; the worker batches to the Expo API with retry/backoff, tracks
@@ -42,7 +53,11 @@ Threadknot server C ─┘                          ├─ biometric/privacy gat
   token/port/URL changes.
 - **HTTP API** (all POST bodies JSON; auth via `Authorization: Bearer …`):
   - `GET  /api/server-info?token=…` → `{app:"threadknot", version, serverId, name}`
-  - `POST /api/mobile/pair` (master token) → `{serverId, serverName, deviceId, credential}`
+  - `POST /api/mobile/pair` → `{serverId, serverName, version, deviceId, credential}`.
+    Authorize with **either** the master token (`Authorization: Bearer …`, the
+    pasted-URL path) **or** a body field `pairingCode` (the scanned-QR path).
+    A bad, expired, or already-redeemed code returns 401 with one message for
+    all three — which it was is not something an unauthenticated caller learns.
   - `POST /api/mobile/push` (device cred) — `{expoPushToken?, notificationsEnabled?,
     notifyErrors?, notifyScope?, notifyWorkspaces?, deviceName?}`. Every field is
     optional and absent means "leave unchanged" — an empty `notifyWorkspaces`
@@ -51,7 +66,12 @@ Threadknot server C ─┘                          ├─ biometric/privacy gat
   - `POST /api/mobile/unpair` (device cred) — device removes itself
 - **WS requests**: `hello` now returns `serverId`/`serverName`;
   `mobile.device.list` / `mobile.device.revoke` are master-only (desktop
-  Settings popover shows paired phones with a revoke button).
+  Settings popover shows paired phones with a revoke button). So are
+  `mobile.pair.begin` → `{payload, qrSvg, code, url, ttlSeconds}` and
+  `mobile.pair.cancel` — minting a pairing code creates a fresh path to a
+  device credential, so a paired phone must not be able to bring in more
+  phones. `qrSvg` is rendered server-side (the `qrcode` crate, SVG feature),
+  which is why neither the web bundle nor the Tauri build needs a QR library.
 
 ### Web side (`src/lib/native.ts`)
 
@@ -83,9 +103,27 @@ Either way the app restores the thread it was on from `localStorage`.
   [react-native-reusables](https://reactnativereusables.com) components
   (`src/components/ui/`), themed to the Threadknot navy/brass console.
 - `src/lib/servers.tsx` — profiles in AsyncStorage, credentials in SecureStore
-  (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`). Add flow: normalize URL → probe
-  `/api/server-info` → pair → store credential → register push. URL changes
-  re-probe with the existing credential (no re-pair needed unless revoked).
+  (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`). Two add flows:
+  - `addServer` (pasted URL): normalize → probe `/api/server-info` → pair →
+    store credential → register push. URL changes re-probe with the existing
+    credential (no re-pair needed unless revoked).
+  - `addServerByScan` (QR): parse → redeem the one-time code → store. It cannot
+    probe for a duplicate first, because *redeeming* is how it learns which
+    server this is and the code only works once. So a scan matching an existing
+    `serverId` **re-pairs that profile in place** (best-effort unpairing the old
+    registration) rather than erroring — which makes rescanning the natural fix
+    for a phone whose credential was revoked or lost.
+- `src/app/servers/scan.tsx` — `expo-camera`'s `CameraView` with
+  `barcodeTypes: ['qr']`. Non-Threadknot QRs in frame are ignored *silently*
+  (a viewfinder sees posters and wifi codes; erroring on them would strobe a
+  failure every frame). A `handled` **ref**, not state, is what suppresses the
+  duplicate scan — state hasn't committed by the next camera frame.
+- `src/app/pair.tsx` — where `threadknot://pair?u=…&c=…` lands when the QR is
+  scanned by the phone's *own* camera app. This one always asks first and shows
+  the origin: a deep link is not proof anyone pointed a camera at anything, so
+  any app or web page on the device could fire one, and silently pairing would
+  let a hostile page install a server profile whose pages then render in our
+  WebView. The in-app scanner needs no such prompt — the camera is the proof.
 - `src/lib/lock.tsx` — biometric gate on cold start, and on return to
   foreground after more than 5 minutes in the background (quick app switches
   stay friction-free); opaque privacy overlay whenever the app is inactive;
@@ -132,8 +170,12 @@ npx expo start --dev-client  # then open from the dev build
 
 ## Security model
 
-- The master token authorizes pairing only; the phone keeps a per-device
-  `amd_…` credential (revocable from desktop Settings) in SecureStore.
+- Pairing authorizes nothing beyond itself; the phone keeps a per-device
+  `amd_…` credential (revocable from desktop Settings) in SecureStore. On the
+  QR path the master token never leaves the machine at all.
+- Minting a pairing code is master-only (`mobile.pair.begin`). A paired phone
+  cannot bring in more phones — that would turn one revocable credential into
+  an unbounded supply of them.
 - Server stores only credential hashes; the device list never serializes them.
 - Push payloads carry ids only (`serverId/projectId/threadId/eventKind`) — no
   URLs, tokens, prompts, or tool output.
@@ -147,8 +189,23 @@ principals → push registration → test push delivered to a mock Expo API with
 correct payload/channel → revoke → credential rejected (401). Rust unit tests
 cover the credential store and dead-token cleanup (`mobile.rs` tests).
 
+## QR pairing smoke-tested (2026-08-07, sandboxed headless server)
+
+`mobile.pair.begin` → QR rendered → **decoded with `zbarimg` and byte-compared
+to the payload** (an SVG that parses is not the same as a QR that scans) →
+redeemed over plain HTTP with no auth header, exactly as the phone does →
+credential authenticates. Rejections all confirmed 401: replaying a spent code,
+a cancelled code, an unknown code, and a request with neither token nor code. A
+device principal calling `mobile.pair.begin` is refused, and the old
+master-token pairing path still works. `mobile.rs` unit tests cover single-use,
+expiry, cancellation, and the live-code cap.
+
 ## Still needs a physical device pass
 
 Foreground/background/killed delivery, cold-start tap routing, biometric
 cancel/lockout paths, keyboard/safe-area behavior in the WebView, and the
-three-server switching matrix (LAN HTTP / Tailscale / ngrok HTTPS).
+three-server switching matrix (LAN HTTP / Tailscale / ngrok HTTPS). **Camera
+pairing has not run on real hardware** — `expo-camera` is a new native module,
+so it needs a fresh dev build (`eas build --profile development`); it will not
+appear in an existing installed build. Worth checking there: permission
+grant/deny/"don't ask again" paths, and scanning off a glossy monitor.

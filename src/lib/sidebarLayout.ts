@@ -13,6 +13,11 @@ export interface SidebarLayout {
   /** Show the relative-time column on thread rows (list + cards). Compact view
    *  always hides it regardless (the time still lives in the hover card). */
   showTimes: boolean;
+  /** Reveal workspaces stashed with "Hide project" alongside the rest, marked
+   *  rather than removed, so a batch can be brought back in place. This is a
+   *  per-device view toggle; what is hidden is on the workspace record and
+   *  syncs mesh-wide. */
+  showHidden: boolean;
   /** Sidebar width in px, mirrored onto the --sidebar-w CSS variable. */
   width: number;
   /** Manual workspace order by id. Listed ids sort first in this order; ids
@@ -33,6 +38,7 @@ const DEFAULTS: SidebarLayout = {
   bigNames: false,
   pinLocal: true,
   showTimes: true,
+  showHidden: false,
   width: SIDEBAR_WIDTH_DEFAULT,
   workspaceOrder: [],
 };
@@ -44,7 +50,8 @@ export function isNonDefaultLayout(l: SidebarLayout): boolean {
     l.view !== DEFAULTS.view ||
     l.bigNames !== DEFAULTS.bigNames ||
     l.pinLocal !== DEFAULTS.pinLocal ||
-    l.showTimes !== DEFAULTS.showTimes
+    l.showTimes !== DEFAULTS.showTimes ||
+    l.showHidden !== DEFAULTS.showHidden
   );
 }
 
@@ -68,6 +75,7 @@ function loadLayout(): SidebarLayout {
       pinLocal: parsed.pinLocal !== false,
       // showTimes defaults to true, so only an explicit false turns it off.
       showTimes: parsed.showTimes !== false,
+      showHidden: parsed.showHidden === true,
       width: clampWidth(
         typeof parsed.width === "number" ? parsed.width : SIDEBAR_WIDTH_DEFAULT,
       ),

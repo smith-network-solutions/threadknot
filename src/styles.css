@@ -195,8 +195,18 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 
 .brand-word {
   font-weight: 800;
-  font-size: 15px;
+  /* 15px at the default width and anything wider; scales down with the sidebar
+     below that. At 0.42em of tracking the mark is ~174px — wider than the brand
+     row's content box once the sidebar is dragged toward its 240px minimum (the
+     rail eats another 56px), where it used to draw straight through the
+     sidebar's right border. */
+  font-size: clamp(11px, calc(var(--sidebar-w) * 0.0769 - 7.5px), 15px);
   letter-spacing: 0.42em;
+  /* Tracking is applied after the last letter too; reclaim that dead column so
+     the mark keeps its real width against the connection pip. */
+  margin-right: -0.42em;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
   text-shadow: 0 0 24px color-mix(in srgb, var(--brass) 35%, transparent);
   translate: 0 1px;
@@ -270,6 +280,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   justify-content: center;
   gap: 7px;
   width: 100%;
+  /* Grid/flex items default to min-width:auto, which is min-content — a long
+     label would widen the track rather than wrap or clip, and the button would
+     hang past the sidebar's edge. */
+  min-width: 0;
   margin-top: 10px;
   padding: 8px;
   border: 1px dashed var(--line-2);
@@ -281,10 +295,26 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   transition: all 0.15s;
 }
 .add-project:hover { color: var(--brass-hi); border-color: color-mix(in srgb, var(--brass) 50%, transparent); background: var(--brass-dim); }
+/* The icon keeps its size; the label is what gives when the sidebar is narrow.
+   Ellipsis rather than wrap: these are single-line chrome buttons and a second
+   line would jog the whole action stack. */
+.add-project > svg { flex: none; }
+.add-project > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .sidebar-actions {
   flex: none;
   display: grid;
+  /* minmax(0, 1fr), not the implicit `auto`: an auto track is floored at its
+     widest item's min-content, so the usage meter (three chips with a hard
+     minimum) used to size this track ~250px and push every button in the stack
+     out past the sidebar's right border. Zero-floor track = the children shrink
+     to the sidebar instead of the sidebar reporting to the children. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 8px;
   border-top: 1px solid var(--line);
@@ -442,6 +472,55 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   transition: opacity 0.18s ease;
 }
 .rail-dot.lit { opacity: 1; }
+
+/* ---- hidden projects ---- */
+
+/* Only on screen while "show hidden" is on (or a search pulled one back), so
+   this is never the resting state of anything. Dimmer and desaturated: present
+   enough to right-click and bring back, quiet enough that the projects you are
+   actually in still own the column. `.on` wins — if you are somehow reading a
+   hidden project, it must not look inert. */
+.rail-item.hidden-ws { opacity: 0.34; filter: grayscale(0.65); }
+.rail-item.hidden-ws:hover,
+.rail-item.hidden-ws.on { opacity: 1; filter: none; }
+
+/* The way back, parked at the foot of the column. `margin-top: auto` only bites
+   when the rail is short enough to have slack; once the tiles overflow it sits
+   directly under the last one and scrolls with them, which is what you want —
+   a sticky footer would eat a tile's worth of a phone-height rail. */
+.rail-stash {
+  margin-top: auto;
+  color: var(--dim);
+}
+.rail-stash:hover { color: var(--text); }
+.rail-stash-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  border: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  background: rgba(255, 255, 255, 0.03);
+}
+:root[data-family="light"] .rail-stash-face { background: rgba(20, 30, 60, 0.04); }
+/* Count under the glyph rather than beside it: 38px is not wide enough for
+   both, and the number is the part that changes. */
+.rail-stash-count {
+  font-size: 9px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+
+/* Section/picker layouts: the same "stashed" read as the rail's dimmed tile,
+   minus the grayscale — a header row is text, not an avatar. */
+.project-head.hidden-ws { opacity: 0.55; }
+.project-head.hidden-ws:hover { opacity: 1; }
+.project-hidden-mark {
+  flex: none;
+  color: var(--dim);
+}
 
 @media (max-width: 767px) {
   :root { --rail-w: 52px; }
@@ -5208,6 +5287,167 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 /* ============ remove-machine confirmation ============ */
 
+/* Pair-a-phone QR dialog. */
+.pair-phone-modal { width: 360px; }
+.pair-phone-body { font-size: 12.5px; color: var(--dim); line-height: 1.55; }
+.pair-phone-body strong { color: var(--text); }
+.pair-phone-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 268px;
+  justify-content: center;
+  margin: 12px 0 10px;
+}
+/* The QR keeps its own light field in every theme — inverting it, or tinting
+   the modules, is what makes a code stop scanning. */
+.pair-phone-qr {
+  position: relative;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px;
+  line-height: 0;
+}
+.pair-phone-qr img { display: block; width: 240px; height: 240px; }
+.pair-phone-qr.expired img { opacity: 0.12; }
+.pair-phone-expired {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.pair-phone-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.pair-phone-meta .settings-value { color: var(--faint); }
+.pair-phone-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--brass-hi);
+}
+.pair-phone-note {
+  font-size: 11.5px;
+  color: var(--faint);
+  line-height: 1.5;
+  text-align: center;
+}
+.pair-phone-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 0 22px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.pair-phone-done strong { color: var(--text); }
+.pair-phone-check {
+  font-size: 26px;
+  color: var(--teal);
+  line-height: 1;
+}
+
+/* ============ pair a phone (QR) ============
+   The QR itself keeps its own dark-on-white palette regardless of the theme —
+   inverting it would make it unscannable — so it sits on its own white card
+   rather than on the panel. */
+
+.pair-phone-modal { width: 360px; }
+.pair-phone-body {
+  font-size: 12.5px;
+  color: var(--dim);
+  line-height: 1.55;
+}
+.pair-phone-body strong { color: var(--text); }
+
+.pair-phone-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-height: 268px;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.pair-phone-qr {
+  position: relative;
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px;
+  line-height: 0;
+}
+.pair-phone-qr img { width: 240px; height: 240px; display: block; }
+/* Expired: grey it out and say so, rather than leaving a live-looking code
+   on screen that would just fail at the phone. */
+.pair-phone-qr.expired img { opacity: 0.12; filter: grayscale(1); }
+.pair-phone-expired {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--red);
+}
+
+.pair-phone-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-size: 11.5px;
+}
+.pair-phone-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  color: var(--brass-hi);
+}
+
+.pair-phone-note {
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--faint);
+  text-align: center;
+}
+
+.pair-phone-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 30px 0 22px;
+  font-size: 13px;
+  color: var(--dim);
+}
+.pair-phone-done strong { color: var(--text); }
+.pair-phone-check {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 22px;
+  color: var(--teal);
+  background: var(--teal-dim);
+}
+
 .confirm-remove-modal { width: 400px; }
 .confirm-remove-body {
   font-size: 12.5px;
@@ -5514,12 +5754,19 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 
 /* ---- compact provider usage meter (sidebar) ------------------------------- */
-.usage-meter { position: relative; margin-top: 2px; }
+.usage-meter { position: relative; min-width: 0; margin-top: 2px; }
+/* Wraps rather than overflows. One chip per provider and providers only ever
+   get added (claude, codex, kimi, claudex…), so a single fixed row is a bet
+   that loses on either axis: another agent, or the sidebar dragged toward its
+   240px minimum (168px of content once the rail's 56px inset is paid). Chips
+   share a row while they fit and drop to a second row when they don't. */
 .usage-chips {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   width: 100%;
-  gap: 12px;
+  min-width: 0;
+  gap: 6px 10px;
   padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -5528,18 +5775,24 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 .usage-chips:hover,
 .usage-chips[aria-expanded="true"] { border-color: var(--line-2); background: var(--panel-3); }
+/* Basis under the chip's min-content so a row breaks on the chip boundary
+   instead of squashing one; min-width stays `auto` (min-content) deliberately —
+   with wrapping on, that is what makes a chip move to the next line rather than
+   shrink into an unreadable sliver. Chips on a line then share it evenly. */
 .usage-chip {
   display: inline-flex;
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 56px;
   align-items: center;
   gap: 6px;
   color: var(--dim);
 }
+/* The mark and the number are the readable parts and hold their size; the bar
+   is the only thing that gives. */
+.usage-chip > svg { flex: none; }
 .usage-bar {
   display: inline-block;
-  flex: 1;
-  min-width: 24px;
+  flex: 1 1 auto;
+  min-width: 16px;
   height: 5px;
   border-radius: 999px;
   overflow: hidden;
@@ -5563,6 +5816,7 @@ body.reordering { cursor: grabbing; user-select: none; }
   font-variant-numeric: tabular-nums;
   color: var(--dim);
 }
+.usage-chip-pct { flex: none; }
 .usage-chip-pct.warn, .usage-row-pct.warn { color: var(--amber); }
 .usage-chip-pct.hot, .usage-row-pct.hot { color: var(--red); }
 
@@ -5741,6 +5995,7 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 .sched-entry { margin-top: 2px; }
 .sched-count {
+  flex: none;
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 10px;

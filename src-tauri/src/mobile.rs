@@ -1,5 +1,6 @@
 //! Mobile companion devices: revocable per-device credentials (paired once via
-//! the master token) and the Expo push-token registry the push service reads.
+//! the master token, or by scanning a one-time QR pairing code) and the Expo
+//! push-token registry the push service reads.
 //! Persisted atomically to `~/.threadknot/mobile.json`; only credential *hashes*
 //! are stored — the plaintext credential is returned exactly once at pair time.
 
@@ -7,6 +8,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// Who a request authenticated as. The master token (server.json) can do
 /// everything; a paired device credential can drive sessions and manage only
@@ -107,9 +109,53 @@ struct DiskDevice {
     credential_hash: String,
 }
 
+/// How long a QR pairing code stays redeemable. Long enough to unlock a phone
+/// and open the scanner, short enough that a photographed screen is worthless
+/// by the time anyone acts on it.
+pub const PAIRING_TTL: Duration = Duration::from_secs(180);
+
+/// Live codes are capped so a stuck client reopening the dialog can't grow the
+/// set of valid secrets without bound. Oldest is evicted first.
+const MAX_PENDING_PAIRINGS: usize = 4;
+
+/// Crockford-style base32: no I/L/O/U, so a code is unambiguous when someone
+/// gives up on the camera and reads it out loud.
+const PAIRING_ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// 10 chars over a 32-symbol alphabet = 50 bits, single-use, 3-minute TTL.
+const PAIRING_CODE_LEN: usize = 10;
+
+/// A one-time pairing code displayed as a QR on the desktop. Deliberately
+/// in-memory only: it must die with the process, and nothing about it is worth
+/// surviving a restart.
+#[derive(Debug, Clone)]
+struct PendingPairing {
+    code: String,
+    expires_at: Instant,
+}
+
+/// Normalize a scanned/typed code: case and the display hyphen are noise.
+fn normalize_pairing_code(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
+/// Group as `XXXXX-XXXXX` for the human-readable fallback under the QR.
+pub fn format_pairing_code(code: &str) -> String {
+    if code.len() == PAIRING_CODE_LEN {
+        format!("{}-{}", &code[..5], &code[5..])
+    } else {
+        code.to_string()
+    }
+}
+
 pub struct MobileStore {
     path: PathBuf,
     devices: Mutex<Vec<MobileDevice>>,
+    /// Outstanding QR pairing codes (never persisted — see `PendingPairing`).
+    pending: Mutex<Vec<PendingPairing>>,
 }
 
 impl MobileStore {
@@ -131,7 +177,57 @@ impl MobileStore {
         Ok(Self {
             path,
             devices: Mutex::new(devices),
+            pending: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Mint a one-time pairing code for the QR the desktop is about to show.
+    pub fn begin_pairing(&self) -> String {
+        self.begin_pairing_with_ttl(PAIRING_TTL)
+    }
+
+    fn begin_pairing_with_ttl(&self, ttl: Duration) -> String {
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let code: String = (0..PAIRING_CODE_LEN)
+            .map(|_| PAIRING_ALPHABET[rng.random_range(0..PAIRING_ALPHABET.len())] as char)
+            .collect();
+        let mut pending = self.pending.lock().unwrap();
+        let now = Instant::now();
+        pending.retain(|p| p.expires_at > now);
+        while pending.len() >= MAX_PENDING_PAIRINGS {
+            pending.remove(0);
+        }
+        pending.push(PendingPairing {
+            code: code.clone(),
+            expires_at: now + ttl,
+        });
+        code
+    }
+
+    /// Redeem a scanned code. Single use: a successful redemption removes it,
+    /// so the same QR can never mint a second credential.
+    pub fn redeem_pairing(&self, presented: &str) -> bool {
+        let wanted = normalize_pairing_code(presented);
+        if wanted.len() != PAIRING_CODE_LEN {
+            return false;
+        }
+        let mut pending = self.pending.lock().unwrap();
+        let now = Instant::now();
+        pending.retain(|p| p.expires_at > now);
+        match pending.iter().position(|p| p.code == wanted) {
+            Some(i) => {
+                pending.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Invalidate every outstanding code — the desktop closed the QR dialog, so
+    /// what was on screen must stop working immediately rather than at the TTL.
+    pub fn cancel_pairings(&self) {
+        self.pending.lock().unwrap().clear();
     }
 
     fn flush(&self, devices: &[MobileDevice]) -> Result<()> {
@@ -291,6 +387,59 @@ mod tests {
         store.revoke(&device.id).unwrap();
         assert_eq!(store.authenticate(&credential), None);
         assert!(store.revoke(&device.id).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pairing_code_is_single_use() {
+        let (dir, store) = temp_store();
+        let code = store.begin_pairing();
+        assert_eq!(code.len(), PAIRING_CODE_LEN);
+        assert!(
+            code.chars().all(|c| PAIRING_ALPHABET.contains(&(c as u8))),
+            "code must stay in the unambiguous alphabet: {code}"
+        );
+        // Hyphen and case are display noise, not part of the secret.
+        assert!(store.redeem_pairing(&format_pairing_code(&code).to_lowercase()));
+        assert!(
+            !store.redeem_pairing(&code),
+            "a redeemed code must not mint a second credential"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pairing_codes_expire_and_can_be_cancelled() {
+        let (dir, store) = temp_store();
+        let stale = store.begin_pairing_with_ttl(Duration::ZERO);
+        assert!(!store.redeem_pairing(&stale), "an expired code is dead");
+
+        let live = store.begin_pairing();
+        store.cancel_pairings();
+        assert!(
+            !store.redeem_pairing(&live),
+            "closing the QR dialog must invalidate what was on screen"
+        );
+
+        assert!(!store.redeem_pairing(""), "empty input is not a code");
+        assert!(!store.redeem_pairing("SHORT"), "wrong length is not a code");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pending_pairings_are_capped() {
+        let (dir, store) = temp_store();
+        let codes: Vec<String> = (0..MAX_PENDING_PAIRINGS + 2)
+            .map(|_| store.begin_pairing())
+            .collect();
+        assert_eq!(store.pending.lock().unwrap().len(), MAX_PENDING_PAIRINGS);
+        // The two oldest were evicted; the newest survive.
+        for old in &codes[..2] {
+            assert!(!store.redeem_pairing(old), "evicted code must not redeem");
+        }
+        for fresh in &codes[2..] {
+            assert!(store.redeem_pairing(fresh), "recent code must still redeem");
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 

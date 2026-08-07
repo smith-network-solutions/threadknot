@@ -182,6 +182,7 @@ impl Store {
                 created_at: p.created_at.clone(),
                 updated_at: now_iso(),
                 favorite: None,
+                hidden: None,
                 members: vec![WorkspaceMember {
                     machine_id: machine_id.to_string(),
                     project_id: p.id.clone(),
@@ -287,6 +288,7 @@ impl Store {
                 created_at: project.created_at.clone(),
                 updated_at: now_iso(),
                 favorite: None,
+                hidden: None,
                 members: vec![WorkspaceMember {
                     machine_id: self.local_machine_id(),
                     project_id: project.id.clone(),
@@ -555,6 +557,7 @@ impl Store {
                 created_at: project.created_at.clone(),
                 updated_at: now_iso(),
                 favorite: None,
+                hidden: None,
                 members: vec![WorkspaceMember {
                     machine_id,
                     project_id: project.id,
@@ -638,6 +641,25 @@ impl Store {
             .context("unknown workspace")?;
         ws.favorite = favorite.then_some(true);
         // The favorite flag participates in the whole-record LWW mesh replica.
+        ws.updated_at = now_iso();
+        let out = ws.clone();
+        self.flush(&data)?;
+        Ok(out)
+    }
+
+    /// Stash a workspace out of the sidebar (or bring it back). Nothing is
+    /// deleted or detached — its projects, roots and chats are untouched and its
+    /// agents keep running; only the sidebar stops listing it.
+    pub fn set_workspace_hidden(&self, workspace_id: &str, hidden: bool) -> Result<Workspace> {
+        let mut data = self.data.lock().unwrap();
+        let ws = data
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .context("unknown workspace")?;
+        ws.hidden = hidden.then_some(true);
+        // The hidden flag participates in the whole-record LWW mesh replica, so
+        // putting a project away here puts it away on every paired machine.
         ws.updated_at = now_iso();
         let out = ws.clone();
         self.flush(&data)?;
@@ -1797,6 +1819,7 @@ mod catalog_sync_tests {
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: updated_at.into(),
             favorite: None,
+            hidden: None,
             members: vec![WorkspaceMember {
                 machine_id: machine.into(),
                 project_id: format!("{id}-root"),
@@ -1845,6 +1868,41 @@ mod catalog_sync_tests {
         assert_eq!(store.set_workspace_image("art", None).unwrap().image, None);
         drop(store);
         assert_eq!(Store::open_at(dir.clone()).unwrap().workspace("art").unwrap().image, None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Hiding is a workspace-level flag on purpose: `ws()` builds a workspace
+    /// whose only root lives on `machine-remote`, so this also pins down that a
+    /// project you have no folder for locally can still be put away from here —
+    /// and that the flag rides the whole-record LWW replica to the machines that
+    /// do own it.
+    #[test]
+    fn hiding_a_remote_rooted_workspace_persists_and_replicates() {
+        let (store, dir) = temp_store();
+        store
+            .upsert_workspace_replica(ws("w1", "machine-remote", "2026-07-01T00:00:00Z"))
+            .unwrap();
+
+        let hidden = store.set_workspace_hidden("w1", true).unwrap();
+        assert_eq!(hidden.hidden, Some(true));
+        // Bumping the clock is what makes the peer accept our copy.
+        assert!(hidden.updated_at.as_str() > "2026-07-01T00:00:00Z");
+        // Nothing about the workspace itself is lost — this is not a delete.
+        assert_eq!(hidden.members.len(), 1);
+
+        drop(store);
+        let store = Store::open_at(dir.clone()).unwrap();
+        assert_eq!(store.workspace("w1").unwrap().hidden, Some(true));
+
+        // Unhiding clears the field entirely so it serializes away again.
+        assert_eq!(store.set_workspace_hidden("w1", false).unwrap().hidden, None);
+
+        // A peer that hid it later wins, flag and all.
+        let mut from_peer = ws("w1", "machine-remote", "2027-01-01T00:00:00Z");
+        from_peer.hidden = Some(true);
+        assert!(store.upsert_workspace_replica(from_peer).unwrap());
+        assert_eq!(store.workspace("w1").unwrap().hidden, Some(true));
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -1,10 +1,9 @@
 # Threadknot 🧵
 
 **Every coding agent on one thread.** A Tauri (Rust) desktop app that drives
-Claude Code, OpenAI Codex, Kimi Code, and remote Hermes gateways natively over
-their wire protocols — no terminal wrapping, no Node server — and serves the
-same UI to any browser on your LAN, so you can drive your agents from your
-phone.
+Claude Code, OpenAI Codex, and Kimi Code natively over their wire protocols —
+no terminal wrapping, no Node server — and serves the same UI to any browser
+on your LAN, so you can drive your agents from your phone.
 
 <p align="center">
   <img src="docs/media/hero-phone.gif" width="300"
@@ -41,16 +40,15 @@ You also need at least one agent CLI installed and already logged in — see
 │   ├─ claude driver ── spawns `claude`         │   stream-json + control_request
 │   ├─ codex driver ─── spawns `codex`          │   app-server (JSON-RPC/stdio)
 │   ├─ kimi driver ──── spawns `kimi acp`       │   ACP (JSON-RPC/stdio)
-│   ├─ claudex ──────── `claude` + gateway env  │   any model, Claude harness
-│   └─ hermes driver ── remote gateway          │   Runs API (HTTP + SSE)
+│   └─ claudex ──────── `claude` + gateway env  │   any model, Claude harness
 └───────────────────────────────────────────────┘
 ```
 
 - **Auth is your existing subscriptions**: the local drivers spawn the
   installed `claude`, `codex`, and `kimi` CLIs, which use their own
   `claude login` / `codex login` / `kimi login` credentials. No API keys for
-  the local agents. (The two gateway-backed kinds — Hermes and Claudex — are
-  the exception: you register a base URL and key per gateway.)
+  the local agents. (Claudex is the exception: it runs the same `claude`
+  harness against a compatible gateway, so it takes a base URL and key.)
 - **Projects are folders**; each thread runs one agent in that folder with its
   own model / effort / access / plan-build settings.
 - **Everything is event-sourced**: normalized agent events are appended to
@@ -70,7 +68,7 @@ schemas vendored in [`docs/protocol/`](docs/protocol/).
 
 | Control | Options |
 |---|---|
-| Agent | Claude Code, Codex, Kimi Code, Hermes (remote gateways), Claudex (Claude harness + any model) |
+| Agent | Claude Code, Codex, Kimi Code, Claudex (Claude harness + any model) |
 | Model | Claude: Fable 5 / Opus 5 / Sonnet 5 / Haiku 4.5 · Codex: discovered via `model/list` · Kimi: K3 / K3 256K / K2.7 Code |
 | Effort | K3: low / high / max (high default) · other models expose their supported levels (+ **1M context** toggle on supported Claude models via the `[1m]` suffix) |
 | Access | **Read-only** (ask for everything) / **Edits** (auto-accept edits) / **Full** (no prompts) |
@@ -130,15 +128,8 @@ network. The token persists in the browser after first load.
 
 ## Credits
 
-Threadknot started as a port of [t3code](https://github.com/pingdotgg/t3code)'s
-agent integration into a from-scratch, all-Rust stack. t3code worked out how to
-drive these CLIs natively in the first place — Claude's stream-json transport
-and its `control_request` permission handshake, Codex's app-server JSON-RPC —
-and Threadknot's drivers reimplement that layer rather than reinvent it. A
-handful of pieces are direct ports and say so at the top of the file:
-`ContextMeter`, the Codex wire integration, the port scanner, and the
-streamable-HTTP MCP endpoint.
+Inspired by [t3code](https://github.com/pingdotgg/t3code) and
+[Codex](https://github.com/openai/codex) — thanks to both teams.
 
-t3code is MIT-licensed, © 2026 T3 Tools Inc. Full notice in
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md). Thanks to the t3 team —
-this project would have taken a great deal longer without their work to read.
+t3code is MIT-licensed, © 2026 T3 Tools Inc.; its notice is in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
