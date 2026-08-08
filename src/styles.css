@@ -267,6 +267,20 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   padding: 6px 8px 12px;
 }
 
+/* WebKitGTK may keep overflow thumbs in a compositor layer above portals.
+   Paint the sidebar thumb only while the list is actually moving; the gutter
+   stays intact, so showing/hiding it never nudges the sidebar contents. */
+html .sidebar-scroll:not(.is-scrolling) {
+  scrollbar-color: transparent transparent;
+}
+html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-color: transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  transition: background-color 100ms ease, border-color 100ms ease;
+}
+
 .sidebar-empty {
   color: var(--faint);
   font-size: 12.5px;

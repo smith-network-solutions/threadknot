@@ -2640,6 +2640,41 @@ export function Sidebar({
   // sidebar. The rail runs its own drag over its own scroller; the picker
   // shows one project at a time and so has nothing to reorder.
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarIdleTimer = useRef<number | null>(null);
+  const onSidebarScroll = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    scroller.classList.add("is-scrolling");
+    if (scrollbarIdleTimer.current !== null) {
+      window.clearTimeout(scrollbarIdleTimer.current);
+    }
+    // A short quiet window covers wheel/trackpad event spacing without leaving
+    // WebKitGTK's composited thumb hanging over whatever opens next.
+    scrollbarIdleTimer.current = window.setTimeout(() => {
+      scroller.classList.remove("is-scrolling");
+      scrollbarIdleTimer.current = null;
+    }, 160);
+  }, []);
+  useEffect(
+    () => () => {
+      if (scrollbarIdleTimer.current !== null) {
+        window.clearTimeout(scrollbarIdleTimer.current);
+      }
+    },
+    [],
+  );
+
+  // Settings is portaled above the sidebar, but WebKitGTK can still composite
+  // the native scrollbar over it. Hide the thumb synchronously on open even if
+  // it falls inside the final scroll-event quiet window.
+  useEffect(() => {
+    if (!showSettings) return;
+    if (scrollbarIdleTimer.current !== null) {
+      window.clearTimeout(scrollbarIdleTimer.current);
+      scrollbarIdleTimer.current = null;
+    }
+    scrollRef.current?.classList.remove("is-scrolling");
+  }, [showSettings]);
   const sectionDrag = useReorderDrag({
     containerRef: scrollRef,
     scrollRef,
@@ -2839,7 +2874,7 @@ export function Sidebar({
         />
       )}
 
-      <div className="sidebar-scroll" ref={scrollRef}>
+      <div className="sidebar-scroll" ref={scrollRef} onScroll={onSidebarScroll}>
         {agentsView && (
           <HermesSection
             filter={filter}
