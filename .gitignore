@@ -10,3 +10,12 @@ build-tauri.log
 .keys.*
 *.pem
 *.key
+
+# The hosted relay and its console live in a separate private repository:
+# a separate private repository. They are ignored here rather than
+# merely absent, because both directories still exist in a working copy that was
+# split from the monorepo — and a single `git add -A` would put the sellable
+# service back into the repository that is intended to be published. Do not
+# remove these two lines to "tidy up".
+/relay/
+/console/
