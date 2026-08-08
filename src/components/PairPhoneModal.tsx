@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { MobileDeviceInfo, PairingQr } from "../lib/protocol";
+import type {
+  DeviceCapability,
+  MobileDeviceInfo,
+  PairingQr,
+  PairingTarget,
+} from "../lib/protocol";
+import { DEFAULT_DEVICE_CAPABILITIES } from "../lib/protocol";
 import { useStore } from "../state/store";
+import { CapabilityPicker } from "./SettingsPopover";
 import { XIcon } from "./icons";
 
 /** How often we ask the server whether a phone finished pairing. The scan
@@ -19,6 +26,10 @@ const DONE_MS = 1400;
  * screenshot, or on a shared display), and a master token leaked that way is
  * permanent. The code is single-use, expires on its own, and is invalidated
  * outright the moment this dialog closes.
+ *
+ * The permissions chosen here are bound to that code server-side. The phone
+ * redeeming it takes what the code carries and has no way to ask for more, so
+ * narrowing the list before the scan is a real decision, not a hint.
  */
 export function PairPhoneModal({
   knownDeviceIds,
@@ -35,13 +46,23 @@ export function PairPhoneModal({
   const [error, setError] = useState<string | null>(null);
   const [remaining, setRemaining] = useState(0);
   const [paired, setPaired] = useState<MobileDeviceInfo | null>(null);
+  const [granted, setGranted] = useState<DeviceCapability[]>(DEFAULT_DEVICE_CAPABILITIES);
+  const [target, setTarget] = useState<PairingTarget>("lan");
+  const [remoteReady, setRemoteReady] = useState(false);
   const knownRef = useRef(new Set(knownDeviceIds));
+
+  // `granted` is read through a ref so editing the checklist doesn't re-mint
+  // the code on every click — a fresh code mid-scan is a dead code.
+  const grantedRef = useRef(granted);
+  grantedRef.current = granted;
+  const targetRef = useRef(target);
+  targetRef.current = target;
 
   const mint = useCallback(() => {
     setError(null);
     setQr(null);
     void actions
-      .beginMobilePairing()
+      .beginMobilePairing(grantedRef.current, targetRef.current)
       .then((next) => {
         setQr(next);
         setRemaining(next.ttlSeconds);
@@ -50,6 +71,15 @@ export function PairPhoneModal({
   }, [actions]);
 
   useEffect(mint, [mint]);
+
+  // Only offer the remote address if this machine actually has one and remote
+  // access is on — otherwise the choice is a dead end.
+  useEffect(() => {
+    void actions
+      .getRemoteAccess()
+      .then((r) => setRemoteReady(r.enabled && !!r.origin))
+      .catch(() => setRemoteReady(false));
+  }, [actions]);
 
   // Escape closes only this dialog, leaving settings open underneath.
   useEffect(() => {
@@ -140,6 +170,51 @@ export function PairPhoneModal({
             <div className="pair-phone-body">
               In the Threadknot app, tap <strong>Add server → Scan QR code</strong>.
             </div>
+
+            {remoteReady && (
+              <div className="pair-phone-target">
+                {(["lan", "remote"] as PairingTarget[]).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={`settings-toggle${target === option ? " primary" : ""}`}
+                    title={
+                      option === "lan"
+                        ? "For a phone on this network"
+                        : "For a phone anywhere, through this machine's public address"
+                    }
+                    onClick={() => {
+                      if (option === target) return;
+                      setTarget(option);
+                      targetRef.current = option;
+                      // The code on screen encodes the old address, so it has
+                      // to be replaced rather than relabelled.
+                      mint();
+                    }}
+                  >
+                    {option === "lan" ? "on this network" : "from anywhere"}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <details className="pair-phone-grants">
+              <summary>
+                permissions for this phone
+                <span className="dim"> · {granted.length} selected</span>
+              </summary>
+              <CapabilityPicker
+                granted={granted}
+                onToggle={(id, on) => {
+                  setGranted((prev) =>
+                    on ? [...prev, id] : prev.filter((c) => c !== id),
+                  );
+                  // The code on screen already carries the old set, so it has
+                  // to be replaced rather than reinterpreted.
+                  mint();
+                }}
+              />
+            </details>
 
             <div className="pair-phone-stage">
               {error && <div className="modal-error">{error}</div>}

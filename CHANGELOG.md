@@ -8,6 +8,23 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+## v0.1.176 · 2026-08-08
+
+- **Connecting a machine to the hosted relay is now one button.** Settings → reachable from anywhere → **connect this machine** opens app.threadknot.ai, you sign in and press Approve, and the machine picks it up by itself — there is nothing to copy, and no code to carry to your phone. Pasting a token still works and is tucked under "or paste a token from the console" for scripted setups.
+- **Your trial now starts when you connect your first machine, not when you sign up.** Signing up to look around no longer quietly burns trial days before you have used anything.
+- **Threadknot warns you before the trial ends.** Settings shows the days remaining once you are inside the last week, and says what happens when it runs out: sessions already running are never cut off, only new ones stop.
+- **Opening your machine's web address in a new browser now tells you how to get in.** It used to load the app and sit on "offline — retrying…" with no explanation. Now it asks for the one-time code from Settings → pair a phone → from anywhere, and lets you in as soon as you type it.
+- Fixed **Subscribe** on the billing page, which failed with a deserialization error instead of opening Stripe Checkout.
+
+## v0.1.175 · 2026-08-08
+
+- **Connections between your machines are now encrypted.** Each machine has its own certificate, exchanged when you pair, so a machine is recognised by its key rather than by its address — and nothing sensitive travels in the clear on your network any more. Machines paired before this update show **update needed** in Settings → machines instead of connecting: update Threadknot on that machine, then pair the two again. Nothing else changes, and your chats and projects are untouched.
+- **Pairing two machines no longer sends either one's master token.** The two machines prove they know it instead, and swap credentials that only work on that one link and can be replaced without re-pairing everything.
+- **A phone only does on another machine what you allowed it to do here.** Previously a request sent on to a paired machine arrived there as that machine's owner, so a phone you had not given terminal access to could still open one somewhere else in your fleet. Now the permissions you set travel with the request.
+- **Large downloads and video previews no longer slow the app down.** Files, attachments and recordings stream instead of being loaded whole, so opening a multi-gigabyte recording no longer uses gigabytes of memory, and scrubbing a video fetches only the part it needs.
+- Downloads now show real progress, because the file size is sent up front.
+- A machine or phone that stops responding can no longer make Threadknot use more and more memory waiting for it. It is disconnected instead, and reconnects on its own.
+
 ## v0.1.174 · 2026-08-06
 
 - Claude chats can now launch with Claude in Chrome. Choose **Enabled** under **Claude in Chrome** beside the message box before sending, and Threadknot starts that session with Chrome control turned on.

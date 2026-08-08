@@ -9,7 +9,8 @@ import { ActivityIndicator, Alert, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function Home() {
-  const { loaded, profiles, activeId, credentials, setActive } = useServers();
+  const { loaded, profiles, activeId, credentials, sessions, setActive, refreshSession } =
+    useServers();
   const { status } = useLock();
   const insets = useSafeAreaInsets();
   const poolRef = React.useRef<PoolHandle>(null);
@@ -68,8 +69,10 @@ export default function Home() {
         ref={poolRef}
         profiles={profiles}
         credentials={credentials}
+        sessions={sessions}
         activeId={activeId}
         onConnChange={onConnChange}
+        onSessionRetry={refreshSession}
       />
     </View>
   );

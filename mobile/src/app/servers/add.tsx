@@ -1,13 +1,14 @@
+import { BrandMark } from '@/components/BrandMark';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Text } from '@/components/ui/text';
-import { normalizeServerUrl } from '@/lib/api';
+import { isRelayOrigin, normalizeServerUrl, pairingPayloadFor } from '@/lib/api';
 import { useServers } from '@/lib/servers';
 import { useRouter } from 'expo-router';
-import { Anchor, ChevronLeft, QrCode, ShieldAlert } from 'lucide-react-native';
+import { ChevronLeft, QrCode, ShieldAlert } from 'lucide-react-native';
 import * as React from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,26 +16,40 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export default function AddServer() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { profiles, addServer } = useServers();
+  const { profiles, addServer, addServerByScan } = useServers();
   const [url, setUrl] = React.useState('');
+  const [code, setCode] = React.useState('');
   const [nickname, setNickname] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const firstRun = profiles.length === 0;
 
-  const insecureRemote = React.useMemo(() => {
+  const parsed = React.useMemo(() => {
     try {
-      return normalizeServerUrl(url).insecureRemote;
+      return normalizeServerUrl(url);
     } catch {
-      return false;
+      return null;
     }
   }, [url]);
+  const insecureRemote = parsed?.insecureRemote ?? false;
+  // A relay address cannot be paired with a token, so the code is not optional
+  // there — surfacing that while they type beats a refusal after they submit.
+  const needsCode = parsed != null && !parsed.token && isRelayOrigin(parsed.baseUrl);
 
   async function onSubmit() {
     setError(null);
     setBusy(true);
     try {
-      await addServer(url, nickname);
+      const typed = code.trim();
+      if (typed) {
+        // Reuse the scan path verbatim rather than adding a second pairing
+        // route: it is the one that already handles a relay origin, a cookie
+        // session and the ingress probe.
+        const base = parsed?.baseUrl ?? normalizeServerUrl(url).baseUrl;
+        await addServerByScan(pairingPayloadFor(base, typed), nickname);
+      } else {
+        await addServer(url, nickname);
+      }
       router.replace('/');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -63,9 +78,7 @@ export default function AddServer() {
         )}
 
         <View className="mb-8 items-center gap-3 pt-6">
-          <View className="h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card">
-            <Icon as={Anchor} className="size-8 text-brass" />
-          </View>
+          <BrandMark />
           <Text className="text-2xl font-bold tracking-tight">
             {firstRun ? 'Welcome aboard' : 'Add a server'}
           </Text>
@@ -73,6 +86,14 @@ export default function AddServer() {
             {firstRun
               ? 'Connect your first Threadknot server. Scan the QR from the desktop app’s Settings — or paste a LAN / Tailscale / ngrok URL that reaches it.'
               : 'Scan the QR from that server’s Settings, or paste its full URL (it includes ?token=…).'}
+            {'\n\n'}
+            {/* A hosted-relay address never accepts a token URL: the strict
+                ingress refuses a credential in a URL however it arrives. Saying
+                so here beats discovering it as a refusal after typing a hostname. */}
+            Reaching a machine from outside your network (a
+            <Text className="font-mono text-muted-foreground"> remote.threadknot.ai </Text>
+            address) is paired with a code rather than a token — scan the QR, or
+            enter the code shown beneath it.
           </Text>
         </View>
 
@@ -95,13 +116,30 @@ export default function AddServer() {
             <Input
               value={url}
               onChangeText={setUrl}
-              placeholder="http://192.168.0.54:42800/?token=…"
+              placeholder="https://your-machine.remote.threadknot.ai"
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
               autoFocus
             />
           </View>
+          <View className="gap-2">
+            <Label>{needsCode ? 'Pairing code' : 'Pairing code (optional)'}</Label>
+            <Input
+              value={code}
+              onChangeText={setCode}
+              placeholder="ABCDE-FGHIJ"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              autoComplete="off"
+            />
+            <Text className="text-xs text-muted-foreground">
+              {needsCode
+                ? 'Required for a relay address. Desktop: Settings → pair a phone → remote.'
+                : 'Use this instead of a token URL. Desktop: Settings → pair a phone.'}
+            </Text>
+          </View>
+
           <View className="gap-2">
             <Label>Nickname (optional)</Label>
             <Input

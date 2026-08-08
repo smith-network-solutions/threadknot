@@ -3,7 +3,7 @@ import { Text } from '@/components/ui/text';
 import type { ServerProfile } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useRouter } from 'expo-router';
-import { Plus, Settings2 } from 'lucide-react-native';
+import { Globe, Plus, Settings2 } from 'lucide-react-native';
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
@@ -50,6 +50,13 @@ export function ServerSwitcher({ profiles, activeId, conn, onSelect }: Props) {
               )}
             >
               <View className={cn('h-2 w-2 rounded-full', dotClass(conn[p.id]))} />
+              {/* Reached over the relay rather than the local network. Worth a
+                  mark of its own: the same machine can be a chip on the LAN and
+                  a chip over the relay, and which one you are typing into
+                  decides whether the traffic left the building. */}
+              {p.ingress === 'remote' && (
+                <Icon as={Globe} className="size-3 text-muted-foreground" />
+              )}
               <Text
                 className={cn('text-sm', active ? 'font-semibold text-brass-hi' : 'text-foreground')}
                 numberOfLines={1}
@@ -67,7 +74,9 @@ export function ServerSwitcher({ profiles, activeId, conn, onSelect }: Props) {
         </Pressable>
       </ScrollView>
       <Pressable
-        onPress={() => router.push('/servers')}
+        onPress={() => router.push('/settings')}
+        accessibilityRole="button"
+        accessibilityLabel="Settings"
         className="mr-3 h-8 w-8 items-center justify-center rounded-full active:bg-accent"
       >
         <Icon as={Settings2} className="size-4 text-muted-foreground" />

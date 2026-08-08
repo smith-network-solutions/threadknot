@@ -65,6 +65,7 @@ import { DirPicker } from "./components/DirPicker";
 import { SchedulesPanel } from "./components/SchedulesPanel";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
+import { PairBrowser } from "./components/PairBrowser";
 
 function makeActions(
   client: ThreadknotClient,
@@ -490,8 +491,44 @@ function makeActions(
       return devices;
     },
 
-    async beginMobilePairing() {
-      return await client.request("mobile.pair.begin", {});
+    async beginMobilePairing(capabilities, target) {
+      return await client.request("mobile.pair.begin", {
+        ...(capabilities ? { capabilities } : {}),
+        ...(target ? { target } : {}),
+      });
+    },
+
+    async getConnectorStatus() {
+      return await client.request("connector.status", {});
+    },
+
+    async enrollConnector(enrollmentToken: string, machineName?: string) {
+      return await client.request("connector.enroll", {
+        enrollmentToken,
+        ...(machineName ? { machineName } : {}),
+      });
+    },
+
+    async beginConnectorApproval(machineName?: string) {
+      return await client.request("connector.beginApproval", {
+        ...(machineName ? { machineName } : {}),
+      });
+    },
+
+    async cancelConnectorApproval() {
+      return await client.request("connector.cancelApproval", {});
+    },
+
+    async setConnectorEnabled(enabled: boolean) {
+      return await client.request("connector.setEnabled", { enabled });
+    },
+
+    async getRemoteAccess() {
+      return await client.request("remote.get", {});
+    },
+
+    async setRemoteAccess(patch) {
+      return await client.request("remote.set", patch);
     },
 
     async cancelMobilePairing() {
@@ -500,6 +537,14 @@ function makeActions(
 
     async revokeMobileDevice(deviceId: string) {
       await client.request("mobile.device.revoke", { deviceId });
+    },
+
+    async setMobileDeviceCapabilities(deviceId, capabilities) {
+      const { device } = await client.request("mobile.device.setCapabilities", {
+        deviceId,
+        capabilities,
+      });
+      return device;
     },
 
     listThemes,
@@ -1093,6 +1138,19 @@ function makeActions(
       return client.request("ports.scan", {});
     },
 
+    getDictationSettings() {
+      return client.request("dictation.settings.get", {});
+    },
+
+    async saveDictationSettings(input) {
+      const settings = await client.request("dictation.settings.save", input);
+      // Capability rides hello, so make the mic appear/disappear immediately
+      // instead of waiting for the identity broadcast to round-trip.
+      const hello = await client.request("hello", {});
+      dispatch({ type: "hello", data: hello });
+      return settings;
+    },
+
     async startDictation() {
       const { recordingId } = await client.request("dictation.start", {});
       return recordingId;
@@ -1455,6 +1513,9 @@ export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [showPicker, setShowPicker] = useState(false);
   const [showSchedules, setShowSchedules] = useState(false);
+  /** This origin needs a credential this browser does not have. Not an error
+   *  state, so it is kept out of `conn` — it is the first step of setup. */
+  const [needsPairing, setNeedsPairing] = useState(false);
 
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -1676,9 +1737,18 @@ export default function App() {
         }
         const target = await discoverServer();
         if (cancelled) return;
+        if (target.needsPairing) {
+          // Deliberately no `client.connect`: the socket could only be refused,
+          // and retrying it for ever is exactly the dead end this replaces.
+          setNeedsPairing(true);
+          return;
+        }
         dispatch({ type: "isTauri", value: target.isTauri });
         stopFocusTracking = startFocusTracking(target.isTauri);
-        dispatch({ type: "http", value: { base: target.httpBase, token: target.token } });
+        dispatch({
+          type: "http",
+          value: { base: target.httpBase, token: target.token, csrf: target.csrf },
+        });
         client.connect(target.wsUrl);
       } catch {
         if (!cancelled) dispatch({ type: "conn", conn: "offline" });
@@ -1743,6 +1813,11 @@ export default function App() {
       setShowPicker(true);
     }
   }
+
+  // Before the shell, not inside it: an unpaired browser has no session, so
+  // every pane behind this would render empty and every request would 401. One
+  // screen with the one instruction that helps.
+  if (needsPairing) return <PairBrowser />;
 
   return (
     <StoreContext.Provider value={store}>

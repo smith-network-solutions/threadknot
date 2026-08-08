@@ -26,11 +26,14 @@ import { LaneChips, ReviewMenu } from "./ReviewMenu";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
 import { Composer } from "./Composer";
-import { AgentMark, AnchorIcon, ArrowDownIcon, MenuIcon, PencilIcon } from "./icons";
+import { AgentMark, ArrowDownIcon, KnotIcon, MenuIcon, PencilIcon } from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
 
-/** How close to the end of the log still counts as "watching the present". */
+/** How close to the end we can be before showing the jump-to-present button. */
 const BOTTOM_SLACK = 90;
+/** Auto-follow only engages at the real end; a larger threshold makes manual
+ * scrolling snap the final stretch and keeps tugging the reader back down. */
+const BOTTOM_STICK_EPSILON = 2;
 
 /** Persistent chip showing the applied conversation zoom ("115%"). Sits in the
  *  thread header, which stays at 1x along with the composer: only the message
@@ -390,9 +393,15 @@ export function ThreadView() {
           if (!loadedFeedId) return;
           const el = e.currentTarget;
           scrollTopRef.current = el.scrollTop;
-          const present =
-            el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
-          stickRef.current = present;
+          const distanceFromEnd = Math.max(
+            0,
+            el.scrollHeight - el.scrollTop - el.clientHeight,
+          );
+          // Being near the end is useful for button visibility, but it must
+          // not seize a manual gesture. Live-follow resumes only once the
+          // scroller genuinely reaches the bottom.
+          stickRef.current = distanceFromEnd <= BOTTOM_STICK_EPSILON;
+          const present = distanceFromEnd < BOTTOM_SLACK;
           setAtPresent((prev) => (prev === present ? prev : present));
         }}
       >
@@ -400,7 +409,7 @@ export function ThreadView() {
           {state.feedLoading && <div className="feed-note note-status">loading log…</div>}
           {!state.feedLoading && feedLen === 0 && (
             <div className="feed-empty">
-              <AnchorIcon size={26} className="feed-empty-glyph" />
+              <KnotIcon size={26} className="feed-empty-glyph" />
               <p>
                 {draft
                   ? hermesHome

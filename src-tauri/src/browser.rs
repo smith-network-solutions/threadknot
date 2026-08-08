@@ -2757,6 +2757,19 @@ impl BrowserRegistry {
         if let Some(spec) = &profile {
             self.assert_profile_free(key, &spec.id)?;
         }
+        // The session key is a caller-supplied string and every distinct one is a
+        // Chrome with its own profile directory, so without this an authenticated
+        // client could ask for a thousand of them (SEC-014). Checked at the single
+        // choke point rather than in `ws_handler`, so the MCP door is covered too.
+        {
+            let live = self.sessions.lock().unwrap().len();
+            anyhow::ensure!(
+                live < crate::limits::MAX_LIVE_BROWSER_SESSIONS,
+                "this machine already has {live} browser sessions open, which is the limit of {} \
+                 — each one is a Chrome, so close one before opening another",
+                crate::limits::MAX_LIVE_BROWSER_SESSIONS
+            );
+        }
         let session = spawn_session(profile).await?;
         // Double-check: another attach may have spawned concurrently — keep one.
         let mut sessions = self.sessions.lock().unwrap();
@@ -3652,12 +3665,21 @@ fn param<'a>(params: &'a HashMap<String, String>, key: &str) -> Option<&'a str> 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
     State(state): State<ServerState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
-    let Some(principal) = state.authenticate(param(&params, "token").unwrap_or("")) else {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    use crate::mobile::Capability;
+    if !crate::server::ws_origin_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+    let principal = match state.authenticate_ingress(&headers, &params) {
+        Ok(authenticated) => authenticated.principal,
+        Err(rejection) => return rejection.into_response(),
     };
+    if let Err(e) = principal.require(Capability::Browser) {
+        return crate::server::forbidden(e);
+    }
     let key = param(&params, "session").unwrap_or("default").to_string();
 
     // A thread that lives on another machine drives THAT machine's browser:
@@ -3665,12 +3687,19 @@ pub async fn ws_handler(
     // "sign a remote machine's browser in from the one you're sitting at"
     // possible at all — the alternative is walking over to it.
     //
-    // Only this machine's own master may splice. A paired phone is refused a
-    // signed-in browser locally (below), and must not be able to launder that
-    // refusal through a machine it is paired with.
+    // Owner-only, deliberately stricter than `browser` + `mesh`.
+    //
+    // The original reason was that the splice carried the PEER's master token,
+    // so the signed-in check would run over there as that machine's owner and
+    // pass. SEC-012 removed that: the splice now carries the caller's own grants
+    // and the far side enforces them, so `browser` + `mesh` would in fact be
+    // sound. It stays owner-only anyway, because relaxing it is a *widening* of
+    // authority over stored browser logins and that is a product decision, not a
+    // consequence of a transport change. The check to relax, when someone
+    // decides to, is this one — and `mesh` + `browser` is then sufficient.
     if let Some(mid) = param(&params, "machineId") {
         if mid != state.device.machine_id {
-            if !matches!(principal, crate::mobile::Principal::Master) {
+            if !principal.is_owner() {
                 return (
                     StatusCode::FORBIDDEN,
                     "another machine's browser can only be opened from that machine's owner",
@@ -3678,17 +3707,26 @@ pub async fn ws_handler(
                     .into_response();
             }
             let mid = mid.to_string();
-            return ws.on_upgrade(move |socket| async move {
-                crate::peernet::splice_browser(socket, state, mid, params).await;
+            let grants = principal.mesh_assertion();
+            // A spliced screencast costs this machine a socket pair and the
+            // bandwidth either way, so it counts against the same budget.
+            let guard = match admit_browser(&state, &principal) {
+                Ok(guard) => guard,
+                Err(resp) => return *resp,
+            };
+            return crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
+                tokio::select! {
+                    _ = crate::peernet::splice_browser(socket, state, mid, params, grants) => {}
+                    _ = guard.closed() => {}
+                }
             });
         }
     }
 
-    // A signed-in browser shows a logged-in account and can act as its owner.
-    // The master token is this machine's own credential; a paired phone's
-    // revocable credential (or a LAN link shared from it) is not enough to sit
-    // in front of that session.
-    if !matches!(principal, crate::mobile::Principal::Master) {
+    // A signed-in browser shows a logged-in account and can act as its owner,
+    // so it takes the separate `signedBrowser` grant — which is never part of
+    // the default set, on any pairing.
+    if !principal.can(crate::mobile::Capability::SignedBrowser) {
         let signed_in = state
             .hub
             .store
@@ -3704,10 +3742,15 @@ pub async fn ws_handler(
         }
     }
 
+    let guard = match admit_browser(&state, &principal) {
+        Ok(guard) => guard,
+        Err(resp) => return *resp,
+    };
     let registry = Arc::clone(&state.browsers);
     let session = match registry.get_or_spawn(&key).await {
         Ok(s) => s,
         Err(e) => {
+            // Includes the live-session limit, whose message names it.
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("browser spawn failed: {e:#}"),
@@ -3721,7 +3764,28 @@ pub async fn ws_handler(
             let _ = session.navigate(url).await;
         }
     }
-    ws.on_upgrade(move |socket| bridge(socket, registry, key, session))
+    crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
+        tokio::select! {
+            _ = bridge(socket, registry, key, session) => {}
+            _ = guard.closed() => {}
+        }
+    })
+}
+
+/// Take a slot in this principal's browser budget, before the upgrade — after it
+/// the only way to refuse is a close frame with nothing readable in it.
+fn admit_browser(
+    state: &ServerState,
+    principal: &crate::mobile::Principal,
+) -> Result<crate::sessions::SessionGuard, Box<axum::response::Response>> {
+    state
+        .sessions
+        .try_register(principal, state.policy, crate::sessions::SessionKind::Browser)
+        .map_err(|e| {
+            Box::new(
+                (axum::http::StatusCode::TOO_MANY_REQUESTS, format!("{e:#}")).into_response(),
+            )
+        })
 }
 
 /// Counts attached human viewers for the lifetime of one socket.

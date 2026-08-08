@@ -19,7 +19,12 @@ threadknot/
 │       ├── bin/threadknot-headless.rs ← server without a window (smoke tests / pure LAN)
 │       ├── protocol.rs         ← wire types (must match PROTOCOL.md + src/lib/protocol.ts)
 │       ├── store.rs            ← ~/.threadknot persistence
-│       ├── server.rs           ← axum: /ws, static serving, request dispatch
+│       ├── server.rs           ← axum: /ws, static serving, request dispatch, the three listeners
+│       ├── ingress.rs          ← which listener a request came in by, and what that door allows
+│       ├── mesh.rs             ← mesh certificate identity, per-peer credentials, the pairing proof
+│       ├── peers.rs            ← the peer registry (peers.json): per-pair credentials + pinned CAs
+│       ├── peernet.rs          ← live peer sockets, mDNS discovery, routing, splices, byte proxy
+│       ├── connector.rs        ← the outbound relay connector (dials out; nothing listens)
 │       ├── git.rs              ← multi-repo git: discovery + status/diff/stage/commit/branch/push (git.* requests)
 │       ├── claudex.rs         ← Claudex profiles + bridge sidecar supervisor
 │       ├── library.rs          ← the Library: skill folders + MCP-server registry
@@ -32,6 +37,9 @@ threadknot/
 │           └── kimi.rs         ← Kimi Code ACP JSON-RPC driver
 ├── skills/                     ← Threadknot's OWN clean-room document skills
 │   └── {docx,xlsx,pptx,pdf}/   ← SKILL.md + scripts/, embedded via bundled.rs
+├── relay-protocol/             ← connector↔relay wire contract; STANDALONE crate (see below)
+├── relay/                      ← the hosted relay: its own workspace (relayd + control-plane)
+├── scripts/mesh-smoke.py       ← two sandboxed instances, pairs them, asserts the mesh forms
 └── docs/{PROTOCOL.md, DEVELOPMENT.md, protocol/*}
 ```
 
@@ -141,12 +149,74 @@ cargo build --bin threadknot-headless --manifest-path src-tauri/Cargo.toml
 ./src-tauri/target/debug/threadknot-headless      # prints local + LAN URL w/ token
 ```
 
+## Ports, and running two instances side by side
+
+One instance binds **three** sockets, derived from `THREADKNOT_PORT` (default
+42800; also pinned in `server.json` once that file exists):
+
+| port | what | who reaches it |
+| --- | --- | --- |
+| `<port>` | LAN/Tauri compatibility listener, plain HTTP | browsers, the webview, paired phones |
+| `<port+1>` | strict remote ingress, loopback only | the connector process on this same machine |
+| `<port+2>` | mesh listener, **TLS** | paired Threadknot machines |
+
+`PROTOCOL.md` explains why these are three sockets and not one socket with three
+policies. What matters here is that changing `THREADKNOT_PORT` moves all three,
+so two instances need at least three ports of clearance between them.
+
+> **GOTCHA — the 42800 range sits inside Linux's ephemeral port range, so a bind
+> can fail with `Address already in use` when nothing is listening.**
+> `ip_local_port_range` is `32768 60999` by default, and 42800/42801/42802 are
+> inside it: any outbound socket on this machine may already hold one of them as
+> its source port. It is intermittent, it looks like a stale process, and killing
+> things does not fix it. Two test instances hit this the first time
+> `mesh-smoke.py` was run. **Give test instances ports below 32768** (the smoke
+> script uses 22810 and 22820 for exactly this reason). The relay box takes the
+> other route and reserves its 42900–42901 with `ip_local_reserved_ports`, which
+> is the right fix for a fixed service port but not something to demand of a
+> developer's machine.
+
+A second instance needs three things separated, not two:
+
+```bash
+HOME=/tmp/tk-b/home \
+THREADKNOT_DATA_DIR=/tmp/tk-b/data \
+THREADKNOT_PORT=22830 \
+  ./src-tauri/target/debug/threadknot-headless
+```
+
+`HOME` is the one people forget. `THREADKNOT_DATA_DIR` does **not** isolate the
+Library, which writes into the CLIs' own global skill directories
+(`~/.claude/skills/` and friends) and removes the destination first — so a second
+instance exercising installs will clobber the skills the live app is using.
+
+`scripts/mesh-smoke.py` does all of the above and is the fastest way to check
+mesh work end to end: two sandboxed headless instances, the two-phase pairing
+handshake, and then assertions on the properties that matter rather than on "it
+connected" — that a routed request crosses the link, that a device's grants are
+enforced on the **far** side, that no credential or certificate reaches a
+client-facing response, and that the mesh listener refuses both a master token
+and a URL credential.
+
+> **Never delete `mesh-ca.pem` to "reset" the mesh.** Every peer pinned that
+> certificate authority at pairing, so removing it silently unpairs all of them —
+> they stay listed, and every connection fails the handshake. `MeshIdentity`
+> therefore reuses an existing identity always, and treats a corrupt one as a
+> hard error rather than quietly re-minting. Re-pairing is the only repair.
+
 ## Verify gate (must pass before declaring done)
 
 ```bash
 cd src-tauri && cargo build && cargo clippy      # Rust
 cd ..        && npm run build                     # frontend typecheck + bundle
 ```
+
+The relay is a separate workspace with its own gate — see
+[the relay section](#the-relay-workspace-relay) below. It must build **and test
+with no `DATABASE_URL` set**: the Postgres-backed tests skip loudly rather than
+failing, because the production box carries a `DATABASE_URL` pointing at the live
+database in its service environment and a `cargo test` run there must not migrate
+or write to it.
 
 Then a **behavioral** smoke test with a real agent turn (do NOT just trust compiles):
 run `threadknot-headless`, grab the token from its stdout (or `~/.threadknot/server.json`),
@@ -738,6 +808,53 @@ in a temp directory and published only once complete. Nothing executes during an
 install. Guards: `safe_join` refuses any path escaping the skill folder, and
 `MAX_SKILL_FILES`/`MAX_SKILL_BYTES` stop someone pointing it at a repository.
 
+## The relay workspace (`relay/`)
+
+The hosted relay is **its own cargo workspace**, deliberately: the desktop build
+must not be slowed by (or coupled to) server-only dependencies, and the relay has
+to be buildable from a checkout that never compiles Tauri. It has its own verify
+gate — `cargo build && cargo clippy && cargo test` inside `relay/` — and that gate
+must pass with **no `DATABASE_URL` set** (see the Verify gate section).
+
+`relay-protocol/` is a **standalone crate on purpose**, and its manifest carries
+an empty `[workspace]` table for that reason. It is a path dependency of *both*
+`src-tauri` and `relay/`, and a crate that belongs to one workspace cannot be
+path-depended on from another. Someone will eventually try to tidy it into a
+member of one of the two; it will not build. Keeping it a shared crate is also
+what makes a change that would break the connector fail to compile the relay in
+the same `cargo build`, which is the point.
+
+**Build the relay for musl, not for this machine.** The box is Ubuntu 24.04
+(glibc 2.39) and this machine is newer (glibc 2.43), so a dynamically linked
+binary built here dies on the box with a `GLIBC_2.4x not found` loader error —
+after a deploy, not at build time. Target `x86_64-unknown-linux-musl` and the
+binary is static and version-independent. A local Docker image
+`tk-relay-musl:latest` (the official Rust image plus `musl-tools` and that target
+added) exists for it. Mount the **repository root**, not `relay/` — the workspace
+path-depends on `../relay-protocol`, so a mount of `relay/` alone cannot resolve
+it:
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src/relay tk-relay-musl:latest \
+  cargo build --release --target x86_64-unknown-linux-musl
+```
+
+Build plan, infrastructure and stage status: **`docs/RELAY-BUILD-PLAN.md`**.
+Threat model and release gate: **`docs/REMOTE-ACCESS-SECURITY.md`**.
+
+### Connector escape hatches (test only)
+
+`connector.rs` reads four environment variables so it can be pointed at a relay
+that is not production. **None of them may be set in a shipped configuration** —
+each one moves where this machine's tunnel terminates:
+
+| variable | what it overrides | why it exists |
+| --- | --- | --- |
+| `THREADKNOT_RELAY_HOST` | the host the connector dials (default: `relay_protocol::CONNECTOR_SNI`) | point a dev build at a test box |
+| `THREADKNOT_RELAY_PORT` | that host's port (default 443) | a test relay on an unprivileged port |
+| `THREADKNOT_RELAY_SNI` | the SNI presented (default: the same constant) | the relay routes on SNI, and it is **not** always the host being dialled — dialling a test box while still presenting the production SNI is what makes the connection land on the connector endpoint rather than on the data plane |
+| `THREADKNOT_CONTROL_URL` | the control-plane base URL used by `connector.enroll` | enroll against a local control plane |
+
 ## State on disk
 
 `~/.threadknot/`: `server.json` (`{port,token}` — delete to rotate token), `projects.json`
@@ -745,7 +862,27 @@ install. Guards: `safe_join` refuses any path escaping the skill folder, and
 `claudex.json` (Claudex profiles — holds bridge tokens, same trust level as
 `server.json`) + `claudex/<profileId>/` (each profile's isolated
 `CLAUDE_CONFIG_DIR`, erased when the profile is removed — it holds that
-profile's transcripts and nothing else can reach them), `mcp-servers.json`
+profile's transcripts and nothing else can reach them), `dictation.json`
+(voice provider settings and its write-only API key, mode `0600` on Unix), `mcp-servers.json`
 (installed MCP servers — holds their tokens, same trust level as `server.json`;
 skills live in the CLIs' own directories, not here). Env overrides: `THREADKNOT_PORT`, `THREADKNOT_DATA_DIR` (whole
 store — use it for smoke tests), `THREADKNOT_DIST` (UI location), `RUST_LOG`.
+
+**Mesh and connector identity** live in the same directory:
+
+| file | secret? | notes |
+| --- | --- | --- |
+| `mesh-ca.pem` | no | this machine's self-signed mesh CA — the thing every peer pins at pairing |
+| `mesh-ca.key` | **yes, `0600`** | signs the leaf; permissions are re-applied on every open, not just at creation, because a file restored from a backup arrives world-readable |
+| `mesh-leaf.pem` | no | the leaf the mesh TLS listener serves, SAN `<machineId>.threadknot.mesh` |
+| `mesh-leaf.key` | **yes, `0600`** | the listener's private key |
+| `peers.json` | **yes, `0600`** | per-pair credentials, inbound credential hashes, each peer's pinned CA |
+| `connector.json` | no | server-assigned installation id + hostname, and the on/off flag |
+| `connector.key` | **yes, `0600`** | the installation's Ed25519 identity, base64 seed |
+
+Two of these are load-bearing beyond their contents. **Deleting `mesh-ca.pem`
+unpairs every peer** (they pinned it — see "Ports, and running two instances side
+by side"), and
+regenerating `connector.key` orphans the installation, because the control plane
+knows that key; rotation is an explicit two-call operation against the control
+plane, never a side effect of a missing file.

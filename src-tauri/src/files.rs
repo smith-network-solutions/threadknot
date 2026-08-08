@@ -141,18 +141,21 @@ pub fn read(state: &ServerState, payload: &Value) -> anyhow::Result<Value> {
 pub async fn file_handler(
     State(state): State<ServerState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
-    if state
-        .authenticate(params.get("token").map(String::as_str).unwrap_or(""))
-        .is_none()
+    let principal = match crate::server::authorize_bytes(
+        &state,
+        &headers,
+        &params,
+        crate::mobile::Capability::Files,
+    ) {
+        Ok(p) => p,
+        Err(resp) => return *resp,
+    };
+    // Remote project: stream the bytes from the owning machine (mesh-gated).
+    if let Some(resp) = crate::server::maybe_proxy_bytes(&state, &principal, "/file", &params).await
     {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
-    }
-    // Remote project: stream the bytes from the owning machine.
-    if let Some(mid) = params.get("machineId") {
-        if mid != &state.device.machine_id {
-            return crate::server::proxy_peer_bytes(&state, mid, "/file", &params).await;
-        }
+        return resp;
     }
     let (Some(project_id), Some(rel)) = (params.get("project"), params.get("path")) else {
         return (StatusCode::BAD_REQUEST, "missing params").into_response();
@@ -164,8 +167,16 @@ pub async fn file_handler(
         Ok(p) => p,
         Err(_) => return (StatusCode::FORBIDDEN, "forbidden path").into_response(),
     };
-    let Ok(bytes) = std::fs::read(&target) else {
+    let Ok(file) = std::fs::File::open(&target) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    // A directory opens successfully on Unix and only fails on the first read, so
+    // the kind is checked here rather than surfacing as a truncated body.
+    let Ok(meta) = file.metadata().map(|m| m.is_file().then_some(m.len())) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let Some(total) = meta else {
+        return (StatusCode::NOT_FOUND, "not a file").into_response();
     };
 
     let ext = target
@@ -182,16 +193,77 @@ pub async fn file_handler(
     let mut resp = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
-        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        // Set explicitly because a streamed body has no length of its own, and
+        // without it a download shows no progress and no total size.
+        .header(header::CONTENT_LENGTH, total);
 
     if params.get("download").map(String::as_str) == Some("1") {
         resp = resp.header(header::CONTENT_DISPOSITION, content_disposition(&filename));
     }
 
-    match resp.body(axum::body::Body::from(bytes)) {
+    match resp.body(stream_range(file, 0, total)) {
         Ok(r) => r,
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "response error").into_response(),
     }
+}
+
+/// A file (or a byte range of one) as a response body that never holds more than
+/// one chunk in memory.
+///
+/// `/file`, `/attachment` and `/artifact-file` used to `std::fs::read` the whole
+/// thing, so serving a 4 GB recording allocated 4 GB on the machine the owner is
+/// sitting at, and N concurrent requests allocated N times that (SEC-014).
+/// Streaming is the fix rather than a size cap: `Body::from_stream` is polled by
+/// hyper as it writes, so a slow client stalls this stream instead of
+/// accumulating anything, and no legitimate download has to be refused for being
+/// large. That backpressure is also what makes the streaming path safe on the
+/// peer byte proxy, which already streamed.
+///
+/// `len` is a byte count from `start`; the stream ends early if the file is
+/// shorter (it can be replaced mid-read, and truncating the body is better than
+/// hanging on a length that no longer exists).
+pub fn stream_range(file: std::fs::File, start: u64, len: u64) -> axum::body::Body {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    struct Cursor {
+        file: tokio::fs::File,
+        seek_to: Option<u64>,
+        remaining: u64,
+    }
+
+    let cursor = Cursor {
+        file: tokio::fs::File::from_std(file),
+        seek_to: (start > 0).then_some(start),
+        remaining: len,
+    };
+    axum::body::Body::from_stream(futures::stream::unfold(
+        Some(cursor),
+        |state| async move {
+            let mut cursor = state?;
+            if cursor.remaining == 0 {
+                return None;
+            }
+            if let Some(offset) = cursor.seek_to.take() {
+                if let Err(e) = cursor.file.seek(std::io::SeekFrom::Start(offset)).await {
+                    return Some((Err(e), None));
+                }
+            }
+            let want = cursor
+                .remaining
+                .min(crate::limits::FILE_STREAM_CHUNK as u64) as usize;
+            let mut buf = vec![0u8; want];
+            match cursor.file.read(&mut buf).await {
+                Ok(0) => None,
+                Ok(n) => {
+                    buf.truncate(n);
+                    cursor.remaining -= n as u64;
+                    Some((Ok(buf), Some(cursor)))
+                }
+                Err(e) => Some((Err(e), None)),
+            }
+        },
+    ))
 }
 
 /// Resolve `rel` against `root` with defense-in-depth path confinement:

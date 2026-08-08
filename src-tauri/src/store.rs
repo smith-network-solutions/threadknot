@@ -121,6 +121,10 @@ impl Store {
 
     fn open_at(dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(dir.join("threads"))?;
+        // The data dir holds the master token, paired-device hashes, peer master
+        // tokens and signed-in browser profiles. Its mode otherwise depends on
+        // whatever umask happened to be set when it was first created.
+        restrict_dir(&dir);
         let path = dir.join("projects.json");
         let mut data = if path.exists() {
             serde_json::from_str(&std::fs::read_to_string(&path)?).context("parse projects.json")?
@@ -219,6 +223,10 @@ impl Store {
 
     pub fn server_config(&self) -> Result<ServerConfig> {
         let path = self.dir.join("server.json");
+        // SEC-013: this file IS the master credential. Repair its mode on every
+        // open, not just at creation — an install that predates this (or one
+        // restored from a permissive backup) is exactly the case that matters.
+        restrict_file(&path);
         let env_port = std::env::var("THREADKNOT_PORT")
             .or_else(|_| std::env::var("ARMADA_PORT"))
             .ok()
@@ -231,7 +239,7 @@ impl Store {
                 // (not just in memory) so it stays stable across restarts.
                 if cfg.server_id.is_empty() {
                     cfg.server_id = uuid::Uuid::new_v4().to_string();
-                    std::fs::write(&path, serde_json::to_string_pretty(&cfg)?)?;
+                    write_private(&path, &serde_json::to_string_pretty(&cfg)?)?;
                 }
                 // Env override wins (lets a second instance run on another port).
                 if let Some(port) = env_port {
@@ -245,7 +253,7 @@ impl Store {
             token: generate_token(),
             server_id: uuid::Uuid::new_v4().to_string(),
         };
-        std::fs::write(&path, serde_json::to_string_pretty(&cfg)?)?;
+        write_private(&path, &serde_json::to_string_pretty(&cfg)?)?;
         Ok(cfg)
     }
 
@@ -1576,6 +1584,59 @@ fn is_safe_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Write a secret-bearing file so only its owner can read it.
+///
+/// Created owner-only from the start — writing first and chmod-ing after leaves
+/// a window where the master token is world-readable, and on a shared box that
+/// window is all anyone needs. On Windows the file inherits the user profile's
+/// ACL, which is already owner-scoped for the default layout; a dedicated ACL
+/// pass is tracked in docs/REMOTE-ACCESS-SECURITY.md (SEC-013).
+pub fn write_private(path: &std::path::Path, contents: &str) -> Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("write {}", path.display()))?;
+    file.write_all(contents.as_bytes())?;
+    // An existing file keeps its old mode through `open`, so repair it too.
+    restrict_file(path);
+    Ok(())
+}
+
+/// Force an existing secret-bearing file to owner-only. No-op off Unix and
+/// best-effort: a store on a filesystem without Unix modes (a VFAT stick, a
+/// network share) must still start.
+pub fn restrict_file(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if path.exists() {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// Same, for the directory holding those files.
+pub fn restrict_dir(dir: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if dir.exists() {
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
 pub fn data_dir() -> PathBuf {
     // Override lets a second instance run against its own store on the same
     // box (mesh testing: two ports, two data dirs, one machine). The pre-rename
@@ -1620,6 +1681,86 @@ pub fn generate_token() -> String {
             chars[rng.random_range(0..chars.len())] as char
         })
         .collect()
+}
+
+/// SEC-013: the master token at rest.
+#[cfg(all(test, unix))]
+mod secret_permissions_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("threadknot-perm-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn mode(path: &std::path::Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn a_fresh_server_json_is_owner_only() {
+        let dir = scratch();
+        let store = Store::open_at(dir.clone()).unwrap();
+        let cfg = store.server_config().unwrap();
+        assert!(!cfg.token.is_empty());
+        assert_eq!(mode(&dir.join("server.json")), 0o600);
+        assert_eq!(mode(&dir), 0o700, "the directory holding it, too");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The case that actually matters: an install that predates this, or one
+    /// restored from a permissive backup, already has a world-readable master
+    /// token on disk. Creating new files correctly does nothing for it — the
+    /// mode has to be repaired when the file is read.
+    #[test]
+    fn an_existing_permissive_server_json_is_repaired() {
+        let dir = scratch();
+        let store = Store::open_at(dir.clone()).unwrap();
+        let first = store.server_config().unwrap();
+
+        let path = dir.join("server.json");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let reopened = Store::open_at(dir.clone()).unwrap();
+        let again = reopened.server_config().unwrap();
+        assert_eq!(again.token, first.token, "repair must not rotate the token");
+        assert_eq!(mode(&path), 0o600, "world-readable master token repaired");
+        assert_eq!(mode(&dir), 0o700);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A rewrite (the server-id backfill path) must not hand the file back to
+    /// the umask.
+    #[test]
+    fn rewriting_the_config_keeps_it_owner_only() {
+        let dir = scratch();
+        std::fs::create_dir_all(&dir).unwrap();
+        // `server_id`, not `serverId`: `ServerConfig` has no
+        // `rename_all = "camelCase"`, so the camelCase spelling is an unknown
+        // field that serde silently ignores — the fixture then exercised a
+        // *default* empty id rather than the blank one it looked like it was
+        // supplying, and the test passed for the wrong reason.
+        std::fs::write(
+            dir.join("server.json"),
+            r#"{"port":42800,"token":"legacy-token","server_id":""}"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            dir.join("server.json"),
+            std::fs::Permissions::from_mode(0o666),
+        )
+        .unwrap();
+
+        let store = Store::open_at(dir.clone()).unwrap();
+        let cfg = store.server_config().unwrap();
+        assert_eq!(cfg.token, "legacy-token");
+        assert!(!cfg.server_id.is_empty(), "server id was minted on disk");
+        assert_eq!(mode(&dir.join("server.json")), 0o600);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 #[cfg(test)]

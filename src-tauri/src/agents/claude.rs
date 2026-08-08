@@ -51,6 +51,14 @@ const INTERRUPT_GRACE: Duration = Duration::from_secs(2);
 /// becomes an explicit error instead of retrying forever.
 const MAX_AUTO_RECONNECTS: u8 = 1;
 
+/// Compaction — `/compact`, or the automatic one Claude Code runs when the
+/// window fills — is a single long summarization request that emits no model or
+/// tool traffic while it works, only a `compacting` status. Against the ordinary
+/// 90s budget it always reads as a stall, so the watchdog kills the CLI
+/// mid-summary and the compaction is silently lost. Summarizing a full 1M-token
+/// window is the slow case this has to cover.
+const COMPACTION_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// Shared ring buffer of the CLI's most recent stderr lines.
 type StderrTail = Arc<Mutex<VecDeque<String>>>;
 
@@ -77,6 +85,7 @@ fn stderr_summary(tail: &StderrTail) -> String {
 #[derive(Debug, Clone, Copy)]
 struct DriverPolicy {
     first_response_timeout: Duration,
+    compaction_timeout: Duration,
     interrupt_grace: Duration,
     max_auto_reconnects: u8,
 }
@@ -85,6 +94,7 @@ impl DriverPolicy {
     fn production() -> Self {
         Self {
             first_response_timeout: FIRST_RESPONSE_TIMEOUT,
+            compaction_timeout: COMPACTION_TIMEOUT,
             interrupt_grace: INTERRUPT_GRACE,
             max_auto_reconnects: MAX_AUTO_RECONNECTS,
         }
@@ -97,6 +107,7 @@ impl DriverPolicy {
 #[derive(Debug)]
 struct FirstResponseWatchdog {
     timeout: Duration,
+    compaction_timeout: Duration,
     max_reconnects: u8,
     reconnects: u8,
     deadline: Option<Instant>,
@@ -112,6 +123,7 @@ impl FirstResponseWatchdog {
     fn new(policy: DriverPolicy) -> Self {
         Self {
             timeout: policy.first_response_timeout,
+            compaction_timeout: policy.compaction_timeout,
             max_reconnects: policy.max_auto_reconnects,
             reconnects: 0,
             deadline: None,
@@ -125,6 +137,21 @@ impl FirstResponseWatchdog {
 
     fn provider_progress(&mut self) {
         self.deadline = None;
+    }
+
+    /// The CLI has begun compacting: give it a compaction-sized budget instead
+    /// of the pre-response one. Safe to bound rather than disarm because a real
+    /// compaction ends in `compact_boundary`, which counts as progress and
+    /// clears the deadline outright.
+    ///
+    /// Only ever *extends* an already-armed deadline. An auto-compaction that
+    /// fires mid-turn (after real output) must not newly arm the watchdog: its
+    /// recovery replays the user message, which is only safe before any
+    /// assistant or tool work has happened.
+    fn compacting(&mut self, now: Instant) {
+        if self.deadline.is_some() {
+            self.deadline = Some(now + self.compaction_timeout);
+        }
     }
 
     fn deadline(&self) -> Option<Instant> {
@@ -167,7 +194,43 @@ fn is_provider_progress(frame: &Value) -> bool {
     }
 }
 
+/// The CLI announcing that it has started compacting. This rides the same
+/// `system`/`status` channel [`is_provider_progress`] deliberately ignores, so
+/// it is matched on its exact status text rather than by loosening that rule.
+fn is_compaction_start(frame: &Value) -> bool {
+    frame.get("type").and_then(Value::as_str) == Some("system")
+        && frame.get("subtype").and_then(Value::as_str) == Some("status")
+        && frame.get("status").and_then(Value::as_str) == Some("compacting")
+}
+
+/// A message that is nothing but a slash command invocation (`/compact`,
+/// `/cost`, `/my-command with args`) — the only form the CLI intercepts locally.
+fn is_slash_command(text: &str) -> bool {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        return false;
+    };
+    if trimmed.contains('\n') {
+        return false;
+    }
+    // Split on whitespace rather than skipping it: `/ some words` is prose that
+    // happens to open with a slash, not an invocation of a command named `some`.
+    let name = rest.split(char::is_whitespace).next().unwrap_or("");
+    name.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+}
+
 fn reconnect_message(original: &str) -> String {
+    // A slash command has to be replayed verbatim: the CLI only intercepts one
+    // when the message *is* the command, so a preamble silently demotes
+    // `/compact` (or any `.claude/commands` entry) to prose the model merely
+    // comments on. The framing below would be wrong for it anyway — a local
+    // command repeats no work.
+    if is_slash_command(original) {
+        return original.to_string();
+    }
     format!(
         "[Threadknot automatically replaced a stalled Claude connection before any \
          assistant or tool output was received. Continue the request below now. \
@@ -959,6 +1022,8 @@ async fn run_with_policy(
                     Some(v) => {
                         if is_provider_progress(&v) {
                             watchdog.provider_progress();
+                        } else if is_compaction_start(&v) {
+                            watchdog.compacting(Instant::now());
                         }
                         handle_message(ctx, &mut session, v).await?
                     },
@@ -2005,6 +2070,17 @@ pub fn probe() -> (bool, Option<String>) {
 mod tests {
     use super::*;
 
+    /// Short pre-response budget so a stall is easy to assert; the compaction
+    /// budget stays at the production value the timing assertions name.
+    fn test_policy() -> DriverPolicy {
+        DriverPolicy {
+            first_response_timeout: Duration::from_secs(5),
+            compaction_timeout: COMPACTION_TIMEOUT,
+            interrupt_grace: Duration::ZERO,
+            max_auto_reconnects: 1,
+        }
+    }
+
     fn settings(access: Access) -> ThreadSettings {
         ThreadSettings {
             model: "claude-fable-5".into(),
@@ -2406,11 +2482,7 @@ mod tests {
         assert!(is_provider_progress(&permission));
         assert!(is_provider_progress(&result));
 
-        let policy = DriverPolicy {
-            first_response_timeout: Duration::from_secs(5),
-            interrupt_grace: Duration::ZERO,
-            max_auto_reconnects: 1,
-        };
+        let policy = test_policy();
         let mut watchdog = FirstResponseWatchdog::new(policy);
         watchdog.start_turn(Instant::now());
         assert!(watchdog.deadline().is_some());
@@ -2418,15 +2490,78 @@ mod tests {
         assert!(watchdog.deadline().is_none());
     }
 
+    /// The regression behind "Claude stopped responding before it began work"
+    /// on `/compact`: compaction is one long silent summarization whose only
+    /// wire signal is a status frame the progress rule ignores, so the 90s
+    /// pre-response budget killed the CLI mid-summary and lost the compaction.
+    #[test]
+    fn compaction_gets_its_own_budget_instead_of_reading_as_a_stall() {
+        let compacting = json!({
+            "type": "system",
+            "subtype": "status",
+            "status": "compacting"
+        });
+        assert!(is_compaction_start(&compacting));
+        // Still not "progress" — the black-holed-TCP guard stays intact for
+        // every other status the CLI emits.
+        assert!(!is_provider_progress(&compacting));
+        assert!(!is_compaction_start(&json!({
+            "type": "system", "subtype": "status", "status": "requesting"
+        })));
+
+        let now = Instant::now();
+        let mut watchdog = FirstResponseWatchdog::new(test_policy());
+        watchdog.start_turn(now);
+        watchdog.compacting(now);
+        // Well past the pre-response budget, still inside the compaction one.
+        assert!(watchdog.deadline().unwrap() > now + Duration::from_secs(5));
+        assert_eq!(watchdog.deadline(), Some(now + Duration::from_secs(600)));
+
+        // Compaction finishing is ordinary progress and disarms outright.
+        assert!(is_provider_progress(&json!({
+            "type": "system", "subtype": "compact_boundary"
+        })));
+    }
+
+    /// An auto-compaction can fire mid-turn, after real output has already
+    /// disarmed the watchdog. Re-arming there would make a later stall replay
+    /// the user message on top of completed work.
+    #[test]
+    fn compaction_never_rearms_a_watchdog_that_progress_already_disarmed() {
+        let now = Instant::now();
+        let mut watchdog = FirstResponseWatchdog::new(test_policy());
+        watchdog.start_turn(now);
+        watchdog.provider_progress();
+        watchdog.compacting(now);
+        assert!(watchdog.deadline().is_none());
+    }
+
+    /// The second half of the same bug: the stall recovery wrapped the replayed
+    /// text in a preamble, which stopped the CLI intercepting `/compact` at all
+    /// — the model just described the command instead of running it.
+    #[test]
+    fn reconnect_replays_a_slash_command_verbatim() {
+        assert_eq!(reconnect_message("/compact"), "/compact");
+        assert_eq!(reconnect_message("  /compact  "), "  /compact  ");
+        assert_eq!(reconnect_message("/my-command some args"), "/my-command some args");
+
+        // Ordinary prose keeps the do-not-repeat-work framing.
+        let wrapped = reconnect_message("fix the parser");
+        assert!(wrapped.starts_with("[Threadknot automatically replaced"));
+        assert!(wrapped.ends_with("fix the parser"));
+
+        // Not commands: a path, prose that merely opens with a slash, and a
+        // command that picked up a mid-turn steer note (no longer bare).
+        assert!(!is_slash_command("/srv/projects/threadknot"));
+        assert!(!is_slash_command("/ what does this do"));
+        assert!(!is_slash_command("/compact\n\n[Note added mid-turn]: also check the logs"));
+        assert!(!is_slash_command("read src/main.rs"));
+    }
+
     #[test]
     fn watchdog_reconnects_once_then_fails_closed() {
-        let policy = DriverPolicy {
-            first_response_timeout: Duration::from_secs(5),
-            interrupt_grace: Duration::ZERO,
-            max_auto_reconnects: 1,
-        };
         let now = Instant::now();
-        let mut watchdog = FirstResponseWatchdog::new(policy);
+        let mut watchdog = FirstResponseWatchdog::new(test_policy());
         watchdog.start_turn(now);
         assert_eq!(
             watchdog.timed_out(now + Duration::from_secs(5)),

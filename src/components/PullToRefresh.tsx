@@ -28,9 +28,9 @@ const EXCLUDE = [
 ].join(",");
 
 /**
- * Walk up from the touch target to the first real scroller. A pull only starts
- * when that scroller is already at its top (or nothing on the way up scrolls),
- * which is what keeps this out of the way of ordinary feed scrolling.
+ * Walk up from the touch target through every real scroller. A pull only
+ * starts when all of them are already at their top (or nothing on the way up
+ * scrolls), which is what keeps nested panels from impersonating the feed.
  */
 function atScrollTop(target: Element | null): boolean {
   for (let el = target; el && el !== document.body; el = el.parentElement) {
@@ -38,7 +38,7 @@ function atScrollTop(target: Element | null): boolean {
     const oy = getComputedStyle(el).overflowY;
     if (oy !== "auto" && oy !== "scroll") continue;
     if (el.scrollHeight <= el.clientHeight + 1) continue;
-    return el.scrollTop <= 0;
+    if (el.scrollTop > 0) return false;
   }
   return true;
 }

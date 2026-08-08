@@ -1084,6 +1084,17 @@ body.reordering { cursor: grabbing; user-select: none; }
   background: var(--teal);
   box-shadow: 0 0 6px rgba(67, 201, 165, 0.8);
 }
+/* A pair that predates the encrypted mesh. Warm rather than red: nothing is
+   broken and nothing is at risk — the link simply refuses to form until the
+   other machine is updated. Red would read as an alert to act on now. */
+.machine-pill.stale {
+  color: var(--brass);
+  background: var(--brass-dim, var(--panel-2));
+  border-color: var(--brass);
+}
+.machine-pill.stale .pill-dot {
+  background: var(--brass);
+}
 .machine-card-actions {
   display: flex;
   align-items: center;
@@ -2761,6 +2772,55 @@ body.reordering { cursor: grabbing; user-select: none; }
   line-height: 1.45;
 }
 
+/* LAN vs public address for the QR. Only rendered when this machine has a
+   provisioned public address, so it is absent for most installs. */
+.pair-phone-target {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+/* The grant checklist inside the pairing dialog. Collapsed by default: the
+   common case is "the defaults are fine", and the QR is what the eye wants. */
+.pair-phone-grants {
+  margin: 0 0 4px;
+  font-size: 11px;
+}
+.pair-phone-grants > summary {
+  cursor: pointer;
+  color: var(--brass-hi);
+  padding: 2px 0;
+}
+
+/* Paired phones: one row per device, with its grants folded away underneath. */
+.settings-subblock { margin-top: 2px; }
+.settings-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.capability-picker {
+  margin: 4px 0 6px 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+.capability-option {
+  display: grid;
+  /* checkbox | name | consequence — the consequence is the column that
+     actually decides the answer, so it gets the room. */
+  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.capability-option input { margin: 0; cursor: pointer; }
+.capability-label { color: var(--brass-hi); }
+.capability-detail { min-width: 0; }
+
 /* Registered remote Hermes gateways (Settings). */
 .hermes-agent-head {
   display: inline-flex;
@@ -2865,6 +2925,36 @@ body.reordering { cursor: grabbing; user-select: none; }
   text-transform: none;
   letter-spacing: 0;
 }
+
+/* ---- voice transcription provider ---- */
+
+.voice-intro {
+  max-width: 58ch;
+  margin: 7px 0 14px;
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.voice-provider-row { padding: 4px 0 8px; }
+.voice-callout {
+  margin: 6px 0 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.voice-callout.good { color: var(--teal); border-color: var(--teal-dim); }
+.voice-callout.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 30%, transparent); }
+.voice-callout.bad { color: var(--red); border-color: color-mix(in srgb, var(--red) 34%, transparent); }
+.voice-form { margin: 10px 0 7px; }
+.voice-secret-note { max-width: 58ch; margin: 0 0 12px; }
+.voice-secret-note code { font-family: var(--font-mono); color: var(--dim); }
+.voice-result { margin: 8px 0 4px; }
+.voice-save { margin-top: 8px; }
+.voice-save:disabled { opacity: 0.45; cursor: default; }
 
 /* ================= thread pane ================= */
 
@@ -3739,9 +3829,11 @@ body.reordering { cursor: grabbing; user-select: none; }
   background: #090c12;
   font-size: 11.5px;
   line-height: 1.5;
+  /* Keep the conversation as the only vertical scroll surface. A capped,
+     independently scrolling diff makes touch and trackpad gestures latch at
+     both of its edges; expanded diffs can still scroll sideways for long
+     lines and can be collapsed from their header. */
   overflow-x: auto;
-  max-height: 420px;
-  overflow-y: auto;
 }
 .diff-line { display: block; padding: 0 12px; white-space: pre; }
 .diff-add { background: rgba(67, 201, 165, 0.1); color: #8ee0c6; }
@@ -7228,4 +7320,116 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   .lib-grid { grid-template-columns: 1fr; }
   .lib-card-head { flex-direction: column; align-items: flex-start; gap: 6px; }
   .lib-remove, .lib-locked { margin-left: 0; }
+}
+
+/* ── Pair this browser ─────────────────────────────────────────────────────
+   Shown when a browser reaches a machine over the relay that has not been told
+   about it yet. Styled as a standalone page rather than a modal: there is no app
+   behind it to return to, because nothing has loaded and nothing can until this
+   is done. Uses the theme tokens so it matches whatever palette is active. */
+.pair-browser {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 18px;
+  background: var(--bg);
+  color: var(--text);
+  /* Safe areas matter here specifically: this is the one screen a phone lands on
+     before any of the app's own layout has run. */
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+.pair-browser-card {
+  width: 100%;
+  max-width: 440px;
+}
+
+.pair-browser-brand {
+  margin-bottom: 22px;
+  letter-spacing: 0.18em;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.pair-browser-card h1 {
+  margin: 0 0 10px;
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.pair-browser-lede {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.pair-browser-steps {
+  margin: 0 0 20px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+
+.pair-browser-steps strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pair-browser-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 14px;
+  /* 18px minimum: iOS Safari zooms the whole page when a focused input is
+     smaller, which on this screen shoves the button off-frame. */
+  font-size: 18px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.pair-browser-input:focus {
+  outline: none;
+  border-color: var(--brass);
+}
+
+.pair-browser-submit {
+  width: 100%;
+  margin-top: 12px;
+  padding: 13px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--brass-hi);
+  background: var(--brass-dim);
+  border: 1px solid color-mix(in srgb, var(--brass) 50%, transparent);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.pair-browser-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pair-browser-error {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--danger, #e5534b);
+}
+
+.pair-browser-note {
+  margin: 18px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  opacity: 0.85;
 }

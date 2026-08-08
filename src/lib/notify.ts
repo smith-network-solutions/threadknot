@@ -1,4 +1,5 @@
 import { nativeBootstrap } from "./native";
+import { CSRF_HEADER } from "./discovery";
 
 // Notification plumbing (Traycer-style): native/system notification when the
 // window is unfocused, in-app toast + chime otherwise. The LAN phone URL is
@@ -137,18 +138,37 @@ export function wantsWorkspace(prefs: NotifyPrefs, workspaceId: string | undefin
 async function syncNotifyPrefsToShell(p: NotifyPrefs): Promise<void> {
   const native = nativeBootstrap();
   if (!native) return;
+  // Two authentication shapes, matching the two ingresses the shell may have
+  // reached this server through — see `NativeBootstrap`. On the relay there is no
+  // credential to send: the strict ingress refuses a credential in the body just
+  // as it refuses one in the URL, and it resolves the cookie *before* it looks at
+  // a bearer, so a cookie-authenticated state change needs the double-submit
+  // header or it is a 403. Without this, per-workspace notification
+  // subscriptions set from the web UI silently never reached a relay-connected
+  // machine.
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const body: Record<string, unknown> = {
+    // Deliberately not `notificationsEnabled`: that master switch belongs to
+    // the shell's own settings screen, which re-asserts it from its stored
+    // profile on every launch. Scope "none" already silences the device.
+    notifyScope: p.enabled ? p.scope : "none",
+    notifyWorkspaces: p.workspaces,
+  };
+  if (native.token) {
+    body.credential = native.token;
+  } else if (native.csrf) {
+    headers[CSRF_HEADER] = native.csrf;
+  } else {
+    // Neither shape available: the shell has not finished establishing a session.
+    // Sending anyway would be a guaranteed 403, and the shell re-asserts the
+    // subscription from its stored profile on the next launch regardless.
+    return;
+  }
   try {
     await fetch(`${window.location.origin}/api/mobile/push`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      // Deliberately not `notificationsEnabled`: that master switch belongs to
-      // the shell's own settings screen, which re-asserts it from its stored
-      // profile on every launch. Scope "none" already silences the device.
-      body: JSON.stringify({
-        credential: native.token,
-        notifyScope: p.enabled ? p.scope : "none",
-        notifyWorkspaces: p.workspaces,
-      }),
+      headers,
+      body: JSON.stringify(body),
     });
   } catch {
     // offline or shell gone — the phone keeps its last saved subscription

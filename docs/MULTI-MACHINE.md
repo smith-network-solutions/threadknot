@@ -97,8 +97,13 @@ ids stays stable.
 ~/.threadknot/projects.json    gains: workspaces: [Workspace], thread.machineId
 ~/.threadknot/device.json      NEW    (friendlyName, capabilities)
 ~/.threadknot/peers.json       NEW    peer registry (0600, hermes.json pattern)
-   [ { machineId, name, port, token, addresses: [...],
+   [ { machineId, name, port, meshPort, meshCa, addresses: [...],
+       outboundCredential, inboundCredentialHash,
        lastGoodAddress, lastSeenAt, addedAt, meshVersion } ]
+~/.threadknot/mesh-ca.pem      NEW    this machine's mesh certificate authority
+~/.threadknot/mesh-ca.key      NEW    0600
+~/.threadknot/mesh-leaf.pem    NEW    the leaf that CA signs
+~/.threadknot/mesh-leaf.key    NEW    0600
 ```
 
 **Migration (once, on first load of the new build):**
@@ -112,16 +117,49 @@ before, with the sidebar showing one workspace per former project.
 
 ## Peering & trust
 
-- **Pairing UX:** Settings → Machines → "Add machine": paste the peer's LAN
-  URL + token (already shown in its Settings — same flow as Hermes/mobile).
-- **Mutual with one paste:** A calls B's `peer.pair` over the token-gated
-  channel, sending its own `{machineId, friendlyName, port, token}`; both
-  sides persist each other. A paired machine is **fully trusted** (tokens
-  exchanged both ways; 0600 at rest; never serialized to frontend clients).
-- **Transport:** one persistent outbound WebSocket per online peer against
-  the existing `/ws?token=…` endpoint (peers are privileged clients speaking
-  the `peer.*`-extended protocol). Reconnect with capped backoff; presence =
-  socket up + ping.
+> **Superseded by SEC-012 (2026-08-08), and the original text is worth keeping in
+> mind as a cautionary example.** As designed and shipped, this section exchanged
+> each machine's **master token** and then put it in a plaintext `ws://` URL on
+> every connection. Three problems in one string: the credential was fleet-level
+> authority, it was in a URL (copied into proxy logs, `Referer` headers, shell
+> history and crash reports), and it was in the clear. `MESH_VERSION` is now **2**
+> and pairs made under version 1 are refused rather than downgraded to.
+> Authoritative record: `REMOTE-ACCESS-SECURITY.md`, SEC-012.
+
+- **Pairing UX:** unchanged — Settings → Machines → "Add machine": paste the
+  peer's LAN URL + token (the same flow as Hermes/mobile).
+- **Two phases, and the master token is never transmitted.** A first fetches
+  `GET /api/peer/identity` over plain HTTP: machine id, name, certificate
+  authority, mesh port, and a single-use challenge. Nothing there is secret — a
+  certificate's job is to be handed out. A then completes
+  `POST /api/peer/pair` on B's **TLS mesh listener**, pinned to the CA it just
+  received, carrying `HMAC(B's master token, context ‖ challenge ‖ A's machine id
+  ‖ fingerprint(B's CA))`. B recomputes it and compares.
+
+  The CA fingerprint in that message is the part that matters. An attacker who
+  intercepts the unauthenticated identity fetch and substitutes their own
+  certificate receives a proof computed over *their* fingerprint, which the real
+  machine rejects — so the trust-on-first-use hole is closed rather than
+  accepted. The challenge is single-use and short-lived, so a captured proof
+  cannot be replayed at all.
+- **What is exchanged** is a pair of freshly minted per-link credentials, one per
+  direction, each independently rotatable. Each side stores the plaintext it will
+  *present* and only a hash of what it will *accept*. No master token is stored
+  and none crosses the wire. A paired machine is trusted to describe its own
+  callers, not to be another machine.
+- **Transport:** one persistent outbound **`wss`** per online peer to
+  `0.0.0.0:<port+2>`, verified against the CA pinned at pairing, with the
+  credential in an `Authorization` header. The TLS name is a synthetic
+  `<machine-id>.threadknot.mesh` resolved to whichever address hint is being
+  tried — so identity is checked while the address stays disposable, which is the
+  invariant the DHCP-resilience section below already depends on. A machine that
+  takes over an address completes the TCP connection and then fails the
+  handshake. Reconnect with capped backoff; presence = socket up + ping.
+- **Authority travels with the request.** A routed request carries the
+  *originating* caller's grants (`mesh` frame field, or the
+  `X-Threadknot-Mesh-Grants` header for splices and the byte proxy), so a phone
+  denied `terminal` here cannot obtain one by asking a peer. Under the original
+  design every routed request arrived as the peer's owner.
 
 ## Discovery & DHCP resilience (three layers)
 
@@ -228,7 +266,8 @@ event relay, machine chips, machine→root new-thread picker)
 **Phase 4.5 — Full remote streaming — ✅ DONE** (everything a direct client
 gets, through the mesh): the whole `git.*` family and `term.*` route by
 machineId; `/file`, `/attachment` and `/artifact-file` stream bytes from the
-owner through the local server (peer token attached server-side); `/term`
+owner through the local server (the per-link credential is attached
+server-side, in a header, never in the URL); `/term`
 sockets splice onto the owner's pty (type here, shell runs there); the
 workspace panel renders for remote roots from the member snapshot — Files,
 Git, Artifacts and Terminal tabs all work on a remote machine's root. The
@@ -263,7 +302,10 @@ is the integration test at the end of Phase 4.
 - Thread-creation folder choice = registered roots only, never subfolders
   (Spencer, 2026-07-22). Attaching a NEW root does use a (proxied) folder
   picker — that's registration, not thread creation.
-- Paired machines are fully mutually trusted (tokens exchanged both ways).
+- Paired machines authenticate each other by pinned certificate and per-link
+  credential, and a routed request carries its original caller's grants rather
+  than the peer owner's (SEC-012). The earlier "fully mutually trusted, tokens
+  exchanged both ways" model is gone.
 
 ## Open questions (none block Phases 0–2)
 

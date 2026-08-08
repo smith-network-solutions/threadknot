@@ -6,8 +6,17 @@
 // shell every function here is an inert no-op.
 
 export interface NativeBootstrap {
-  /** Device credential presented as the ws/HTTP token. Held in memory only. */
-  token: string;
+  /** Device credential presented as the ws/HTTP token. Held in memory only.
+   *
+   *  **Empty on a relay-connected server**, and that is the normal case there:
+   *  the strict ingress refuses any credential-bearing query key with a 400 even
+   *  when the value is valid, so a token here would break every request rather
+   *  than merely being redundant. Authority comes from the `HttpOnly` session
+   *  cookie the shell established instead. */
+  token?: string;
+  /** Double-submit token derived from that cookie. Present only in the cookie
+   *  case; `token` and `csrf` are the two alternatives, never both. */
+  csrf?: string;
   serverId?: string;
   platform?: "ios" | "android";
   /** Optional shell features. Absent in older mobile builds. */
@@ -51,8 +60,15 @@ declare global {
 }
 
 export function nativeBootstrap(): NativeBootstrap | null {
-  const b = window.__THREADKNOT_NATIVE__;
-  return b && typeof b.token === "string" && b.token.length > 0 ? b : null;
+  // Deliberately NOT gated on a token. It used to be, which silently disabled
+  // the entire native bridge for a relay-connected server: no `ready`, no
+  // route/connection reporting, no push-tap navigation, no native clipboard —
+  // and the app reporting itself offline. On the strict ingress there is no
+  // token to have, so requiring one made the remote case unreachable.
+  //
+  // The shell is still identified by `ReactNativeWebView` (see `isNativeShell`),
+  // so an ordinary browser cannot fake its way in here by defining the global.
+  return window.__THREADKNOT_NATIVE__ ?? null;
 }
 
 export function isNativeShell(): boolean {

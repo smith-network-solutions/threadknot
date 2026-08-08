@@ -2,7 +2,7 @@
 //! browser can drive agent sessions, and fans out hub events to every client.
 
 use crate::agents::{claude, codex, kimi, Hub};
-use crate::mobile::{MobileStore, Principal};
+use crate::mobile::{Capability, MobileStore, Principal};
 use crate::protocol::*;
 use crate::store::ServerConfig;
 use anyhow::Context as _;
@@ -31,16 +31,114 @@ pub struct ServerState {
     pub browser_profiles: Arc<crate::browser_profiles::BrowserProfileStore>,
     pub mobile: Arc<MobileStore>,
     pub dictation: Arc<crate::dictation::Dictation>,
+    /// Every live authenticated socket, so revoking a device (or narrowing its
+    /// grants) closes the connections it already holds.
+    pub sessions: Arc<crate::sessions::SessionRegistry>,
+    /// Opaque cookie sessions for remote browsers (SEC-006).
+    pub browser_sessions: Arc<crate::ingress::BrowserSessions>,
+    /// Whether remote access is on, and the public origin it was given.
+    pub remote: Arc<crate::remote::RemoteStore>,
+    /// This machine's mesh certificate authority and leaf, for the TLS listener
+    /// paired machines dial (SEC-012).
+    pub mesh: Arc<crate::mesh::MeshIdentity>,
+    /// Single-use challenges issued by `/api/peer/identity` and consumed by
+    /// `/api/peer/pair`, so pairing proves the master token instead of sending it.
+    pub pairing_challenges: Arc<crate::mesh::PairingChallenges>,
+    /// The outbound relay connector (Stage 2): dials out, holds a multiplexed
+    /// session, and forwards each inbound stream to the strict loopback ingress.
+    pub connector: Arc<crate::connector::Connector>,
+    /// Which listener this clone of the state serves. The strict ingress gets
+    /// its own clone with `IngressPolicy::Remote`; nothing else differs.
+    pub policy: crate::ingress::IngressPolicy,
 }
 
 impl ServerState {
-    /// Resolve a presented token to a principal: the master token (server.json)
-    /// or a paired mobile device's revocable credential.
+    /// Resolve a presented token to a principal: the master token
+    /// (`server.json`), a paired mobile device's revocable credential carrying
+    /// whatever grants that device currently holds, or a paired machine's peer
+    /// credential.
+    ///
+    /// A peer resolves to `Principal::Peer` with **no** asserted authority. The
+    /// grants it acts with come from the request frame, not from the credential
+    /// — see `mesh_principal`. Defaulting to "the peer's owner" here instead
+    /// would mean any handler that forgot to consult the frame silently ran as
+    /// Master again, which is the bug being fixed.
     pub fn authenticate(&self, token: &str) -> Option<Principal> {
-        if token == self.config.token {
+        // Constant-time compare: the master token is a fixed secret, and a
+        // byte-at-a-time `==` on it is exactly the kind of oracle a patient
+        // attacker on the LAN can grind against.
+        if !self.config.token.is_empty() && constant_time_eq(token, &self.config.token) {
             return Some(Principal::Master);
         }
-        self.mobile.authenticate(token).map(Principal::Device)
+        if let Some(grant) = self.mobile.authenticate(token) {
+            return Some(Principal::Device(grant));
+        }
+        self.peernet
+            .registry
+            .authenticate(token)
+            .map(|machine_id| {
+                Principal::Peer(crate::mobile::PeerPrincipal {
+                    machine_id,
+                    // Narrowest possible starting point: no grants at all until
+                    // a frame says otherwise.
+                    on_behalf_of: Some(Vec::new()),
+                })
+            })
+    }
+
+    /// The TLS port paired machines dial. LAN port + 2 — the strict remote
+    /// ingress already took +1.
+    pub fn mesh_port(&self) -> u16 {
+        self.config.port.saturating_add(2)
+    }
+
+    /// The principal for a device id, read fresh so a cookie session never
+    /// carries authority the owner has since taken away.
+    fn principal_for_device(&self, device_id: &str) -> Option<Principal> {
+        self.mobile.grant_for(device_id).map(Principal::Device)
+    }
+
+    /// Resolve an incoming HTTP/WebSocket request under this listener's policy.
+    ///
+    /// Everything that authenticates goes through here, so "what does the
+    /// strict ingress accept" is answered in exactly one place rather than at
+    /// each of the seven routes that used to read `?token=` for themselves.
+    pub fn authenticate_ingress(
+        &self,
+        headers: &axum::http::HeaderMap,
+        params: &HashMap<String, String>,
+    ) -> Result<crate::ingress::Authenticated, crate::ingress::Rejection> {
+        // The mesh listener is not gated on the remote switch: the mesh is the
+        // LAN product and works whether or not this machine is published.
+        if self.policy.is_remote() && !self.remote.enabled() {
+            return Err(crate::ingress::Rejection {
+                status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                message: "remote access is turned off for this machine",
+            });
+        }
+        crate::ingress::authenticate(
+            self.policy,
+            headers,
+            params,
+            |token| self.authenticate(token),
+            |cookie| {
+                self.browser_sessions
+                    .resolve(cookie)
+                    .and_then(|device_id| self.principal_for_device(&device_id))
+            },
+        )
+    }
+
+    /// Close every live socket held by `device_id`, and drop its browser
+    /// sessions — the enforcement half of a revoke or a capability reduction.
+    pub fn close_device_sessions(&self, device_id: &str) {
+        let closed = self.sessions.close_device(device_id);
+        let cookies = self.browser_sessions.revoke_device(device_id);
+        if closed > 0 || cookies > 0 {
+            tracing::info!(
+                "device {device_id}: closed {closed} live socket(s), dropped {cookies} browser session(s)"
+            );
+        }
     }
 
     /// Human-readable server name shown in the mobile app's server list.
@@ -59,6 +157,60 @@ impl ServerState {
             .trim_end_matches('/')
             .to_string()
     }
+}
+
+/// Compare two secrets without leaking where they first differ.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Hosts whose pages are always allowed to open a Threadknot WebSocket: the
+/// Tauri webview's own origin (which is never the server's host) and loopback,
+/// which covers `npm run dev` driving the real backend.
+const TRUSTED_WS_HOSTS: &[&str] = &["tauri.localhost", "localhost", "127.0.0.1", "::1"];
+
+/// Whether a browser is allowed to open a WebSocket to us from this page.
+///
+/// Native clients (the Expo shell's fetch, curl, the peer mesh) send no
+/// `Origin` at all and are unaffected — the token is the credential there. What
+/// this stops is a *page on another site*, opened in a browser that can reach
+/// the LAN, silently attaching to `/ws`, `/term` or `/browser`. Same-origin
+/// pages (the bundled UI, a phone browser on the LAN URL, a tunnelled host) all
+/// present an `Origin` equal to the `Host` they connected to.
+pub(crate) fn ws_origin_allowed(headers: &axum::http::HeaderMap) -> bool {
+    let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    else {
+        // No Origin: not a browser navigation-initiated request.
+        return true;
+    };
+    let Ok(origin) = url::Url::parse(origin) else {
+        // Includes the literal `null` origin a sandboxed frame sends.
+        return false;
+    };
+    // Tauri serves the desktop UI from its own scheme on macOS/Linux.
+    if origin.scheme() == "tauri" {
+        return true;
+    }
+    let Some(host) = origin.host_str() else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if TRUSTED_WS_HOSTS.contains(&host) {
+        return true;
+    }
+    // Otherwise it must be the very host this request was addressed to.
+    headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(|h| h.rsplit_once(':').map(|(name, _)| name).unwrap_or(h))
+        .map(|h| h.trim_start_matches('[').trim_end_matches(']'))
+        .is_some_and(|h| h.eq_ignore_ascii_case(host))
 }
 
 /// The deep link a pairing QR encodes. `threadknot://` (the Expo app's scheme)
@@ -159,6 +311,129 @@ pub async fn run(state: ServerState) {
     // Mesh runtime: peer sockets + presence + announce + mDNS discovery.
     state.peernet.start();
 
+    let app = build_router(state.clone());
+
+    // The strict ingress. Bound unconditionally because it is loopback-only —
+    // binding it exposes nothing, and having the socket always present is what
+    // makes turning remote access on and off instant rather than a restart.
+    // Everything it serves is refused while remote access is off.
+    spawn_remote_listener(&state);
+
+    // The mesh listener. TLS, and the only door a paired machine may use.
+    spawn_mesh_listener(&state);
+
+    // The relay connector. Dials out; nothing here listens. It is started
+    // unconditionally and returns to waiting when disabled, so flipping the
+    // switch takes effect without a restart.
+    state.connector.attach_hub(Arc::clone(&state.hub));
+    state.connector.attach_remote(Arc::clone(&state.remote));
+    state.connector.start();
+
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], state.config.port));
+    tracing::info!("threadknot server on {addr} — LAN: {}", state.lan_url);
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => {
+            // Only the process that actually owns Threadknot's port may recover
+            // persisted in-flight turns. Doing this before bind would let an
+            // accidental second launch interrupt or duplicate live work.
+            state.hub.recover_orphaned_threads();
+            // Tie the presence poller to this server's lifetime: spawned now
+            // that the bind owns the port, and aborted when `serve` returns so
+            // a dead process never keeps probing gateways.
+            let poller = crate::hermes::spawn_status_poller(Arc::clone(&state.hub));
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!("server error: {e}");
+            }
+            poller.abort();
+        }
+        Err(e) => tracing::error!("cannot bind {addr}: {e}"),
+    }
+}
+
+/// Bind the loopback-only listener the connector dials.
+///
+/// A failure here is logged and dropped rather than fatal: the LAN product must
+/// keep working on a machine where something else already holds that port.
+fn spawn_remote_listener(state: &ServerState) {
+    let mut remote_state = state.clone();
+    remote_state.policy = crate::ingress::IngressPolicy::Remote;
+    let port = state.remote.port();
+    tokio::spawn(async move {
+        // 127.0.0.1 explicitly, never 0.0.0.0: the strict policy must not be
+        // something a caller on the LAN can choose to be judged by.
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
+                tracing::info!("threadknot remote ingress on {addr} (loopback only)");
+                let router = build_router(remote_state);
+                if let Err(e) = axum::serve(listener, router).await {
+                    tracing::error!("remote ingress error: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("remote ingress not available on {addr}: {e}"),
+        }
+    });
+}
+
+/// Bind the TLS listener paired machines dial (SEC-012).
+///
+/// Failure is logged, not fatal, for the same reason the strict listener's is:
+/// a machine where something else holds that port must still work as a solo
+/// desktop. What it loses is the mesh, and the peer list says so.
+fn spawn_mesh_listener(state: &ServerState) {
+    let mut mesh_state = state.clone();
+    mesh_state.policy = crate::ingress::IngressPolicy::Mesh;
+    let port = state.mesh_port();
+    let acceptor = match state.mesh.server_config() {
+        Ok(config) => tokio_rustls::TlsAcceptor::from(config),
+        Err(e) => {
+            tracing::error!("mesh listener disabled — cannot build TLS config: {e:#}");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!("mesh listener not available on {addr}: {e}");
+                return;
+            }
+        };
+        tracing::info!("threadknot mesh listener on {addr} (TLS, peer credentials only)");
+        let router = build_router(mesh_state);
+        let service = hyper_util::service::TowerToHyperService::new(router);
+        loop {
+            let Ok((tcp, _remote)) = listener.accept().await else {
+                continue;
+            };
+            let acceptor = acceptor.clone();
+            let service = service.clone();
+            // One task per connection, and a handshake failure is a debug line
+            // and nothing else: anything can connect to a TLS port and send
+            // garbage, and logging that at warn level hands a passer-by the
+            // ability to fill this machine's disk.
+            tokio::spawn(async move {
+                let Ok(tls) = acceptor.accept(tcp).await else {
+                    return;
+                };
+                let io = hyper_util::rt::TokioIo::new(tls);
+                // Both HTTP/1.1 and h2: the byte proxy is plain HTTP requests
+                // while `/ws`, `/term` and `/browser` need HTTP/1.1's upgrade
+                // mechanism, and `auto` picks per connection via ALPN.
+                let builder =
+                    hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
+                if let Err(e) = builder.serve_connection_with_upgrades(io, service).await {
+                    tracing::debug!("mesh connection ended: {e}");
+                }
+            });
+        }
+    });
+}
+
+/// The whole HTTP/WebSocket surface, assembled without binding a port — so the
+/// authorization matrix can drive the real handlers rather than a stand-in.
+pub fn build_router(state: ServerState) -> Router {
     let mut app = Router::new()
         .route("/ws", any(ws_handler))
         .route("/attachment", get(attachment_handler))
@@ -166,13 +441,40 @@ pub async fn run(state: ServerState) {
         .route("/file", get(crate::files::file_handler))
         .route("/term", any(crate::term::ws_handler))
         .route("/browser", any(crate::browser::ws_handler))
-        .route("/mcp", any(crate::mcp::mcp_handler))
         .route("/api/server-info", get(server_info_handler))
-        .route("/api/peer/pair", post(peer_pair_handler))
         .route("/api/mobile/pair", post(mobile_pair_handler))
         .route("/api/mobile/push", post(mobile_push_handler))
         .route("/api/mobile/push/test", post(mobile_push_test_handler))
-        .route("/api/mobile/unpair", post(mobile_unpair_handler));
+        .route("/api/mobile/unpair", post(mobile_unpair_handler))
+        // Exchange a pairing proof or a native device bearer for an opaque
+        // cookie, so a remote browser never has to hold a credential it can
+        // leak through a URL, a screenshot or an extension.
+        .route(
+            "/api/session",
+            post(session_bootstrap_handler).delete(session_signout_handler),
+        );
+
+    // `/mcp` hands a local agent this machine's tool surface and
+    // `/api/peer/identity` is the mesh pairing bootstrap. Neither is something a
+    // relay has any business carrying, so they are absent from the strict router
+    // rather than merely guarded on it.
+    if !state.policy.is_remote() {
+        app = app
+            .route("/mcp", any(crate::mcp::mcp_handler))
+            // Public identity: a certificate and a machine id, nothing secret.
+            // It lives on the plain-HTTP listener because it is the bootstrap —
+            // the caller has no certificate to verify against yet, which is
+            // precisely what this hands them.
+            .route("/api/peer/identity", get(peer_identity_handler));
+    }
+
+    // Pairing completes on the mesh listener, so the exchange is inside TLS.
+    // It authenticates by proof rather than by peer credential — a machine being
+    // paired for the first time does not have one yet — which is why it is a
+    // route rather than something `authenticate_ingress` handles.
+    if state.policy.is_mesh() {
+        app = app.route("/api/peer/pair", post(peer_pair_handler));
+    }
 
     if let Some(dist) = resolve_dist() {
         let index = dist.join("index.html");
@@ -194,30 +496,82 @@ pub async fn run(state: ServerState) {
         }));
     }
 
-    let app = app
-        .layer(axum::middleware::from_fn(cache_policy))
-        .layer(tower_http::cors::CorsLayer::permissive())
-        .with_state(state.clone());
+    let app = app.layer(axum::middleware::from_fn(cache_policy));
+    // Permissive CORS is a LAN convenience (curl, scripts, the dev server). The
+    // strict ingress ships no CORS headers at all, so a browser refuses to hand
+    // another origin's script the response — which is the only defence that
+    // still means anything once authentication is a cookie.
+    let app = if state.policy.is_remote() {
+        // The remote-off gate as a LAYER, not only inside `authenticate_ingress`.
+        //
+        // Two reasons it has to be here. The static bundle is served by
+        // `fallback_service`, which never calls `authenticate_ingress` — it
+        // cannot, since the shell must load before anyone can sign in — so with
+        // the check only at authentication time, turning remote access off still
+        // served 5 MB of JavaScript to anyone who resolved the hostname, and
+        // charged it to the owner's fair-use allowance. And a route added later
+        // that forgets to authenticate is covered by construction rather than by
+        // remembering.
+        app.layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            remote_enabled_gate,
+        ))
+        .layer(axum::middleware::from_fn(remote_security_headers))
+    } else {
+        app.layer(tower_http::cors::CorsLayer::permissive())
+    };
+    app.with_state(state)
+}
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], state.config.port));
-    tracing::info!("threadknot server on {addr} — LAN: {}", state.lan_url);
-    match tokio::net::TcpListener::bind(addr).await {
-        Ok(listener) => {
-            // Only the process that actually owns Threadknot's port may recover
-            // persisted in-flight turns. Doing this before bind would let an
-            // accidental second launch interrupt or duplicate live work.
-            state.hub.recover_orphaned_threads();
-            // Tie the presence poller to this server's lifetime: spawned now
-            // that the bind owns the port, and aborted when `serve` returns so
-            // a dead process never keeps probing gateways.
-            let poller = crate::hermes::spawn_status_poller(Arc::clone(&state.hub));
-            if let Err(e) = axum::serve(listener, app).await {
-                tracing::error!("server error: {e}");
-            }
-            poller.abort();
-        }
-        Err(e) => tracing::error!("cannot bind {addr}: {e}"),
+/// Refuse everything on the strict ingress while remote access is off.
+///
+/// "Off" has to mean off for *every* byte, not only for authenticated ones.
+async fn remote_enabled_gate(
+    State(state): State<ServerState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if !state.remote.enabled() {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "remote access is turned off for this machine",
+        )
+            .into_response();
     }
+    next.run(req).await
+}
+
+/// Response headers for the public origin.
+///
+/// Only on the strict ingress: HSTS on a plain-http LAN address would pin a
+/// browser to https for an origin that has none, which bricks the LAN UI for
+/// six months.
+async fn remote_security_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderName, HeaderValue};
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    let mut put = |name: HeaderName, value: &'static str| {
+        headers.insert(name, HeaderValue::from_static(value));
+    };
+    put(
+        header::STRICT_TRANSPORT_SECURITY,
+        "max-age=31536000; includeSubDomains",
+    );
+    // No referrer at all: the URL alone tells another site which installation
+    // and which thread someone is looking at.
+    put(header::REFERRER_POLICY, "no-referrer");
+    put(header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+    // `data:`/`blob:` are load-bearing here — sidebar art is stored as a data
+    // URL and recordings play from a blob. `frame-ancestors 'none'` is what
+    // stops a hostile page framing the UI and driving it with the user's cookie.
+    put(
+        header::CONTENT_SECURITY_POLICY,
+        "default-src 'self';          script-src 'self';          style-src 'self' 'unsafe-inline';          img-src 'self' data: blob:;          media-src 'self' data: blob:;          font-src 'self' data:;          connect-src 'self' ws: wss:;          object-src 'none';          base-uri 'none';          form-action 'none';          frame-ancestors 'none'",
+    );
+    resp
 }
 
 /// Cache policy for the bundled web UI.
@@ -262,11 +616,23 @@ pub(crate) async fn proxy_peer_bytes(
     machine_id: &str,
     endpoint: &str,
     params: &HashMap<String, String>,
+    on_behalf_of: Option<Vec<Capability>>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     let Some(peer) = state.peernet.registry.peer(machine_id) else {
         return (StatusCode::NOT_FOUND, "unknown machine").into_response();
     };
+    if peer.needs_upgrade() {
+        return (
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "{} was paired before Threadknot encrypted mesh connections — update Threadknot \
+                 on that machine, then pair the two again",
+                peer.name
+            ),
+        )
+            .into_response();
+    }
     let Some(addr) = peer
         .last_good_address
         .clone()
@@ -274,23 +640,37 @@ pub(crate) async fn proxy_peer_bytes(
     else {
         return (StatusCode::BAD_GATEWAY, "no known address for that machine").into_response();
     };
+    // Every credential-bearing key is stripped and none is added: the peer's
+    // credential rides an `Authorization` header, so nothing authenticating
+    // appears in this URL at all.
     let query: Vec<(String, String)> = params
         .iter()
-        .filter(|(k, _)| k.as_str() != "token" && k.as_str() != "machineId")
+        .filter(|(k, _)| !crate::ingress::is_credential_query_key(k) && k.as_str() != "machineId")
         .map(|(k, v)| (k.clone(), v.clone()))
-        .chain(std::iter::once(("token".to_string(), peer.token.clone())))
         .collect();
+    let client = match state.peernet.byte_client(&peer, &addr) {
+        Ok(client) => client,
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY, format!("peer TLS setup failed: {e:#}"))
+                .into_response()
+        }
+    };
+    // The synthetic mesh name, resolved to `addr` by the client built above, so
+    // the certificate check proves identity while the address stays disposable.
     let url = format!(
-        "http://{}{endpoint}",
-        crate::peernet::host_port(&addr, peer.port)
+        "https://{}:{}{endpoint}",
+        crate::mesh::mesh_dns_name(&peer.machine_id),
+        peer.mesh_port
     );
-    let resp = match crate::hermes::http_client()
+    let mut request = client
         .get(&url)
         .query(&query)
         .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await
-    {
+        .header("authorization", format!("Bearer {}", peer.outbound_credential));
+    if let Some(value) = crate::ingress::mesh_grants_header_value(on_behalf_of.as_deref()) {
+        request = request.header(crate::ingress::MESH_GRANTS_HEADER, value);
+    }
+    let resp = match request.send().await {
         Ok(r) => r,
         Err(e) => {
             return (StatusCode::BAD_GATEWAY, format!("peer fetch failed: {e}")).into_response()
@@ -314,8 +694,15 @@ pub(crate) async fn proxy_peer_bytes(
 
 /// If the request names a peer machine, stream it from there instead of
 /// serving locally. Returns None when the request is local.
-async fn maybe_proxy_bytes(
+///
+/// The `mesh` check runs HERE, on this side, so a device that may not reach
+/// other machines is refused where its identity is still known. It is no longer
+/// the *only* check — the caller's grants now travel with the request and the far
+/// side enforces them too — but keeping it means a denial is reported by the
+/// machine the person is actually talking to.
+pub(crate) async fn maybe_proxy_bytes(
     state: &ServerState,
+    principal: &Principal,
     endpoint: &str,
     params: &HashMap<String, String>,
 ) -> Option<axum::response::Response> {
@@ -323,7 +710,35 @@ async fn maybe_proxy_bytes(
     if mid == &state.device.machine_id {
         return None;
     }
-    Some(proxy_peer_bytes(state, mid, endpoint, params).await)
+    if let Err(e) = principal.require(Capability::Mesh) {
+        return Some(forbidden(e));
+    }
+    Some(proxy_peer_bytes(state, mid, endpoint, params, principal.mesh_assertion()).await)
+}
+
+/// A capability refusal as an HTTP response. Deliberately says *what* was
+/// missing: the person holding the phone can only fix this on the desktop, and
+/// a silent 404 would read as a bug.
+pub(crate) fn forbidden(error: anyhow::Error) -> axum::response::Response {
+    (axum::http::StatusCode::FORBIDDEN, format!("{error:#}")).into_response()
+}
+
+/// Resolve the principal for a byte endpoint and check the grant it needs.
+/// `Err` is the response to return.
+pub(crate) fn authorize_bytes(
+    state: &ServerState,
+    headers: &axum::http::HeaderMap,
+    params: &HashMap<String, String>,
+    capability: Capability,
+) -> Result<Principal, Box<axum::response::Response>> {
+    let authenticated = state
+        .authenticate_ingress(headers, params)
+        .map_err(|r| Box::new(r.into_response()))?;
+    authenticated
+        .principal
+        .require(capability)
+        .map_err(|e| Box::new(forbidden(e)))?;
+    Ok(authenticated.principal)
 }
 
 /// Serve a stored attachment (token-gated) so the transcript can render
@@ -331,15 +746,16 @@ async fn maybe_proxy_bytes(
 async fn attachment_handler(
     State(state): State<ServerState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
-    if state
-        .authenticate(params.get("token").map(String::as_str).unwrap_or(""))
-        .is_none()
-    {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
-    }
-    if let Some(resp) = maybe_proxy_bytes(&state, "/attachment", &params).await {
+    // An attachment is chat content, so it rides with the `threads` grant
+    // rather than with project file access.
+    let principal = match authorize_bytes(&state, &headers, &params, Capability::Threads) {
+        Ok(p) => p,
+        Err(resp) => return *resp,
+    };
+    if let Some(resp) = maybe_proxy_bytes(&state, &principal, "/attachment", &params).await {
         return resp;
     }
     let (Some(thread), Some(id)) = (params.get("thread"), params.get("id")) else {
@@ -348,15 +764,34 @@ async fn attachment_handler(
     let Some(path) = state.hub.store.attachment_path(thread, id) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
-    let Ok(bytes) = std::fs::read(&path) else {
+    // Streamed, not read into memory: see `files::stream_range`.
+    let Ok((file, total)) = open_with_len(&path) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    (
-        [(axum::http::header::CONTENT_TYPE, crate::store::mime_for_ext(ext))],
-        bytes,
-    )
-        .into_response()
+    match axum::response::Response::builder()
+        .header(axum::http::header::CONTENT_TYPE, crate::store::mime_for_ext(ext))
+        .header(axum::http::header::CONTENT_LENGTH, total)
+        .body(crate::files::stream_range(file, 0, total))
+    {
+        Ok(r) => r,
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "response error").into_response(),
+    }
+}
+
+/// Open a file and read its length in one step, so a streamed response can still
+/// declare `Content-Length`.
+fn open_with_len(path: &std::path::Path) -> std::io::Result<(std::fs::File, u64)> {
+    let file = std::fs::File::open(path)?;
+    let meta = file.metadata()?;
+    // A directory opens successfully on Unix and only fails on the first read.
+    if !meta.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a file",
+        ));
+    }
+    Ok((file, meta.len()))
 }
 
 /// Serve a produced artifact's durable snapshot (token-gated). Unlike `/file`,
@@ -368,13 +803,11 @@ async fn artifact_file_handler(
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     use axum::http::{header, HeaderValue, StatusCode};
-    if state
-        .authenticate(params.get("token").map(String::as_str).unwrap_or(""))
-        .is_none()
-    {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
-    }
-    if let Some(resp) = maybe_proxy_bytes(&state, "/artifact-file", &params).await {
+    let principal = match authorize_bytes(&state, &headers, &params, Capability::Files) {
+        Ok(p) => p,
+        Err(resp) => return *resp,
+    };
+    if let Some(resp) = maybe_proxy_bytes(&state, &principal, "/artifact-file", &params).await {
         return resp;
     }
     let Some(id) = params.get("id") else {
@@ -386,7 +819,10 @@ async fn artifact_file_handler(
     let Some(path) = state.hub.store.artifact_snapshot_path(&rec.thread_id, id) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
-    let Ok(bytes) = std::fs::read(&path) else {
+    // Streamed, not read into memory: see `files::stream_range`. This one matters
+    // most — an artifact is often a screen recording, and a range request from a
+    // <video> element used to read the entire file to serve a few hundred KB of it.
+    let Ok((file, total)) = open_with_len(&path) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
     // Records written before a type was recognized carry the octet-stream
@@ -409,7 +845,6 @@ async fn artifact_file_handler(
 
     // Range support exists for video: without it a <video> element cannot seek,
     // so scrubbing a recorded walkthrough silently does nothing.
-    let total = bytes.len() as u64;
     let range = headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
@@ -427,20 +862,18 @@ async fn artifact_file_handler(
         resp = resp.header(header::CONTENT_DISPOSITION, disposition);
     }
 
-    let (status, body) = match range {
+    let (status, start, len) = match range {
         Some((start, end)) => {
             resp = resp.header(
                 header::CONTENT_RANGE,
                 format!("bytes {start}-{end}/{total}"),
             );
-            (
-                StatusCode::PARTIAL_CONTENT,
-                bytes[start as usize..=end as usize].to_vec(),
-            )
+            (StatusCode::PARTIAL_CONTENT, start, end - start + 1)
         }
-        None => (StatusCode::OK, bytes),
+        None => (StatusCode::OK, 0, total),
     };
-    match resp.status(status).body(axum::body::Body::from(body)) {
+    resp = resp.header(header::CONTENT_LENGTH, len);
+    match resp.status(status).body(crate::files::stream_range(file, start, len)) {
         Ok(r) => r,
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "response error").into_response(),
     }
@@ -655,6 +1088,20 @@ async fn build_agents_info(
     ]
 }
 
+/// The grant set a Master-authenticated payload asked for, defaulting to
+/// [`crate::mobile::default_capabilities`] when the key is absent. Unknown names
+/// are dropped, so a client can never widen the set by inventing one.
+fn requested_capabilities(payload: &Value) -> Vec<Capability> {
+    match payload.get("capabilities").and_then(|v| v.as_array()) {
+        Some(list) => crate::mobile::normalize_capabilities(
+            list.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(Capability::parse),
+        ),
+        None => crate::mobile::default_capabilities(),
+    }
+}
+
 /// Bearer credential from the Authorization header, falling back to a JSON
 /// body field — RN fetch on the phone sends the header; curl smoke tests
 /// often find the body easier.
@@ -674,11 +1121,10 @@ fn bearer_or_field(headers: &axum::http::HeaderMap, body: &Value, key: &str) -> 
 async fn server_info_handler(
     State(state): State<ServerState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
-    use axum::http::StatusCode;
-    let token = params.get("token").map(String::as_str).unwrap_or("");
-    if state.authenticate(token).is_none() {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    if let Err(rejection) = state.authenticate_ingress(&headers, &params) {
+        return rejection.into_response();
     }
     axum::Json(json!({
         "app": "threadknot",
@@ -689,24 +1135,55 @@ async fn server_info_handler(
     .into_response()
 }
 
-/// `POST /api/peer/pair` — the receiving half of mutual one-paste pairing.
-/// The initiating Threadknot authenticates with OUR master token (the paste) and
-/// sends its own identity INCLUDING its master token; we store it as a peer
-/// and answer with our identity. After one call, both sides hold each
-/// other's tokens: full mutual trust.
+/// `GET /api/peer/identity` — the public half of pairing.
+///
+/// Unauthenticated and deliberately so: everything it returns is public
+/// information — a machine id, a display name, a certificate authority, a port.
+/// A certificate is not a secret; its whole job is to be handed out.
+///
+/// It also mints a single-use challenge. That is what turns the *next* request
+/// into a proof of the master token rather than a transmission of it, and what
+/// binds the proof to the certificate the caller actually saw. See
+/// `mesh::pairing_proof`.
+async fn peer_identity_handler(State(state): State<ServerState>) -> axum::response::Response {
+    axum::Json(json!({
+        "machineId": state.device.machine_id,
+        "name": state.device.friendly_name(),
+        "avatar": state.device.avatar(),
+        "color": state.device.color(),
+        "profileUpdatedAt": state.device.profile_updated_at(),
+        "port": state.config.port,
+        "meshPort": state.mesh_port(),
+        "meshCa": state.mesh.ca_pem,
+        "meshVersion": crate::device::MESH_VERSION,
+        "addresses": crate::peernet::local_addresses(),
+        "challenge": state.pairing_challenges.issue(),
+    }))
+    .into_response()
+}
+
+/// `POST /api/peer/pair` — the receiving half of mutual pairing, over TLS.
+///
+/// The exchange this replaced sent each machine's **master token** to the other
+/// and stored it as the peer credential forever. Now:
+///
+/// * the initiator proves it knows our master token without sending it, and the
+///   proof is bound to the certificate it saw, so intercepting the identity
+///   fetch and substituting a certificate does not yield a usable proof;
+/// * what is actually exchanged is a pair of freshly minted, independently
+///   rotatable per-link credentials;
+/// * it runs on the mesh listener, so the whole exchange is inside TLS.
+///
+/// Mounted on the mesh router but authenticating by proof rather than by peer
+/// credential — a machine being paired for the first time does not have one yet.
 async fn peer_pair_handler(
     State(state): State<ServerState>,
-    headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
-    let Some(token) = bearer_or_field(&headers, &body, "token") else {
-        return (StatusCode::UNAUTHORIZED, "missing token").into_response();
-    };
-    if state.authenticate(&token) != Some(Principal::Master) {
-        return (StatusCode::UNAUTHORIZED, "pairing requires this server's master token")
-            .into_response();
-    }
+    let get = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let (machine_id, challenge, proof) = (get("machineId"), get("challenge"), get("proof"));
+
     let mesh_version = body.get("meshVersion").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     if mesh_version != crate::device::MESH_VERSION {
         return (
@@ -718,19 +1195,65 @@ async fn peer_pair_handler(
         )
             .into_response();
     }
-    let get = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let (machine_id, peer_token) = (get("machineId"), get("peerToken"));
-    if machine_id.is_empty() || peer_token.is_empty() {
-        return (StatusCode::BAD_REQUEST, "missing machineId/peerToken").into_response();
+    if machine_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing machineId").into_response();
     }
     if machine_id == state.device.machine_id {
         return (StatusCode::BAD_REQUEST, "a machine cannot pair with itself").into_response();
     }
+    // Challenge first: single-use and short-lived, so a captured proof is dead
+    // before it can be replayed and there is nothing to grind against.
+    if !state.pairing_challenges.redeem(&challenge) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "pairing challenge expired or already used — start pairing again",
+        )
+            .into_response();
+    }
+    let expected = crate::mesh::pairing_proof(
+        &state.config.token,
+        &challenge,
+        &machine_id,
+        &state.mesh.ca_pem,
+    );
+    if !crate::mesh::constant_time_eq(&expected, &proof) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "pairing proof did not verify — check the token, and that nothing is intercepting the \
+             connection",
+        )
+            .into_response();
+    }
+
+    let peer_ca = get("meshCa");
+    let peer_mesh_port = body.get("meshPort").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+    let their_credential_for_us = get("credentialForYou");
+    if peer_ca.is_empty() || peer_mesh_port == 0 || their_credential_for_us.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "missing meshCa/meshPort/credentialForYou",
+        )
+            .into_response();
+    }
+    // Refuse a CA we cannot build a trust anchor from, here rather than at the
+    // first connection attempt: a pair that looks successful and then never
+    // connects is a much worse failure than a pairing that says no.
+    if let Err(e) = crate::mesh::client_config_for_ca(&peer_ca) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("that machine sent an unusable certificate: {e:#}"),
+        )
+            .into_response();
+    }
+
     let addresses: Vec<String> = body
         .get("addresses")
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
         .unwrap_or_default();
+    // The credential THEY will present to US. Minted here, hashed here, and the
+    // plaintext leaves exactly once — in the response below.
+    let our_credential_for_them = crate::mesh::mint_credential();
     let peer = crate::peers::Peer {
         machine_id,
         name: {
@@ -747,7 +1270,10 @@ async fn peer_pair_handler(
             .get("profileUpdatedAt")
             .and_then(|v| v.as_str())
             .map(String::from),
-        token: peer_token,
+        outbound_credential: their_credential_for_us,
+        inbound_credential_hash: crate::mesh::hash_credential(&our_credential_for_them),
+        mesh_ca: peer_ca,
+        mesh_port: peer_mesh_port,
         port: body.get("port").and_then(|v| v.as_u64()).unwrap_or(42800) as u16,
         addresses,
         last_good_address: None,
@@ -766,8 +1292,13 @@ async fn peer_pair_handler(
                 "color": state.device.color(),
                 "profileUpdatedAt": state.device.profile_updated_at(),
                 "port": state.config.port,
+                "meshPort": state.mesh_port(),
+                "meshCa": state.mesh.ca_pem,
                 "meshVersion": crate::device::MESH_VERSION,
                 "addresses": crate::peernet::local_addresses(),
+                // Their half of the exchange. Sent once, over TLS, and stored
+                // here only as a hash.
+                "credentialForYou": our_credential_for_them,
             }))
             .into_response()
         }
@@ -786,9 +1317,13 @@ async fn mobile_pair_handler(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     let scanned = body.get("pairingCode").and_then(|v| v.as_str());
-    match scanned {
-        Some(code) => {
-            if !state.mobile.redeem_pairing(code) {
+    // Authority comes from the pairing proof, never from the joining client's
+    // request body: a scanned code carries exactly the grants the owner bound
+    // to it, and only a caller already holding the master token may name a set.
+    let capabilities = match scanned {
+        Some(code) => match state.mobile.redeem_pairing(code) {
+            Some(granted) => granted,
+            None => {
                 // One message for wrong/expired/already-used: which one it was
                 // is not something an unauthenticated caller should learn.
                 return (
@@ -797,8 +1332,18 @@ async fn mobile_pair_handler(
                 )
                     .into_response();
             }
-        }
+        },
         None => {
+            // The master-token path is a LAN convenience (paste the printed
+            // URL). Remotely there is no legitimate way to be holding that
+            // token, so a scanned code is the only accepted proof.
+            if state.policy.is_remote() {
+                return (
+                    StatusCode::FORBIDDEN,
+                    "pair with a one-time code — the master token is not accepted remotely",
+                )
+                    .into_response();
+            }
             let Some(token) = bearer_or_field(&headers, &body, "token") else {
                 return (StatusCode::UNAUTHORIZED, "missing token").into_response();
             };
@@ -806,8 +1351,9 @@ async fn mobile_pair_handler(
                 return (StatusCode::UNAUTHORIZED, "pairing requires the server's master token")
                     .into_response();
             }
+            requested_capabilities(&body)
         }
-    }
+    };
     let name = body
         .get("deviceName")
         .and_then(|v| v.as_str())
@@ -822,7 +1368,7 @@ async fn mobile_pair_handler(
         .chars()
         .take(16)
         .collect::<String>();
-    match state.mobile.pair(name, platform) {
+    match state.mobile.pair(name, platform, capabilities) {
         Ok((device, credential)) => {
             state.hub.broadcast_state("mobileDevices", None);
             axum::Json(json!({
@@ -831,11 +1377,157 @@ async fn mobile_pair_handler(
                 "version": env!("THREADKNOT_VERSION"),
                 "deviceId": device.id,
                 "credential": credential,
+                "capabilities": device
+                    .capabilities
+                    .iter()
+                    .map(|c| c.as_str())
+                    .collect::<Vec<_>>(),
             }))
             .into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response(),
     }
+}
+
+/// `POST /api/session` — pairing proof or native bearer in, opaque cookie out.
+///
+/// This is the endpoint that lets credentials leave URLs (SEC-006). A remote
+/// browser presents a one-time pairing code exactly once; from then on it holds
+/// an `HttpOnly` cookie it cannot read, cannot copy out of the address bar, and
+/// cannot leak through a `Referer`. The CSRF token in the response body is the
+/// half the page *is* meant to hold, and is derived from the cookie, so a page
+/// on another origin cannot compute it.
+///
+/// Strict ingress only. The cookie is `Secure`, so a browser on the plain-http
+/// LAN address would silently drop it; the LAN keeps its query token during the
+/// migration window instead of getting a session that half works.
+async fn session_bootstrap_handler(
+    State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<Value>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    if !state.policy.is_remote() {
+        return (
+            StatusCode::NOT_FOUND,
+            "browser sessions are for remote connections; this one authenticates by token",
+        )
+            .into_response();
+    }
+    if !state.remote.enabled() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "remote access is turned off for this machine",
+        )
+            .into_response();
+    }
+    if !ws_origin_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+
+    // Either a scanned pairing code (first visit) or the credential a native
+    // shell already holds (re-establishing a session for its WebView).
+    let device = match body.get("pairingCode").and_then(|v| v.as_str()) {
+        Some(code) => {
+            let Some(capabilities) = state.mobile.redeem_pairing(code) else {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    "that pairing code is expired or already used — show a fresh QR",
+                )
+                    .into_response();
+            };
+            let name = body
+                .get("deviceName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Remote browser")
+                .chars()
+                .take(64)
+                .collect::<String>();
+            let platform = body
+                .get("platform")
+                .and_then(|v| v.as_str())
+                .unwrap_or("browser")
+                .chars()
+                .take(16)
+                .collect::<String>();
+            match state.mobile.pair(name, platform, capabilities) {
+                Ok((device, _credential)) => {
+                    // The plaintext credential is deliberately dropped here. A
+                    // browser gets a cookie; only the native shell, which has a
+                    // keychain to put it in, gets a bearer token.
+                    state.hub.broadcast_state("mobileDevices", None);
+                    device
+                }
+                Err(e) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response()
+                }
+            }
+        }
+        None => {
+            let Some(token) = crate::ingress::bearer(&headers) else {
+                return (StatusCode::UNAUTHORIZED, "missing pairing code or credential")
+                    .into_response();
+            };
+            match state.authenticate(&token) {
+                Some(Principal::Device(grant)) => match state.mobile.device(&grant.id) {
+                    Some(device) => device,
+                    None => {
+                        return (StatusCode::UNAUTHORIZED, "unknown or revoked device")
+                            .into_response()
+                    }
+                },
+                // Including a valid master token: it never becomes a remote session.
+                _ => {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        "only a paired device credential can open a remote session",
+                    )
+                        .into_response()
+                }
+            }
+        }
+    };
+
+    let cookie = state.browser_sessions.issue(&device.id);
+    let csrf = crate::ingress::csrf_token(&cookie);
+    let body = json!({
+        "deviceId": device.id,
+        "deviceName": device.name,
+        "capabilities": device.capabilities.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+        "csrf": csrf,
+        "serverId": state.config.server_id,
+        "serverName": state.server_name(),
+        "version": env!("THREADKNOT_VERSION"),
+    });
+    (
+        [(
+            axum::http::header::SET_COOKIE,
+            crate::ingress::session_cookie_header(&cookie),
+        )],
+        axum::Json(body),
+    )
+        .into_response()
+}
+
+/// `DELETE /api/session` — sign this browser out and drop the stored session.
+async fn session_signout_handler(
+    State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    if let Some(cookie) = crate::ingress::cookie_value(&headers, crate::ingress::SESSION_COOKIE) {
+        if let Some(device_id) = state.browser_sessions.resolve(&cookie) {
+            state.browser_sessions.revoke_device(&device_id);
+            state.sessions.close_device(&device_id);
+        }
+    }
+    (
+        [(
+            axum::http::header::SET_COOKIE,
+            crate::ingress::clear_cookie_header(),
+        )],
+        axum::Json(json!({})),
+    )
+        .into_response()
 }
 
 /// Resolve the calling device from its credential (mobile-only endpoints).
@@ -845,11 +1537,31 @@ fn device_from_request(
     body: &Value,
 ) -> Result<String, Box<axum::response::Response>> {
     use axum::http::StatusCode;
-    let token = bearer_or_field(headers, body, "credential").ok_or_else(|| {
+    // A remote browser authenticates by cookie, which the browser attaches on
+    // the strength of the URL alone — so it, and only it, needs the
+    // double-submit proof that the caller is a page we served.
+    if let Some(cookie) = crate::ingress::cookie_value(headers, crate::ingress::SESSION_COOKIE) {
+        if let Some(device_id) = state.browser_sessions.resolve(&cookie) {
+            if !crate::ingress::csrf_ok(crate::ingress::AuthKind::Cookie, headers) {
+                return Err(Box::new(
+                    (StatusCode::FORBIDDEN, "missing or stale CSRF token").into_response(),
+                ));
+            }
+            return Ok(device_id);
+        }
+    }
+    let token = if state.policy.is_remote() {
+        // No body-field credentials remotely: the header is the one place a
+        // credential can travel without ending up somewhere it gets copied.
+        crate::ingress::bearer(headers)
+    } else {
+        bearer_or_field(headers, body, "credential")
+    }
+    .ok_or_else(|| {
         Box::new((StatusCode::UNAUTHORIZED, "missing credential").into_response())
     })?;
     match state.authenticate(&token) {
-        Some(Principal::Device(id)) => Ok(id),
+        Some(Principal::Device(grant)) => Ok(grant.id),
         _ => Err(Box::new(
             (StatusCode::UNAUTHORIZED, "unknown or revoked device").into_response(),
         )),
@@ -958,6 +1670,7 @@ async fn mobile_unpair_handler(
     };
     match state.mobile.revoke(&device_id) {
         Ok(()) => {
+            state.close_device_sessions(&device_id);
             state.hub.broadcast_state("mobileDevices", None);
             axum::Json(json!({})).into_response()
         }
@@ -968,13 +1681,43 @@ async fn mobile_unpair_handler(
 async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
     State(state): State<ServerState>,
 ) -> impl IntoResponse {
-    let token = params.get("token").map(String::as_str).unwrap_or("");
-    let Some(principal) = state.authenticate(token) else {
-        return (axum::http::StatusCode::UNAUTHORIZED, "bad token").into_response();
+    use axum::http::StatusCode;
+    if !ws_origin_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+    let principal = match state.authenticate_ingress(&headers, &params) {
+        Ok(authenticated) => authenticated.principal,
+        Err(rejection) => return rejection.into_response(),
     };
-    ws.on_upgrade(move |socket| handle_socket(socket, state, principal))
+    // Admitted before the upgrade, because a refusal after it can only be a
+    // close frame with no explanation in it (SEC-014).
+    let guard = match state.sessions.try_register(
+        &principal,
+        state.policy,
+        crate::sessions::SessionKind::App,
+    ) {
+        Ok(guard) => guard,
+        Err(e) => return (StatusCode::TOO_MANY_REQUESTS, format!("{e:#}")).into_response(),
+    };
+    // A frame larger than this is refused from its header, before its payload is
+    // read, so an oversized frame costs a disconnect rather than an allocation.
+    ws.max_message_size(crate::limits::MAX_WS_MESSAGE_BYTES)
+        .max_frame_size(crate::limits::MAX_WS_MESSAGE_BYTES)
+        .on_upgrade(move |socket| async move {
+            // Revoking the device (or narrowing its grants) drops this future,
+            // which drops the socket — the connection closes without waiting for
+            // the client to notice.
+            tokio::select! {
+                _ = handle_socket(socket, state.clone(), principal.clone()) => {}
+                _ = guard.closed() => {
+                    tracing::info!("closing app socket: session revoked");
+                }
+            }
+        })
+        .into_response()
 }
 
 /// How many requests one socket may have in flight at once. High enough that
@@ -982,12 +1725,42 @@ async fn ws_handler(
 /// can't spawn unbounded work.
 const MAX_INFLIGHT_REQUESTS: usize = 32;
 
+/// A spawned task that must not outlive the socket it serves.
+///
+/// Dropping a `JoinHandle` only detaches the task, and both of this socket's
+/// helpers park on channels that a revoked connection never closes — so without
+/// this, "revoke closes the socket" would leave the writer holding the sink open
+/// and the fan-out subscribed to the hub forever.
+struct TaskGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for TaskGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn handle_socket(socket: WebSocket, state: ServerState, principal: Principal) {
+    use crate::limits::{self, Enqueued, FrameClass};
+
     let (mut sink, mut stream) = socket.split();
     let mut events = state.hub.broadcast.subscribe();
     let mut relayed = state.hub.relay.subscribe();
 
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // Bounded, and the bound is the point (SEC-014). This channel used to be
+    // unbounded, so a client that stopped reading its socket — a phone whose
+    // screen locked mid-turn, a tab the OS froze, a relay hop that stalled —
+    // grew this process's heap for as long as the agent kept talking. That heap
+    // is on the workstation its owner is sitting at.
+    let (out_tx, mut out_rx) =
+        tokio::sync::mpsc::channel::<String>(limits::OUTBOUND_QUEUE_FRAMES);
+
+    // Set when a frame that MUST be delivered could not be queued. See the
+    // policy note on `crate::limits::enqueue`: a response cannot be dropped,
+    // because the client is blocked on its id and would wait forever, and a
+    // persisted event cannot be dropped, because it carries status the UI has no
+    // other way to learn. Both therefore end the connection instead, which is
+    // recoverable — the client reconnects, replays and reissues.
+    let hangup = Arc::new(tokio::sync::Notify::new());
 
     // The thread this socket is currently displaying, learned from its
     // `thread.get` calls. Streaming deltas (seq < 0) for any OTHER thread are
@@ -995,51 +1768,79 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
     // — on a phone or a tunnel that firehose is what starves the response the
     // user is actually waiting on.
     let viewing: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let writer_viewing = viewing.clone();
 
-    // Writer: multiplex responses, local broadcasts, and frames relayed from
-    // peer machines (pre-serialized, origin-tagged) onto the socket.
-    let writer = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                msg = out_rx.recv() => {
-                    let Some(msg) = msg else { break };
-                    if sink.send(Message::Text(msg.into())).await.is_err() { break; }
-                }
-                ev = events.recv() => {
-                    match ev {
+    // Writer: nothing but "take the next queued frame and write it". It is
+    // deliberately the only task that touches the sink and the only one that
+    // blocks on a slow client, so the fan-out below stays free to keep draining
+    // the hub's broadcast — which is what stops a stalled sink turning into
+    // indiscriminate broadcast lag that loses persisted events along with deltas.
+    let _writer = TaskGuard(tokio::spawn(async move {
+        while let Some(msg) = out_rx.recv().await {
+            if sink.send(Message::Text(msg.into())).await.is_err() {
+                break;
+            }
+        }
+    }));
+
+    // Fan-out: local broadcasts and frames relayed from peer machines
+    // (pre-serialized, origin-tagged), classified and queued under the policy
+    // for their class.
+    let _fanout = TaskGuard(tokio::spawn({
+        let out_tx = out_tx.clone();
+        let viewing = Arc::clone(&viewing);
+        let hangup = Arc::clone(&hangup);
+        async move {
+            loop {
+                let (text, class) = tokio::select! {
+                    ev = events.recv() => match ev {
                         Ok(ev) => {
-                            if let ServerMessage::Event { thread_id, seq, .. } = &ev {
+                            let class = match &ev {
                                 // Persisted events (seq >= 0) always go out: they drive
                                 // status, attention badges and notifications for threads
                                 // the client isn't looking at. Deltas do not.
-                                if *seq < 0
-                                    && writer_viewing.lock().unwrap().as_deref()
+                                ServerMessage::Event { thread_id, seq, .. } if *seq < 0 => {
+                                    if viewing.lock().unwrap().as_deref()
                                         != Some(thread_id.as_str())
-                                {
-                                    continue;
+                                    {
+                                        continue;
+                                    }
+                                    FrameClass::Delta
                                 }
-                            }
-                            if let Ok(text) = serde_json::to_string(&ev) {
-                                if sink.send(Message::Text(text.into())).await.is_err() { break; }
+                                _ => FrameClass::Persisted,
+                            };
+                            match serde_json::to_string(&ev) {
+                                Ok(text) => (text, class),
+                                Err(_) => continue,
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        // Lagged means the hub outran this socket by more than the
+                        // shared ring, and there is no way to tell whether what it
+                        // skipped was deltas or persisted state. Disconnecting on it
+                        // would put any client slower than a streaming turn into a
+                        // reconnect loop, so this stays a gap the next `thread.get`
+                        // repairs — the queue below is what the bound is for.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::debug!("app socket lagged the hub by {n} event(s)");
+                            continue;
+                        }
                         Err(_) => break,
-                    }
-                }
-                ev = relayed.recv() => {
-                    match ev {
+                    },
+                    ev = relayed.recv() => match ev {
                         Ok(text) => {
-                            if sink.send(Message::Text(text.into())).await.is_err() { break; }
+                            let class = relayed_frame_class(&text);
+                            (text, class)
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
-                    }
+                    },
+                };
+                if limits::enqueue(&out_tx, text, class).await == Enqueued::Hangup {
+                    hangup.notify_one();
+                    break;
                 }
             }
         }
-    });
+    }));
 
     // Requests run concurrently. Handling them inline used to serialize the
     // socket: one slow call (a git shell-out, a request routed to a sluggish
@@ -1048,7 +1849,22 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
     // correlates responses by id and orders anything order-sensitive with its
     // own awaits, so out-of-order completion is safe.
     let inflight = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_REQUESTS));
-    while let Some(Ok(msg)) = stream.next().await {
+    // Per connection rather than per principal, so the check is a float compare
+    // against a local and never a lock on the hottest path in the process. What
+    // bounds a principal is this rate multiplied by its connection cap.
+    let mut rate = limits::TokenBucket::new(limits::WS_REQUESTS_PER_SECOND, limits::WS_REQUEST_BURST);
+    loop {
+        let msg = tokio::select! {
+            biased;
+            _ = hangup.notified() => {
+                tracing::info!("closing app socket: client is not draining its own frames");
+                break;
+            }
+            msg = stream.next() => msg,
+        };
+        // A frame over `MAX_WS_MESSAGE_BYTES` arrives here as an error, having
+        // been refused from its length header rather than buffered.
+        let Some(Ok(msg)) = msg else { break };
         let Message::Text(text) = msg else { continue };
         let Ok(req) = serde_json::from_str::<ClientRequest>(&text) else {
             continue;
@@ -1061,12 +1877,36 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
                 *viewing.lock().unwrap() = Some(tid.to_string());
             }
         }
+        if !rate.take() {
+            // Answered rather than dropped: the client is waiting on this id, and
+            // a refusal it can read and back off from beats a socket that goes
+            // quiet. Named limits, because the only person who can act on this is
+            // whoever is looking at the screen.
+            let frame = ServerMessage::Response {
+                id,
+                ok: false,
+                data: None,
+                error: Some(format!(
+                    "rate limit: at most {} requests per second on one connection (burst {})",
+                    limits::WS_REQUESTS_PER_SECOND as u64, limits::WS_REQUEST_BURST as u64
+                )),
+            };
+            if let Ok(text) = serde_json::to_string(&frame) {
+                if limits::enqueue(&out_tx, text, FrameClass::Response).await == Enqueued::Hangup {
+                    break;
+                }
+            }
+            continue;
+        }
         let Ok(permit) = inflight.clone().acquire_owned().await else {
             break;
         };
         let state = state.clone();
-        let principal = principal.clone();
+        // A peer socket carries requests from every client on that machine, so
+        // the authority is resolved per frame rather than once at upgrade.
+        let principal = effective_principal(&principal, &req);
         let out_tx = out_tx.clone();
+        let hangup = Arc::clone(&hangup);
         tokio::spawn(async move {
             let _permit = permit;
             let frame = match handle_request(&state, &principal, req).await {
@@ -1084,11 +1924,69 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
                 },
             };
             if let Ok(text) = serde_json::to_string(&frame) {
-                let _ = out_tx.send(text);
+                if limits::enqueue(&out_tx, text, FrameClass::Response).await == Enqueued::Hangup {
+                    hangup.notify_one();
+                }
             }
         });
     }
-    writer.abort();
+    // The two `TaskGuard`s abort here, which drops the sink and closes the
+    // socket; the session guard in `ws_handler` deregisters on the way out.
+}
+
+/// The class of a frame relayed from a peer machine.
+///
+/// These arrive already serialized, so the alternative to a targeted parse is to
+/// treat every one of them as undroppable — which would let a peer's streaming
+/// firehose disconnect a slow client that was only ever behind on deltas. The
+/// shape read here is a subset of `ServerMessage::Event`; anything else, including
+/// anything unparseable, is treated as state and therefore never dropped.
+fn relayed_frame_class(text: &str) -> crate::limits::FrameClass {
+    #[derive(serde::Deserialize)]
+    struct Shape {
+        #[serde(rename = "type")]
+        kind: Option<String>,
+        seq: Option<i64>,
+    }
+    match serde_json::from_str::<Shape>(text) {
+        Ok(shape) if shape.kind.as_deref() == Some("event") && shape.seq.unwrap_or(0) < 0 => {
+            crate::limits::FrameClass::Delta
+        }
+        _ => crate::limits::FrameClass::Persisted,
+    }
+}
+
+/// Resolve the authority one frame carries.
+///
+/// For everything except a peer this is the connection's own principal, and the
+/// frame's `mesh` field is **discarded** — that discard is the security property.
+/// A phone can put any assertion it likes in a frame; only a socket that
+/// authenticated with a peer credential has its assertion read.
+///
+/// For a peer, an absent assertion means "that machine's owner". That is a
+/// widening relative to the connection default (`authenticate` starts a peer with
+/// no grants at all), and deliberately so: the connection default exists to make
+/// a handler that forgets to call this function powerless rather than omnipotent,
+/// while the frame is the actual source of truth. Machine-to-machine plumbing
+/// (`mesh.workspaceUpsert` and friends) sends no assertion because there is no
+/// human behind it, and only an authenticated paired machine can produce a frame
+/// here at all.
+fn effective_principal(connection: &Principal, req: &ClientRequest) -> Principal {
+    let Principal::Peer(peer) = connection else {
+        return connection.clone();
+    };
+    let on_behalf_of = req.mesh.as_ref().and_then(|assertion| {
+        assertion.on_behalf_of.as_ref().map(|names| {
+            names
+                .iter()
+                .filter_map(|name| Capability::parse(name))
+                .collect::<Vec<_>>()
+        })
+    });
+    Principal::Peer(crate::mobile::PeerPrincipal {
+        machine_id: peer.machine_id.clone(),
+        on_behalf_of,
+    })
 }
 
 /// Head and tail kept from an oversized tool output on replay.
@@ -1333,6 +2231,139 @@ fn is_routable(kind: &str) -> bool {
     ROUTABLE.contains(&kind) || kind.starts_with("git.")
 }
 
+/// The grant a request kind needs, by consequence rather than by module.
+///
+/// One table, consulted centrally before anything else runs, is the point:
+/// per-arm checks are what let `browser.profile.list` and the peer terminal
+/// splice drift out of the policy. Kinds with no entry are unprivileged
+/// (`hello`, `project.list`, presence, themes…) and any kind that needs the
+/// master credential outright is refused separately, above this.
+fn required_capability(kind: &str) -> Option<Capability> {
+    if kind.starts_with("git.") {
+        return Some(Capability::Git);
+    }
+    if kind.starts_with("term.") {
+        return Some(Capability::Terminal);
+    }
+    if kind.starts_with("fs.") || kind.starts_with("artifacts.") {
+        return Some(Capability::Files);
+    }
+    if kind.starts_with("thread.")
+        || kind.starts_with("turn.")
+        || kind.starts_with("schedule.")
+        || kind.starts_with("archive.")
+        || kind == "approval.respond"
+        || kind == "question.respond"
+    {
+        return Some(Capability::Threads);
+    }
+    None
+}
+
+/// Request kinds that carry a full `ThreadSettings` object from the client.
+const SETTINGS_INGESTION_KINDS: &[&str] = &[
+    "thread.create",
+    "thread.setAgent",
+    "thread.setSettings",
+    "schedule.create",
+    "schedule.update",
+];
+
+/// Kinds that *run* a thread (or schedule) whose stored settings may already
+/// carry signed-browser authority the caller was never granted.
+const SETTINGS_EXERCISING_KINDS: &[&str] = &[
+    "turn.start",
+    "turn.steer",
+    "thread.review",
+    "thread.parley.start",
+];
+
+/// Whether these settings hand an agent the owner's logged-in browser identity.
+fn settings_claim_signed_browser(settings: &ThreadSettings) -> bool {
+    settings.claude_chrome
+        || settings
+            .browser_profile_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+}
+
+/// The same test against a raw client payload, before it is deserialized —
+/// unknown/extra keys and a missing `settings` object are simply "no claim".
+fn payload_claims_signed_browser(payload: &Value) -> bool {
+    let Some(settings) = payload.get("settings") else {
+        return false;
+    };
+    let profile = settings
+        .get("browserProfileId")
+        .and_then(|v| v.as_str())
+        .is_some_and(|id| !id.trim().is_empty());
+    let chrome = settings
+        .get("claudeChrome")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    profile || chrome
+}
+
+/// SEC-003: authority carried by a *payload field* gets the same check as a
+/// privileged request kind.
+///
+/// `browser.profile.*` is master-only, and `/browser` refuses a device a
+/// signed-in session — but none of that mattered while a device could simply
+/// post `browserProfileId` inside a `ThreadSettings` blob and have an agent
+/// drive the owner's logged-in Chrome for it. This runs on every path that
+/// ingests settings, and it runs BEFORE mesh routing, so asking a peer to do it
+/// instead is refused here rather than arriving there as that machine's owner.
+fn authorize_settings(state: &ServerState, principal: &Principal, kind: &str, payload: &Value)
+    -> anyhow::Result<()>
+{
+    if principal.can(Capability::SignedBrowser) {
+        return Ok(());
+    }
+    if SETTINGS_INGESTION_KINDS.contains(&kind) && payload_claims_signed_browser(payload) {
+        anyhow::bail!(
+            "{} — signed-in browser profiles cannot be selected from this device",
+            Capability::SignedBrowser.denial()
+        );
+    }
+    // Running an existing thread is the same authority by another route: the
+    // profile resolver attaches whatever profile the thread already names.
+    // Only checkable for threads this machine owns; a request routed to a peer
+    // is refused or allowed by the `mesh` grant alone.
+    if SETTINGS_EXERCISING_KINDS.contains(&kind) && !names_remote_machine(state, payload) {
+        if let Some(thread_id) = payload.get("threadId").and_then(|v| v.as_str()) {
+            if let Some(thread) = state.hub.store.thread(thread_id) {
+                if settings_claim_signed_browser(&thread.settings) {
+                    anyhow::bail!(
+                        "{} — this chat is bound to a signed-in browser profile",
+                        Capability::SignedBrowser.denial()
+                    );
+                }
+            }
+        }
+    }
+    if kind == "schedule.run" {
+        if let Some(id) = payload.get("scheduleId").and_then(|v| v.as_str()) {
+            if let Some(schedule) = state.hub.store.list_schedules().into_iter().find(|s| s.id == id)
+            {
+                anyhow::ensure!(
+                    !settings_claim_signed_browser(&schedule.settings),
+                    "{} — this schedule is bound to a signed-in browser profile",
+                    Capability::SignedBrowser.denial()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether this payload targets another machine.
+fn names_remote_machine(state: &ServerState, payload: &Value) -> bool {
+    payload
+        .get("machineId")
+        .and_then(|v| v.as_str())
+        .is_some_and(|mid| mid != state.device.machine_id)
+}
+
 /// Push a workspace record to every paired machine (best-effort; an offline
 /// peer reconciles at its next connect via the resync push). The catalog is
 /// mesh-wide — every workspace is visible on every machine — so targets are
@@ -1344,7 +2375,7 @@ async fn replicate_workspace(state: &ServerState, ws: &Workspace) {
         }
         if let Err(e) = state
             .peernet
-            .request(&peer.machine_id, "mesh.workspaceUpsert", json!({ "workspace": ws }))
+            .request(&peer.machine_id, "mesh.workspaceUpsert", json!({ "workspace": ws }), None)
             .await
         {
             tracing::debug!("workspace replicate to {} deferred: {e:#}", peer.machine_id);
@@ -1365,6 +2396,9 @@ async fn replicate_workspace_delete(state: &ServerState, id: &str, deleted_at: &
                 &peer.machine_id,
                 "mesh.workspaceDelete",
                 json!({ "id": id, "deletedAt": deleted_at }),
+                // Replication is machine-to-machine with no caller behind it, so
+                // it asserts nothing and arrives as that machine's owner.
+                None,
             )
             .await
         {
@@ -1373,7 +2407,10 @@ async fn replicate_workspace_delete(state: &ServerState, id: &str, deleted_at: &
     }
 }
 
-async fn handle_request(
+/// Dispatch one client RPC. This is where request-kind, capability and
+/// payload-field authorization all live, so the authorization matrix in
+/// `tests/authorization_matrix.rs` drives it directly rather than a stand-in.
+pub async fn handle_request(
     state: &ServerState,
     principal: &Principal,
     req: ClientRequest,
@@ -1388,7 +2425,7 @@ async fn handle_request(
     // Reading update status stays open so the fleet view works on mobile.
     if crate::update::is_privileged(&req.kind) {
         anyhow::ensure!(
-            *principal == Principal::Master,
+            principal.is_owner(),
             "updating Threadknot requires this machine's master token, not a device credential"
         );
     }
@@ -1399,7 +2436,7 @@ async fn handle_request(
     // what that session is allowed to reach.
     if req.kind.starts_with("browser.profile.") && req.kind != "browser.profile.list" {
         anyhow::ensure!(
-            *principal == Principal::Master,
+            principal.is_owner(),
             "managing signed-in browser profiles requires this machine's master token"
         );
     }
@@ -1411,20 +2448,36 @@ async fn handle_request(
     // token; reading the shelf does not.
     if req.kind.starts_with("library.") && req.kind != "library.list" {
         anyhow::ensure!(
-            *principal == Principal::Master,
+            principal.is_owner(),
             "installing skills and MCP servers requires this machine's master token"
         );
     }
 
+    // Central capability gate. Also BEFORE routing: a device that may not open
+    // a terminal here must not be able to open one on a paired machine either,
+    // and peer requests carry that machine's master token, so this side is the
+    // only side that still knows who is really asking.
+    if let Some(capability) = required_capability(&req.kind) {
+        principal.require(capability)?;
+    }
+    authorize_settings(state, principal, &req.kind, &p)?;
+
     if is_routable(&req.kind) {
         if let Some(mid) = p.get("machineId").and_then(|v| v.as_str()) {
             if mid != state.device.machine_id {
+                principal.require(Capability::Mesh)?;
                 let mid = mid.to_string();
                 let mut payload = p.clone();
                 if let Some(obj) = payload.as_object_mut() {
                     obj.remove("machineId");
                 }
-                return state.peernet.request(&mid, &req.kind, payload).await;
+                // The caller's own grants travel with the request. This is
+                // the structural half of the fix: the far side no longer has to
+                // trust that this side checked, because it can check itself.
+                return state
+                    .peernet
+                    .request(&mid, &req.kind, payload, principal.mesh_assertion())
+                    .await;
             }
         }
     }
@@ -1452,7 +2505,15 @@ async fn handle_request(
                 "version": env!("THREADKNOT_VERSION"),
                 "gitHash": env!("THREADKNOT_GIT_HASH"),
                 "buildDate": env!("THREADKNOT_BUILD_DATE"),
-                "lanUrl": state.lan_url,
+                // SEC-001: `lan_url` embeds `config.token`, which authenticates
+                // as Master. Handing it to every authenticated principal meant a
+                // paired phone could read its own `hello`, lift the master token
+                // out of it, and reconnect with full administrative authority.
+                // A device gets the address only; the credential stays here.
+                // `is_local_master`, deliberately not `is_owner`: a peer acting
+                // for its own owner administers ITS machine, and handing it our
+                // token-bearing URL would rebuild SEC-001 across the mesh.
+                "lanUrl": if principal.is_local_master() { state.lan_url.clone() } else { state.lan_origin() },
                 "agents": agents,
                 // Named reviewer presets for Parley debates (personas.json);
                 // edited via persona.save/delete, which pulse "identity".
@@ -1472,7 +2533,16 @@ async fn handle_request(
                 "meshVersion": crate::device::MESH_VERSION,
                 // Whether the composer's mic button can do anything here, and
                 // why not when it can't.
-                "dictation": crate::dictation::capability(*principal == Principal::Master),
+                "dictation": state.dictation.capability(principal.is_owner()),
+                // What this connection may actually do, so the UI can hide what
+                // the owner did not grant instead of offering it and failing.
+                // Advisory only — every one of these is enforced server-side.
+                "principal": principal.label(),
+                "capabilities": principal
+                    .capabilities()
+                    .iter()
+                    .map(|c| c.as_str())
+                    .collect::<Vec<_>>(),
             }))
         }
         "app.changelog" => {
@@ -1490,7 +2560,7 @@ async fn handle_request(
         "device.info" => Ok(state.device.info()),
         "device.rename" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "renaming this machine requires the desktop app"
             );
             let name = state.device.set_friendly_name(field(&p, "name")?)?;
@@ -1503,7 +2573,7 @@ async fn handle_request(
         }
         "device.setAppearance" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "changing this machine's appearance requires the desktop app"
             );
             let (avatar, color) = state.device.set_appearance(
@@ -1528,6 +2598,11 @@ async fn handle_request(
                     let online = state.peernet.is_online(&p.machine_id);
                     let mut v = serde_json::to_value(&p).unwrap_or(json!({}));
                     v["online"] = json!(online);
+                    // A pair from before the encrypted mesh is not "offline" —
+                    // it is refused, and only re-pairing fixes it. Reporting it
+                    // as offline would send someone hunting a network fault that
+                    // does not exist.
+                    v["needsUpgrade"] = json!(p.needs_upgrade());
                     v
                 })
                 .collect();
@@ -1535,7 +2610,7 @@ async fn handle_request(
         }
         "peer.add" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "peer management requires the desktop app"
             );
             // Accept a bare host:port, an origin, or the full LAN URL with
@@ -1560,11 +2635,93 @@ async fn handle_request(
                 })
                 .ok_or_else(|| anyhow::anyhow!("missing token (paste the peer's URL with ?token=… or fill the token field)"))?;
 
-            // Call the peer's pairing endpoint with OUR identity + master
-            // token — after this exchange trust is mutual.
-            let resp = crate::hermes::http_client()
-                .post(format!("http://{}/api/peer/pair", crate::peernet::host_port(&host, port)))
-                .bearer_auth(&token)
+            // Two phases, and the split is the security property.
+            //
+            // Phase 1 fetches public identity over plain HTTP: machine id, name,
+            // certificate authority, mesh port, and a single-use challenge.
+            // Nothing secret crosses, so there is nothing here to steal.
+            let identity: Value = crate::hermes::http_client()
+                .get(format!(
+                    "http://{}/api/peer/identity",
+                    crate::peernet::host_port(&host, port)
+                ))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .context("could not reach the peer — check the URL and that Threadknot is running there")?
+                .error_for_status()
+                .context("that machine did not answer a Threadknot identity probe")?
+                .json()
+                .await
+                .context("bad identity response — is that really a Threadknot?")?;
+
+            let their_id = identity
+                .get("machineId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            anyhow::ensure!(!their_id.is_empty(), "peer sent no machine id");
+            anyhow::ensure!(
+                their_id != state.device.machine_id,
+                "that URL points at this machine"
+            );
+            let their_mesh_version =
+                identity.get("meshVersion").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            anyhow::ensure!(
+                their_mesh_version == crate::device::MESH_VERSION,
+                "that machine speaks mesh version {their_mesh_version} and this one speaks {} — \
+                 update Threadknot on the older machine, then pair them again",
+                crate::device::MESH_VERSION
+            );
+            let their_ca = identity
+                .get("meshCa")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let their_mesh_port =
+                identity.get("meshPort").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+            let challenge = identity
+                .get("challenge")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            anyhow::ensure!(
+                !their_ca.is_empty() && their_mesh_port != 0 && !challenge.is_empty(),
+                "that machine did not offer an encrypted mesh — update Threadknot there"
+            );
+            // Refuse an unusable certificate now rather than after storing a
+            // pair that could never connect.
+            crate::mesh::client_config_for_ca(&their_ca)
+                .context("that machine sent an unusable certificate")?;
+
+            // Phase 2 runs over TLS pinned to the certificate authority phase 1
+            // returned, and proves knowledge of their master token *without
+            // sending it*. The proof covers the fingerprint of the CA we just
+            // received, so if phase 1 was intercepted and a substitute
+            // certificate injected, the proof is computed over the attacker's
+            // fingerprint and the real machine refuses it. That is what closes
+            // the trust-on-first-use hole rather than accepting it.
+            let proof = crate::mesh::pairing_proof(
+                &token,
+                &challenge,
+                &state.device.machine_id,
+                &their_ca,
+            );
+            // The credential THEY will present to US: minted here, and only its
+            // hash is kept.
+            let our_credential_for_them = crate::mesh::mint_credential();
+            let probe = crate::peers::Peer {
+                machine_id: their_id.clone(),
+                mesh_ca: their_ca.clone(),
+                mesh_port: their_mesh_port,
+                ..crate::peers::Peer::blank()
+            };
+            let client = state.peernet.byte_client(&probe, &host)?;
+            let resp = client
+                .post(format!(
+                    "https://{}:{their_mesh_port}/api/peer/pair",
+                    crate::mesh::mesh_dns_name(&their_id)
+                ))
                 .json(&json!({
                     "machineId": state.device.machine_id,
                     "name": state.device.friendly_name(),
@@ -1572,28 +2729,33 @@ async fn handle_request(
                     "color": state.device.color(),
                     "profileUpdatedAt": state.device.profile_updated_at(),
                     "port": state.config.port,
-                    "peerToken": state.config.token,
-                    "addresses": crate::peernet::local_addresses(),
+                    "meshPort": state.mesh_port(),
+                    "meshCa": state.mesh.ca_pem,
                     "meshVersion": crate::device::MESH_VERSION,
+                    "addresses": crate::peernet::local_addresses(),
+                    "challenge": challenge,
+                    "proof": proof,
+                    "credentialForYou": our_credential_for_them,
                 }))
                 .timeout(std::time::Duration::from_secs(10))
                 .send()
                 .await
-                .context("could not reach the peer — check the URL and that Threadknot is running there")?;
+                .context("could not complete the encrypted pairing handshake")?;
             anyhow::ensure!(
                 resp.status().is_success(),
                 "peer refused pairing: {}",
                 resp.text().await.unwrap_or_default()
             );
             let them: Value = resp.json().await.context("bad pairing response")?;
-            let their_id = them.get("machineId").and_then(|v| v.as_str()).unwrap_or("");
-            anyhow::ensure!(!their_id.is_empty(), "peer sent no machine id");
-            anyhow::ensure!(
-                their_id != state.device.machine_id,
-                "that URL points at this machine"
-            );
+            let their_credential_for_us = them
+                .get("credentialForYou")
+                .and_then(|v| v.as_str())
+                .filter(|c| !c.is_empty())
+                .context("peer sent no credential")?
+                .to_string();
+
             let mut addresses = vec![host.clone()];
-            if let Some(list) = them.get("addresses").and_then(|v| v.as_array()) {
+            if let Some(list) = identity.get("addresses").and_then(|v| v.as_array()) {
                 for a in list.iter().filter_map(|x| x.as_str()) {
                     if !addresses.iter().any(|x| x == a) {
                         addresses.push(a.to_string());
@@ -1601,9 +2763,10 @@ async fn handle_request(
                 }
             }
             let peer = state.peernet.registry.upsert(crate::peers::Peer {
-                machine_id: their_id.to_string(),
+                machine_id: their_id.clone(),
                 name: them
                     .get("name")
+                    .or_else(|| identity.get("name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("Threadknot")
                     .chars()
@@ -1617,13 +2780,16 @@ async fn handle_request(
                     .get("profileUpdatedAt")
                     .and_then(|v| v.as_str())
                     .map(String::from),
-                token,
+                outbound_credential: their_credential_for_us,
+                inbound_credential_hash: crate::mesh::hash_credential(&our_credential_for_them),
+                mesh_ca: their_ca,
+                mesh_port: their_mesh_port,
                 port: them.get("port").and_then(|v| v.as_u64()).unwrap_or(port as u64) as u16,
                 addresses,
                 last_good_address: Some(host),
                 last_seen_at: Some(now_iso()),
                 added_at: now_iso(),
-                mesh_version: them.get("meshVersion").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                mesh_version: their_mesh_version,
             })?;
             state.peernet.kick.notify_waiters();
             hub.broadcast_state("peers", None);
@@ -1631,7 +2797,7 @@ async fn handle_request(
         }
         "peer.remove" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "peer management requires the desktop app"
             );
             let machine_id = field(&p, "machineId")?;
@@ -1647,7 +2813,7 @@ async fn handle_request(
         }
         "peer.setAppearance" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "peer management requires the desktop app"
             );
             let avatar = appearance_patch(&p, "image")?;
@@ -1739,7 +2905,7 @@ async fn handle_request(
         }
         "workspace.attachRoot" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "workspace roots are managed from the desktop app"
             );
             let workspace_id = field(&p, "workspaceId")?.to_string();
@@ -1752,7 +2918,7 @@ async fn handle_request(
             } else {
                 let v = state
                     .peernet
-                    .request(&machine_id, "mesh.createProject", json!({ "path": path }))
+                    .request(&machine_id, "mesh.createProject", json!({ "path": path }), None)
                     .await?;
                 serde_json::from_value(v)?
             };
@@ -1772,7 +2938,7 @@ async fn handle_request(
         }
         "workspace.detachRoot" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "workspace roots are managed from the desktop app"
             );
             let workspace_id = field(&p, "workspaceId")?.to_string();
@@ -1791,7 +2957,7 @@ async fn handle_request(
                 store.wrap_project_in_workspace(&project_id)?;
             } else if let Err(e) = state
                 .peernet
-                .request(&machine_id, "mesh.rewrapProject", json!({ "projectId": project_id }))
+                .request(&machine_id, "mesh.rewrapProject", json!({ "projectId": project_id }), None)
                 .await
             {
                 tracing::warn!("rewrap on {machine_id} deferred: {e:#}");
@@ -1800,16 +2966,21 @@ async fn handle_request(
             replicate_workspace(state, &ws).await;
             Ok(serde_json::to_value(ws)?)
         }
-        // ---- mesh.* : peer-to-peer replication plumbing (peers authenticate
-        // with the master token, so Principal::Master is implied) ----
+        // ---- mesh.* : peer-to-peer replication plumbing ----
+        //
+        // `is_peer`, not `is_owner`: these are machine-to-machine calls with no
+        // human on the other end, so the credential that carries them is a peer
+        // credential and nothing else. Checking the transport rather than the
+        // authority level is what finally makes the "peer-only" in the messages
+        // below true — under the old model a local master token satisfied it.
         "mesh.createProject" => {
-            anyhow::ensure!(*principal == Principal::Master, "mesh calls are peer-only");
+            anyhow::ensure!(principal.is_peer(), "mesh calls are peer-only");
             let project = store.create_project_raw(field(&p, "path")?.to_string(), None)?;
             hub.broadcast_state("projects", None);
             Ok(serde_json::to_value(project)?)
         }
         "mesh.workspaceUpsert" => {
-            anyhow::ensure!(*principal == Principal::Master, "mesh calls are peer-only");
+            anyhow::ensure!(principal.is_peer(), "mesh calls are peer-only");
             let ws: Workspace = serde_json::from_value(
                 p.get("workspace")
                     .cloned()
@@ -1826,7 +2997,7 @@ async fn handle_request(
             Ok(json!({}))
         }
         "mesh.workspaceDelete" => {
-            anyhow::ensure!(*principal == Principal::Master, "mesh calls are peer-only");
+            anyhow::ensure!(principal.is_peer(), "mesh calls are peer-only");
             let id = field(&p, "id")?;
             let deleted_at = field(&p, "deletedAt")?;
             if store.apply_workspace_tombstone(id, deleted_at)? {
@@ -1840,7 +3011,7 @@ async fn handle_request(
             Ok(json!({}))
         }
         "mesh.rewrapProject" => {
-            anyhow::ensure!(*principal == Principal::Master, "mesh calls are peer-only");
+            anyhow::ensure!(principal.is_peer(), "mesh calls are peer-only");
             store.wrap_project_in_workspace(field(&p, "projectId")?)?;
             hub.broadcast_state("workspaces", None);
             Ok(json!({}))
@@ -1855,7 +3026,7 @@ async fn handle_request(
         }
         "hermes.agent.add" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Hermes agent management requires the desktop app"
             );
             let base_url = crate::hermes::normalize_base_url(field(&p, "baseUrl")?)?;
@@ -1881,7 +3052,7 @@ async fn handle_request(
         }
         "hermes.agent.remove" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Hermes agent management requires the desktop app"
             );
             hub.hermes.remove(field(&p, "agentId")?)?;
@@ -1893,7 +3064,7 @@ async fn handle_request(
         }
         "hermes.agent.setImage" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Hermes agent management requires the desktop app"
             );
             let image = optional_sidebar_image(&p, "image")?;
@@ -1903,7 +3074,7 @@ async fn handle_request(
         }
         "hermes.agent.setAvatar" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Hermes agent management requires the desktop app"
             );
             // Same picture as setImage under its current wire name, with the
@@ -1960,7 +3131,7 @@ async fn handle_request(
         })),
         "claudex.profile.add" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Claudex profile management requires the desktop app"
             );
             let input: crate::claudex::ProfileInput = serde_json::from_value(p.clone())?;
@@ -1970,7 +3141,7 @@ async fn handle_request(
         }
         "claudex.profile.update" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Claudex profile management requires the desktop app"
             );
             let id = field(&p, "profileId")?.to_string();
@@ -1983,7 +3154,7 @@ async fn handle_request(
         }
         "claudex.profile.remove" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Claudex profile management requires the desktop app"
             );
             let id = field(&p, "profileId")?.to_string();
@@ -1994,7 +3165,7 @@ async fn handle_request(
         }
         "claudex.profile.setAvatar" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Claudex profile management requires the desktop app"
             );
             let image = appearance_patch(&p, "image")?.flatten();
@@ -2010,7 +3181,7 @@ async fn handle_request(
         // actually asking: will a turn work right now?
         "claudex.profile.test" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "Claudex profile management requires the desktop app"
             );
             let profile = hub
@@ -2032,45 +3203,220 @@ async fn handle_request(
         // A paired phone must not be able to bring in more phones.
         "mobile.pair.begin" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "showing a pairing QR requires this machine's master token"
             );
-            let code = state.mobile.begin_pairing();
-            let origin = state.lan_origin();
+            // Grants are bound to the code here, on the desktop, by the owner.
+            // The joining client redeems the code and takes what it carries; it
+            // has no way to ask for more.
+            let capabilities = requested_capabilities(&p);
+            // Which address the QR should send the phone to. A phone on
+            // cellular cannot reach `192.168.x.x`, and a phone on the sofa
+            // should not be routed through a relay — so the owner picks, and
+            // the remote answer comes from stored configuration. Deriving it
+            // from the request's `Host` would let anyone who can reach this
+            // server have a QR minted that points a phone at a host they chose.
+            let target = p.get("target").and_then(|v| v.as_str()).unwrap_or("lan");
+            let origin = match target {
+                "remote" => state.remote.origin().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "set this machine's public address and turn remote access on first"
+                    )
+                })?,
+                _ => state.lan_origin(),
+            };
+            let code = state.mobile.begin_pairing(capabilities.clone());
             let payload = pairing_payload(&origin, &code);
             Ok(json!({
                 "payload": payload,
                 "qrSvg": pairing_qr_svg(&payload)?,
                 "code": crate::mobile::format_pairing_code(&code),
                 "url": origin,
+                "target": target,
                 "ttlSeconds": crate::mobile::PAIRING_TTL.as_secs(),
+                "capabilities": capabilities.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
             }))
         }
         // The dialog closed (or the countdown ran out client-side): stop
         // honoring what was on screen now rather than at the TTL.
         "mobile.pair.cancel" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "pairing management requires this machine's master token"
             );
             state.mobile.cancel_pairings();
             Ok(json!({ "ok": true }))
         }
+        // ---- connector.* : the hosted relay (Stage 2) ----
+        //
+        // Machine administration throughout, so owner-only and deliberately
+        // absent from ROUTABLE: each machine enrolls itself with its own key.
+        // Enrolling a peer from here would mean holding a key on behalf of a
+        // machine that should be the only thing that ever holds it.
+        "connector.status" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "remote access settings require the desktop app"
+            );
+            Ok(serde_json::to_value(state.connector.status())?)
+        }
+        "connector.enroll" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "enrolling this machine requires the desktop app"
+            );
+            let token = field(&p, "enrollmentToken")?;
+            let name = p
+                .get("machineName")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(String::from)
+                .unwrap_or_else(|| state.device.friendly_name());
+            let status = state.connector.enroll(token, &name).await?;
+            // The relay assigns the hostname, so enrollment is also what
+            // provisions the pairing origin. Deriving it anywhere else would mean
+            // guessing, and a guessed origin in a QR sends a phone nowhere.
+            if !status.public_origin.is_empty() {
+                state
+                    .remote
+                    .set(Some(true), Some(Some(status.public_origin.clone())))?;
+            }
+            hub.broadcast_state("identity", None);
+            Ok(serde_json::to_value(status)?)
+        }
+        // The interactive way to connect a machine: no token, nothing to copy.
+        // The desktop asks for a request, the owner opens the URL and presses
+        // Approve, and the connector notices on its own — see `begin_approval`.
+        "connector.beginApproval" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "connecting this machine requires the desktop app"
+            );
+            let name = p
+                .get("machineName")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(String::from)
+                .unwrap_or_else(|| state.device.friendly_name());
+            let approval = state.connector.begin_approval(&name).await?;
+            hub.broadcast_state("connector", None);
+            Ok(serde_json::to_value(approval)?)
+        }
+        "connector.cancelApproval" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "remote access settings require the desktop app"
+            );
+            state.connector.cancel_approval();
+            Ok(serde_json::to_value(state.connector.status())?)
+        }
+        "connector.setEnabled" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "remote access settings require the desktop app"
+            );
+            let enabled = p
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .ok_or_else(|| anyhow::anyhow!("missing enabled"))?;
+            let status = state.connector.set_enabled(enabled)?;
+            // Turning the connector off also closes the strict ingress, so a
+            // browser holding a cookie for the public origin loses it now rather
+            // than at its next request.
+            if !enabled {
+                state.remote.set(Some(false), None)?;
+                let dropped = state.browser_sessions.revoke_all();
+                let closed = state.sessions.close_remote();
+                tracing::info!(
+                    "connector disabled: {dropped} session(s), {closed} socket(s) dropped"
+                );
+            }
+            hub.broadcast_state("identity", None);
+            Ok(serde_json::to_value(status)?)
+        }
+        // Remote access: machine administration, so master-only and never
+        // routed to a peer — each machine is provisioned for itself.
+        "remote.get" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "remote access settings require the desktop app"
+            );
+            let config = state.remote.get();
+            Ok(json!({
+                "enabled": config.enabled,
+                "origin": config.origin,
+                "loopbackPort": config.port,
+                "browserSessions": state.browser_sessions.len(),
+            }))
+        }
+        "remote.set" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "remote access settings require the desktop app"
+            );
+            let enabled = p.get("enabled").and_then(|v| v.as_bool());
+            let origin = appearance_patch(&p, "origin")?;
+            let was_enabled = state.remote.enabled();
+            let config = state.remote.set(enabled, origin)?;
+            // Turning it off has to mean off *now*: outstanding browser
+            // sessions die and anything already connected through the strict
+            // ingress is dropped. Changing the origin invalidates them too —
+            // the cookie was issued for a hostname that no longer applies.
+            if was_enabled && (!config.enabled || enabled.is_none()) {
+                let dropped = state.browser_sessions.revoke_all();
+                let closed = state.sessions.close_remote();
+                tracing::info!("remote access changed: {dropped} session(s), {closed} socket(s) dropped");
+            }
+            hub.broadcast_state("identity", None);
+            Ok(json!({
+                "enabled": config.enabled,
+                "origin": config.origin,
+                "loopbackPort": config.port,
+            }))
+        }
         "mobile.device.list" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "device management requires the desktop app"
             );
             Ok(json!({ "devices": state.mobile.list() }))
         }
         "mobile.device.revoke" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "device management requires the desktop app"
             );
-            state.mobile.revoke(field(&p, "deviceId")?)?;
+            let device_id = field(&p, "deviceId")?.to_string();
+            state.mobile.revoke(&device_id)?;
+            // SEC-008: the record is gone, but the sockets it already opened
+            // would otherwise stay live and fully usable. Revoke means now.
+            state.close_device_sessions(&device_id);
             hub.broadcast_state("mobileDevices", None);
             Ok(json!({}))
+        }
+        // Editing what a paired device may do. Master-only, like every other
+        // authority change, and never routed to a peer: each machine grants for
+        // itself.
+        "mobile.device.setCapabilities" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "changing a device's permissions requires the desktop app"
+            );
+            let device_id = field(&p, "deviceId")?.to_string();
+            anyhow::ensure!(
+                p.get("capabilities").is_some_and(|v| v.is_array()),
+                "capabilities must be an array"
+            );
+            let device = state
+                .mobile
+                .set_capabilities(&device_id, requested_capabilities(&p))?;
+            // A reduction is a partial revocation: close what the device holds
+            // so it has to come back through the gate with its new grants.
+            state.close_device_sessions(&device_id);
+            hub.broadcast_state("mobileDevices", None);
+            Ok(json!({ "device": device }))
         }
         "project.create" => {
             let path = field(&p, "path")?.to_string();
@@ -2506,18 +3852,47 @@ async fn handle_request(
         }
         // Dictation drives this machine's own microphone, so it is never peer
         // routed and never available to a paired device's credential.
+        "dictation.settings.get" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "dictation settings are only available in the app on that machine"
+            );
+            Ok(state.dictation.settings())
+        }
+        "dictation.settings.save" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "dictation settings are only available in the app on that machine"
+            );
+            let settings = state.dictation.configure(
+                field(&p, "provider")?,
+                field(&p, "baseUrl")?,
+                field(&p, "model")?,
+                p.get("apiKey").and_then(Value::as_str),
+            )?;
+            hub.broadcast_state("identity", None);
+            Ok(settings)
+        }
         "dictation.start" => {
             anyhow::ensure!(
-                *principal == Principal::Master,
+                principal.is_owner(),
                 "dictation records this machine's mic, so it only runs from the app on that machine"
             );
             Ok(json!({ "recordingId": state.dictation.start().await? }))
         }
         "dictation.stop" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "dictation records this machine's mic, so it only runs from the app on that machine"
+            );
             let text = state.dictation.stop(field(&p, "recordingId")?).await?;
             Ok(json!({ "text": text }))
         }
         "dictation.cancel" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "dictation records this machine's mic, so it only runs from the app on that machine"
+            );
             state.dictation.cancel(field(&p, "recordingId")?).await;
             Ok(json!({}))
         }
@@ -2543,7 +3918,18 @@ async fn handle_request(
         // Signed-in browser profiles. Managing them is a master-only action:
         // a paired phone can *drive* a session the owner set up, but creating
         // one, widening its scope, or erasing it is not a remote capability.
-        "browser.profile.list" => Ok(json!({ "profiles": state.browser_profiles.list() })),
+        // Enumerating the owner's signed-in logins is part of that authority —
+        // the id list is exactly what a caller needs to smuggle a profile into
+        // ThreadSettings. Answered as "you have none" rather than as a refusal:
+        // a device without the grant cannot select one anyway, and the picker
+        // that asks for this list on open should render empty, not error.
+        "browser.profile.list" => Ok(json!({
+            "profiles": if principal.can(Capability::SignedBrowser) {
+                state.browser_profiles.list()
+            } else {
+                Vec::new()
+            }
+        })),
         "browser.profile.create" => {
             let profile = state
                 .browser_profiles

@@ -137,6 +137,37 @@ Either way the app restores the thread it was on from `localStorage`.
   nav intent held behind the biometric gate → home screen activates the right
   server and injects the thread navigation once the page reports ready.
 
+## Settings and the App Store surface
+
+The gear in `ServerSwitcher` opens `src/app/settings/`, not the server list —
+the server list is one row inside it. The rest of that folder exists because a
+WebView-shaped app is judged on what it offers *natively*, and because App
+Store review needs to reach certain things without leaving the binary:
+
+- `settings/privacy.tsx`, `settings/terms.tsx` — the policies **in full, in
+  app**. The `threadknot.ai` URLs in `src/lib/legal.ts` are what App Store
+  Connect gets, but a reviewer must not depend on that site being up.
+- `settings/account.tsx` — guideline 5.1.1(v) account deletion. **The delete
+  button is inert**: it sets local state and shows the 24-hour notice, and
+  sends nothing, because the relay has no deletion endpoint yet. Wire it before
+  a store submission — shipping the notice without the deletion behind it is a
+  promise the app does not keep.
+- `settings/support.tsx`, `settings/about.tsx` — a real support route, and the
+  version/build/bundle string support asks for, copyable in one tap.
+
+## Icons
+
+Every icon asset is generated from `mobile/assets/images/brand-source.png` (the
+master render of the mark) by `mobile/scripts/make-icons.py` — re-run it rather
+than hand-editing a PNG. It keys the glyph off the plate by dropping the one
+lit component that spans the whole frame, which is the gold rule; a plain
+luminance threshold keeps the rule, and a flood fill from the stem misses the
+rope, whose coils are shadow-separated from it.
+
+`icon.png` keeps its black margin and stays alpha-free (the App Store rejects
+an alpha channel). The Android foreground and the in-app `BrandMark` use the
+keyed glyph on transparency.
+
 ## EAS / building
 
 Project: `@servicestorm/threadknot-mobile` (id `ec582486-06b9-4315-841a-6ea0171d45b7`),

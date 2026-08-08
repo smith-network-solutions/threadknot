@@ -1,8 +1,9 @@
+import { BrandMark } from '@/components/BrandMark';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { useLock } from '@/lib/lock';
-import { Anchor, Fingerprint, ShieldAlert } from 'lucide-react-native';
+import { Fingerprint, ShieldAlert } from 'lucide-react-native';
 import * as React from 'react';
 import { Linking, View } from 'react-native';
 
@@ -15,9 +16,7 @@ export function LockOverlay() {
   return (
     <View className="absolute inset-0 z-50 items-center justify-center bg-background px-8">
       <View className="items-center gap-4">
-        <View className="h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card">
-          <Icon as={Anchor} className="size-8 text-brass" />
-        </View>
+        <BrandMark />
         <Text className="text-2xl font-bold tracking-tight">Threadknot</Text>
 
         {status === 'unavailable' ? (

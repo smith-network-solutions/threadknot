@@ -4,3 +4,9 @@ target
 dev.log
 build-tauri.log
 .idea/
+
+# Secrets — never commit. Held outside git on purpose.
+.keys
+.keys.*
+*.pem
+*.key

@@ -36,16 +36,21 @@
 #     before (coredump storm). If it reports FAIL, diagnose from the log; do
 #     not hammer it.
 #
-# Assumes the release binary already exists (build with:
+# Assumes the target binary already exists. For the release build:
 #   cd threadknot && npx tauri build --no-bundle
-# NOT plain `cargo build --release`). Port and binary path below are stable.
+# NOT plain `cargo build --release` — that ships a binary which loads the dev
+# server and shows "Could not connect to localhost". For the dev build, a plain
+# `cargo build` in src-tauri/ is what the dev launcher runs against.
+#
+# Which binary gets relaunched is DERIVED from the live process, not fixed —
+# see the note further down.
 set -u
 LOG=/tmp/threadknot-restart.log
 # Derived from this script's own location, not hardcoded — every checkout of
 # this repo lives somewhere different, and a baked-in path silently restarts
 # somebody else's binary (or nothing at all).
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$REPO/src-tauri/target/release/threadknot"
+RELEASE_BIN="$REPO/src-tauri/target/release/threadknot"
 PORT=42800
 exec >>"$LOG" 2>&1
 echo "==================== restart $(date '+%F %T') ===================="
@@ -55,8 +60,38 @@ sleep 3
 
 # Identify the live instance by the port it owns (unambiguous), then fallbacks.
 OLDPID="$(ss -ltnp 2>/dev/null | grep ":$PORT " | grep -oP 'pid=\K[0-9]+' | head -1)"
-[ -z "${OLDPID:-}" ] && OLDPID="$(pgrep -f 'target/release/threadknot' | head -1)"
+# Fallback matches either build, since the dev instance runs the debug binary,
+# and matches a RELATIVE path because that is what the launchers actually exec
+# (the live instance's cmdline is literally `target/debug/threadknot`). The `$`
+# anchor keeps it off `threadknot-headless`. The port check above is the
+# authoritative one; this only covers an instance that failed to bind.
+[ -z "${OLDPID:-}" ] && OLDPID="$(pgrep -f 'target/(debug|release)/threadknot$' | head -1)"
 echo "old pid: ${OLDPID:-none}"
+
+# Relaunch the SAME build that is running, not always the release one.
+#
+# The desktop launchers are "Threadknot" (release binary) and "Threadknot (Dev)"
+# (`~/.local/bin/threadknot-dev-app`, which runs the DEBUG binary against vite).
+# `BIN` used to be hardcoded to release, so restarting a dev instance silently
+# swapped it for a release build — which looks like "my HMR stopped working" and
+# is genuinely baffling if you don't know this script did it. Worse, the two
+# builds can be different commits, so "restart onto the new build" would restart
+# onto the wrong one.
+#
+# /proc/<pid>/exe still resolves after the file is replaced by a rebuild, with
+# " (deleted)" appended to the link text — so strip that, then check the path is
+# there now (the rebuild put a fresh file at the same location).
+BIN="$RELEASE_BIN"
+if [ -n "${OLDPID:-}" ]; then
+  LIVE_EXE="$(readlink "/proc/$OLDPID/exe" 2>/dev/null || true)"
+  LIVE_EXE="${LIVE_EXE% (deleted)}"
+  if [ -n "$LIVE_EXE" ] && [ -x "$LIVE_EXE" ]; then
+    BIN="$LIVE_EXE"
+  elif [ -n "$LIVE_EXE" ]; then
+    echo "WARN: live binary $LIVE_EXE is gone; falling back to the release build"
+  fi
+fi
+echo "relaunching: $BIN"
 
 # Snapshot the launcher env + cwd from the LIVE process before it dies.
 # NOTE: write with a redirect, never `cp` — /proc/<pid>/environ is mode 0400, so

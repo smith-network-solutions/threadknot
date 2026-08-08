@@ -70,6 +70,11 @@ export interface PeerInfo {
   meshVersion: number;
   /** Present in peer.list responses (live presence). */
   online?: boolean;
+  /** Paired before Threadknot encrypted mesh connections (SEC-012). Such a pair
+   *  is refused rather than downgraded to the old plaintext transport, so it is
+   *  never `online` — and saying only "offline" would send someone looking for
+   *  a network fault instead of updating the other machine and re-pairing. */
+  needsUpgrade?: boolean;
   /** Appearance the peer advertises for itself (data URL / accent color). */
   avatar?: string;
   color?: string;
@@ -463,7 +468,13 @@ export interface HelloData {
   gitHash?: string;
   /** Commit date (YYYY-MM-DD) of this build; absent on old servers. */
   buildDate?: string;
+  /** Carries `?token=` ONLY for the desktop's own master connection; a paired
+   *  device is given the origin alone (SEC-001). */
   lanUrl: string;
+  /** Whether this connection is the desktop owner or a paired device. */
+  principal?: "master" | "device" | "peer";
+  /** What this connection may do. Advisory — enforced server-side regardless. */
+  capabilities?: DeviceCapability[];
   agents: AgentInfo[];
   /** Named reviewer presets (Parley personas); absent on old servers. */
   personas?: ReviewerPersona[];
@@ -487,8 +498,30 @@ export interface HelloData {
 /** Why voice dictation can or can't run against this server. */
 export interface DictationCapability {
   available: boolean;
-  /** Shown on the disabled mic button when `available` is false. */
+  /** Explains unavailability in Voice settings; the composer hides the button. */
   hint?: string;
+}
+
+export type DictationProvider = "local" | "api";
+
+/** Secret-free server settings. The stored API key is exposed only as a bool. */
+export interface DictationSettings {
+  provider: DictationProvider;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  captureAvailable: boolean;
+  captureHint?: string;
+  localAvailable: boolean;
+  localHint?: string;
+}
+
+export interface DictationSettingsInput {
+  provider: DictationProvider;
+  baseUrl: string;
+  model: string;
+  /** Absent preserves the stored key; present replaces it. */
+  apiKey?: string;
 }
 
 /** One commit in the build's embedded changelog (app.changelog). */
@@ -1055,6 +1088,110 @@ export interface ClaudexProfileInput {
   sidecar?: ClaudexSidecar | null;
 }
 
+/** What a paired device is allowed to do. Chosen by the desktop owner, stored
+ *  server-side against the device, and enforced there — this list is what the
+ *  UI shows, never what it asserts. See `mobile.rs` / `Capability`. */
+export type DeviceCapability =
+  | "threads"
+  | "files"
+  | "git"
+  | "terminal"
+  | "browser"
+  | "signedBrowser"
+  | "mesh";
+
+/** Grants a pairing starts with unless the owner narrows it. Mirrors
+ *  `default_capabilities()` — notably WITHOUT `signedBrowser`. */
+export const DEFAULT_DEVICE_CAPABILITIES: DeviceCapability[] = [
+  "threads",
+  "files",
+  "git",
+  "terminal",
+  "browser",
+  "mesh",
+];
+
+/** Label + consequence for each grant, in the order the settings UI lists them. */
+export const DEVICE_CAPABILITY_LABELS: {
+  id: DeviceCapability;
+  label: string;
+  detail: string;
+}[] = [
+  { id: "threads", label: "chats", detail: "read chats, send turns, answer approvals" },
+  { id: "files", label: "files", detail: "browse and download project files" },
+  { id: "git", label: "git", detail: "see and act on repository state" },
+  { id: "terminal", label: "terminals", detail: "a real shell on this machine" },
+  { id: "browser", label: "browser", detail: "drive throwaway browser sessions" },
+  {
+    id: "signedBrowser",
+    label: "signed-in browser",
+    detail: "act as your logged-in accounts — off by default",
+  },
+  { id: "mesh", label: "other machines", detail: "use the grants above on paired machines" },
+];
+
+/** Where a pairing QR sends the phone. `lan` is the local address; `remote` is
+ *  the provisioned public origin, and is only offered once remote access is
+ *  configured and on. */
+export type PairingTarget = "lan" | "remote";
+
+/** The hosted relay connector for THIS machine (Stage 2). */
+export interface ConnectorStatus {
+  /** `off` | `unenrolled` | `connecting` | `online` | `error`. `unenrolled`
+   *  exists so that "on but no token pasted yet" does not read as
+   *  "connecting" forever, which is the state people file support tickets about. */
+  state: "off" | "unenrolled" | "connecting" | "online" | "error";
+  /** Server-assigned. Never chosen by this machine. */
+  hostname: string;
+  publicOrigin: string;
+  lastError?: string;
+  connectedSince?: string;
+  bytesIn: number;
+  bytesOut: number;
+  /** False when a subscription has lapsed or a kill switch is on. Existing
+   *  traffic keeps flowing; only new sessions are refused. */
+  acceptingNewSessions: boolean;
+  holdReason?: string;
+  /** Days left in the trial. Present so the panel can warn *before* anything
+   *  stops working — `holdReason` only appears once the hold is already in
+   *  force, so a build that watched only that told people on the day it broke. */
+  trialDaysLeft?: number;
+  /** A connection request waiting for someone to approve it in the console.
+   *  Present only while one is in flight. */
+  approval?: ConnectorApproval;
+  monthBytes?: number;
+  monthQuotaBytes?: number;
+  liveStreams: number;
+}
+
+/** A device-approval request in flight.
+ *
+ *  Note what is absent: the `deviceCode`. That is the secret which collects the
+ *  enrollment and it never leaves the Rust side, so nothing here is damaging to
+ *  read over a shoulder or in a screenshot. */
+export interface ConnectorApproval {
+  /** Hyphenated, for reading aloud. A fallback — the normal path is the link. */
+  userCode: string;
+  verificationUri: string;
+  /** The approval page with the code already filled in. */
+  verificationUriComplete: string;
+  expiresAt: string;
+  /** Approval is not a state: a granted request becomes an enrollment and the
+   *  panel disappears on its own. */
+  state: "waiting" | "denied" | "expired";
+}
+
+export interface RemoteAccess {
+  /** Off by default. Turning it off signs every remote browser out at once. */
+  enabled: boolean;
+  /** The provisioned public origin, e.g. `https://x.remote.threadknot.ai`. */
+  origin?: string | null;
+  /** Loopback port the connector dials. Never reachable from the network. */
+  loopbackPort: number;
+  /** How many browser sessions are currently outstanding. */
+  browserSessions?: number;
+}
+
 /** A phone paired with this server (Settings → mobile devices). */
 export interface MobileDeviceInfo {
   id: string;
@@ -1063,6 +1200,9 @@ export interface MobileDeviceInfo {
   expoPushToken?: string;
   notificationsEnabled: boolean;
   notifyErrors: boolean;
+  /** Absent only from a server older than capability-scoped pairing. */
+  capabilities?: DeviceCapability[];
+  capabilitiesVersion?: number;
   createdAt: string;
   lastSeenAt?: string;
 }
@@ -1078,6 +1218,10 @@ export interface PairingQr {
   code: string;
   /** This server's origin, shown so it's clear which machine is on offer. */
   url: string;
+  /** Grants this code will hand the phone that redeems it. */
+  capabilities?: DeviceCapability[];
+  /** Which address the QR points at. */
+  target?: PairingTarget;
   /** Seconds the code stays redeemable from when it was minted. */
   ttlSeconds: number;
 }
@@ -1157,7 +1301,13 @@ export interface RequestMap {
   };
   /** Mint a one-time pairing code + its QR. Master-only: a paired phone must
    *  not be able to bring in more phones. */
-  "mobile.pair.begin": { payload: Record<string, never>; data: PairingQr };
+  "mobile.pair.begin": {
+    /** Grants bound to the code server-side; the phone cannot widen them.
+     *  `target` picks the address the QR carries — the remote one comes from
+     *  stored configuration, never from the request's Host header. */
+    payload: { capabilities?: DeviceCapability[]; target?: PairingTarget };
+    data: PairingQr;
+  };
   /** Invalidate outstanding codes when the QR leaves the screen. */
   "mobile.pair.cancel": { payload: Record<string, never>; data: { ok: boolean } };
   "mobile.device.list": {
@@ -1167,6 +1317,37 @@ export interface RequestMap {
   "mobile.device.revoke": {
     payload: { deviceId: string };
     data: Record<string, never>;
+  };
+  /** Master-only. Reducing a grant also drops that device's live sockets. */
+  "mobile.device.setCapabilities": {
+    payload: { deviceId: string; capabilities: DeviceCapability[] };
+    data: { device: MobileDeviceInfo };
+  };
+  /** Master-only. */
+  "connector.status": { payload: Record<string, never>; data: ConnectorStatus };
+  "connector.enroll": {
+    payload: { enrollmentToken: string; machineName?: string };
+    data: ConnectorStatus;
+  };
+  /** Master-only. Opens a device-approval request; the connector then polls for
+   *  the answer on its own, so closing this panel does not abandon it. */
+  "connector.beginApproval": {
+    payload: { machineName?: string };
+    data: ConnectorApproval;
+  };
+  "connector.cancelApproval": {
+    payload: Record<string, never>;
+    data: ConnectorStatus;
+  };
+  "connector.setEnabled": {
+    payload: { enabled: boolean };
+    data: ConnectorStatus;
+  };
+  "remote.get": { payload: Record<string, never>; data: RemoteAccess };
+  /** Master-only. Absent keys are left alone; `origin: null` clears it. */
+  "remote.set": {
+    payload: { enabled?: boolean; origin?: string | null };
+    data: RemoteAccess;
   };
   "hermes.agent.list": {
     payload: Record<string, never>;
@@ -1420,6 +1601,8 @@ export interface RequestMap {
   "schedule.run": { payload: { scheduleId: string }; data: { threadId: string } };
   "usage.get": { payload: Record<string, never>; data: { usage: ProviderUsage[] } };
   "usage.refresh": { payload: Record<string, never>; data: Record<string, never> };
+  "dictation.settings.get": { payload: Record<string, never>; data: DictationSettings };
+  "dictation.settings.save": { payload: DictationSettingsInput; data: DictationSettings };
   /** Records the mic on the machine serving this connection — never peer routed. */
   "dictation.start": { payload: Record<string, never>; data: { recordingId: string } };
   /** Empty `text` means the clip held no speech. */

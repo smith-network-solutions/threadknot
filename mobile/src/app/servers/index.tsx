@@ -48,6 +48,11 @@ export default function ServersScreen() {
                           <Text>active</Text>
                         </Badge>
                       )}
+                      {p.ingress === 'remote' && (
+                        <Badge variant="outline">
+                          <Text>relay</Text>
+                        </Badge>
+                      )}
                       {!p.notificationsEnabled && (
                         <Badge variant="secondary">
                           <Text>muted</Text>

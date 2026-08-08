@@ -13,7 +13,13 @@ use std::sync::Mutex;
 /// Bumped when the peer wire protocol changes incompatibly. Exchanged in
 /// `device.info` and pairing so mismatched Threadknots refuse to pair with a
 /// readable "update Threadknot on X" instead of failing mid-turn.
-pub const MESH_VERSION: u32 = 1;
+///
+/// **2** — SEC-012. Peer links are TLS against a certificate authority pinned at
+/// pairing, credentials are per-link and travel in headers, and routed requests
+/// carry the originating caller's grants. Version 1 is not merely different, it
+/// is the vulnerability: a v1 peer can only be reached by putting a master token
+/// in a plaintext URL, so v1 pairs are refused rather than downgraded to.
+pub const MESH_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

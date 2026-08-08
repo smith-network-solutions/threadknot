@@ -44,15 +44,28 @@ export async function getPushToken(): Promise<string | null> {
 }
 
 /** Push our current token + preferences to one server. Quiet best-effort:
- * callers decide whether failures should surface. */
+ * callers decide whether failures should surface.
+ *
+ * Nothing here assumes the server is LAN-reachable. The Expo push token is
+ * issued by Expo's own service over the public internet, and delivery runs
+ * server → Expo → phone, so a relay origin changes only *this* registration
+ * call. `csrf` is what keeps that call working over the relay: the session
+ * cookie rides along whether we want it to or not, and the server then requires
+ * the double-submit proof (see `devicePost`). */
 export async function registerPushForServer(
   profile: ServerProfile,
-  credential: string
+  credential: string,
+  csrf?: string
 ): Promise<void> {
   const expoPushToken = await getPushToken();
-  await updatePushRegistration(profile.baseUrl, credential, {
-    ...(expoPushToken ? { expoPushToken } : {}),
-    notificationsEnabled: profile.notificationsEnabled,
-    deviceName: deviceLabel(),
-  });
+  await updatePushRegistration(
+    profile.baseUrl,
+    credential,
+    {
+      ...(expoPushToken ? { expoPushToken } : {}),
+      notificationsEnabled: profile.notificationsEnabled,
+      deviceName: deviceLabel(),
+    },
+    csrf
+  );
 }

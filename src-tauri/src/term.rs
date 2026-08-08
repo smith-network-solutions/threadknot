@@ -168,6 +168,16 @@ impl TermRegistry {
         self.dir.join(format!("{}.cwd", safe_segment(term_id)))
     }
 
+    /// Live (running) shells on this machine, across every principal.
+    pub fn live_count(&self) -> usize {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.alive.load(Ordering::Relaxed))
+            .count()
+    }
+
     /// Whether a live (running) session currently exists for this terminal.
     pub fn alive(&self, project_id: &str, term_id: &str) -> bool {
         let sessions = self.sessions.lock().unwrap();
@@ -210,6 +220,20 @@ impl TermRegistry {
             // Dead session — drop it and spawn a replacement (restart on reconnect).
             sessions.remove(&key);
         }
+        // A pty deliberately outlives its socket, so the per-device socket cap
+        // cannot bound this on its own: attaching and detaching in a loop would
+        // leave a shell, two threads and 512 KB of scrollback behind every time
+        // (SEC-014).
+        let live = sessions
+            .values()
+            .filter(|s| s.alive.load(Ordering::Relaxed))
+            .count();
+        anyhow::ensure!(
+            live < crate::limits::MAX_LIVE_TERMINAL_SESSIONS,
+            "this machine already has {live} running terminals, which is the limit of {} — \
+             close one before opening another",
+            crate::limits::MAX_LIVE_TERMINAL_SESSIONS
+        );
         let scrollback_path = self.scrollback_path(&key.1);
         let cwd_path = self.cwd_path(&key.1);
         // Reopen in the shell's last-known directory if we have one; otherwise
@@ -379,18 +403,47 @@ fn param<'a>(params: &'a HashMap<String, String>, key: &str) -> Option<&'a str> 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
     State(state): State<ServerState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
-    if state.authenticate(param(&params, "token").unwrap_or("")).is_none() {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    use crate::mobile::Capability;
+    if !crate::server::ws_origin_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+    // SEC-002: keep the RESOLVED principal, not just "something authenticated".
+    // A pty is an interactive shell, so it needs the `terminal` grant — and the
+    // peer splice below replaces the caller's credential with the peer's MASTER
+    // token, so anything not checked on this side arrives there as that
+    // machine's owner. This is the check that was missing.
+    let principal = match state.authenticate_ingress(&headers, &params) {
+        Ok(authenticated) => authenticated.principal,
+        Err(rejection) => return rejection.into_response(),
+    };
+    if let Err(e) = principal.require(Capability::Terminal) {
+        return crate::server::forbidden(e);
     }
     // Remote-machine terminal: splice this socket onto the owner's /term.
     if let Some(mid) = param(&params, "machineId") {
         if mid != state.device.machine_id {
+            if let Err(e) = principal.require(Capability::Mesh) {
+                return crate::server::forbidden(e);
+            }
             let mid = mid.to_string();
-            return ws.on_upgrade(move |socket| async move {
-                crate::peernet::splice_term(socket, state, mid, params).await;
+            // A spliced socket costs this machine a socket pair either way, so it
+            // counts against the same budget as a local terminal.
+            let guard = match admit_terminal(&state, &principal) {
+                Ok(guard) => guard,
+                Err(resp) => return *resp,
+            };
+            // The caller's grants travel with the splice, so the far side
+            // enforces `terminal` for itself instead of trusting that we did.
+            let grants = principal.mesh_assertion();
+            return crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
+                tokio::select! {
+                    _ = crate::peernet::splice_term(socket, state, mid, params, grants) => {}
+                    _ = guard.closed() => {}
+                }
             });
         }
     }
@@ -416,6 +469,10 @@ pub async fn ws_handler(
     let cols = param(&params, "cols").and_then(|c| c.parse().ok()).unwrap_or(DEFAULT_COLS);
     let rows = param(&params, "rows").and_then(|r| r.parse().ok()).unwrap_or(DEFAULT_ROWS);
 
+    let guard = match admit_terminal(&state, &principal) {
+        Ok(guard) => guard,
+        Err(resp) => return *resp,
+    };
     let registry = Arc::clone(&state.terms);
     let session = match registry.get_or_spawn(
         (project_id, term_id.clone()),
@@ -425,12 +482,34 @@ pub async fn ws_handler(
     ) {
         Ok(s) => s,
         Err(e) => {
+            // Includes the live-shell limit, whose message names it.
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn failed: {e:#}"))
                 .into_response();
         }
     };
 
-    ws.on_upgrade(move |socket| bridge(socket, session, cols, rows))
+    crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
+        tokio::select! {
+            _ = bridge(socket, session, cols, rows) => {}
+            _ = guard.closed() => {}
+        }
+    })
+}
+
+/// Take a slot in this principal's terminal budget, before the upgrade — after
+/// it, the only way to refuse is a close frame with nothing readable in it.
+fn admit_terminal(
+    state: &ServerState,
+    principal: &crate::mobile::Principal,
+) -> Result<crate::sessions::SessionGuard, Box<axum::response::Response>> {
+    state
+        .sessions
+        .try_register(principal, state.policy, crate::sessions::SessionKind::Terminal)
+        .map_err(|e| {
+            Box::new(
+                (axum::http::StatusCode::TOO_MANY_REQUESTS, format!("{e:#}")).into_response(),
+            )
+        })
 }
 
 /// Bridge one WebSocket client to a session: replay buffer, fan-out output,

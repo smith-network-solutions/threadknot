@@ -149,6 +149,12 @@ export default function ServerDetail() {
           <Separator />
 
           <View className="gap-1">
+            <Text className="text-xs text-muted-foreground">
+              Reached via:{' '}
+              {profile.ingress === 'remote'
+                ? 'Threadknot relay (session cookie)'
+                : 'local network (access token)'}
+            </Text>
             <Text className="text-xs text-muted-foreground">Host: {profile.serverName ?? '—'}</Text>
             <Text className="text-xs text-muted-foreground">Threadknot v{profile.version ?? '?'}</Text>
             <Text className="text-xs text-muted-foreground">Server ID: {profile.serverId}</Text>

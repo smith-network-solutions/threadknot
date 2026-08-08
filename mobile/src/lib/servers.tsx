@@ -4,8 +4,11 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import {
   ApiError,
+  bootstrapSession,
+  endSession,
   normalizeServerUrl,
   pairServer,
+  isRelayOrigin,
   pairServerWithCode,
   parsePairingPayload,
   probeServer,
@@ -13,7 +16,7 @@ import {
   unpairDevice,
 } from './api';
 import { deviceLabel, registerPushForServer } from './push';
-import type { ServerProfile } from './types';
+import type { IngressKind, RemoteSession, ServerProfile } from './types';
 
 const STORE_KEY = 'threadknot.servers.v1';
 
@@ -41,6 +44,12 @@ export interface ServersValue {
   active: ServerProfile | null;
   /** In-memory device credentials keyed by profile id (from SecureStore). */
   credentials: Record<string, string>;
+  /** Live cookie sessions for `ingress: 'remote'` profiles, keyed by profile id.
+   * Absent for LAN profiles, which authenticate by token and have no session. */
+  sessions: Record<string, RemoteSession>;
+  /** Re-open a remote profile's cookie session — after a revoke, a 30-day idle
+   * expiry, or a spell offline. No-op for a LAN profile. */
+  refreshSession(id: string): Promise<void>;
   addServer(input: string, nickname?: string): Promise<ServerProfile>;
   /** Add (or re-pair) a server from a scanned `threadknot://pair?…` QR. */
   addServerByScan(payload: string, nickname?: string): Promise<ServerProfile>;
@@ -67,31 +76,9 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = React.useState<ServerProfile[]>([]);
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [credentials, setCredentials] = React.useState<Record<string, string>>({});
-
-  // Load metadata + credentials once at startup, then best-effort re-sync the
-  // push registration with every server (token rollover, changed prefs).
-  React.useEffect(() => {
-    void (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORE_KEY);
-        const state: PersistedState = raw ? JSON.parse(raw) : { profiles: [], activeId: null };
-        const creds: Record<string, string> = {};
-        for (const p of state.profiles) {
-          const c = await SecureStore.getItemAsync(credKey(p.id)).catch(() => null);
-          if (c) creds[p.id] = c;
-        }
-        setProfiles(state.profiles);
-        setActiveId(state.activeId ?? state.profiles[0]?.id ?? null);
-        setCredentials(creds);
-        for (const p of state.profiles) {
-          const c = creds[p.id];
-          if (c) void registerPushForServer(p, c).catch(() => undefined);
-        }
-      } finally {
-        setLoaded(true);
-      }
-    })();
-  }, []);
+  const [sessions, setSessions] = React.useState<Record<string, RemoteSession>>({});
+  // Monotonic, app-wide: the WebView keys off it, so it only has to change.
+  const sessionGen = React.useRef(0);
 
   const persist = React.useCallback((next: PersistedState) => {
     void AsyncStorage.setItem(STORE_KEY, JSON.stringify(next)).catch(() => undefined);
@@ -113,6 +100,86 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
   const credsRef = React.useRef(credentials);
   credsRef.current = credentials;
 
+  /** Open (or re-open) a cookie session and learn which door this origin is.
+   *
+   * Returns both halves so the caller can persist `ingress` on the profile and
+   * use the CSRF token immediately — React state is not readable in the same
+   * tick, and the very next thing a caller does is a state-changing POST. */
+  const openSession = React.useCallback(
+    async (
+      profileId: string,
+      baseUrl: string,
+      credential: string
+    ): Promise<{ ingress: IngressKind; session: RemoteSession | null }> => {
+      const generation = ++sessionGen.current;
+      const probe = await bootstrapSession(baseUrl, credential, generation);
+      setSessions((prev) => {
+        const next = { ...prev };
+        if (probe.session) next[profileId] = probe.session;
+        else delete next[profileId];
+        return next;
+      });
+      return probe;
+    },
+    []
+  );
+
+  /** Record which door a profile turned out to be, if it changed. */
+  const rememberIngress = React.useCallback(
+    (profileId: string, ingress: IngressKind) => {
+      const current = profilesRef.current.find((p) => p.id === profileId);
+      if (!current || current.ingress === ingress) return;
+      commit(
+        profilesRef.current.map((p) => (p.id === profileId ? { ...p, ingress } : p)),
+        activeRef.current
+      );
+    },
+    [commit]
+  );
+
+  // Load metadata + credentials once at startup, then per server: open a cookie
+  // session if it needs one, and best-effort re-sync the push registration
+  // (token rollover, changed prefs). Session first — the push call needs its
+  // CSRF token, and the WebView needs the cookie in the jar before it mounts.
+  React.useEffect(() => {
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORE_KEY);
+        const state: PersistedState = raw ? JSON.parse(raw) : { profiles: [], activeId: null };
+        const creds: Record<string, string> = {};
+        for (const p of state.profiles) {
+          const c = await SecureStore.getItemAsync(credKey(p.id)).catch(() => null);
+          if (c) creds[p.id] = c;
+        }
+        setProfiles(state.profiles);
+        setActiveId(state.activeId ?? state.profiles[0]?.id ?? null);
+        setCredentials(creds);
+        for (const p of state.profiles) {
+          const c = creds[p.id];
+          if (!c) continue;
+          void (async () => {
+            let csrf: string | undefined;
+            // A profile already known to be `compat` is not probed again: the
+            // LAN listener has no session to give, and an unreachable one would
+            // only cost a timeout ahead of the push sync it also blocks.
+            if (p.ingress !== 'compat') {
+              const probe = await openSession(p.id, p.baseUrl, c).catch(() => null);
+              if (probe) {
+                rememberIngress(p.id, probe.ingress);
+                csrf = probe.session?.csrf;
+              }
+            }
+            await registerPushForServer(p, c, csrf).catch(() => undefined);
+          })();
+        }
+      } finally {
+        setLoaded(true);
+      }
+    })();
+    // Runs exactly once at mount by design; the callbacks it uses are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const value = React.useMemo<ServersValue>(() => {
     const requireProfile = (id: string): ServerProfile => {
       const p = profilesRef.current.find((x) => x.id === id);
@@ -131,13 +198,29 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
       activeId,
       active: profiles.find((p) => p.id === activeId) ?? null,
       credentials,
+      sessions,
+
+      async refreshSession(id: string) {
+        const profile = requireProfile(id);
+        const cred = requireCredential(id);
+        const probe = await openSession(id, profile.baseUrl, cred);
+        rememberIngress(id, probe.ingress);
+      },
 
       async addServer(input: string, nickname?: string) {
         const { baseUrl, token } = normalizeServerUrl(input);
         if (!token) {
+          // Two different problems wear the same shape here, and the old message
+          // assumed the wrong one. A relay address has NO token to be missing —
+          // the strict ingress refuses a credential in a URL with a 400 — so
+          // telling someone to go and find one sent them looking for something
+          // that cannot exist. A pairing code is the answer for both cases; it is
+          // simply mandatory for the remote one.
           throw new ApiError(
             'bad-url',
-            "The URL is missing its token. In Threadknot, open Settings and copy the full LAN URL (it ends with ?token=…)."
+            isRelayOrigin(baseUrl)
+              ? 'A Threadknot relay address is paired with a code, not a token — there is no token for it to be missing. On the desktop: Settings → pair a phone → remote, then scan the QR or type the code shown beneath it.'
+              : "This URL has no token. Either paste the full LAN URL from Threadknot Settings (it ends with ?token=…), or leave the URL as-is and enter a pairing code from Settings → pair a phone."
           );
         }
         const info = await probeServer(baseUrl, token);
@@ -161,13 +244,22 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
           version: pair.version,
           baseUrl,
           deviceId: pair.deviceId,
+          // The pasted-URL path carries a master token, which only the compat
+          // listener accepts at all (`mobile_pair_handler` refuses it remotely),
+          // so this is settled before we ask. Asking anyway keeps one source of
+          // truth: a profile later re-pointed at a relay origin re-probes.
+          ingress: 'compat',
           notificationsEnabled: true,
           createdAt: nowIso(),
           updatedAt: nowIso(),
         };
         setCredentials((c) => ({ ...c, [id]: pair.credential }));
         commit([...profilesRef.current, profile], id);
-        void registerPushForServer(profile, pair.credential).catch(() => undefined);
+        const probe = await openSession(id, baseUrl, pair.credential).catch(() => null);
+        if (probe) rememberIngress(id, probe.ingress);
+        void registerPushForServer(profile, pair.credential, probe?.session?.csrf).catch(
+          () => undefined
+        );
         return profile;
       },
 
@@ -183,9 +275,26 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
 
         if (existing) {
           // Retire the stale registration so the desktop's paired-phones list
-          // doesn't accumulate a dead entry per re-pair.
+          // doesn't accumulate a dead entry per re-pair. Sign the old cookie
+          // session out *first*, and await it: un-pairing revokes sessions
+          // server-side but leaves the dead cookie in this phone's jar, and the
+          // strict ingress answers an unresolvable cookie with 401 instead of
+          // falling through to the `Authorization` header — so the leftover
+          // would break the fresh credential we are about to store.
           const oldCred = credsRef.current[id];
-          if (oldCred) void unpairDevice(existing.baseUrl, oldCred).catch(() => undefined);
+          const oldSession = sessions[id];
+          if (oldCred) {
+            // Only when there is a session to end — a LAN profile has none, and
+            // waiting out a request timeout against a server that may not be
+            // reachable is not something a re-pair should do for nothing.
+            if (oldSession) await endSession(existing.baseUrl, oldSession.csrf);
+            void unpairDevice(existing.baseUrl, oldCred, oldSession?.csrf).catch(() => undefined);
+          }
+          setSessions((prev) => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
         }
 
         await SecureStore.setItemAsync(credKey(id), pair.credential, {
@@ -203,6 +312,11 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
           version: pair.version,
           baseUrl,
           deviceId: pair.deviceId,
+          // Unknown until asked. The QR's origin does not settle it: a relay
+          // origin is https, but so is a Tailscale Funnel or ngrok tunnel to the
+          // compat listener, and reading the scheme as "remote" would put a LAN
+          // profile into cookie mode where there is no cookie to be had.
+          ingress: undefined,
           notificationsEnabled: existing?.notificationsEnabled ?? true,
           createdAt: existing?.createdAt ?? nowIso(),
           updatedAt: nowIso(),
@@ -214,17 +328,39 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
             : [...profilesRef.current, profile],
           id
         );
-        void registerPushForServer(profile, pair.credential).catch(() => undefined);
+        // Awaited, unlike the push sync: on a remote origin the WebView cannot
+        // authenticate at all until the cookie is in the jar, and the caller
+        // navigates to it the moment this resolves.
+        const probe = await openSession(id, baseUrl, pair.credential).catch(() => null);
+        if (probe) rememberIngress(id, probe.ingress);
+        void registerPushForServer(profile, pair.credential, probe?.session?.csrf).catch(
+          () => undefined
+        );
         return profile;
       },
 
       async removeServer(id: string) {
         const p = profilesRef.current.find((x) => x.id === id);
         const cred = credsRef.current[id];
-        if (p && cred) void unpairDevice(p.baseUrl, cred).catch(() => undefined);
+        const session = sessions[id];
+        if (p && cred) {
+          // Cookie first, credential second — same reason as the re-pair path:
+          // the un-pair kills the session server-side but only this response
+          // clears the cookie out of the phone's jar, and a dead cookie left
+          // there 401s requests that the bearer alone would have satisfied.
+          // Skipped when there is no session (every LAN profile), so removing an
+          // unreachable server stays instant.
+          if (session) await endSession(p.baseUrl, session.csrf);
+          void unpairDevice(p.baseUrl, cred, session?.csrf).catch(() => undefined);
+        }
         await SecureStore.deleteItemAsync(credKey(id)).catch(() => undefined);
         setCredentials((c) => {
           const next = { ...c };
+          delete next[id];
+          return next;
+        });
+        setSessions((s) => {
+          const next = { ...s };
           delete next[id];
           return next;
         });
@@ -257,6 +393,12 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
             if (info.serverId !== profile.serverId) {
               throw new ApiError('server', 'That URL points at a DIFFERENT Threadknot server. Add it as a new server instead.');
             }
+            // The old origin's cookie is worthless at the new one (the session
+            // cookie is host-scoped, deliberately, so it can never reach a
+            // sibling installation on the relay domain) — drop it and ask the
+            // new address which door it is.
+            const previous = sessions[id];
+            if (previous) await endSession(profile.baseUrl, previous.csrf);
             commit(
               profilesRef.current.map((p) =>
                 p.id === id
@@ -265,6 +407,8 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
               ),
               activeRef.current
             );
+            const probe = await openSession(id, baseUrl, cred).catch(() => null);
+            if (probe) rememberIngress(id, probe.ingress);
             return;
           } catch (e) {
             // Credential revoked server-side → fall through to token re-pair.
@@ -292,12 +436,20 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
           serverName: pair.serverName,
           version: pair.version,
           deviceId: pair.deviceId,
+          // This branch re-paired with a master token, which only the compat
+          // listener accepts.
+          ingress: 'compat',
           updatedAt: nowIso(),
         };
         commit(
           profilesRef.current.map((p) => (p.id === id ? updated : p)),
           activeRef.current
         );
+        setSessions((s) => {
+          const next = { ...s };
+          delete next[id];
+          return next;
+        });
         void registerPushForServer(updated, pair.credential).catch(() => undefined);
       },
 
@@ -314,17 +466,18 @@ export function ServersProvider({ children }: { children: React.ReactNode }) {
           profilesRef.current.map((p) => (p.id === id ? updated : p)),
           activeRef.current
         );
-        await registerPushForServer(updated, cred);
+        await registerPushForServer(updated, cred, sessions[id]?.csrf);
       },
 
       async testPush(id: string) {
         const profile = requireProfile(id);
         const cred = requireCredential(id);
-        await registerPushForServer(profile, cred).catch(() => undefined);
-        await sendTestPush(profile.baseUrl, cred);
+        const csrf = sessions[id]?.csrf;
+        await registerPushForServer(profile, cred, csrf).catch(() => undefined);
+        await sendTestPush(profile.baseUrl, cred, csrf);
       },
     };
-  }, [loaded, profiles, activeId, credentials, commit]);
+  }, [loaded, profiles, activeId, credentials, sessions, commit, openSession, rememberIngress]);
 
   return <ServersContext.Provider value={value}>{children}</ServersContext.Provider>;
 }

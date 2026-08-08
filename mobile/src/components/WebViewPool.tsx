@@ -1,8 +1,9 @@
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import type { ConnState } from '@/components/ServerSwitcher';
+import { sameOrigin } from '@/lib/api';
 import { downloadAndShare, isFileUrl } from '@/lib/download';
-import type { ServerProfile, WebToNativeMessage } from '@/lib/types';
+import type { RemoteSession, ServerProfile, WebToNativeMessage } from '@/lib/types';
 import * as Clipboard from 'expo-clipboard';
 import * as React from 'react';
 import { ActivityIndicator, AppState, Linking, Platform, View } from 'react-native';
@@ -22,8 +23,12 @@ export interface PoolHandle {
 interface Props {
   profiles: ServerProfile[];
   credentials: Record<string, string>;
+  /** Cookie sessions for `ingress: 'remote'` profiles, keyed by profile id. */
+  sessions: Record<string, RemoteSession>;
   activeId: string | null;
   onConnChange(profileId: string, conn: ConnState): void;
+  /** Re-open a remote profile's session (revoked, idled out, or offline). */
+  onSessionRetry(profileId: string): Promise<void>;
 }
 
 /** How many server WebViews stay warm. Switching among the most recent ones
@@ -51,12 +56,13 @@ function parseMessage(raw: string): WebToNativeMessage | null {
 }
 
 export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewPool(
-  { profiles, credentials, activeId, onConnChange },
+  { profiles, credentials, sessions, activeId, onConnChange, onSessionRetry },
   ref
 ) {
   // LRU of mounted profile ids, most recent last; always contains activeId.
   const [mounted, setMounted] = React.useState<string[]>([]);
   const [downloading, setDownloading] = React.useState(false);
+  const [retrying, setRetrying] = React.useState<string | null>(null);
   const views = React.useRef(new Map<string, WebView | null>());
   const ready = React.useRef(new Set<string>());
   const pendingNav = React.useRef(new Map<string, PoolNav>());
@@ -77,6 +83,19 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
     });
   }, [activeId, profiles]);
 
+  // A new session generation remounts that profile's WebView (see the `key`
+  // below), so the page it had reported ready is gone. Forget the flag or the
+  // next queued push-tap navigation is injected into a view that never arrives.
+  const generations = React.useRef(new Map<string, number>());
+  React.useEffect(() => {
+    for (const [id, session] of Object.entries(sessions)) {
+      if (generations.current.get(id) !== session.generation) {
+        generations.current.set(id, session.generation);
+        ready.current.delete(id);
+      }
+    }
+  }, [sessions]);
+
   const dispatchToWeb = React.useCallback((profileId: string, message: object) => {
     const view = views.current.get(profileId);
     if (!view) return;
@@ -89,6 +108,16 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
   // React Native owns the reliable foreground signal. The JavaScript inside a
   // suspended WebView may never observe its WebSocket closing, so tell every
   // warm page to renew its connection and replay its selected chat on wake.
+  const missingSessions = React.useRef<string[]>([]);
+  React.useEffect(() => {
+    // `!== 'compat'` rather than `=== 'remote'`: a profile paired while the
+    // session bootstrap happened to fail is left with the door unknown, and
+    // "unknown" renders as LAN. Re-probing it here is what corrects that
+    // without waiting for the next cold start.
+    missingSessions.current = profiles
+      .filter((p) => p.ingress !== 'compat' && !sessions[p.id])
+      .map((p) => p.id);
+  }, [profiles, sessions]);
   React.useEffect(() => {
     let wasAway = AppState.currentState !== 'active';
     const subscription = AppState.addEventListener('change', (next) => {
@@ -97,6 +126,12 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
           for (const id of views.current.keys()) {
             dispatchToWeb(id, { type: 'resume' });
           }
+          // A phone that was asleep may have lost its session to the 30-day
+          // idle expiry, a revoke, or simply having been offline when the app
+          // started. Bounded by resume events, so this cannot spin.
+          for (const id of missingSessions.current) {
+            void onSessionRetry(id).catch(() => undefined);
+          }
         }
         wasAway = false;
       } else {
@@ -104,7 +139,7 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
       }
     });
     return () => subscription.remove();
-  }, [dispatchToWeb]);
+  }, [dispatchToWeb, onSessionRetry]);
 
   const inject = React.useCallback(
     (profileId: string, nav: PoolNav) => {
@@ -183,15 +218,75 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
         const credential = profile ? credentials[id] : undefined;
         if (!profile || !credential) return null;
         const isActive = id === activeId;
+        const remote = profile.ingress === 'remote';
+        const session = sessions[id];
+
+        // A remote page has no way to authenticate itself: the strict ingress
+        // refuses a credential in a URL outright, so the cookie in the platform
+        // jar is the only thing that will open `/ws`, an attachment or a
+        // terminal. Mounting before it exists would give a WebView whose every
+        // request 401s, and — worse on iOS — react-native-webview copies the
+        // shared jar into the WKWebView store when the view loads its source,
+        // so a cookie that arrives afterwards is not picked up until a reload.
+        if (remote && !session) {
+          if (!isActive) return null;
+          return (
+            <View key={id} className="absolute inset-0" style={{ zIndex: 1 }}>
+              <View className="flex-1 items-center justify-center gap-4 bg-background px-8">
+                <Text className="text-center text-lg font-semibold">
+                  Signing in to {profile.name}
+                </Text>
+                <Text className="text-center text-sm text-muted-foreground">
+                  {profile.baseUrl}
+                  {'\n'}This machine is reached over the Threadknot relay, which needs a session
+                  before the console can load.
+                </Text>
+                <Button
+                  variant="outline"
+                  disabled={retrying === id}
+                  onPress={() => {
+                    setRetrying(id);
+                    void onSessionRetry(id)
+                      .catch(() => undefined)
+                      .finally(() => setRetrying(null));
+                  }}
+                >
+                  {retrying === id ? (
+                    <ActivityIndicator color="#d8dde9" />
+                  ) : (
+                    <Text>Try again</Text>
+                  )}
+                </Button>
+              </View>
+            </View>
+          );
+        }
+
+        // Two shapes of bootstrap, because the two ingresses authenticate
+        // differently and the page has to know which it is in:
+        //
+        // - LAN (`compat`): the device credential goes into page scope, and the
+        //   page appends it as `?token=`. Kept deliberately — SEC-006 leaves
+        //   query authentication on the LAN listener during the migration
+        //   window, because the session cookie is `Secure` and a browser on a
+        //   plain-http LAN address drops it silently.
+        // - Remote: no credential at all. Authentication is the `HttpOnly`
+        //   cookie the shell already bootstrapped, which the page can neither
+        //   read nor leak; what it does get is the CSRF half, which is exactly
+        //   the part it is meant to hold.
         const bootstrap = JSON.stringify({
-          token: credential,
+          ...(remote ? { csrf: session?.csrf ?? '' } : { token: credential }),
           serverId: profile.serverId,
           platform: Platform.OS,
-          capabilities: ['clipboard-read', 'reload'],
+          capabilities: ['clipboard-read', 'reload', ...(remote ? ['cookie-session'] : [])],
         });
         return (
           <View
-            key={id}
+            // The session generation is part of the key so a re-bootstrapped
+            // session gets a brand-new native web view. That remount is what
+            // makes the fresh cookie take effect: the shared-jar copy happens
+            // when the view loads its source, not continuously.
+            key={remote ? `${id}:${session?.generation ?? 0}` : id}
             pointerEvents={isActive ? 'auto' : 'none'}
             className="absolute inset-0"
             style={{ opacity: isActive ? 1 : 0, zIndex: isActive ? 1 : 0 }}
@@ -201,9 +296,21 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
                 views.current.set(id, v);
               }}
               source={{ uri: `${profile.baseUrl}/` }}
-              // The credential is injected into page scope before any app code
-              // runs — it never appears in the URL or web storage.
+              // Injected into page scope before any app code runs, so nothing
+              // secret has to ride the URL or web storage.
               injectedJavaScriptBeforeContentLoaded={`window.__THREADKNOT_NATIVE__ = ${bootstrap}; true;`}
+              // iOS only, and load-bearing for the remote path: without it the
+              // WKWebView keeps a private cookie store and never sees the
+              // session that this app's own HTTP stack put in
+              // `NSHTTPCookieStorage`. Android's WebView already shares its
+              // CookieManager with React Native's OkHttp jar.
+              //
+              // Set unconditionally rather than only for remote profiles: this
+              // is a construction-time native option, so flipping it would mean
+              // remounting, and it costs a LAN profile nothing — the session
+              // cookie is host-scoped and `Secure`, so it is never offered to
+              // another installation's hostname or to a plain-http LAN address.
+              sharedCookiesEnabled
               onMessage={onMessage(id)}
               onContentProcessDidTerminate={() => {
                 // iOS reclaims background WebViews under memory pressure.
@@ -215,10 +322,17 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
                 // has no back button, so the user would be stranded.
                 if (isFileUrl(req.url, profile.baseUrl)) {
                   setDownloading(true);
-                  void downloadAndShare(req.url).finally(() => setDownloading(false));
+                  void downloadAndShare(req.url, credential).finally(() =>
+                    setDownloading(false)
+                  );
                   return false;
                 }
-                if (req.url.startsWith(profile.baseUrl) || req.url.startsWith('about:')) {
+                // Origin equality, not a prefix match: `baseUrl` has no trailing
+                // slash, so `startsWith` would also accept
+                // `https://<host>.attacker.example` as same-origin and render an
+                // attacker's page inside the shell — with our cookie jar
+                // attached to anything it could talk the WebView into loading.
+                if (sameOrigin(req.url, profile.baseUrl) || req.url.startsWith('about:')) {
                   return true;
                 }
                 void Linking.openURL(req.url).catch(() => undefined);
@@ -227,7 +341,7 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
               onFileDownload={({ nativeEvent }) => {
                 // iOS: WKWebView flagged a response as a download attachment.
                 setDownloading(true);
-                void downloadAndShare(nativeEvent.downloadUrl).finally(() =>
+                void downloadAndShare(nativeEvent.downloadUrl, credential).finally(() =>
                   setDownloading(false)
                 );
               }}

@@ -1041,6 +1041,29 @@ pub struct ClientRequest {
     pub kind: String,
     #[serde(default)]
     pub payload: serde_json::Value,
+    /// Whose authority this request carries, when it arrived over a peer link.
+    ///
+    /// One peer socket multiplexes requests from every client on that machine —
+    /// its owner, and each of its paired phones — so the assertion has to be
+    /// per-request rather than per-connection. It is a sibling of `payload`, not
+    /// a field inside it, so it can never collide with a real request parameter
+    /// or be smuggled in by a client that controls a payload.
+    ///
+    /// **Only honoured on a connection that authenticated as a peer.** A phone
+    /// or a LAN browser can put this in a frame all it likes; it is discarded.
+    #[serde(default)]
+    pub mesh: Option<MeshAssertion>,
+}
+
+/// The `mesh` sibling of a routed request frame.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshAssertion {
+    /// Capability names the originating caller held. `None` means the request
+    /// came from the sending machine's own owner. Names are parsed leniently:
+    /// an unrecognised one is dropped, never honoured.
+    #[serde(default)]
+    pub on_behalf_of: Option<Vec<String>>,
 }
 
 /// Server -> client frames.
@@ -1088,6 +1111,15 @@ pub enum ServerMessage {
 
 pub fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// The same wire format as [`now_iso`], for a deadline computed in the future.
+///
+/// Used for a countdown the browser renders: the client subtracts its own clock,
+/// so the value has to be an absolute instant rather than a duration that goes
+/// stale between the response being built and the page painting it.
+pub fn iso_from(at: std::time::SystemTime) -> String {
+    chrono::DateTime::<chrono::Utc>::from(at).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 pub fn new_id() -> String {

@@ -1,11 +1,11 @@
+import { BrandMark } from '@/components/BrandMark';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { normalizeServerUrl } from '@/lib/api';
 import { useServers } from '@/lib/servers';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Anchor, ShieldAlert } from 'lucide-react-native';
+import { ShieldAlert } from 'lucide-react-native';
 import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -57,9 +57,7 @@ export default function PairFromLink() {
       style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
     >
       <View className="items-center gap-3">
-        <View className="h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card">
-          <Icon as={Anchor} className="size-8 text-brass" />
-        </View>
+        <BrandMark />
         <Text className="text-2xl font-bold tracking-tight">Pair with this server?</Text>
       </View>
 

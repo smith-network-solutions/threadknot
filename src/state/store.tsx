@@ -100,7 +100,9 @@ export interface AppState {
    *  "open in new window" drop zone). */
   dragProject: Project | null;
   /** HTTP base + token for token-gated requests (attachment thumbnails). */
-  http: { base: string; token: string } | null;
+  /** `token` is empty in remote mode, where authentication is a cookie; `csrf`
+   *  is the double-submit half a cookie session must send with state changes. */
+  http: { base: string; token: string; csrf?: string } | null;
   hello: HelloData | null;
   projects: Project[];
   /** Sidebar top-level containers (NOT the `workspace` tab map below —
@@ -213,7 +215,7 @@ export type Action =
   | { type: "isTauri"; value: boolean }
   | { type: "solo"; projectId: string | null }
   | { type: "dragProject"; project: Project | null }
-  | { type: "http"; value: { base: string; token: string } }
+  | { type: "http"; value: { base: string; token: string; csrf?: string } }
   | { type: "hello"; data: HelloData }
   | { type: "projects"; projects: Project[] }
   | { type: "workspaces"; workspaces: Workspace[] }
@@ -822,8 +824,43 @@ export interface ThreadknotActions {
   deleteBrowserProfile: (profileId: string, machineId?: string) => Promise<void>;
   listMobileDevices: () => Promise<import("../lib/protocol").MobileDeviceInfo[]>;
   revokeMobileDevice: (deviceId: string) => Promise<void>;
-  /** Mint a one-time pairing code + QR for the phone to scan. */
-  beginMobilePairing: () => Promise<import("../lib/protocol").PairingQr>;
+  /** Replace a paired device's grants. Narrowing them also closes whatever
+   *  sockets that device currently holds. */
+  setMobileDeviceCapabilities: (
+    deviceId: string,
+    capabilities: import("../lib/protocol").DeviceCapability[],
+  ) => Promise<import("../lib/protocol").MobileDeviceInfo>;
+  /** Mint a one-time pairing code + QR for the phone to scan, bound to the
+   *  grants the owner picked and to the address it should point at. */
+  beginMobilePairing: (
+    capabilities?: import("../lib/protocol").DeviceCapability[],
+    target?: import("../lib/protocol").PairingTarget,
+  ) => Promise<import("../lib/protocol").PairingQr>;
+  /** The hosted relay connector for THIS machine. Master-only on the server. */
+  getConnectorStatus: () => Promise<import("../lib/protocol").ConnectorStatus>;
+  /** Register with the relay using a token copied from the console. The
+   *  hostname comes back from the server; this machine never proposes one. */
+  enrollConnector: (
+    enrollmentToken: string,
+    machineName?: string,
+  ) => Promise<import("../lib/protocol").ConnectorStatus>;
+  /** Ask the relay to open a connection request and start watching for the
+   *  answer. Nothing sensitive is displayed: the owner opens a URL and presses
+   *  Approve, and the connector notices by itself. */
+  beginConnectorApproval: (
+    machineName?: string,
+  ) => Promise<import("../lib/protocol").ConnectorApproval>;
+  /** Stop watching. The request stays valid server-side until it expires. */
+  cancelConnectorApproval: () => Promise<import("../lib/protocol").ConnectorStatus>;
+  setConnectorEnabled: (
+    enabled: boolean,
+  ) => Promise<import("../lib/protocol").ConnectorStatus>;
+  /** Remote access for THIS machine. Master-only on the server. */
+  getRemoteAccess: () => Promise<import("../lib/protocol").RemoteAccess>;
+  setRemoteAccess: (patch: {
+    enabled?: boolean;
+    origin?: string | null;
+  }) => Promise<import("../lib/protocol").RemoteAccess>;
   /** Kill outstanding pairing codes the moment the QR is dismissed. */
   cancelMobilePairing: () => Promise<void>;
   listHermesAgents: () => Promise<import("../lib/protocol").HermesAgentInfo[]>;
@@ -1034,6 +1071,10 @@ export interface ThreadknotActions {
   /** Delete Threadknot's record and durable snapshot, leaving the project file intact. */
   deleteArtifact: (artifactId: string) => Promise<void>;
   scanPorts: () => Promise<{ ports: import("../lib/protocol").PortInfo[] }>;
+  getDictationSettings: () => Promise<import("../lib/protocol").DictationSettings>;
+  saveDictationSettings: (
+    input: import("../lib/protocol").DictationSettingsInput,
+  ) => Promise<import("../lib/protocol").DictationSettings>;
   /** Start recording this machine's mic; resolves to the id the other two take. */
   startDictation: () => Promise<string>;
   /** Stop and transcribe. Empty string means the clip held no speech. */

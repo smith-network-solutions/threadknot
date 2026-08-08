@@ -48,7 +48,7 @@ clipboard-rs = { version = "0.3.5", default-features = false, features = ["wayla
 url = "2"
 sha2 = "0.10"
 hex = "0.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 gethostname = "1"
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 mdns-sd = "0.13"
@@ -56,6 +56,35 @@ urlencoding = "2"
 # QR rendering for phone pairing. SVG only — the `image` feature would drag in
 # the whole `image` crate to produce a raster we never use.
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+# --- Mesh transport (SEC-012) -----------------------------------------------
+# Peer connections are TLS with the peer's certificate authority PINNED at
+# pairing time, so a peer is authenticated by its key rather than by whatever
+# answered at an address. `rustls` and `tokio-rustls` are already in the tree
+# via reqwest and tokio-tungstenite; naming them here makes the server side
+# available too. `rcgen` mints the machine's own mesh identity at first run.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
+rustls-pki-types = "1"
+hmac = "0.12"
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+# Serving axum over a TLS acceptor we drive ourselves. `hyper-util` is already a
+# transitive dependency of axum, so this adds no new code to the binary — it
+# just makes the connection builder reachable.
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio", "service"] }
+
+# --- Relay connector (Stage 2) ----------------------------------------------
+relay-protocol = { path = "../relay-protocol" }
+# The relay presents a real Let's Encrypt certificate for a name known in
+# advance, so the connector uses the public trust anchors — unlike the mesh,
+# where each peer's certificate authority is pinned at pairing time.
+webpki-roots = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+yamux = "0.13"
+tokio-util = { version = "0.7", features = ["compat"] }
+futures = "0.3"
 
 [profile.release]
 strip = true

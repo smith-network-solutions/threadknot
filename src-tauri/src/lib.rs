@@ -11,14 +11,18 @@ pub mod browser_profiles;
 pub mod bundled;
 pub mod catalog;
 pub mod clipboard;
+pub mod connector;
 pub mod device;
 pub mod dictation;
 pub mod files;
 pub mod git;
 pub mod claudex;
 pub mod hermes;
+pub mod ingress;
 pub mod library;
+pub mod limits;
 pub mod mcp;
+pub mod mesh;
 pub mod mobile;
 pub mod notifications;
 pub mod peernet;
@@ -28,8 +32,10 @@ pub mod protocol;
 pub mod push;
 pub mod personas;
 pub mod recorder;
+pub mod remote;
 pub mod schedules;
 pub mod server;
+pub mod sessions;
 pub mod store;
 pub mod term;
 pub mod themes;
@@ -435,6 +441,18 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
         &store::data_dir(),
         &config.server_id,
     )?);
+    let remote = Arc::new(remote::RemoteStore::open(&store::data_dir(), config.port)?);
+    // This machine's mesh identity. Minted on first run and then stable for the
+    // life of the install: regenerating it would silently unpair every peer,
+    // since each one pinned the certificate authority at pairing.
+    // The connector forwards to the strict ingress and nowhere else, so it is
+    // handed that port at construction and has no way to be told another one.
+    let connector = connector::Connector::open(&store::data_dir(), remote.port())?;
+    let mesh_identity = Arc::new(mesh::MeshIdentity::load_or_create(
+        &store::data_dir(),
+        &config.server_id,
+    )?);
+    let browser_sessions = Arc::new(ingress::BrowserSessions::open(&store::data_dir())?);
     let lan_url = server::lan_url(config.port, &config.token);
     let info = ServerInfo {
         port: config.port,
@@ -469,13 +487,22 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
         config,
         device,
         peernet,
+        mesh: mesh_identity,
+        pairing_challenges: Arc::new(mesh::PairingChallenges::new()),
+        connector,
         lan_url,
         agents_cache: Arc::new(RwLock::new(None)),
         terms: Arc::new(term::TermRegistry::new(store::data_dir().join("terminals"))),
         browsers,
         browser_profiles,
         mobile,
-        dictation: Arc::new(dictation::Dictation::default()),
+        dictation: Arc::new(dictation::Dictation::open(&store::data_dir())?),
+        sessions: sessions::SessionRegistry::new(),
+        browser_sessions,
+        remote,
+        // The LAN/Tauri listener. `server::run` clones this state with
+        // `IngressPolicy::Remote` for the loopback listener.
+        policy: ingress::IngressPolicy::Compat,
     };
     Ok((state, info))
 }

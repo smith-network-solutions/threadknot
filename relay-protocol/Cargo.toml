@@ -1,0 +1,22 @@
+# Standalone workspace on purpose. This crate is a path dependency of BOTH
+# `src-tauri` (the desktop connector) and `relay/` (the relay workspace), and a
+# crate that belongs to one workspace cannot be path-depended on from another.
+# An empty `[workspace]` table makes it its own root, so both sides can use it.
+[workspace]
+
+[package]
+name = "relay-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Wire contract shared by the Threadknot desktop connector, the relay data plane, and the control plane"
+license = "SEE LICENSE IN ../LICENSE"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "rt"] }

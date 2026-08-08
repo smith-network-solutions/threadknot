@@ -28,7 +28,8 @@
       "package": "com.smithnetworksolutions.threadknot",
       "adaptiveIcon": {
         "backgroundColor": "#0b0d12",
-        "foregroundImage": "./assets/images/android-icon-foreground.png"
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -48,7 +49,7 @@
         {
           "backgroundColor": "#0b0d12",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 128
         }
       ],
       "expo-secure-store",

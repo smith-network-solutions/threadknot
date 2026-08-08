@@ -10,8 +10,15 @@ import { createPortal } from "react-dom";
 import type {
   ArchiveHeader,
   BrowserProfileInfo,
+  ConnectorStatus,
+  DeviceCapability,
   DiscoveredPeer,
+  RemoteAccess,
   UpdateStatus,
+} from "../lib/protocol";
+import {
+  DEFAULT_DEVICE_CAPABILITIES,
+  DEVICE_CAPABILITY_LABELS,
 } from "../lib/protocol";
 import { copyText, timeAgo } from "../lib/format";
 import { pickAvatarImage } from "../lib/sidebarImage";
@@ -78,6 +85,8 @@ import {
 import type {
   ClaudexProfileInfo,
   ClaudexProfileInput,
+  DictationProvider,
+  DictationSettings,
   HermesAgentDetails,
   HermesAgentInfo,
 } from "../lib/protocol";
@@ -792,18 +801,30 @@ function MachinesSettings() {
                   <span className="machine-card-title">{p.name}</span>
                 </div>
                 <div className="machine-card-sub">{addr}</div>
+                {/* A pair made before the encrypted mesh is a different problem
+                    from a machine being asleep: it will never connect, and only
+                    updating that machine and re-pairing fixes it. Labelling it
+                    "offline" would send someone hunting a network fault. */}
                 <span
-                  className={`machine-pill${p.online ? " online" : ""}`}
+                  className={`machine-pill${
+                    p.needsUpgrade ? " stale" : p.online ? " online" : ""
+                  }`}
                   title={
-                    p.online
-                      ? undefined
-                      : p.lastSeenAt
-                        ? `last seen ${timeAgo(p.lastSeenAt)}`
-                        : undefined
+                    p.needsUpgrade
+                      ? "This pair predates encrypted mesh connections. Update Threadknot on that machine, then pair the two again."
+                      : p.online
+                        ? undefined
+                        : p.lastSeenAt
+                          ? `last seen ${timeAgo(p.lastSeenAt)}`
+                          : undefined
                   }
                 >
                   <span className="pill-dot" />
-                  {p.online ? "connected" : "offline"}
+                  {p.needsUpgrade
+                    ? "update needed"
+                    : p.online
+                      ? "connected"
+                      : "offline"}
                 </span>
               </div>
               <div className="machine-card-actions">
@@ -962,6 +983,443 @@ function MachinesSettings() {
   );
 }
 
+/** Bytes as something a person can read. Deliberately coarse: nobody needs a
+ *  fair-use figure to the byte, and precision here reads as importance. */
+function bytes(n: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = n;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+/** The hosted relay connector: paste a token from the console, and this machine
+ *  becomes reachable from anywhere.
+ *
+ *  This is the paid path, so the panel is explicit about the trade rather than
+ *  quiet about it: the relay terminates TLS, which means its operator *can*
+ *  inspect traffic. The build plan forbids ever implying otherwise, and a
+ *  settings panel is exactly where someone decides whether they mind.
+ */
+function ConnectorSettings() {
+  const { actions } = useStore();
+  const [status, setStatus] = useState<ConnectorStatus | null>(null);
+  const [token, setToken] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    void actions
+      .getConnectorStatus()
+      .then(setStatus)
+      .catch(() => undefined);
+  }, [actions]);
+
+  useEffect(() => {
+    load();
+    // The connector pushes a `connector` state pulse on every change, but a
+    // slow poll also covers the case where this panel is open while a reconnect
+    // is cycling — the interesting states here are transient by nature.
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const run = (work: Promise<ConnectorStatus>) => {
+    setBusy(true);
+    setError(null);
+    void work
+      .then((s) => {
+        setStatus(s);
+        setToken("");
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  // Owner-only on the server, so a device simply never gets a value back.
+  if (!status) return null;
+
+  const enrolled = status.state !== "off" && status.state !== "unenrolled";
+  const quota =
+    status.monthBytes !== undefined && status.monthQuotaBytes
+      ? Math.min(100, Math.round((status.monthBytes / status.monthQuotaBytes) * 100))
+      : null;
+
+  return (
+    <div className="settings-block">
+      <div className="settings-row">
+        <span className="settings-label">reachable from anywhere</span>
+        <span
+          className={`machine-pill${
+            status.state === "online"
+              ? " online"
+              : status.state === "error"
+                ? " stale"
+                : ""
+          }`}
+        >
+          <span className="pill-dot" />
+          {status.state === "unenrolled" ? "not set up" : status.state}
+        </span>
+      </div>
+
+      {status.hostname && (
+        <div className="settings-row">
+          <code className="settings-value">{status.publicOrigin}</code>
+          <button
+            type="button"
+            className="settings-toggle"
+            onClick={() => void navigator.clipboard?.writeText(status.publicOrigin)}
+          >
+            copy
+          </button>
+        </div>
+      )}
+
+      {status.state === "off" || status.state === "unenrolled" ? (
+        status.approval ? (
+          /* A request is out. The connector polls for the answer itself, so this
+             is only a display — closing the panel does not abandon it. */
+          <ApprovalPanel
+            approval={status.approval}
+            busy={busy}
+            onCancel={() => run(actions.cancelConnectorApproval())}
+            onRetry={() => {
+              setError(null);
+              void actions
+                .beginConnectorApproval()
+                .then(load)
+                .catch((e: unknown) =>
+                  setError(e instanceof Error ? e.message : String(e)),
+                );
+            }}
+          />
+        ) : (
+          <>
+            <div className="settings-row">
+              <button
+                type="button"
+                className="settings-toggle primary"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setError(null);
+                  void actions
+                    .beginConnectorApproval()
+                    .then(load)
+                    .catch((e: unknown) =>
+                      setError(e instanceof Error ? e.message : String(e)),
+                    )
+                    .finally(() => setBusy(false));
+                }}
+              >
+                {busy ? "starting…" : "connect this machine"}
+              </button>
+              <span className="settings-value dim">
+                opens app.threadknot.ai to sign in and approve. nothing to copy.
+              </span>
+            </div>
+
+            {/* Demoted, not removed: a headless or scripted install still has a
+                token, and so does anyone who already minted one. Behind a
+                disclosure because offering both as equals is what made this the
+                confusing step in the first place. */}
+            <details className="settings-details">
+              <summary className="settings-value dim">
+                or paste a token from the console
+              </summary>
+              <div className="settings-row" style={{ marginTop: 6 }}>
+                <input
+                  className="settings-input"
+                  placeholder="paste the token from app.threadknot.ai"
+                  value={token}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => setToken(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && token.trim()) {
+                      run(actions.enrollConnector(token.trim()));
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="settings-toggle"
+                  disabled={busy || !token.trim()}
+                  onClick={() => run(actions.enrollConnector(token.trim()))}
+                >
+                  set up
+                </button>
+              </div>
+              <div className="settings-value dim">
+                single-use, expires in 15 minutes. this machine keeps its own key —
+                the token only proves you authorised it.
+              </div>
+            </details>
+          </>
+        )
+      ) : (
+        <div className="settings-row">
+          <button
+            type="button"
+            className={`settings-toggle${status.state === "online" ? " primary" : ""}`}
+            disabled={busy}
+            onClick={() => run(actions.setConnectorEnabled(false))}
+          >
+            turn off
+          </button>
+          <span className="settings-value dim">
+            {status.liveStreams > 0
+              ? `${status.liveStreams} live connection${status.liveStreams === 1 ? "" : "s"}`
+              : "idle"}
+            {status.bytesIn + status.bytesOut > 0 &&
+              ` · ${bytes(status.bytesIn + status.bytesOut)} this session`}
+          </span>
+        </div>
+      )}
+
+      {enrolled && !status.acceptingNewSessions && (
+        <div className="settings-value error">
+          {/* Verbatim from the control plane: it knows which limit was hit and
+              this build does not. Paraphrasing would drift. */}
+          {status.holdReason ??
+            "new connections are on hold. anything already open keeps working."}
+        </div>
+      )}
+
+      {/* The warning, not the obituary. `acceptingNewSessions` is still true
+          here: this is the only advance notice a customer gets, because the
+          console is a place they have no reason to visit while everything works. */}
+      {enrolled &&
+        status.acceptingNewSessions &&
+        status.trialDaysLeft !== undefined &&
+        status.trialDaysLeft <= 7 && (
+          <div className={`settings-value${status.trialDaysLeft <= 3 ? " error" : " dim"}`}>
+            {status.trialDaysLeft > 0
+              ? `${status.trialDaysLeft} day${status.trialDaysLeft === 1 ? "" : "s"} left in the trial. after that this machine finishes the sessions it has and stops taking new ones — nothing is cut off mid-session. subscribe at app.threadknot.ai/billing.`
+              : "the trial ends today. subscribe at app.threadknot.ai/billing to keep opening new sessions."}
+          </div>
+        )}
+
+      {quota !== null && quota >= 80 && (
+        <div className="settings-value dim">
+          {bytes(status.monthBytes ?? 0)} of {bytes(status.monthQuotaBytes ?? 0)} fair
+          use this month ({quota}%). past the limit, transfer is slowed — never
+          billed, never cut off.
+        </div>
+      )}
+
+      {status.lastError && status.state !== "online" && (
+        <div className="settings-value dim">{status.lastError}</div>
+      )}
+
+      <div className="settings-value dim">
+        {enrolled
+          ? "the relay decrypts traffic to route it, so its operator can technically see what passes through — source, terminal output, browser sessions. it stores none of it."
+          : "off — nothing outside this network can reach this machine."}
+      </div>
+      {error && <div className="settings-value error">{error}</div>}
+    </div>
+  );
+}
+
+/** A connection request waiting for someone to approve it in the console.
+ *
+ *  The link is the whole point, and it is deliberately the largest thing here:
+ *  the person is sitting at this machine, so the fastest route is opening the
+ *  page on this machine. The code underneath is a fallback for a box with no
+ *  browser — it is not the intended path and is not presented as one.
+ *
+ *  Nothing on screen is a credential. The secret that collects the enrollment
+ *  never leaves the Rust side, so this panel is safe on a shared display.
+ */
+function ApprovalPanel({
+  approval,
+  busy,
+  onCancel,
+  onRetry,
+}: {
+  approval: NonNullable<ConnectorStatus["approval"]>;
+  busy: boolean;
+  onCancel: () => void;
+  onRetry: () => void;
+}) {
+  const [remaining, setRemaining] = useState(() => secondsLeft(approval.expiresAt));
+
+  useEffect(() => {
+    setRemaining(secondsLeft(approval.expiresAt));
+    const timer = window.setInterval(
+      () => setRemaining(secondsLeft(approval.expiresAt)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [approval.expiresAt]);
+
+  // Expiry is enforced by the control plane; this only stops the panel claiming
+  // a window that has already closed.
+  const dead = approval.state !== "waiting" || remaining <= 0;
+
+  if (dead) {
+    return (
+      <>
+        <div className="settings-value error">
+          {approval.state === "denied"
+            ? "that request was declined in the console."
+            : "that request expired before it was approved."}
+        </div>
+        <div className="settings-row">
+          <button
+            type="button"
+            className="settings-toggle primary"
+            disabled={busy}
+            onClick={onRetry}
+          >
+            try again
+          </button>
+          <button type="button" className="settings-toggle" disabled={busy} onClick={onCancel}>
+            cancel
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="settings-row">
+        <a
+          className="settings-toggle primary"
+          href={approval.verificationUriComplete}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          open the approval page
+        </a>
+        <span className="settings-value dim">
+          sign in and press approve — {remaining}s left
+        </span>
+      </div>
+      <div className="settings-value dim">
+        waiting for approval. this machine is watching for it, so you can close
+        settings. if the page did not open, go to {approval.verificationUri} and
+        enter <code className="settings-value">{approval.userCode}</code>.
+      </div>
+      <div className="settings-row">
+        <button type="button" className="settings-toggle" disabled={busy} onClick={onCancel}>
+          cancel
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** Whole seconds until an ISO instant, floored at zero. */
+function secondsLeft(iso: string): number {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return 0;
+  return Math.max(0, Math.round((at - Date.now()) / 1000));
+}
+
+/** Remote access for this machine: the public address it has been given, and
+ *  whether the strict ingress answers at all.
+ *
+ *  Deliberately blunt about what it is. Everything else in Threadknot is
+ *  reachable only from this network; this is the one switch that puts a
+ *  workstation behind a public hostname, so the copy says so rather than
+ *  calling it "sharing".
+ */
+function RemoteAccessSettings() {
+  const { actions } = useStore();
+  const [remote, setRemote] = useState<RemoteAccess | null>(null);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void actions
+      .getRemoteAccess()
+      .then((r) => {
+        if (cancelled) return;
+        setRemote(r);
+        setDraft(r.origin ?? "");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [actions]);
+
+  const apply = (patch: { enabled?: boolean; origin?: string | null }) => {
+    setBusy(true);
+    setError(null);
+    void actions
+      .setRemoteAccess(patch)
+      .then((r) => {
+        setRemote(r);
+        setDraft(r.origin ?? "");
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  // Only rendered for the desktop owner: the RPC is master-only, so a device
+  // simply never gets a value back.
+  if (!remote) return null;
+
+  return (
+    <div className="settings-block">
+      <div className="settings-row">
+        <span className="settings-label">or your own tunnel</span>
+        <button
+          type="button"
+          className={`settings-toggle${remote.enabled ? " primary" : ""}`}
+          disabled={busy || (!remote.enabled && !remote.origin)}
+          title={
+            remote.origin
+              ? "Answer requests forwarded from the public address"
+              : "Set a public address first"
+          }
+          onClick={() => apply({ enabled: !remote.enabled })}
+        >
+          {remote.enabled ? "on" : "off"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <input
+          className="settings-input"
+          placeholder="https://your-machine.remote.threadknot.app"
+          value={draft}
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") apply({ origin: draft.trim() || null });
+          }}
+        />
+        <button
+          type="button"
+          className="settings-toggle"
+          disabled={busy || draft.trim() === (remote.origin ?? "")}
+          onClick={() => apply({ origin: draft.trim() || null })}
+        >
+          save
+        </button>
+      </div>
+      <div className="settings-value dim">
+        {remote.enabled
+          ? `this machine answers on its public address. turning this off signs every remote browser out immediately${remote.browserSessions ? ` (${remote.browserSessions} open)` : ""}.`
+          : "off — nothing outside this network can reach this machine. the connector talks to 127.0.0.1:" +
+            remote.loopbackPort +
+            ", never to the network."}
+      </div>
+      {error && <div className="settings-value error">{error}</div>}
+    </div>
+  );
+}
+
 function MobileDevices() {
   const { actions } = useStore();
   const [devices, setDevices] = useState<
@@ -1015,25 +1473,123 @@ function MobileDevices() {
         />
       )}
       {(devices ?? []).map((d) => (
-        <div key={d.id} className="settings-row">
-          <span className="settings-value">
-            {d.name}
-            <span className="dim"> · {d.platform}{d.expoPushToken ? "" : " · no push"}</span>
+        <PairedPhoneRow
+          key={d.id}
+          device={d}
+          onChanged={(next) =>
+            setDevices((prev) => (prev ?? []).map((x) => (x.id === next.id ? next : x)))
+          }
+          onRevoked={() =>
+            setDevices((prev) => (prev ?? []).filter((x) => x.id !== d.id))
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One paired phone: name, revoke, and the grants it holds.
+ *
+ *  The grants are the whole point of the row. A phone is a remote-control for a
+ *  workstation — "paired" is not one thing, it is a set of very different
+ *  consequences (read a chat / open a shell / act as your logged-in accounts),
+ *  and the owner has to be able to see and change which ones this device got.
+ */
+function PairedPhoneRow({
+  device,
+  onChanged,
+  onRevoked,
+}: {
+  device: import("../lib/protocol").MobileDeviceInfo;
+  onChanged: (device: import("../lib/protocol").MobileDeviceInfo) => void;
+  onRevoked: () => void;
+}) {
+  const { actions } = useStore();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const granted = device.capabilities ?? DEFAULT_DEVICE_CAPABILITIES;
+
+  const toggle = (id: DeviceCapability, on: boolean) => {
+    const next = on
+      ? [...granted, id]
+      : granted.filter((c) => c !== id);
+    setError(null);
+    void actions
+      .setMobileDeviceCapabilities(device.id, next)
+      .then(onChanged)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  };
+
+  return (
+    <div className="settings-subblock">
+      <div className="settings-row">
+        <span className="settings-value">
+          {device.name}
+          <span className="dim">
+            {" "}
+            · {device.platform}
+            {device.expoPushToken ? "" : " · no push"}
           </span>
+        </span>
+        <span className="settings-row-actions">
+          <button
+            type="button"
+            className="settings-toggle"
+            aria-expanded={open}
+            title="What this phone is allowed to do"
+            onClick={() => setOpen((v) => !v)}
+          >
+            {granted.length} of {DEVICE_CAPABILITY_LABELS.length} permissions
+          </button>
           <button
             type="button"
             className="settings-toggle"
             title="Revoke this phone's access"
             onClick={() => {
               void actions
-                .revokeMobileDevice(d.id)
-                .then(() => setDevices((devices ?? []).filter((x) => x.id !== d.id)))
+                .revokeMobileDevice(device.id)
+                .then(onRevoked)
                 .catch(() => undefined);
             }}
           >
             revoke
           </button>
-        </div>
+        </span>
+      </div>
+      {open && (
+        <>
+          <CapabilityPicker granted={granted} onToggle={toggle} />
+          <div className="settings-value dim">
+            taking a permission away also closes whatever this phone has open
+            right now
+          </div>
+          {error && <div className="settings-value error">{error}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The grant checklist, shared by the pairing dialog and the device row. */
+export function CapabilityPicker({
+  granted,
+  onToggle,
+}: {
+  granted: DeviceCapability[];
+  onToggle: (id: DeviceCapability, on: boolean) => void;
+}) {
+  return (
+    <div className="capability-picker">
+      {DEVICE_CAPABILITY_LABELS.map((c) => (
+        <label key={c.id} className="capability-option">
+          <input
+            type="checkbox"
+            checked={granted.includes(c.id)}
+            onChange={(e) => onToggle(c.id, e.target.checked)}
+          />
+          <span className="capability-label">{c.label}</span>
+          <span className="capability-detail dim">{c.detail}</span>
+        </label>
       ))}
     </div>
   );
@@ -1605,6 +2161,12 @@ function PhoneAccessSettings() {
         </div>
       )}
 
+      {/* The hosted relay first: it is the path that works from a phone on
+          cellular with no setup beyond a pasted token. The manual origin below
+          stays for people running their own tunnel, which the threat model
+          explicitly keeps as a supported transport. */}
+      <ConnectorSettings />
+      <RemoteAccessSettings />
       <MobileDevices />
     </>
   );
@@ -2759,12 +3321,184 @@ function BrowserProfileSettings() {
   );
 }
 
+/** Local capture with either an on-device Whisper CLI or an explicitly
+ * configured OpenAI-compatible transcription endpoint. Credentials stay
+ * write-only and this screen is mounted only for the master connection. */
+function VoiceSettings() {
+  const { actions } = useStore();
+  const [settings, setSettings] = useState<DictationSettings | null>(null);
+  const [provider, setProvider] = useState<DictationProvider>("local");
+  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
+  const [model, setModel] = useState("gpt-transcribe");
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void actions
+      .getDictationSettings()
+      .then((next) => {
+        if (cancelled) return;
+        setSettings(next);
+        setProvider(next.provider);
+        setBaseUrl(next.baseUrl);
+        setModel(next.model);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [actions]);
+
+  async function save() {
+    if (busy || !settings) return;
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const next = await actions.saveDictationSettings({
+        provider,
+        baseUrl: baseUrl.trim(),
+        model: model.trim(),
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      });
+      setSettings(next);
+      setApiKey("");
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!settings) {
+    return (
+      <div className="settings-block">
+        <div className="settings-label">voice dictation</div>
+        <div className={`settings-value ${error ? "notify-failed" : "dim"}`}>
+          {error ?? "loading transcription settings…"}
+        </div>
+      </div>
+    );
+  }
+
+  const apiReady = settings.hasApiKey || apiKey.trim().length > 0;
+  const canSave =
+    !busy &&
+    !!baseUrl.trim() &&
+    !!model.trim() &&
+    (provider === "local" || apiReady);
+
+  return (
+    <div className="settings-block voice-settings">
+      <div className="settings-label">voice dictation</div>
+      <p className="voice-intro">
+        Threadknot records this machine&apos;s microphone with ffmpeg, then turns the
+        completed clip into text locally or through a compatible API.
+      </p>
+
+      {!settings.captureAvailable && (
+        <div className="voice-callout bad">{settings.captureHint}</div>
+      )}
+
+      <div className="settings-row voice-provider-row">
+        <span className="settings-value">
+          transcription
+          <span className="settings-hint">Choose where recorded audio is processed.</span>
+        </span>
+        <span className="settings-seg">
+          <button
+            type="button"
+            className={`settings-toggle ${provider === "local" ? "on" : ""}`}
+            onClick={() => setProvider("local")}
+          >
+            local
+          </button>
+          <button
+            type="button"
+            className={`settings-toggle ${provider === "api" ? "on" : ""}`}
+            onClick={() => setProvider("api")}
+          >
+            API
+          </button>
+        </span>
+      </div>
+
+      {provider === "local" ? (
+        <div className={`voice-callout ${settings.localAvailable ? "good" : "bad"}`}>
+          {settings.localAvailable
+            ? "Local Whisper is ready. Audio never leaves this machine."
+            : settings.localHint}
+        </div>
+      ) : (
+        <>
+          <div className="voice-callout warn">
+            Recorded audio is uploaded to this provider. Use an endpoint whose data
+            handling you trust.
+          </div>
+          <div className="claudex-form voice-form">
+            <label className="claudex-field">
+              <span>base URL</span>
+              <input
+                type="text"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.openai.com/v1"
+              />
+            </label>
+            <label className="claudex-field">
+              <span>model</span>
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="gpt-transcribe or whisper-1"
+              />
+            </label>
+            <label className="claudex-field">
+              <span>API key</span>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={settings.hasApiKey ? "stored — type to replace" : "required"}
+                autoComplete="off"
+              />
+            </label>
+          </div>
+          <div className="settings-hint voice-secret-note">
+            The key is stored on this machine and is never returned after saving.
+            Any OpenAI-compatible <code>/audio/transcriptions</code> endpoint can be used.
+          </div>
+        </>
+      )}
+
+      {error && <div className="settings-value notify-failed voice-result">{error}</div>}
+      {saved && !error && <div className="settings-value ok voice-result">saved</div>}
+      <button
+        type="button"
+        className="settings-toggle primary voice-save"
+        disabled={!canSave}
+        onClick={() => void save()}
+      >
+        {busy ? "saving…" : "save voice settings"}
+      </button>
+    </div>
+  );
+}
+
 const SETTINGS_SECTIONS = [
   { id: "appearance", label: "Appearance", blurb: "theme, size, sidebar, composer" },
   { id: "notifications", label: "Notifications", blurb: "alerts & sound" },
   { id: "machines", label: "Machines", blurb: "your fleet" },
   { id: "phone", label: "Phone & access", blurb: "LAN URL, devices" },
   { id: "agents", label: "Agents", blurb: "Claude, Codex, Kimi, Claudex" },
+  { id: "voice", label: "Voice", blurb: "dictation & transcription" },
   { id: "library", label: "Library", blurb: "skills & MCP tools" },
   { id: "browser", label: "Browser logins", blurb: "stay signed in" },
   { id: "terminal", label: "Terminal", blurb: "font & cursor" },
@@ -2781,6 +3515,9 @@ type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
  */
 export function SettingsScreen({ onClose }: { onClose: () => void }) {
   const { state } = useStore();
+  const visibleSections = SETTINGS_SECTIONS.filter(
+    (item) => item.id !== "voice" || state.hello?.principal === "master",
+  );
   // The pulsing gear is a pointer at this tab, so land on it when it is the
   // reason the user opened settings.
   const [section, setSection] = useState<SettingsSection>(
@@ -2823,7 +3560,7 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
         </header>
         <div className="ss-body">
           <nav className="ss-nav" aria-label="Settings sections">
-            {SETTINGS_SECTIONS.map((s) => (
+            {visibleSections.map((s) => (
               <button
                 key={s.id}
                 type="button"
@@ -2849,6 +3586,7 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
             {section === "machines" && <MachinesSettings />}
             {section === "phone" && <PhoneAccessSettings />}
             {section === "agents" && <AgentsSettings />}
+            {section === "voice" && state.hello?.principal === "master" && <VoiceSettings />}
             {section === "library" && <LibrarySettings />}
             {section === "browser" && <BrowserProfileSettings />}
             {section === "archives" && <ArchivesSettings onClose={onClose} />}

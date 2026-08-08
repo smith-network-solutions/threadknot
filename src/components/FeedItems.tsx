@@ -83,7 +83,7 @@ export function CopyButton({
 export function DiffBody({ unified }: { unified: string }) {
   const lines = unified.replace(/\n$/, "").split("\n");
   return (
-    <pre className="diff-body">
+    <pre className="diff-body" data-no-pull>
       {lines.map((line, i) => {
         let cls = "diff-ctx";
         if (line.startsWith("+++") || line.startsWith("---")) cls = "diff-file";

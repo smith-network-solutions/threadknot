@@ -8,12 +8,45 @@ load; the UI stores it in localStorage and appends it to the WS URL). The Tauri
 desktop shell loads the bundled UI and obtains `{ port, token }` via the
 `server_info` Tauri command; a phone browser uses the LAN URL shown in Settings.
 
+## Listeners and ingress policy
+
+The server binds **three** sockets, and which one a request arrived on is what
+decides what that request is allowed to be. The policy is a property of the
+socket deliberately: it cannot be a header, because "I came from the relay" is
+spoofable from the LAN, and it cannot be the source address, because the
+desktop's own webview is also loopback. A separate socket is the only version of
+this that a caller cannot select for itself.
+
+| listener | dialled by | authenticates with | refuses |
+|---|---|---|---|
+| `0.0.0.0:<port>` | LAN browsers, the Tauri webview, paired phones on the same network | master token, device bearer, session cookie — and, here only, `?token=` in the URL | nothing further; this is the compatibility door and the LAN product is unchanged |
+| `127.0.0.1:<port+1>` | the connector process on this same machine, and therefore a public relay | a native device bearer, or the opaque cookie from `POST /api/session` | any credential in the query string (`400`, even a valid one), the master credential (`403` however presented), a peer credential (`403`) |
+| `0.0.0.0:<port+2>`, **TLS** | paired Threadknot machines, and nothing else | exactly one thing: a per-peer credential in an `Authorization: Bearer` header | a credential in the query string (`400`), any principal that is not a peer (`403`, even though valid), an anonymous request (`401`) |
+
+Route *mounting* differs too, rather than routes merely being guarded: `/mcp`
+and `GET /api/peer/identity` are absent from the strict listener's router (a
+relay has no business carrying either), and `POST /api/peer/pair` exists **only**
+on the mesh listener, so that exchange is always inside TLS.
+
+The strict listener is bound unconditionally even when remote access is off,
+because it is loopback-only — binding it exposes nothing, and an always-present
+socket is what makes the switch instant instead of a restart; every request on
+it answers `503` while remote access is off. The mesh listener is *not* gated on
+that switch: the mesh is part of the LAN product. A bind failure on either
+hardened listener is logged and dropped rather than fatal — a machine where
+something else already holds that port must still work as a solo desktop, and
+what it loses (the mesh) is reported in `peer.list`.
+
 ## Envelopes
 
 Client → server (requests):
 
 ```jsonc
 { "id": 17, "type": "project.create", "payload": { ... } }
+
+// On a connection that authenticated as a PEER only, a frame may also carry a
+// `mesh` sibling of `payload` naming whose authority it runs with:
+{ "id": 17, "type": "turn.start", "payload": { ... }, "mesh": { "onBehalfOf": ["threads"] } }
 ```
 
 Server → client:
@@ -34,7 +67,7 @@ Server → client:
 
 | type | payload | data |
 |---|---|---|
-| `hello` | `{}` | `{ version, gitHash, buildDate, lanUrl, agents: AgentInfo[], serverId, serverName, machineId, friendlyName, avatar?, color?, profileUpdatedAt, meshVersion, dictation: { available, hint? } }` — `version` is git-derived at build time (`0.1.<commit count>`, build.rs), so it bumps with every commit; `gitHash`/`buildDate` identify the exact build. `avatar`/`color`/`profileUpdatedAt` carry this machine's own profile (the peer merges it last-write-wins by `profileUpdatedAt`) |
+| `hello` | `{}` | `{ version, gitHash, buildDate, lanUrl, principal, capabilities, agents: AgentInfo[], serverId, serverName, machineId, friendlyName, avatar?, color?, profileUpdatedAt, meshVersion, dictation: { available, hint? } }` — `lanUrl` carries `?token=` for the master principal only; a device gets the origin, and so does a **peer** (it is administering its own machine, so handing it this machine's token-bearing URL would rebuild the leak it fixed one hop out). `principal` is `"master" \| "device" \| "peer"` and `capabilities` is the grant list this connection actually holds — for a peer, the grants of whoever asked *it* (both advisory; enforced server-side). — `version` is git-derived at build time (`0.1.<commit count>`, build.rs), so it bumps with every commit; `gitHash`/`buildDate` identify the exact build. `avatar`/`color`/`profileUpdatedAt` carry this machine's own profile (the peer merges it last-write-wins by `profileUpdatedAt`) |
 | `app.changelog` | `{}` | `{ entries: [{ version, hash, date, subject, body }], notes: [{ version, date, notes[] }] }` — both embedded at compile time by build.rs. `notes` are the client-facing update notes (parsed from CHANGELOG.md) shown by the sidebar version popover; `entries` are the raw git log (newest first, last 60 commits), kept internal |
 | `device.info` | `{}` | `{ machineId, friendlyName, avatar?, color?, profileUpdatedAt, hostname, os, arch, version, meshVersion, capabilities[] }` — this machine's mesh identity + live capability scan (`run-claude`, `run-codex`, `run-kimi`, …) |
 | `device.rename` | `{ name, machineId? }` | `{ friendlyName }` — the name peers see; master principal only. Routable: with another machine's `machineId` it is forwarded to that machine, which renames itself and gossips the change (peer-to-peer last-write-wins, no central authority) |
@@ -50,11 +83,16 @@ Server → client:
 | `mesh.workspaceUpsert` | `{ workspace }` | `{}` — peer-to-peer catalog push: the FULL workspace list syncs mesh-wide (membership is irrelevant — remote-only workspaces render everywhere and route through their owner); whole-record LWW by `updatedAt`, records older than a local tombstone stay dead; uncovered local projects get re-wrapped |
 | `mesh.workspaceDelete` | `{ id, deletedAt }` | `{}` — peer-to-peer delete: tombstones + drops the record unless the local copy was edited after `deletedAt` (the edit wins and revives at the next resync); tombstones are re-pushed alongside the catalog at every peer connect |
 | `mesh.rewrapProject` | `{ projectId }` | `{}` — peer-to-peer: re-wrap a just-detached project into its own workspace |
-| `peer.list` | `{}` | `{ peers: PeerInfo[], discovered: DiscoveredPeer[] }` — paired machines (with live `online`) + unpaired Threadknots seen via mDNS; tokens never serialized |
-| `peer.add` | `{ url, token? }` | `PeerInfo` — one-paste mutual pairing: calls the peer's `POST /api/peer/pair` with OUR identity + master token; afterwards both sides hold each other's tokens; master principal only |
+| `peer.list` | `{}` | `{ peers: PeerInfo[], discovered: DiscoveredPeer[] }` — paired machines (with live `online` and `needsUpgrade`) + unpaired Threadknots seen via mDNS. Credentials, credential hashes and pinned CAs are never serialized. `needsUpgrade` is reported separately from `online` because a pre-mesh-v2 pair is not offline — it is refused, and only re-pairing fixes it; calling it offline sends someone hunting a network fault that does not exist |
+| `peer.add` | `{ url, token? }` | `PeerInfo` — one-paste mutual pairing, in the two phases described below: `GET /api/peer/identity` for the peer's public identity and a single-use challenge, then `POST /api/peer/pair` over TLS pinned to that identity's CA, carrying an HMAC **proof** of the pasted token rather than the token itself. Each side leaves holding a freshly minted per-link credential for the other; no master token is stored or transmitted. Owner only |
 | `peer.remove` | `{ machineId }` | `{}` — also purges workspaces living entirely on that machine (no tombstone: re-pairing brings them back); master principal only |
 | `peer.setAppearance` | `{ machineId, image?, color? }` | `PeerInfo` - a LOCAL display override for the peer's avatar/accent color (never sent to the peer; wins over the peer-advertised `avatar`/`color` in the UI); same patch semantics as `device.setAppearance`; master principal only |
 | `peer.announce` | `{ machineId, addresses[], port }` | `{}` — a peer refreshing its address hints (sent over peer sockets on startup/interface change); only known machine ids are honored |
+| `connector.status` | `{}` | `ConnectorStatus` — this machine's hosted-relay connector: `state` (`off` \| `unenrolled` \| `connecting` \| `online` \| `error`), server-assigned `hostname`/`publicOrigin`, `lastError`, `connectedSince`, byte counters, `acceptingNewSessions` + `holdReason`, `trialDaysLeft`, `approval`, `liveStreams`. `trialDaysLeft` exists because `holdReason` is only populated once a hold is already in force — a build watching only that told people their trial had ended on the day it stopped working, which is the one day the information is useless. The whole `connector.*` family is owner-only and deliberately **not** routable: each machine enrolls itself with its own key, and enrolling a peer from here would mean holding a key on behalf of the one machine that should ever hold it |
+| `connector.beginApproval` | `{ machineName? }` | `ConnectorApproval` — **the normal way to connect a machine.** Opens a device-approval request: this machine generates its keypair, signs over the key *and* the name, and gets back a URL for the owner to open plus a short `userCode` as a fallback for a box with no browser. Nothing sensitive is returned — the `deviceCode` that collects the enrollment stays in the Rust process, so the panel is safe on a shared screen. The connector then polls on its own, so closing Settings does not abandon an approval mid-grant, and a granted request lands as a normal enrollment (config written, pairing origin provisioned, supervisor kicked). Owner only |
+| `connector.cancelApproval` | `{}` | `ConnectorStatus` — stop watching. The request stays valid server-side until it expires; this only stops *this* machine collecting it |
+| `connector.enroll` | `{ enrollmentToken, machineName? }` | `ConnectorStatus` — the token path, kept for scripted and headless installs and for anyone already holding a token. Registers this installation with the relay's control plane, signing the console-issued token with this machine's own Ed25519 key so seeing the token is not enough to enroll a different key. The hostname comes back server-assigned and is never proposed here; enrollment is therefore also what provisions the remote pairing origin. Owner only |
+| `connector.setEnabled` | `{ enabled }` | `ConnectorStatus` — turning it off drops the tunnel, signs every remote browser session out and closes every socket opened through the strict ingress; the LAN is untouched. Owner only |
 | `project.create` | `{ path, name? }` | `Project` |
 | `project.list` | `{}` | `{ projects: Project[] }` |
 | `project.delete` | `{ projectId }` | `{}` (does NOT touch the folder on disk) |
@@ -103,8 +141,10 @@ Server → client:
 | `usage.get` | `{}` | `{ usage: ProviderUsage[] }` — cached snapshots (kicks a fetch if the cache is cold; results arrive via the `usage` broadcast) |
 | `usage.refresh` | `{}` | `{}` — force a re-fetch, bypassing the freshness floor; snapshot arrives via the `usage` broadcast |
 | `dictation.start` | `{}` | `{ recordingId }` — records the mic of the machine serving this socket; never peer routed, master token only |
-| `dictation.stop` | `{ recordingId }` | `{ text }` — stops and transcribes with a local Whisper; `""` means the clip held no speech |
+| `dictation.stop` | `{ recordingId }` | `{ text }` — stops and transcribes with the selected local/API provider; `""` means the clip held no speech |
 | `dictation.cancel` | `{ recordingId }` | `{}` — throw the clip away without transcribing it |
+| `dictation.settings.get` | `{}` | Secret-free voice settings (`provider`, API base/model, `hasApiKey`, local/capture readiness); master only |
+| `dictation.settings.save` | `{ provider, baseUrl, model, apiKey? }` | Saves local or OpenAI-compatible API transcription settings; the write-only key is never returned; master only |
 | `fs.listDir` | `{ path? }` | `{ path, parent, entries: [{name, path, isDir}] }` (dirs only; for the phone's folder picker; `path` omitted → home dir) |
 | `term.list` | `{ projectId }` | `{ terms: TermInfo[] }` — persisted tabs for the project, each with a live `alive` flag |
 | `term.create` | `{ projectId, name? }` | `TermInfo` — a new tab (name defaults to `Terminal N`); the pty spawns lazily on first `/term` attach |
@@ -127,6 +167,15 @@ Server → client:
 | `git.checkoutMany` | `{ projectId, repoIds, branch }` | `{ results: GitOpResult[] }` — same branch across repos: switches where it exists, creates (`-b`) where it doesn't (`created` per repo) |
 | `git.pr` | `{ repoId, title?, body? }` | `{ url?, output }` — `gh pr create` (`--fill` without a title) using the installed gh CLI's auth |
 
+Where a row above says **"master principal only"** it means the *owner* test, not
+the narrow one: this machine's master credential, or a peer link carrying that
+peer's own owner (the fleet view exists so that sitting at one machine can
+administer another, and that was already true when peers authenticated as
+Master). A peer acting for one of *its* paired devices does not pass. The narrow
+"exactly this machine's master credential" test is used in one place only —
+withholding the token-bearing `lanUrl` in `hello` — because that answer would
+hand over the credential itself.
+
 Any terminal mutation broadcasts `state.changed { scope: "terminals", projectId }`. A new
 or updated artifact, or an artifact deletion, broadcasts
 `state.changed { scope: "artifacts", projectId }`. Every git mutation broadcasts
@@ -137,21 +186,27 @@ or updated artifact, or an artifact deletion, broadcasts
 Full design + phases: `docs/MULTI-MACHINE.md`. Summary of the wire pieces:
 
 - **Identity**: `machineId` == `server.json`'s `server_id`. It is the ONLY
-  durable key — addresses/ports are hints. `meshVersion` (int) is exchanged at
-  pairing; mismatches refuse with "update Threadknot on the older machine".
+  durable key — addresses/ports are hints. `meshVersion` (int, currently **2**)
+  is exchanged at pairing; mismatches refuse with "update Threadknot on the
+  older machine".
 - **Workspace**: `{ id, name, createdAt, updatedAt, members: [{machineId,
   projectId}] }` — the renameable sidebar container above (unchanged)
   `Project`. Migration wraps each project 1:1 reusing the project id.
   `Thread` carries a required, immutable `machineId`.
-- **Pairing** (`POST /api/peer/pair`): initiator authenticates with the
-  target's master token and posts `{ machineId, name, port, peerToken (its
-  OWN master token), addresses[], meshVersion }`; the target stores it in
-  `~/.threadknot/peers.json` (0600) and answers with its own identity. Mutual
-  trust after one paste.
-- **Presence/transport**: each side keeps a persistent outbound WS to every
-  paired peer (`/ws?token=…`), verifying `hello.machineId` against the
-  registry BEFORE trusting an address. `state.changed { scope: "peers" }`
-  broadcasts on any presence/registry change.
+- **Pairing**: two phases (`GET /api/peer/identity`, then `POST /api/peer/pair`
+  on the mesh listener inside TLS). Each side ends up holding a per-link
+  credential the other minted, plus the other's pinned certificate authority, in
+  `~/.threadknot/peers.json` (0600). No master token is stored or transmitted.
+  Full field list below.
+- **Presence/transport**: each side keeps a persistent outbound **`wss://`** to
+  every paired peer's mesh listener, verified against the CA pinned at pairing
+  and authenticated by a per-peer credential in an `Authorization` header — never
+  a URL, which is copied into proxy logs, shell history and crash reports. The
+  URI names the synthetic `<machineId>.threadknot.mesh` host so the certificate
+  check asks "is this really machine X" while the address stays disposable;
+  `hello.machineId` is still verified against the registry before an address is
+  trusted. `state.changed { scope: "peers" }` broadcasts on any
+  presence/registry change.
 - **DHCP resilience**: mDNS `_threadknot._tcp.local.` advertise+browse (TXT:
   machineId, name, meshVersion), plus `peer.announce` pushed over live peer
   sockets on startup and whenever the local interface set changes.
@@ -162,19 +217,147 @@ Full design + phases: `docs/MULTI-MACHINE.md`. Summary of the wire pieces:
   forwards the request verbatim (sans `machineId`) over that peer's socket
   and returns its response — the OWNER executes and persists; clients supply
   the id from the thread/workspace they're acting on. Local calls omit it and
-  are byte-identical to pre-mesh.
+  are byte-identical to pre-mesh. The forwarded frame carries a `mesh`
+  assertion describing the original caller's authority, so the owner enforces
+  the same grants the near side did (see below).
 - **Byte + socket streaming**: `/file`, `/attachment` and `/artifact-file`
   accept `machineId` and stream the bytes from the owner through this server
-  (the peer's master token is attached server-side — client tokens never
-  work on a peer directly). `/term?machineId=…` splices the WebSocket onto
+  over the mesh listener (the peer credential is attached server-side in a
+  header — client tokens never work on a peer directly, and every
+  credential-bearing query key is stripped before forwarding).
+  `/term?machineId=…` splices the WebSocket onto
   the owner's pty endpoint, so remote terminals type/echo live, and
   `/browser?machineId=…` does the same onto the owner's Chrome, so a chat on a
   peer shows and drives that machine's browser (and its stored logins) from
-  here. Only a local master principal may splice to a peer.
+  here. `/term` needs the `terminal` + `mesh` grants; the `/browser` splice is
+  owner-only, deliberately stricter than the `browser` + `mesh` that would now
+  suffice (see the driven-browser section). These paths are
+  connection-scoped rather than framed, so they carry the caller's authority in
+  the `X-Threadknot-Mesh-Grants` header instead of a `mesh` frame field.
 - **Event relay**: each peer socket relays the peer's own `event` and
   `state.changed` broadcasts to local clients with an added
   `origin: <machineId>` field. Frames that already carry `origin` are never
   relayed again (loop prevention); locally produced frames never have it.
+
+### Peer pairing (two phases)
+
+Pairing bootstraps trust between two machines that have never met, over a
+network that may have an attacker on it. It is split in two so that nothing
+secret ever crosses in the clear, and so that the second phase can be
+authenticated by *proof* rather than by transmission.
+
+**Phase 1 — `GET /api/peer/identity`** on the target's plain-HTTP LAN listener.
+Unauthenticated on purpose: everything it returns is public. It lives on the
+plain listener because it *is* the bootstrap — the caller has no certificate to
+verify against yet, which is precisely what this hands them.
+
+```jsonc
+{ "machineId": "…", "name": "…", "avatar": null, "color": null, "profileUpdatedAt": null,
+  "port": 42800, "meshPort": 42802, "meshCa": "-----BEGIN CERTIFICATE-----…",
+  "meshVersion": 2, "addresses": ["192.168.0.10", …],
+  "challenge": "…" }   // single-use, 120 s, in memory only
+```
+
+**Phase 2 — `POST /api/peer/pair`**, on the target's **mesh listener**, over TLS
+pinned to the `meshCa` phase 1 returned. Mounted only there, and authenticated
+by the proof rather than by a peer credential — a machine being paired for the
+first time does not have one yet.
+
+```jsonc
+// initiator → target
+{ "machineId": "…", "name": "…", "avatar": null, "color": null, "profileUpdatedAt": null,
+  "port": 42800, "meshPort": 42802, "meshCa": "…", "meshVersion": 2,
+  "addresses": [ … ], "challenge": "…",
+  "proof": "…",                 // HMAC-SHA256, see below
+  "credentialForYou": "…" }     // minted by the initiator; the target will present this to it
+
+// target → initiator (its own identity, plus the other half of the exchange)
+{ "machineId": "…", "name": "…", …, "meshCa": "…", "meshVersion": 2,
+  "credentialForYou": "…" }     // minted by the target; the initiator will present this to it
+```
+
+`proof` is `HMAC-SHA256(key = the target's master token, "threadknot-peer-pair-v2"
+‖ challenge ‖ 0x00 ‖ initiator machineId ‖ 0x00 ‖ hex(SHA-256(meshCa)))`. Three
+properties matter, and each is why one input is in there:
+
+- The master token is the **key**, so it proves knowledge without being sent. The
+  exchange this replaced put each machine's master token in a request body and
+  then stored it forever as the peer credential.
+- The message binds the **fingerprint of the CA the initiator actually saw**. Phase
+  1 is unauthenticated, so an attacker can intercept it and substitute their own
+  certificate — but then the proof is computed over *their* fingerprint, the real
+  machine recomputes with its own, and the comparison fails. That is what closes
+  the trust-on-first-use hole instead of accepting it.
+- It binds the initiator's `machineId`, so a captured proof cannot be replayed to
+  pair a different machine. The challenge is single-use and short-lived, so it
+  cannot be replayed at all — and it is checked *before* the proof, so there is
+  nothing to grind against.
+
+Both sides then hold, per pair: the credential they present outbound, the hash
+of the credential they accept inbound, the peer's pinned CA, and the peer's mesh
+port. Each direction is independently rotatable, and re-pairing the same machine
+is the supported way to rotate. `mint_credential` is 32 bytes of OS randomness,
+base64url unpadded; inbound credentials are stored as SHA-256 and compared in
+constant time, scanned across every pair rather than looked up by a claimed
+machine id (a caller that could name which pair to check could grind one at a
+time).
+
+**Version 1 pairs are refused, never downgraded.** `MESH_VERSION` is `2`, and a
+pair is unusable if its `meshVersion` is lower or if any of the pinned CA,
+outbound credential or mesh port is missing. Such a pair is reported as
+`needsUpgrade` in `peer.list` and every use of it errors with "update Threadknot
+on that machine, then pair the two again". A silent fallback to the old
+plaintext transport would mean the fix only applied to pairs made after the
+upgrade, which is the same as not shipping it — an attacker on the LAN would
+simply wait for the one legacy pair.
+
+### Mesh principal propagation (the `mesh` frame field)
+
+A peer credential says **which machine** a request came from. It does not say
+**whose authority** it carries, and it must not: one peer socket multiplexes
+requests from every client on that machine — its owner, and each of its paired
+phones — so the authority has to be per request.
+
+```jsonc
+{ "id": 17, "type": "term.create", "payload": { … },
+  "mesh": { "onBehalfOf": ["threads", "files"] } }
+```
+
+- It is honoured **only** on a connection that authenticated with a peer
+  credential. A phone or a LAN browser can put it in a frame all it likes; it is
+  discarded. That discard is the security property.
+- `mesh` is a **sibling of `payload`, not a field inside it**, so it can never
+  collide with a real request parameter and cannot be smuggled in by a client
+  that controls a payload.
+- **Absent** `onBehalfOf` means "that machine's own owner", which carries
+  machine-administration authority here — the fleet view exists so that sitting
+  at one machine can administer another. It does not confer this machine's own
+  master credential: `hello` still withholds the token-bearing `lanUrl` from a
+  peer, because handing it over would rebuild the leak it was closing, one hop
+  out. Machine-to-machine plumbing (`mesh.workspaceUpsert` and friends) sends no
+  assertion, because there is no human behind it.
+- A **present** `onBehalfOf` list can only **narrow**. There is no assertion a
+  peer can make that grants more than its own owner already had, and a request
+  forwarded through a third machine carries the *original* caller's authority
+  unchanged rather than being re-widened at each hop.
+- An **unrecognised capability name is dropped, not honoured and not an error**. A
+  newer peer must never be able to widen an older machine by naming a capability
+  it does not understand, and erroring would let a newer peer break an older one
+  by merely mentioning one.
+- Resolving the credential alone gives a peer **no grants at all**. The authority
+  comes from the frame (or, on the paths below, the header) and nowhere else:
+  defaulting to "the peer's owner" at credential resolution would mean any handler
+  that forgot to consult it silently ran as Master again, which is the bug being
+  fixed.
+
+For the connection-scoped paths there is no frame to put this in, so the same
+assertion travels in the **`X-Threadknot-Mesh-Grants`** header: a comma-separated
+capability list on the splices (`/term`, `/browser`) and the byte proxy (`/file`,
+`/attachment`, `/artifact-file`), absent meaning the peer's own owner. It is read
+**only** on the mesh listener — on any other door "absent" describes every
+request ever made, so reading it there would silently promote ordinary LAN
+requests to owner authority. The long-lived peer `/ws` socket deliberately sends
+no such header; its authority is per frame.
 
 ### Git (multi-repo projects)
 
@@ -704,11 +887,19 @@ path for `publish_artifact`. Downloads are captured with
 A thread's browser is disposable unless its settings name a signed-in profile
 (`ThreadSettings.browserProfileId`). Profiles are managed with
 `browser.profile.list` / `.create` / `.update` / `.delete` — all but `list`
-require the master token, and all four are routable, so `machineId` manages
+require an owner principal (creating a profile, widening the sites it may reach,
+or erasing one is an authority change over stored logins; a revocable phone
+credential may drive a session the owner already set up but not decide what it
+can reach), and all four are routable, so `machineId` manages
 another machine's logins from here. `GET /browser` takes `machineId` too and
 splices the socket onto that machine's Chrome (like `/term`), which is how a
 remote machine's browser gets signed in without sitting at it; splicing
-requires the local master principal. Profiles live in
+requires an **owner** principal — which a peer acting for its own owner satisfies,
+since the fleet view exists so that sitting at one machine can administer
+another. It stays owner-only even though the splice now carries the caller's own
+grants and the far side enforces them (so `browser` + `mesh` would in fact be
+sound): relaxing it widens authority over stored logins, which is a product
+decision rather than a consequence of the transport change. Profiles live in
 `~/.threadknot/browser-profiles.json` with
 their Chrome data under `~/.threadknot/browser/profiles/<id>`. A signed-in session
 may only load documents from the profile's `origins` (enforced by Fetch
@@ -716,7 +907,9 @@ interception in the browser, not just at the tool boundary; `origins: ["*"]` —
 what an empty sites list normalizes to — allows any http/https site while still
 excluding non-web schemes like `file://`), refuses
 `browser_evaluate`, keeps Chrome's site isolation, is limited to one thread at a
-time, and is refused to non-master principals on `GET /browser`. `browser_status`
+time, and on `GET /browser` requires the separate `signedBrowser` grant — which
+is never part of the default set, on any pairing, because such a session can act
+as the logged-in account. `browser_status`
 reports `signedInProfile` and `allowedSites`.
 
 Disposable Chromes use a unique temporary profile rather than the user's real
@@ -793,6 +986,15 @@ portable CI executable has no registered toast identity).
   is the stable install identity mobile push routing keys on — auto-migrated in)
 - `mobile.json` — paired mobile devices (credential *hashes* only, Expo push
   tokens, notification prefs)
+- `peers.json` (0600) — paired machines: per-pair outbound credential, inbound
+  credential *hash*, the peer's pinned CA, its mesh port. None of it is
+  serialized to clients
+- `mesh-ca.pem` / `mesh-ca.key` / `mesh-leaf.pem` / `mesh-leaf.key` — this
+  machine's mesh identity. The certificates are public; the two keys are `0600`.
+  **Deleting the CA silently unpairs every peer**, because each one pinned it at
+  pairing
+- `connector.json` + `connector.key` (0600) — the hosted-relay connector's
+  server-assigned installation id/hostname, and its Ed25519 identity
 - `hermes.json` — registered remote Hermes gateways (base URL + bearer API key
   in plaintext — needed for outbound calls; never serialized to clients)
 - `projects.json` — project + thread + schedule + terminal + artifact index
@@ -816,10 +1018,49 @@ mints one with `mobile.pair.begin` and drops it with `mobile.pair.cancel`
 (both master-only, like the device admin requests). The code is single-use,
 expires in 180s, lives only in memory, and is what the QR encodes, so a screen
 showing a pairing QR never leaks this machine's master token. Device
-credentials are accepted everywhere the master token is (`/ws`, asset routes,
-terminals, browser) but cannot run `mobile.device.list` / `mobile.device.revoke`
-/ `mobile.pair.*` (master-only; surfaced in desktop Settings). `hello` additionally returns
-`serverId` and `serverName`. The Rust server pushes `turn_completed`,
+credentials are **capability-scoped**, not equivalent to the master token: each
+device stores a grant set (`threads`, `files`, `git`, `terminal`, `browser`,
+`signedBrowser`, `mesh`) chosen by the owner and bound server-side to the
+pairing code, so the joining client cannot widen it. Grants are checked
+centrally in `handle_request` (and on `/ws`, `/term`, `/browser`, `/file`,
+`/attachment`, `/artifact-file`) **before** any `machineId` routing. The grants
+now also *travel* with a routed request (the `mesh` frame field, or
+`X-Threadknot-Mesh-Grants` on the byte and splice paths) so the far side enforces
+them for itself — that closed the residual gap where only the originating side
+knew who was really asking. The near-side check stays anyway, so a denial is
+reported by the machine the person is actually talking to.
+`mobile.device.list` / `mobile.device.revoke` / `mobile.device.setCapabilities`
+/ `mobile.pair.*` stay master-only (surfaced in desktop Settings); revoking a
+device or narrowing its grants closes the sockets it already holds.
+
+### The strict remote ingress
+
+One of the three listeners above: `127.0.0.1:<port+1>`, dialled only by the
+connector process on this machine, which is what a relay's traffic arrives
+through.
+
+On the strict ingress: credential-bearing query keys are `400` even when valid;
+the master credential is `403` however presented; a peer credential is `403`
+too, which keeps a compromised relay out of the mesh's trust path entirely;
+`/mcp` and `/api/peer/identity` are not mounted; and authentication is either a
+native device bearer token or an
+opaque cookie from `POST /api/session` (one-time pairing code or device bearer
+in, host-scoped `HttpOnly; Secure; SameSite=Strict` cookie plus a double-submit
+CSRF token out; `DELETE` signs out). Cookie-authenticated state changes must
+send `X-Threadknot-Csrf`. Responses carry HSTS, a CSP with `frame-ancestors
+'none'`, `Referrer-Policy: no-referrer`, and no CORS headers. Remote access is
+off by default (`remote.get` / `remote.set` and `connector.*`, owner-only);
+turning it off drops
+every browser session and every socket opened through that ingress, and leaves
+the LAN untouched. `mobile.pair.begin` takes `target: "lan" | "remote"`, and the
+remote address comes from stored configuration — never from the request `Host`,
+which would be a pairing-redirection hole.
+
+`hello` additionally returns `serverId`, `serverName`, `principal`
+(`"master" | "device" | "peer"`) and `capabilities`, and gives the token-bearing
+`lanUrl` to the local master principal only — a device, and a peer, receive the
+origin alone. See
+`docs/REMOTE-ACCESS-SECURITY.md`. The Rust server pushes `turn_completed`,
 `approval_request`, `question_request` (and opt-in `error`) through the Expo
 Push API with data `{version, serverId, projectId, threadId, eventKind}`.
 Full details: `docs/MOBILE.md`.

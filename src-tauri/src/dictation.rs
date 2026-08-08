@@ -5,13 +5,14 @@
 //! simply unavailable inside the desktop shell — a browser-side recorder would
 //! be dead in the app it's meant for. So Threadknot records the machine's own
 //! microphone with ffmpeg (already a runtime dependency for the browser
-//! recorder) and transcribes the clip with a local Whisper install. Nothing
-//! leaves the machine and no API key is involved.
+//! recorder). The finished clip is transcribed either by a local Whisper
+//! install or by an explicitly configured OpenAI-compatible transcription API.
 //!
 //! There is one microphone, so there is one recording slot. Starting a second
 //! recording discards the first rather than fighting over the device.
 
 use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -35,6 +36,9 @@ const SILENCE_DBFS: f32 = -50.0;
 /// Clips shorter than this can't contain a word worth transcribing.
 const MIN_MILLIS: u128 = 400;
 
+const DEFAULT_API_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_API_MODEL: &str = "gpt-transcribe";
+
 /// Phrases Whisper emits from near-silence that survive the volume gate. Any
 /// transcript that is *only* one of these is treated as nothing said.
 const HALLUCINATIONS: &[&str] = &[
@@ -56,10 +60,53 @@ struct Active {
     started: std::time::Instant,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Provider {
+    #[default]
+    Local,
+    Api,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DictationConfig {
+    #[serde(default)]
+    provider: Provider,
+    #[serde(default = "default_api_base_url")]
+    base_url: String,
+    #[serde(default = "default_api_model")]
+    model: String,
+    /// Write-only on the wire; persisted with the same local trust boundary as
+    /// server.json and never included in settings/hello responses.
+    #[serde(default)]
+    api_key: String,
+}
+
+impl Default for DictationConfig {
+    fn default() -> Self {
+        Self {
+            provider: Provider::Local,
+            base_url: default_api_base_url(),
+            model: default_api_model(),
+            api_key: String::new(),
+        }
+    }
+}
+
+fn default_api_base_url() -> String {
+    DEFAULT_API_BASE_URL.into()
+}
+
+fn default_api_model() -> String {
+    DEFAULT_API_MODEL.into()
+}
+
 pub struct Dictation {
     /// One mic, one slot.
     active: Mutex<Option<Active>>,
+    path: PathBuf,
+    config: Mutex<DictationConfig>,
 }
 
 /// Absolute path of a tool we shell out to. Resolved against the agent PATH
@@ -69,8 +116,8 @@ fn tool(name: &str) -> Result<PathBuf> {
     crate::agents::resolve_bin(name).ok_or_else(|| anyhow!("{name} is not installed"))
 }
 
-/// Why dictation can't run here, or `None` when it can.
-fn missing_tool() -> Option<String> {
+/// Why this machine can't capture audio, or `None` when it can.
+fn missing_capture_tool() -> Option<String> {
     if !cfg!(any(
         target_os = "linux",
         target_os = "macos",
@@ -81,29 +128,17 @@ fn missing_tool() -> Option<String> {
     if tool("ffmpeg").is_err() {
         return Some("ffmpeg is not installed — dictation records the mic with it".into());
     }
+    None
+}
+
+/// Why the on-device transcription path can't run, or `None` when it can.
+fn missing_local_transcriber() -> Option<String> {
     if tool("whisper").is_err() {
         return Some(
             "Whisper is not installed — run `pip install -U openai-whisper` to dictate".into(),
         );
     }
     None
-}
-
-/// `{ available, hint }` for the `hello` payload, so the composer can show the
-/// mic button in a state that explains itself.
-pub fn capability(master: bool) -> serde_json::Value {
-    // A paired phone talking to this machine must not be able to switch on the
-    // machine's microphone from across the network, so dictation is master-only.
-    if !master {
-        return serde_json::json!({
-            "available": false,
-            "hint": "Dictation records this machine's mic, so it only runs from the app on that machine",
-        });
-    }
-    match missing_tool() {
-        None => serde_json::json!({ "available": true }),
-        Some(hint) => serde_json::json!({ "available": false, "hint": hint }),
-    }
 }
 
 /// The device named by `THREADKNOT_MIC_DEVICE`, for when the default is the wrong
@@ -151,11 +186,7 @@ async fn capture_args() -> Result<(&'static str, String)> {
     Ok(("dshow", input))
 }
 
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows"
-)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 async fn capture_args() -> Result<(&'static str, String)> {
     Err(anyhow!(
         "dictation is only supported on Windows, macOS and Linux"
@@ -272,9 +303,130 @@ fn quoted(line: &str) -> Option<String> {
 }
 
 impl Dictation {
+    pub fn open(dir: &Path) -> Result<Self> {
+        let path = dir.join("dictation.json");
+        let config = if path.exists() {
+            serde_json::from_str(&std::fs::read_to_string(&path)?)
+                .context("parse dictation.json")?
+        } else {
+            DictationConfig::default()
+        };
+        Ok(Self {
+            active: Mutex::new(None),
+            path,
+            config: Mutex::new(config),
+        })
+    }
+
+    fn unavailable_reason(&self) -> Option<String> {
+        if let Some(hint) = missing_capture_tool() {
+            return Some(hint);
+        }
+        let config = self.config.lock().unwrap();
+        match config.provider {
+            Provider::Local => missing_local_transcriber(),
+            Provider::Api if config.api_key.trim().is_empty() => {
+                Some("Add a transcription API key in Settings → Voice".into())
+            }
+            Provider::Api if config.base_url.trim().is_empty() => {
+                Some("Add a transcription API base URL in Settings → Voice".into())
+            }
+            Provider::Api if config.model.trim().is_empty() => {
+                Some("Choose a transcription API model in Settings → Voice".into())
+            }
+            Provider::Api => None,
+        }
+    }
+
+    /// `{ available, hint }` for hello. Paired clients never get to activate
+    /// this machine's microphone, even when a remote transcriber is selected.
+    pub fn capability(&self, master: bool) -> serde_json::Value {
+        if !master {
+            return serde_json::json!({
+                "available": false,
+                "hint": "Dictation records this machine's mic, so it only runs from the app on that machine",
+            });
+        }
+        match self.unavailable_reason() {
+            None => serde_json::json!({ "available": true }),
+            Some(hint) => serde_json::json!({ "available": false, "hint": hint }),
+        }
+    }
+
+    /// Public, secret-free settings for the Voice screen.
+    pub fn settings(&self) -> serde_json::Value {
+        let config = self.config.lock().unwrap().clone();
+        let capture_hint = missing_capture_tool();
+        let local_hint = capture_hint.clone().or_else(missing_local_transcriber);
+        serde_json::json!({
+            "provider": config.provider,
+            "baseUrl": config.base_url,
+            "model": config.model,
+            "hasApiKey": !config.api_key.is_empty(),
+            "captureAvailable": capture_hint.is_none(),
+            "captureHint": capture_hint,
+            "localAvailable": local_hint.is_none(),
+            "localHint": local_hint,
+        })
+    }
+
+    /// Persist a provider choice. `api_key: None` preserves the write-only key;
+    /// an explicit empty string clears it.
+    pub fn configure(
+        &self,
+        provider: &str,
+        base_url: &str,
+        model: &str,
+        api_key: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let provider = match provider {
+            "local" => Provider::Local,
+            "api" => Provider::Api,
+            _ => anyhow::bail!("unknown dictation provider"),
+        };
+        let base_url = base_url.trim().trim_end_matches('/').to_string();
+        let model = model.trim().to_string();
+        let parsed = url::Url::parse(&base_url).context("invalid transcription API base URL")?;
+        anyhow::ensure!(
+            matches!(parsed.scheme(), "http" | "https")
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+                && parsed.query().is_none()
+                && parsed.fragment().is_none(),
+            "transcription API URL must be an http(s) base URL without credentials, a query, or a fragment"
+        );
+        anyhow::ensure!(!model.is_empty(), "missing transcription model");
+
+        let mut next = self.config.lock().unwrap().clone();
+        next.provider = provider;
+        next.base_url = base_url;
+        next.model = model;
+        if let Some(key) = api_key {
+            next.api_key = key.trim().to_string();
+        }
+        if provider == Provider::Api {
+            anyhow::ensure!(!next.api_key.is_empty(), "missing transcription API key");
+        }
+        self.flush(&next)?;
+        *self.config.lock().unwrap() = next;
+        Ok(self.settings())
+    }
+
+    fn flush(&self, config: &DictationConfig) -> Result<()> {
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(config)?)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        }
+        std::fs::rename(&tmp, &self.path)?;
+        Ok(())
+    }
+
     /// Begin capturing. Returns the id `stop`/`cancel` expect.
     pub async fn start(&self) -> Result<String> {
-        if let Some(hint) = missing_tool() {
+        if let Some(hint) = self.unavailable_reason() {
             return Err(anyhow!(hint));
         }
         // Whatever was running is stale the moment a new capture is asked for.
@@ -333,6 +485,7 @@ impl Dictation {
         let elapsed = active.started.elapsed().as_millis();
         let stderr = close_ffmpeg(&mut active.ffmpeg).await;
 
+        let config = self.config.lock().unwrap().clone();
         let result = async {
             if elapsed < MIN_MILLIS {
                 return Ok(String::new());
@@ -350,7 +503,10 @@ impl Dictation {
             if is_silent(&active.wav).await {
                 return Ok(String::new());
             }
-            transcribe(&active.wav, &active.dir).await
+            match config.provider {
+                Provider::Local => transcribe_local(&active.wav, &active.dir).await,
+                Provider::Api => transcribe_api(&active.wav, &config).await,
+            }
         }
         .await;
 
@@ -407,7 +563,9 @@ async fn close_ffmpeg(child: &mut Child) -> String {
 
 /// True when the clip carries no signal worth transcribing.
 async fn is_silent(wav: &Path) -> bool {
-    let Ok(bin) = tool("ffmpeg") else { return false };
+    let Ok(bin) = tool("ffmpeg") else {
+        return false;
+    };
     let mut cmd = Command::new(bin);
     cmd.args(["-hide_banner", "-nostdin", "-i"])
         .arg(wav)
@@ -429,7 +587,7 @@ async fn is_silent(wav: &Path) -> bool {
 }
 
 /// Run Whisper over the clip and return what it heard.
-async fn transcribe(wav: &Path, dir: &Path) -> Result<String> {
+async fn transcribe_local(wav: &Path, dir: &Path) -> Result<String> {
     // English-only by default: `base.en` is markedly better than `base` at the
     // same speed. `THREADKNOT_WHISPER_MODEL` swaps in a bigger or multilingual one.
     let model = std::env::var("THREADKNOT_WHISPER_MODEL").unwrap_or_else(|_| "base.en".into());
@@ -460,13 +618,68 @@ async fn transcribe(wav: &Path, dir: &Path) -> Result<String> {
         .context("could not run whisper to transcribe the recording")?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
-        let tail = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        let tail = err
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("");
         return Err(anyhow!("whisper failed: {tail}"));
     }
 
     let txt = dir.join("clip.txt");
     let text = std::fs::read_to_string(&txt).unwrap_or_default();
     Ok(clean(&text))
+}
+
+/// Upload a completed clip to an OpenAI-compatible transcription endpoint.
+async fn transcribe_api(wav: &Path, config: &DictationConfig) -> Result<String> {
+    const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+    let audio = tokio::fs::read(wav)
+        .await
+        .context("could not read the recorded audio")?;
+    let part = reqwest::multipart::Part::bytes(audio)
+        .file_name("clip.wav")
+        .mime_str("audio/wav")?;
+    let form = reqwest::multipart::Form::new()
+        .text("model", config.model.clone())
+        .part("file", part);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let response = client
+        .post(format!(
+            "{}/audio/transcriptions",
+            config.base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(&config.api_key)
+        .multipart(form)
+        .send()
+        .await
+        .context("could not reach the transcription API")?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .context("could not read the transcription response")?;
+    anyhow::ensure!(
+        body.len() <= MAX_RESPONSE_BYTES,
+        "transcription API response was too large"
+    );
+    let body = String::from_utf8_lossy(&body);
+    if !status.is_success() {
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.pointer("/error/message")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| body.chars().take(300).collect());
+        anyhow::bail!("transcription API returned {status}: {detail}");
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&body).context("transcription API returned invalid JSON")?;
+    let text = value
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("transcription API response had no text"))?;
+    Ok(clean(text))
 }
 
 /// Collapse Whisper's line-per-segment output into one line, and drop the
@@ -484,7 +697,9 @@ fn clean(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean, pick_dshow_audio};
+    use super::{clean, pick_dshow_audio, Dictation, DictationConfig, Provider};
+    use std::path::PathBuf;
+    use std::sync::Mutex;
 
     /// ffmpeg 7: every device carries its own `(audio)` / `(video)` tag.
     const TAGGED: &str = r#"
@@ -571,7 +786,10 @@ mod tests {
 
     #[test]
     fn joins_segments_onto_one_line() {
-        assert_eq!(clean(" Open the\n file.\n Then run it.\n"), "Open the file. Then run it.");
+        assert_eq!(
+            clean(" Open the\n file.\n Then run it.\n"),
+            "Open the file. Then run it."
+        );
     }
 
     #[test]
@@ -583,6 +801,26 @@ mod tests {
 
     #[test]
     fn keeps_real_speech_that_starts_with_a_filler_word() {
-        assert_eq!(clean("You should refactor this."), "You should refactor this.");
+        assert_eq!(
+            clean("You should refactor this."),
+            "You should refactor this."
+        );
+    }
+
+    #[test]
+    fn public_settings_never_expose_the_api_key() {
+        let dictation = Dictation {
+            active: Mutex::new(None),
+            path: PathBuf::new(),
+            config: Mutex::new(DictationConfig {
+                provider: Provider::Api,
+                base_url: "https://speech.example/v1".into(),
+                model: "whisper-1".into(),
+                api_key: "super-secret-key".into(),
+            }),
+        };
+        let public = dictation.settings();
+        assert_eq!(public["hasApiKey"], true);
+        assert!(!public.to_string().contains("super-secret-key"));
     }
 }

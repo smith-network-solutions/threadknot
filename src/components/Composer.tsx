@@ -28,6 +28,14 @@ import { hermesPresence } from "./HermesPresence";
 // Attachment limits — 8 files, 10 MB each.
 const MAX_ATTACHMENTS = 8;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// A turn is one WebSocket frame, and the server refuses a frame larger than
+// MAX_WS_MESSAGE_BYTES (src-tauri/src/limits.rs) by closing the socket. Base64
+// costs 4/3 of the file bytes, so the total is the ceiling that actually
+// applies — the per-file limit above never was one for eight files at once.
+// Checked here so too much at once is a sentence the user can read instead of a
+// connection that drops mid-send.
+const MAX_ATTACHMENT_TOTAL_BASE64 = 30 * 1024 * 1024;
+const MAX_ATTACHMENT_TOTAL_LABEL = `${Math.floor((MAX_ATTACHMENT_TOTAL_BASE64 * 3) / 4 / (1024 * 1024))} MB`;
 // Image types agents render inline (vision). Everything else is delivered as a
 // workspace file the agent reads with its own tools — so we accept any file.
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -35,6 +43,11 @@ const ACCEPT_ATTR = "*/*";
 
 function isImageType(mime: string): boolean {
   return mime.startsWith("image/");
+}
+
+/** Total wire cost of a draft's attachments (they travel as base64). */
+function attachmentWireBytes(attachments: DraftAttachment[]): number {
+  return attachments.reduce((total, a) => total + a.data.length, 0);
 }
 
 interface DraftAttachment {
@@ -421,7 +434,15 @@ export function Composer({ thread }: ComposerProps) {
     if (files.length > room) {
       setAttachError(`You can attach at most ${MAX_ATTACHMENTS} files.`);
     }
-    if (added.length > 0) updateAttachments([...attachments, ...added]);
+    if (added.length === 0) return;
+    const next = [...attachments, ...added];
+    if (attachmentWireBytes(next) > MAX_ATTACHMENT_TOTAL_BASE64) {
+      setAttachError(
+        `That's too much to send in one message — attachments have to total under ${MAX_ATTACHMENT_TOTAL_LABEL}.`,
+      );
+      return;
+    }
+    updateAttachments(next);
   }
 
   async function pasteFromClipboard(data: DataTransfer): Promise<boolean> {
@@ -446,7 +467,7 @@ export function Composer({ thread }: ComposerProps) {
           setAttachError(`You can attach at most ${MAX_ATTACHMENTS} files.`);
           return true;
         }
-        updateAttachments([
+        const next = [
           ...attachments,
           ...images.slice(0, room).map((image) => ({
             localId: `a${++attachSeq}`,
@@ -454,7 +475,14 @@ export function Composer({ thread }: ComposerProps) {
             mimeType: image.mimeType,
             data: image.data,
           })),
-        ]);
+        ];
+        if (attachmentWireBytes(next) > MAX_ATTACHMENT_TOTAL_BASE64) {
+          setAttachError(
+            `That's too much to send in one message — attachments have to total under ${MAX_ATTACHMENT_TOTAL_LABEL}.`,
+          );
+          return true;
+        }
+        updateAttachments(next);
         if (images.length > room) {
           setAttachError(`You can attach at most ${MAX_ATTACHMENTS} files.`);
         }
@@ -951,17 +979,15 @@ export function Composer({ thread }: ComposerProps) {
               </button>
             )}
             {latestUsage && <ContextMeter usage={latestUsage} />}
-            {dictation && (
+            {dictation?.available && (
               <button
                 type="button"
                 className={`mic-btn${mic === "recording" ? " recording" : micBusy ? " working" : ""}`}
-                disabled={!dictation.available || micBusy}
+                disabled={micBusy}
                 aria-pressed={mic === "recording"}
                 aria-label="Dictate"
                 title={
-                  !dictation.available
-                    ? (dictation.hint ?? "Dictation isn't available on this machine")
-                    : mic === "recording"
+                  mic === "recording"
                       ? "Stop and transcribe (Esc discards)"
                       : mic === "transcribing"
                         ? "Turning your words into text…"
