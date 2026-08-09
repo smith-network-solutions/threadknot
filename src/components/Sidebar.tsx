@@ -286,19 +286,19 @@ function QuickChatsSection({
   const activity = projectActivity(state, threads);
 
   return (
-    <section className="quick-chats" aria-label="Quick chats">
+    <section className="quick-chats" aria-label="Quick threads">
       <header className="quick-chats-head">
         <span className="quick-chats-mark" aria-hidden>
           <PlusIcon size={15} />
         </span>
-        <span className="quick-chats-title">Quick chats</span>
+        <span className="quick-chats-title">Quick threads</span>
         <ProjectPulse activity={activity} />
         <span className="project-count">{active.length}</span>
         <button
           type="button"
           className="icon-btn quick-new"
-          aria-label="New quick chat"
-          title="New quick chat"
+          aria-label="New quick thread"
+          title="New quick thread"
           onClick={() => actions.openQuickDraft()}
         >
           <PlusIcon size={14} />
@@ -307,7 +307,7 @@ function QuickChatsSection({
       <div className="quick-chats-rule" aria-hidden />
       {shown.length === 0 && settled.length === 0 && forceOpen ? (
         <div className="sidebar-empty quick-search-empty">
-          <p>No matching quick chats.</p>
+          <p>No matching quick threads.</p>
         </div>
       ) : shown.length === 0 && settled.length === 0 ? (
         <button
@@ -316,7 +316,7 @@ function QuickChatsSection({
           onClick={() => actions.openQuickDraft()}
         >
           <span>Ask an odd question, compare a file, or diagnose this computer.</span>
-          <strong>Start a quick chat</strong>
+          <strong>Start a quick thread</strong>
         </button>
       ) : (
         <div className="project-threads quick-chat-threads">
@@ -493,14 +493,14 @@ function ProjectRail({
             quickActivity ? ` rail-${quickActivity}` : ""
           }`}
           aria-current={quickOn ? "true" : undefined}
-          aria-label={`Quick chats${
+          aria-label={`Quick threads${
             quickActivity === "attention"
               ? " — needs you"
               : quickActivity === "working"
                 ? " — working"
                 : ""
           }`}
-          title="Quick chats"
+          title="Quick threads"
           onClick={onPickQuick}
         >
           <span className="rail-pip" aria-hidden />
@@ -2430,7 +2430,7 @@ export function Sidebar({
     }
     // Keep whatever's on screen relevant to the view you just switched to, so a
     // lingering workspace chat doesn't sit under the agents list (or vice-versa).
-    // Keep the pane and destination list in agreement. Quick Chats and Hermes
+    // Keep the pane and destination list in agreement. Quick Threads and Hermes
     // are global homes, so neither should leave a workspace thread stranded
     // beneath its list (or vice versa).
     const active = state.activeThreadId
@@ -3022,7 +3022,7 @@ export function Sidebar({
           type="search"
           placeholder={
             quickView
-              ? "Search quick chats…"
+              ? "Search quick threads…"
               : agentsView
                 ? "Search agent threads…"
                 : "Search threads…"
@@ -3319,7 +3319,7 @@ export function Sidebar({
             <span className="quick-entry-mark" aria-hidden>
               <PlusIcon size={13} />
             </span>
-            <span>quick chats</span>
+            <span>quick threads</span>
           </button>
         )}
         {SHOW_HERMES_AGENTS && !soloId && !agentsView && !quickView && (

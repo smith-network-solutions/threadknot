@@ -131,7 +131,7 @@ function makeActions(
   const refreshPeers = async () => {
     const { peers, discovered } = await client.request("peer.list", {});
     dispatch({ type: "peers", peers, discovered });
-    // Quick Chats are deliberately absent from the replicated workspace
+    // Quick Threads are deliberately absent from the replicated workspace
     // catalog, so discover each online machine's hidden home directly.
     for (const peer of peers) {
       if (peer.online) {
