@@ -70,6 +70,22 @@ for ($i = 0; $i -lt 10; $i++) {
 Say "binary copy: $(if ($copied) {'ok'} else {'FAILED, still locked?'})"
 if (-not $copied) { Say '==================== done (FAIL) ===================='; exit 1 }
 
+# Ship the web bundle alongside the binary. The server resolves the LAN/phone
+# UI from a dist folder near the exe or the working directory (resolve_dist in
+# server.rs); the live copy runs far from the checkout, so without this copy
+# every launch of it serves the "Web UI not built yet" fallback page.
+$DistSrc = Join-Path $Repo 'dist'
+$DistDst = Join-Path (Split-Path $Live) 'dist'
+if (Test-Path (Join-Path $DistSrc 'index.html')) {
+    try {
+        if (Test-Path $DistDst) { Remove-Item $DistDst -Recurse -Force -ErrorAction Stop }
+        Copy-Item $DistSrc $DistDst -Recurse -Force -ErrorAction Stop
+        Say 'web dist copy: ok'
+    } catch { Say "web dist copy: FAILED ($($_.Exception.Message))" }
+} else {
+    Say 'web dist copy: skipped (no dist/index.html in checkout)'
+}
+
 # ONE launch attempt.
 Start-Process -FilePath $Live -WorkingDirectory (Split-Path $Live)
 Say 'launched new binary'
