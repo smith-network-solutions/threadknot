@@ -229,7 +229,7 @@ function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void
           <>
             {/* Arcade-only marquee (inert everywhere else; see styles.css). */}
             <div className="review-fight-marquee" aria-hidden="true">
-              select your fighters <em>●</em>{" "}
+              select your agents <em>●</em>{" "}
               {personas.filter((p) => agentAvailable(p.agent)).length} challengers available
             </div>
             <div className="review-modal-scroll">
