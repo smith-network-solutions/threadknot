@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import type { ListDirData } from "../lib/protocol";
 import { useStore } from "../state/store";
-import { FolderIcon, FolderUpIcon, XIcon } from "./icons";
+import { FolderIcon, FolderPlusIcon, FolderUpIcon, XIcon } from "./icons";
 
 /**
  * Browser-side directory picker (phones can't open a native dialog),
  * driven by `fs.listDir` requests against the Threadknot server.
  *
- * Default use adds the chosen folder as a project. Pass `onPick` to instead
- * hand back the selected path (used by the archive storage-location setting);
- * `title` / `confirmLabel` let that caller relabel the dialog.
+ * Default use adds the chosen folder as a project (on `machineId`'s machine
+ * when browsing a peer). Pass `onPick` to instead hand back the selected
+ * path (used by the archive storage-location setting); `title` /
+ * `confirmLabel` let that caller relabel the dialog. A "new folder" button
+ * creates a directory inside the current one (fs.mkdir) and steps into it.
  */
 export function DirPicker({
   onClose,
@@ -23,13 +25,17 @@ export function DirPicker({
   title?: string;
   confirmLabel?: string;
   /** Browse a PEER machine's filesystem (proxied server-side) instead of
-   *  this one — used when attaching a workspace root on another machine. */
+   *  this one — used when creating a workspace or attaching a workspace
+   *  root on another machine. */
   machineId?: string;
 }) {
   const { actions } = useStore();
   const [dir, setDir] = useState<ListDirData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Inline "new folder" name entry is open. */
+  const [naming, setNaming] = useState(false);
+  const [newName, setNewName] = useState("");
 
   async function load(path?: string) {
     setBusy(true);
@@ -57,8 +63,24 @@ export function DirPicker({
     }
     setBusy(true);
     try {
-      await actions.addProject(dir.path);
+      await actions.addProject(dir.path, machineId);
       onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  async function createFolder() {
+    if (!dir || !newName.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const sep = dir.path.endsWith("/") ? "" : "/";
+      const created = await actions.mkdir(`${dir.path}${sep}${newName.trim()}`, machineId);
+      setNaming(false);
+      setNewName("");
+      await load(created.path);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -70,14 +92,50 @@ export function DirPicker({
       <div className="modal dir-picker" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span>{title}</span>
-          <button className="icon-btn" aria-label="Close" onClick={onClose}>
-            <XIcon size={14} />
-          </button>
+          <span className="modal-head-actions">
+            <button
+              className="icon-btn"
+              aria-label="New folder here"
+              title="Create a new folder here"
+              disabled={busy}
+              onClick={() => setNaming((v) => !v)}
+            >
+              <FolderPlusIcon size={14} />
+            </button>
+            <button className="icon-btn" aria-label="Close" onClick={onClose}>
+              <XIcon size={14} />
+            </button>
+          </span>
         </div>
 
         <div className="dir-path">
           <code>{dir?.path ?? "…"}</code>
         </div>
+
+        {naming && (
+          <form
+            className="dir-newfolder"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void createFolder();
+            }}
+          >
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="new folder name"
+              disabled={busy}
+            />
+            <button
+              type="submit"
+              className="btn tone-allow"
+              disabled={busy || !newName.trim()}
+            >
+              Create
+            </button>
+          </form>
+        )}
 
         <div className="dir-list">
           {dir?.parent != null && (

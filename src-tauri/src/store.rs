@@ -321,6 +321,42 @@ impl Store {
         Ok(project)
     }
 
+    /// Wrap a project created on a PEER (via mesh.createProject) in the same
+    /// 1:1 same-id workspace create_project makes for a local folder. The
+    /// project record itself lives on its owner machine; only the workspace
+    /// (with the member snapshot) is stored here, then replicated out.
+    /// mesh.createProject REUSES a project by canonical path, so its 1:1
+    /// workspace may already be here via the catalog sync — then this is a
+    /// no-op returning that record, not a duplicate insert.
+    pub fn create_workspace_for_remote_root(
+        &self,
+        project: &Project,
+        machine_id: &str,
+    ) -> Result<Workspace> {
+        let mut data = self.data.lock().unwrap();
+        if let Some(ws) = data.workspaces.iter().find(|w| w.id == project.id) {
+            return Ok(ws.clone());
+        }
+        let ws = Workspace {
+            id: project.id.clone(),
+            name: project.name.clone(),
+            image: None,
+            created_at: project.created_at.clone(),
+            updated_at: now_iso(),
+            favorite: None,
+            hidden: None,
+            members: vec![WorkspaceMember {
+                machine_id: machine_id.to_string(),
+                project_id: project.id.clone(),
+                name: Some(project.name.clone()),
+                path: Some(project.path.clone()),
+            }],
+        };
+        data.workspaces.insert(0, ws.clone());
+        self.flush(&data)?;
+        Ok(ws)
+    }
+
     pub fn list_projects(&self) -> Vec<Project> {
         self.data.lock().unwrap().projects.clone()
     }

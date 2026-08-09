@@ -176,6 +176,15 @@ export const FolderUpIcon = (p: IconProps) =>
     p,
   );
 
+export const FolderPlusIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.2l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5v-11z" />
+      <path d="M12 11v5M9.5 13.5h5" />
+    </>,
+    p,
+  );
+
 export const TerminalIcon = (p: IconProps) =>
   svg(<path d="M4.5 6.5l5 5.5-5 5.5M12.5 18.5H20" />, p);
 

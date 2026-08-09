@@ -1032,7 +1032,9 @@ export interface ThreadknotActions {
     machineId?: string,
   ) => Promise<import("../lib/protocol").McpServerInfo>;
   deleteMcpServer: (serverId: string, machineId?: string) => Promise<void>;
-  addProject: (path: string) => Promise<void>;
+  /** Create a workspace from a folder — on this machine, or on a peer when
+   *  `machineId` is given (the folder is browsed/created there via fs.*). */
+  addProject: (path: string, machineId?: string) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
   deleteThread: (threadId: string, projectId: string) => Promise<void>;
   renameThread: (threadId: string, title: string) => Promise<void>;
@@ -1053,6 +1055,8 @@ export interface ThreadknotActions {
     path?: string,
     machineId?: string,
   ) => Promise<import("../lib/protocol").ListDirData>;
+  /** Create a folder on the target machine; resolves to its canonical path. */
+  mkdir: (path: string, machineId?: string) => Promise<{ path: string }>;
   refreshUsage: () => Promise<void>;
   /** The build's embedded update notes + git changelog, newest first
    *  (app.changelog). `notes` are client-facing; `entries` are internal. */

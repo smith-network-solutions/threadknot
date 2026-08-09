@@ -93,7 +93,7 @@ Server → client:
 | `connector.cancelApproval` | `{}` | `ConnectorStatus` — stop watching. The request stays valid server-side until it expires; this only stops *this* machine collecting it |
 | `connector.enroll` | `{ enrollmentToken, machineName? }` | `ConnectorStatus` — the token path, kept for scripted and headless installs and for anyone already holding a token. Registers this installation with the relay's control plane, signing the console-issued token with this machine's own Ed25519 key so seeing the token is not enough to enroll a different key. The hostname comes back server-assigned and is never proposed here; enrollment is therefore also what provisions the remote pairing origin. Owner only |
 | `connector.setEnabled` | `{ enabled }` | `ConnectorStatus` — turning it off drops the tunnel, signs every remote browser session out and closes every socket opened through the strict ingress; the LAN is untouched. Owner only |
-| `project.create` | `{ path, name? }` | `Project` |
+| `project.create` | `{ path, name?, machineId? }` | `Project` — with no `machineId` (or this machine's) the folder is wrapped in its 1:1 workspace locally. When `machineId` names a peer this is remote-first workspace creation: the peer creates the project (`mesh.createProject`), the receiver wraps it in its 1:1 workspace and replicates the record mesh-wide (NOT routed — the machineId is a local parameter, like `workspace.attachRoot`); master only in that case |
 | `project.list` | `{}` | `{ projects: Project[] }` |
 | `project.delete` | `{ projectId }` | `{}` (does NOT touch the folder on disk) |
 | `thread.create` | `{ projectId, agent, settings }` | `Thread` |
@@ -146,6 +146,7 @@ Server → client:
 | `dictation.settings.get` | `{}` | Secret-free voice settings (`provider`, API base/model, `hasApiKey`, local/capture readiness); master only |
 | `dictation.settings.save` | `{ provider, baseUrl, model, apiKey? }` | Saves local or OpenAI-compatible API transcription settings; the write-only key is never returned; master only |
 | `fs.listDir` | `{ path? }` | `{ path, parent, entries: [{name, path, isDir}] }` (dirs only; for the phone's folder picker; `path` omitted → home dir) |
+| `fs.mkdir` | `{ path }` | `{ path }` (canonical) — creates the directory and any missing parents; powers the picker's "new folder" button, locally or on a peer via `machineId` routing |
 | `term.list` | `{ projectId }` | `{ terms: TermInfo[] }` — persisted tabs for the project, each with a live `alive` flag |
 | `term.create` | `{ projectId, name? }` | `TermInfo` — a new tab (name defaults to `Terminal N`); the pty spawns lazily on first `/term` attach |
 | `term.rename` | `{ termId, name }` | `TermInfo` |
@@ -211,7 +212,7 @@ Full design + phases: `docs/MULTI-MACHINE.md`. Summary of the wire pieces:
   machineId, name, meshVersion), plus `peer.announce` pushed over live peer
   sockets on startup and whenever the local interface set changes.
 - **Remote routing**: `thread.*`, `turn.*`, `approval.respond`,
-  `question.respond`, `thread.archive`, `fs.listDir`/`fs.tree`/`fs.read`,
+  `question.respond`, `thread.archive`, `fs.listDir`/`fs.mkdir`/`fs.tree`/`fs.read`,
   the whole `git.*` family, `term.*`, `artifacts.list`/`artifacts.delete` and
   `browser.profile.*` accept an optional `machineId`. When it names another machine the server
   forwards the request verbatim (sans `machineId`) over that peer's socket

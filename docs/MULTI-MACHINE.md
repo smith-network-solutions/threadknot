@@ -250,7 +250,14 @@ server → phone via existing `push.rs`; verify explicitly in Phase 4.
 
 **Phase 3 — Workspaces across machines — ✅ DONE** (attachRoot/detachRoot,
 mesh.createProject/workspaceUpsert/rewrapProject, resync-on-connect,
-manage-roots modal, remote DirPicker via `fs.listDir{machineId}`)
+manage-roots modal, remote DirPicker via `fs.listDir{machineId}`,
+remote-first creation via `project.create{machineId}` + `fs.mkdir`)
+- `project.create {path, machineId}`: with a peer's machineId this is
+  remote-FIRST workspace creation — the peer creates the project
+  (mesh.createProject), the receiving machine wraps it in its 1:1 workspace
+  and replicates the record mesh-wide. The "add workspace" button asks which
+  machine whenever a peer is online; `fs.mkdir{machineId}` backs the folder
+  picker's "new folder" button so a fresh folder can be made on any machine.
 - `workspace.attachRoot {workspaceId, machineId, path}`: creates/uses a
   project on the target machine (remote DirPicker proxy for choosing the
   folder), adds the member, replicates the workspace record (LWW rename by

@@ -381,6 +381,7 @@ async fn sec004_request_kinds_require_their_capability() {
         ("term.create", Capability::Terminal, serde_json::json!({ "projectId": h.project.id })),
         ("term.delete", Capability::Terminal, serde_json::json!({ "projectId": h.project.id, "termId": "t" })),
         ("fs.listDir", Capability::Files, serde_json::json!({ "projectId": h.project.id, "path": "" })),
+        ("fs.mkdir", Capability::Files, serde_json::json!({ "path": format!("{}/tk-auth-matrix-mkdir", std::env::temp_dir().display()) })),
         ("fs.read", Capability::Files, serde_json::json!({ "projectId": h.project.id, "path": "x" })),
         ("fs.tree", Capability::Files, serde_json::json!({ "projectId": h.project.id })),
         ("artifacts.list", Capability::Files, serde_json::json!({ "threadId": h.plain_thread.id })),

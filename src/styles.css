@@ -5663,6 +5663,29 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 .dir-empty { color: var(--faint); font-size: 12.5px; padding: 14px; text-align: center; font-style: italic; }
 
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dir-newfolder {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dir-newfolder input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.dir-newfolder input:focus { border-color: var(--brass); outline: none; }
+
 .modal-error {
   margin-top: 8px;
   color: var(--red);

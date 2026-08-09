@@ -2196,6 +2196,7 @@ const ROUTABLE: &[&str] = &[
     "approval.respond",
     "question.respond",
     "fs.listDir",
+    "fs.mkdir",
     "fs.tree",
     "fs.read",
     "term.list",
@@ -3426,9 +3427,39 @@ pub async fn handle_request(
         "project.create" => {
             let path = field(&p, "path")?.to_string();
             let name = p.get("name").and_then(|v| v.as_str()).map(String::from);
-            let project = store.create_project(path, name)?;
-            hub.broadcast_state("projects", None);
-            Ok(serde_json::to_value(project)?)
+            let machine_id = p
+                .get("machineId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            // A machineId naming a PEER makes this remote-first creation: the
+            // peer creates the project (mesh.createProject), we wrap it in its
+            // 1:1 workspace here and replicate the record out — the same
+            // bookkeeping workspace.attachRoot does, minus the attach. The
+            // machineId is a real local parameter, so this kind is NOT in
+            // ROUTABLE.
+            match machine_id {
+                Some(m) if m != state.device.machine_id => {
+                    anyhow::ensure!(
+                        principal.is_owner(),
+                        "workspaces on another machine are created from the desktop app"
+                    );
+                    let v = state
+                        .peernet
+                        .request(&m, "mesh.createProject", json!({ "path": path }), None)
+                        .await?;
+                    let project: Project = serde_json::from_value(v)?;
+                    let ws = store.create_workspace_for_remote_root(&project, &m)?;
+                    hub.broadcast_state("workspaces", None);
+                    hub.broadcast_state("projects", None);
+                    replicate_workspace(state, &ws).await;
+                    Ok(serde_json::to_value(project)?)
+                }
+                _ => {
+                    let project = store.create_project(path, name)?;
+                    hub.broadcast_state("projects", None);
+                    Ok(serde_json::to_value(project)?)
+                }
+            }
         }
         "project.list" => Ok(json!({ "projects": store.list_projects() })),
         "project.delete" => {
@@ -4158,6 +4189,14 @@ pub async fn handle_request(
                 "parent": path.parent().map(|p| p.to_string_lossy()),
                 "entries": entries,
             }))
+        }
+        "fs.mkdir" => {
+            let path = PathBuf::from(field(&p, "path")?);
+            std::fs::create_dir_all(&path)
+                .with_context(|| format!("cannot create folder: {}", path.display()))?;
+            let canonical = std::fs::canonicalize(&path)?;
+            anyhow::ensure!(canonical.is_dir(), "not a directory: {}", path.display());
+            Ok(json!({ "path": canonical.to_string_lossy() }))
         }
         "thread.archive" => {
             let thread_id = field(&p, "threadId")?.to_string();

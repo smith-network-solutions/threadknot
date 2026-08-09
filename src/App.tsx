@@ -66,6 +66,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ThemeSync } from "./components/ThemeStudio";
 import { MainSplit } from "./components/MainSplit";
 import { DirPicker } from "./components/DirPicker";
+import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
@@ -971,10 +972,16 @@ function makeActions(
       }
     },
 
-    async addProject(path: string) {
-      const project = await client.request("project.create", { path });
+    async addProject(path: string, machineId?: string) {
+      const project = await client.request("project.create", {
+        path,
+        ...(machineId ? { machineId } : {}),
+      });
       await refreshProjects();
-      dispatch({ type: "openDraft", draft: defaultDraft(getState(), project.id) });
+      dispatch({
+        type: "openDraft",
+        draft: defaultDraft(getState(), project.id, machineId),
+      });
     },
 
     async deleteProject(projectId: string) {
@@ -1121,6 +1128,13 @@ function makeActions(
     listDir(path?: string, machineId?: string) {
       return client.request("fs.listDir", {
         ...(path ? { path } : {}),
+        ...(machineId ? { machineId } : {}),
+      });
+    },
+
+    mkdir(path: string, machineId?: string) {
+      return client.request("fs.mkdir", {
+        path,
         ...(machineId ? { machineId } : {}),
       });
     },
@@ -1557,7 +1571,10 @@ function maybeNotify(
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const [showPicker, setShowPicker] = useState(false);
+  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
+  /** Non-null → the folder browser is open for a new workspace, on this
+   *  machine (machineId undefined) or on a peer. */
+  const [picker, setPicker] = useState<{ machineId?: string; label?: string } | null>(null);
   const [showSchedules, setShowSchedules] = useState(false);
   /** This origin needs a credential this browser does not have. Not an error
    *  state, so it is kept out of `conn` — it is the first step of setup. */
@@ -1849,16 +1866,34 @@ export default function App() {
 
   const store = useMemo(() => ({ state, dispatch, actions }), [state, actions]);
 
+  async function pickLocalDirectory() {
+    try {
+      const dir = await pickDirectoryNative();
+      if (dir) await actions.addProject(dir);
+    } catch (e) {
+      console.error("add project failed", e);
+    }
+  }
+
   async function onAddProject() {
-    if (state.isTauri) {
-      try {
-        const dir = await pickDirectoryNative();
-        if (dir) await actions.addProject(dir);
-      } catch (e) {
-        console.error("add project failed", e);
-      }
+    // With an online peer, WHICH machine gets the new workspace is a real
+    // choice, so ask first; with none, keep the one-step local flow.
+    if (state.peers.some((p) => p.online)) {
+      setShowNewWorkspace(true);
+    } else if (state.isTauri) {
+      await pickLocalDirectory();
     } else {
-      setShowPicker(true);
+      setPicker({});
+    }
+  }
+
+  function onNewWorkspaceMachine(mc: { machineId: string; label: string }) {
+    setShowNewWorkspace(false);
+    const isLocal = mc.machineId === state.hello?.machineId;
+    if (isLocal && state.isTauri) {
+      void pickLocalDirectory();
+    } else {
+      setPicker({ machineId: isLocal ? undefined : mc.machineId, label: mc.label });
     }
   }
 
@@ -1930,7 +1965,19 @@ export default function App() {
             </div>
           </div>
         )}
-        {showPicker && <DirPicker onClose={() => setShowPicker(false)} />}
+        {showNewWorkspace && (
+          <NewWorkspaceModal
+            onClose={() => setShowNewWorkspace(false)}
+            onChoose={onNewWorkspaceMachine}
+          />
+        )}
+        {picker && (
+          <DirPicker
+            machineId={picker.machineId}
+            {...(picker.label ? { title: `New workspace on ${picker.label}` } : {})}
+            onClose={() => setPicker(null)}
+          />
+        )}
         {showSchedules && <SchedulesPanel onClose={() => setShowSchedules(false)} />}
         <AvatarCropHost />
         {!state.isTauri && <PullToRefresh />}

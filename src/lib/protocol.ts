@@ -1457,7 +1457,13 @@ export interface RequestMap {
     payload: { workspaceId: string; machineId: string; projectId: string };
     data: Workspace;
   };
-  "project.create": { payload: { path: string; name?: string }; data: Project };
+  /** `machineId` names the machine the folder (and its new workspace) is
+   *  created on — absent means this machine. Remote creation is handled by
+   *  the receiver (mesh.createProject + workspace wrap), not routed. */
+  "project.create": {
+    payload: { path: string; name?: string; machineId?: string };
+    data: Project;
+  };
   "project.list": { payload: Record<string, never>; data: { projects: Project[] } };
   "project.delete": { payload: { projectId: string }; data: Record<string, never> };
   "thread.create": {
@@ -1622,6 +1628,9 @@ export interface RequestMap {
   "dictation.stop": { payload: { recordingId: string }; data: { text: string } };
   "dictation.cancel": { payload: { recordingId: string }; data: Record<string, never> };
   "fs.listDir": { payload: { path?: string; machineId?: string }; data: ListDirData };
+  /** Create a directory (and parents) on the target machine; returns the
+   *  canonical path. */
+  "fs.mkdir": { payload: { path: string; machineId?: string }; data: { path: string } };
   "fs.tree": { payload: { projectId: string; machineId?: string }; data: FileTreeData };
   "fs.read": {
     payload: { projectId: string; path: string; machineId?: string };
