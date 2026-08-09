@@ -8,7 +8,7 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
-## v0.1.26 · 2026-08-09
+## v0.1.31 · 2026-08-09
 
 - **Your models become the characters.** Under the Retro-Tech skin, sidebar thread cards and the thread hover preview are full fighter plates: a framed character portrait for the model driving the thread, the title in pixel type, and a vitality strip that turns red and blinks when a thread needs you. An original set of pixel characters ships built in (one per model family), and you can replace any of them under Settings → appearance → model portraits (any image works; it is downscaled automatically), with a per-agent default and one-click reset.
 - **The Arcade theme is now Retro-Tech, and it reaches the whole app.** Files, Git, Artifacts, and the Browser workspace pick up the cabinet look: pixel-face labels and tabs, framed rows, lit active states. The reviewer dialog got more breathing room, sidebar cards read like fighter cards with a bezeled portrait and a framed turn counter, the settled shelf goes attract-mode dim, and hovering a project icon in the rail pops an enlarged badge with its name.
