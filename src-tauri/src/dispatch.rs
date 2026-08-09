@@ -592,6 +592,70 @@ pub fn flush_pending_reports(hub: &Arc<Hub>, machine_id: &str) {
     }
 }
 
+/// Ask the worker machine how a dispatch ended, for the cases where it could
+/// not tell us itself.
+///
+/// Completion is pushed, and that is the right default — it is immediate and
+/// costs nothing while everyone is reachable. But "the worker can always open a
+/// connection back to the parent" is an assumption real networks break in both
+/// boring and exotic ways: a firewall that allows one direction, NAT, a laptop
+/// that moved, or — the case that found this — macOS Local Network privacy
+/// silently refusing outbound LAN connections from an unsigned binary with
+/// `EHOSTUNREACH` while the same machine happily accepts inbound ones.
+///
+/// Without this, such a dispatch is finished on the worker and `Running`
+/// forever on the parent: the work was done, and the answer is simply stranded.
+/// So the side that *can* reach the other also checks, and either direction
+/// working is enough.
+pub fn spawn_reconciler(state: crate::server::ServerState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(limits::DISPATCH_RECONCILE_INTERVAL).await;
+            let local = state.device.machine_id.clone();
+            let stale: Vec<DispatchRecord> = state
+                .hub
+                .dispatch
+                .list()
+                .into_iter()
+                .filter(|r| {
+                    !r.status.is_done()
+                        && matches!(r.role_here(&local), Role::Parent)
+                        && !r.child_thread_id.is_empty()
+                        && state.peernet.is_online(&r.machine_id)
+                })
+                .collect();
+            for record in stale {
+                let asked = state
+                    .peernet
+                    .request(
+                        &record.machine_id,
+                        "dispatch.get",
+                        json!({ "dispatchId": record.id }),
+                        None,
+                    )
+                    .await;
+                let Ok(remote) = asked else { continue };
+                let status: Option<DispatchStatus> = remote
+                    .get("status")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                let Some(status) = status.filter(|s| s.is_done()) else {
+                    continue;
+                };
+                let result: Option<DispatchResult> = remote
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                tracing::info!(
+                    "dispatch {} finished on {} but its report never arrived — adopting it",
+                    record.id,
+                    record.machine_id
+                );
+                accept_report(&state.hub, &record.id, status, result);
+            }
+        }
+    });
+}
+
 /// Apply a worker's report on the PARENT machine.
 pub fn accept_report(
     hub: &Arc<Hub>,

@@ -202,6 +202,13 @@ pub const MAX_REMEMBERED_DISPATCHES: usize = 200;
 /// parent's context, so it cannot be a transcript.
 pub const DISPATCH_SUMMARY_MAX: usize = 8_000;
 
+/// How often a parent re-checks workers that have not reported.
+///
+/// Only a safety net — the worker pushes the moment it finishes — so this is
+/// slow on purpose: one small request per unfinished dispatch, and a dispatch
+/// whose report was merely delayed has usually landed long before the next tick.
+pub const DISPATCH_RECONCILE_INTERVAL: Duration = Duration::from_secs(20);
+
 /// How often a running worker's activity is forwarded to its parent. Progress
 /// is a reassurance, not a transcript: one line every few seconds is enough to
 /// show a build is alive, and anything faster spends the parent's context on

@@ -292,6 +292,9 @@ pub async fn run(state: ServerState) {
     // mesh. Attached here for the same reason push is: `Hub::new` runs before
     // the peer runtime exists.
     state.hub.attach_peernet(Arc::clone(&state.peernet));
+    // Either direction of the link is enough to finish a dispatch: the worker
+    // pushes its report, and the parent also asks. See `spawn_reconciler`.
+    crate::dispatch::spawn_reconciler(state.clone());
 
     // Probe agent availability/models in the background so `hello` is fast.
     {
