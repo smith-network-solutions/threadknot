@@ -192,6 +192,10 @@
   font: 700 8px/13px var(--font-mono, ui-monospace, monospace);
 }
 
+.browser-paste-btn.reading svg {
+  animation: browser-pulse 0.75s ease-in-out infinite;
+}
+
 /* ---- shared tab strip --------------------------------------------------- */
 
 .browser-tabs {
@@ -635,6 +639,52 @@
   border-color: var(--brass, #d9a35c);
 }
 
+.browser-paste-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 0 8px;
+  color: var(--text, #d8dde9);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.browser-paste-card label span {
+  color: var(--faint, #687188);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.browser-paste-card textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  outline: none;
+  background: var(--bg-raise, #0e111a);
+  color: var(--text, #d8dde9);
+  font: 12px/1.45 var(--font-mono, ui-monospace, monospace);
+}
+
+.browser-paste-card textarea:focus {
+  border-color: var(--brass, #d9a35c);
+  box-shadow: 0 0 0 2px rgba(217, 163, 92, 0.09);
+}
+
+.browser-paste-card textarea::placeholder {
+  color: var(--faint, #5c6478);
+}
+
+.browser-dialog-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .browser-dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -891,6 +941,7 @@
 
   .browser-agent-target,
   .browser-activity-panel,
+  .browser-paste-btn.reading svg,
   .browser-connection-dot,
   .browser-activity-status {
     animation: none !important;

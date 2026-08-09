@@ -10,6 +10,7 @@ Format (parsed by build.rs, keep it exact):
 
 ## v0.1.176 · 2026-08-08
 
+- **Paste now works in the Browser workspace.** Click a field and use Ctrl+V or Cmd+V as usual, or tap the clipboard button on a phone. If mobile browser permissions block clipboard access, Threadknot gives you a box where the phone’s own Paste command works.
 - **Push notifications work again.** Every notification had been failing since the rename: phones paired with the old Armada app left push tokens behind, and the notification service rejects a batch that mixes two apps — so one stale token stopped notifications reaching *every* phone, including ones running the current app. Threadknot now sends each app's phones their own batch.
 - A phone paired more than once no longer gets the same notification two or three times.
 - **Connecting a machine to the hosted relay is now one button.** Settings → reachable from anywhere → **connect this machine** opens app.threadknot.ai, you sign in and press Approve, and the machine picks it up by itself — there is nothing to copy, and no code to carry to your phone. Pasting a token still works and is tucked under "or paste a token from the console" for scripted setups.

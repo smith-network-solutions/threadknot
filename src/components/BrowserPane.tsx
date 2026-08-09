@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserProfileInfo, PortInfo, Project } from "../lib/protocol";
 import { findThread, useStore } from "../state/store";
 import { browserWsUrl } from "../lib/discovery";
+import { isNativeShell, readNativeClipboardText } from "../lib/native";
 import "../styles/browser.css";
 
 /** Device-width presets. `null` = fill the pane (native viewport). */
@@ -67,6 +68,16 @@ function modifierMask(event: React.KeyboardEvent): number {
   return (event.altKey ? 1 : 0) + (event.ctrlKey ? 2 : 0) + (event.metaKey ? 4 : 0) + (event.shiftKey ? 8 : 0);
 }
 
+/** Paste belongs to the outer app, not the isolated Chrome process. Letting
+ * the browser perform this shortcut produces an `onPaste` event whose payload
+ * we can explicitly forward to Chrome. */
+function isPasteShortcut(event: React.KeyboardEvent): boolean {
+  return (
+    (!event.altKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") ||
+    (!event.ctrlKey && !event.metaKey && event.shiftKey && event.key === "Insert")
+  );
+}
+
 /** How long the agent's target box / cursor stays on screen after an action.
  *  Long enough to see what was touched, short enough that it never reads as a
  *  marker on whatever the page became. */
@@ -124,6 +135,7 @@ export function BrowserPane({
   const [editing, setEditing] = useState(false);
   const [device, setDevice] = useState("fill");
   const [connection, setConnection] = useState<ConnectionState>("idle");
+  const [supportsPasteControl, setSupportsPasteControl] = useState(false);
   const [activities, setActivities] = useState<BrowserActivity[]>([]);
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -133,6 +145,9 @@ export function BrowserPane({
   const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [dialog, setDialog] = useState<BrowserDialog | null>(null);
   const [dialogReply, setDialogReply] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [readingClipboard, setReadingClipboard] = useState(false);
   const [layoutRevision, setLayoutRevision] = useState(0);
 
   const [ports, setPorts] = useState<PortInfo[]>([]);
@@ -307,6 +322,7 @@ export function BrowserPane({
 
     const connect = () => {
       if (disposed || document.hidden) return;
+      setSupportsPasteControl(false);
       setConnection(retry > 0 ? "retrying" : "connecting");
       const next = new WebSocket(browserWsUrl(http, sessionId, { machineId }));
       next.binaryType = "arraybuffer";
@@ -325,7 +341,9 @@ export function BrowserPane({
         }
         try {
           const message = JSON.parse(event.data) as Record<string, unknown>;
-          if (message.type === "nav" && typeof message.url === "string") {
+          if (message.type === "capabilities") {
+            setSupportsPasteControl(message.paste === true);
+          } else if (message.type === "nav" && typeof message.url === "string") {
             setUrl(message.url);
             if (!editingRef.current) setAddr(message.url);
             // The document just changed under the marker; its page coordinates
@@ -507,6 +525,62 @@ export function BrowserPane({
     setDialog(null);
   };
 
+  const pasteIntoBrowser = (text: string) => {
+    if (!text) return;
+    if (supportsPasteControl) {
+      send({ type: "paste", text });
+    } else {
+      // Rolling upgrades and `tauri dev --no-watch` can put a new viewer in
+      // front of a machine process that predates Control::Paste. Key controls
+      // have always carried one printable character, so use that established
+      // path until the machine advertises native paste support. Normalize line
+      // endings first so CRLF does not become two newlines.
+      for (const character of text.replace(/\r\n?/g, "\n")) {
+        send({
+          type: "key",
+          event: "down",
+          key: "",
+          code: "",
+          keyCode: 0,
+          text: character === "\n" ? "\r" : character,
+          modifiers: 0,
+        });
+      }
+    }
+    canvasRef.current?.focus();
+  };
+
+  const pasteFromClipboard = async () => {
+    if (readingClipboard) return;
+    setReadingClipboard(true);
+    let text: string | null = null;
+    try {
+      if (isNativeShell()) {
+        text = await readNativeClipboardText();
+      } else if (window.isSecureContext && navigator.clipboard?.readText) {
+        text = await navigator.clipboard.readText();
+      }
+    } catch {
+      // LAN browsers and denied clipboard permissions use the manual sheet.
+    } finally {
+      setReadingClipboard(false);
+    }
+
+    if (text) {
+      pasteIntoBrowser(text);
+      return;
+    }
+    setPasteText("");
+    setPasteOpen(true);
+  };
+
+  const submitManualPaste = () => {
+    if (!pasteText) return;
+    pasteIntoBrowser(pasteText);
+    setPasteText("");
+    setPasteOpen(false);
+  };
+
   return (
     <div className="browser-pane">
       {attached && (
@@ -579,6 +653,17 @@ export function BrowserPane({
         >
           <ActivityIcon />
           {activities.length > 0 && <span className="browser-activity-count">{activities.length}</span>}
+        </button>
+
+        <button
+          type="button"
+          className={`browser-btn browser-paste-btn${readingClipboard ? " reading" : ""}`}
+          onClick={() => void pasteFromClipboard()}
+          disabled={readingClipboard || connection !== "live"}
+          aria-label={readingClipboard ? "Reading clipboard" : "Paste into browser"}
+          title={readingClipboard ? "Reading clipboard…" : "Paste into the focused browser field"}
+        >
+          <PasteIcon />
         </button>
 
         {thread && (
@@ -717,6 +802,10 @@ export function BrowserPane({
               send({ type: "wheel", ...point, deltaX: event.deltaX, deltaY: event.deltaY });
             }}
             onKeyDown={(event) => {
+              // Chrome is a separate headless process, so forwarding Ctrl/Cmd+V
+              // would ask it to read a clipboard it cannot see. Do not cancel
+              // the host shortcut: it fires `onPaste` below with the real text.
+              if (isPasteShortcut(event)) return;
               event.preventDefault();
               const printable = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
               send({
@@ -730,6 +819,7 @@ export function BrowserPane({
               });
             }}
             onKeyUp={(event) => {
+              if (isPasteShortcut(event)) return;
               event.preventDefault();
               send({
                 type: "key",
@@ -739,6 +829,11 @@ export function BrowserPane({
                 keyCode: event.keyCode,
                 modifiers: modifierMask(event),
               });
+            }}
+            onPaste={(event) => {
+              event.preventDefault();
+              const text = event.clipboardData.getData("text/plain");
+              pasteIntoBrowser(text);
             }}
           />
 
@@ -823,6 +918,50 @@ export function BrowserPane({
             </div>
           )}
 
+          {pasteOpen && (
+            <div className="browser-dialog-shade browser-paste-shade">
+              <form
+                className="browser-dialog-card browser-paste-card"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="browser-paste-title"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitManualPaste();
+                }}
+              >
+                <span className="browser-eyebrow">CLIPBOARD FALLBACK</span>
+                <label id="browser-paste-title" htmlFor={`browser-paste-${sessionId}`}>
+                  Paste text here
+                  <span>Touch and hold in the box, then choose Paste.</span>
+                </label>
+                <textarea
+                  id={`browser-paste-${sessionId}`}
+                  value={pasteText}
+                  autoFocus
+                  rows={4}
+                  placeholder="Paste from your phone’s clipboard"
+                  onChange={(event) => setPasteText(event.currentTarget.value)}
+                />
+                <div className="browser-dialog-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPasteText("");
+                      setPasteOpen(false);
+                      canvasRef.current?.focus();
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="primary" disabled={!pasteText}>
+                    Paste into browser
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
           {!url && (
             <div className="browser-empty">
               <div className="browser-empty-head">
@@ -901,6 +1040,14 @@ const ExternalIcon = () => (
 const ActivityIcon = () => (
   <svg {...svgProps}>
     <path d="M4 14h3l2-7 4 12 2-5h5" />
+  </svg>
+);
+const PasteIcon = () => (
+  <svg {...svgProps}>
+    <path d="M9 5h6" />
+    <path d="M9 3h6a1 1 0 0 1 1 1v3H8V4a1 1 0 0 1 1-1z" />
+    <path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+    <path d="M12 11v6m-3-3 3 3 3-3" />
   </svg>
 );
 const PowerIcon = () => (

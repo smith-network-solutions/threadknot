@@ -3603,6 +3603,11 @@ enum Control {
         #[serde(default)]
         modifiers: i64,
     },
+    /// Text captured from the viewer's clipboard. Chrome runs in a separate
+    /// process and cannot read that clipboard from a forwarded Ctrl/Cmd+V.
+    Paste {
+        text: String,
+    },
     Navigate {
         url: String,
     },
@@ -3823,6 +3828,14 @@ async fn bridge(
         let last = session.last_frame.lock().unwrap().clone();
         (last, session.tx.subscribe())
     };
+    // The frontend may update before this machine process does (dev hot reload,
+    // or a newer peer viewing an older machine). Unknown controls are ignored
+    // for forward compatibility, so advertise the efficient paste primitive;
+    // viewers without this message fall back to the long-standing key control.
+    let capabilities = json!({ "type": "capabilities", "paste": true }).to_string();
+    if sink.send(Message::Text(capabilities.into())).await.is_err() {
+        return;
+    }
     // Sync the client's address bar to the session's current URL, then replay
     // the last frame so the pane isn't blank on attach.
     let cur_url = session.current_url();
@@ -3973,6 +3986,7 @@ async fn dispatch_control(session: &Arc<BrowserSession>, ctrl: Control) -> Resul
                 )
                 .await
         }
+        Control::Paste { text } => session.insert_text(&text).await,
         Control::Navigate { url } => session.navigate(&url).await,
         Control::Back => session.history(-1).await,
         Control::Forward => session.history(1).await,
@@ -4854,6 +4868,51 @@ mod tests {
         assert_eq!(mouse_button_mask(&MouseButton::Left), 1);
         assert_eq!(mouse_button_mask(&MouseButton::Right), 2);
         assert_eq!(mouse_button_mask(&MouseButton::Middle), 4);
+
+        let Control::Paste { text } = serde_json::from_value(json!({
+            "type": "paste",
+            "text": "first line\nsecond line 🧶",
+        }))
+        .expect("paste control should deserialize") else {
+            panic!("paste control decoded as another variant");
+        };
+        assert_eq!(text, "first line\nsecond line 🧶");
+    }
+
+    /// Old machine processes understand `Control::Key` but not the dedicated
+    /// paste control. Key events carrying individual characters are the
+    /// compatibility path when a viewer updates before its machine restarts.
+    #[tokio::test]
+    #[ignore = "requires an installed Chrome/Chromium binary"]
+    async fn live_chrome_key_text_accepts_a_paste_payload() {
+        let registry = Arc::new(BrowserRegistry::default());
+        let key = "browser-live-key-text-paste";
+        let html = "<textarea id=q autofocus></textarea>";
+        registry
+            .invoke(
+                key,
+                "navigate",
+                &json!({ "url": format!("data:text/html,{}", urlencoding::encode(html)) }),
+            )
+            .await
+            .unwrap();
+        let session = registry.get_or_spawn(key).await.unwrap();
+        for character in "first line\nsecond line 🧶".chars() {
+            let text = if character == '\n' {
+                "\r".to_string()
+            } else {
+                character.to_string()
+            };
+            session
+                .key(true, "", "", 0, Some(&text), 0)
+                .await
+                .unwrap();
+        }
+        let value = session
+            .evaluate("document.querySelector('#q').value")
+            .await
+            .unwrap();
+        assert_eq!(value, "first line\nsecond line 🧶");
     }
 
     #[test]

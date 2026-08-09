@@ -133,7 +133,7 @@ are the visual fallback. Mutating actions accept `includeSnapshot` where a
 follow-up observation is useful. Fill/type values are never placed in the
 human-facing activity stream.
 
-Two input details decide whether real flows work at all:
+Four input details decide whether real flows work at all:
 
 - **Keys carry `text`.** Chrome only performs a key's *default action* when the
   keydown carries text, so `Enter` without `"\r"` fires a keydown and submits
@@ -148,6 +148,14 @@ Two input details decide whether real flows work at all:
   character rather than `Input.insertText`, so search-as-you-type, hotkeys,
   maxlength filters and editors behave as they do for a human. `fast: true`
   restores the single-shot insert for long strings.
+- **Paste crosses the process boundary explicitly.** The Browser canvas catches
+  the host's Ctrl/Cmd+V paste event and sends its plain-text payload over the
+  browser socket. Forwarding only the shortcut cannot work because isolated
+  headless Chrome does not share the viewer's system clipboard. On phones, the
+  clipboard button reads through the native mobile bridge; an editable manual
+  sheet is the fallback for LAN browsers and denied clipboard permissions. The
+  socket advertises native paste support so a newer viewer connected to an
+  older machine can fall back to the established per-key transport.
 
 Observation-only tools (`status`, `console`, `network`, `tabs`, `downloads`)
 never launch Chrome: asking whether a browser is open must not open one.
@@ -312,4 +320,3 @@ Run them with:
 ```bash
 cargo test live_chrome --lib -- --ignored --nocapture
 ```
-
