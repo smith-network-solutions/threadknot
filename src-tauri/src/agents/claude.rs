@@ -279,7 +279,7 @@ pub fn builtin_models() -> Vec<ModelInfo> {
     models
 }
 
-pub const DEFAULT_MODEL: &str = "claude-fable-5";
+pub const DEFAULT_MODEL: &str = "claude-opus-5";
 
 /// Model id passed to `--model`.
 ///
@@ -2260,6 +2260,8 @@ mod tests {
     #[test]
     fn builtin_models_replace_opus_48_with_fixed_window_opus_5() {
         let models = builtin_models();
+        assert_eq!(DEFAULT_MODEL, "claude-opus-5");
+        assert!(models.iter().any(|model| model.id == DEFAULT_MODEL));
         assert!(!models.iter().any(|model| model.id == "claude-opus-4-8"));
         let opus = models
             .iter()
