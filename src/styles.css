@@ -5166,6 +5166,11 @@ body.reordering { cursor: grabbing; user-select: none; }
 .stat-pips { display: none; }
 .parley-splash { display: none; }
 .persona-mark { display: contents; }
+/* Same deal one level out: the sidebar card ships a portrait slot for every
+   theme (the image is user data, not a palette choice) but only the arcade
+   card rack gives it a box. Inert here, so a card in any other theme lays out
+   byte-identical to before the slot existed. */
+.fighter-portrait { display: none; }
 
 .chip {
   align-self: flex-end;
@@ -6736,6 +6741,80 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 .settings-step-btn:hover:not(:disabled) { color: var(--text); border-color: var(--line-2); background: var(--panel-3); }
 .settings-step-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* Portrait manager: one stacked group per agent, each carrying a small framed
+   preview, the chosen file's name, and set/clear. This block lives in the
+   settings pane, which is on screen in every theme, so it needs real base
+   chrome rather than arcade-only paint: neutral 1px frames, the mono face the
+   rest of the settings pane uses for values, and buttons that borrow
+   .usage-refresh's pill so they read as the same class of small control. The
+   arcade section later thickens the frames and swaps the type; nothing here
+   depends on that. */
+.portraits-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.portraits-hint {
+  max-width: 44ch;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--faint);
+}
+.portrait-agent { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.portrait-agent-name {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.portrait-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Fixed 28px so a row's height never depends on which image landed in it; the
+   grid centring keeps a placeholder glyph honest when no file is set yet. */
+.portrait-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.portrait-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The filename takes whatever width is left and gives it back to the buttons
+   as an ellipsis rather than pushing them off the row. */
+.portrait-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.portrait-set,
+.portrait-clear {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  transition: color 0.12s, border-color 0.12s;
+}
+.portrait-set:hover { color: var(--text); border-color: var(--line-2); }
+/* Clear is the destructive half of the pair, so it warms on hover only; at
+   rest it stays as quiet as its sibling. */
+.portrait-clear:hover {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+}
 
 /* ================= scheduled runs ================= */
 
@@ -8667,6 +8746,60 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   color: var(--brass-hi);
   text-shadow: 0 0 10px var(--glow-soft);
 }
+/* The portrait manager inside that panel. Ungated on purpose, like the rest of
+   the settings chrome: this is where a user goes to load the pictures the card
+   rack draws, so it has to look like part of the cabinet even with the cards
+   module switched off. Each agent's legend lights like a block legend, the
+   preview picks up the same frame-and-bezel pair as the cell it feeds, and
+   set/clear join the chip idiom's 2px frames (the blanket radius reset already
+   squares off the base pills). */
+:root[data-theme="arcade"] .portrait-agent-name {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow-soft);
+}
+:root[data-theme="arcade"] .portrait-thumb {
+  border: 2px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background: #0a0a1c;
+}
+:root[data-theme="arcade"] .portrait-thumb img { image-rendering: pixelated; }
+:root[data-theme="arcade"] .portraits-hint,
+:root[data-theme="arcade"] .portrait-name,
+:root[data-theme="arcade"] .portrait-set,
+:root[data-theme="arcade"] .portrait-clear {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+:root[data-theme="arcade"] .portraits-hint { font-size: 10px; line-height: 1.6; }
+:root[data-theme="arcade"] .portrait-set,
+:root[data-theme="arcade"] .portrait-clear {
+  font-size: 10px;
+  text-transform: uppercase;
+  border-width: 2px;
+  border-color: var(--line-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="arcade"] .portrait-set:hover {
+  color: var(--brass-hi);
+  border-color: var(--brass);
+  box-shadow: 0 0 14px -2px var(--glow-soft), 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="arcade"] .portrait-clear:hover {
+  border-color: var(--red);
+  box-shadow: 0 0 14px -2px color-mix(in srgb, var(--red) 40%, transparent), 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+/* Both buttons press into the panel, the way every other cabinet control here
+   does; the offset shadow goes with the travel. */
+:root[data-theme="arcade"] .portrait-set:active,
+:root[data-theme="arcade"] .portrait-clear:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
 
 /* ---- the card rack: thread cards, rail tiles, the settled shelf -------------
    SKIN MODULE: "cards" (:not([data-skin-off~="cards"])). This is the module
@@ -8707,8 +8840,26 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
   animation: arcade-cursor 0.55s steps(1, end) infinite;
 }
-/* Prose stays in the user's UI face (a thread title is something you read, not
-   a machine readout); the open one just lights up. */
+/* The nameplate is stamped, not typeset: a select screen prints the fighter's
+   name in the machine's own bitmap face, small and locked to caps, and the
+   open card's plate lights. Two lines because a thread title is a real
+   sentence and caps eat width; the clamp is the same -webkit-box pattern the
+   hover card uses, and the base rule's nowrap has to be undone for it to bite.
+   Titles stay in the user's UI face everywhere else in the app: this is the
+   one surface the module is allowed to repaint. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card-title {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.active .thread-card-title {
   color: var(--brass-hi);
   text-shadow: 0 0 10px var(--glow-soft);
@@ -8725,8 +8876,69 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   box-shadow: 0 0 0 1px var(--rt-bezel);
   background: #0a0a1c;
 }
-/* Meta row: clock and turn count are machine readouts, and the count gets a
-   plate of its own, like a cabinet's record display. */
+/* The real portrait tile, when the user has given this agent a picture: a
+   34x34 bezeled window at the card's leading edge, the plate the whole card
+   hangs off. Gated on :has(img) rather than on the span alone so a slot that
+   ships empty stays at the base rule's display:none and leaves the card
+   exactly as it is today; the checkerboard is the empty-cell backdrop showing
+   through anything transparent in the image. Pixel art is the point, so the
+   image is never smoothed. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .fighter-portrait:has(img) {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  overflow: hidden;
+  border: 2px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background: repeating-conic-gradient(#0a0a1c 0% 25%, #14163a 0% 50%) 0 0 / 8px 8px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .fighter-portrait img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+/* With a real portrait up, the 12px agent glyph beside it is the same fact
+   twice and the bezel cell above would put two frames in a row. The tile wins;
+   the glyph steps out. Off the portrait it stays exactly as it was. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card:has(.fighter-portrait img) .thread-row-mark,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card:has(.fighter-portrait img) .thread-row-avatar {
+  display: none;
+}
+/* Vitality strip. It belongs to the title row (it reads as the fighter's own
+   bar, under their name) but has to span the card, so the row is allowed to
+   wrap and the strip claims a whole line of it: flex-basis 100% forces the
+   break with no absolute positioning and no second wrapper in the markup.
+   row-gap goes to 0 so the strip's own 4px is the only gap that lands, and the
+   column gap between the portrait, dot and name is untouched. Yellow paint in
+   a black frame on a steel bezel, same recipe as the vitals meter. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card-top {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card-top::after {
+  content: "";
+  flex: 0 0 100%;
+  height: 5px;
+  margin-top: 4px;
+  border: 1px solid var(--rt-frame);
+  background: var(--rt-health);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+}
+/* A thread waiting on a human is taking damage: the bar goes red and blinks on
+   the same square wave as every LED in the cabinet. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.has-attention .thread-card-top::after {
+  background: var(--rt-damage);
+  animation: arcade-led 0.7s steps(1, end) infinite;
+}
+/* Meta row: the score line under the bar. Clock and turn count are machine
+   readouts, the container sets the face so anything else the row carries joins
+   them, and the count gets a plate of its own, like a cabinet's record
+   display. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card-meta,
 :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card-meta .thread-row-time,
 :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card-meta .thread-card-turns {
   font-family: "Silkscreen", var(--font-mono);
@@ -8832,7 +9044,10 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   :root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-modal .btn.tone-allow:not(:disabled),
   :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item.on::before,
   :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.active,
-  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card .status-dot.unread {
+  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card .status-dot.unread,
+  /* The damaged vitality strip keeps its red: the color is the signal, the
+     blink was only the amplifier. */
+  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.has-attention .thread-card-top::after {
     animation: none;
   }
   /* A frozen full-screen dim with no announcement is just a blackout: the

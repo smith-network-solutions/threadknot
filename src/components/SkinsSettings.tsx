@@ -7,6 +7,9 @@
 // The module toggles write through appearance.ts (getSkinPrefs/setSkinPrefs),
 // which owns the documentElement dataset the CSS gates read. This file never
 // touches the dataset itself.
+//
+// The portraits block below rides alongside them: it is skin dressing rather
+// than a palette, and it writes through portraits.ts the same way.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -35,6 +38,15 @@ import {
   SKIN_MODULES,
   type CuratedSkin,
 } from "../lib/skins";
+import {
+  agentPortraitKey,
+  getPortraits,
+  PORTRAITS_EVENT,
+  setPortrait,
+  type PortraitPrefs,
+} from "../lib/portraits";
+import { isAgentVisible } from "../lib/agentVisibility";
+import { downscaleImage } from "../lib/themeCraft";
 import type { CustomTheme } from "../lib/protocol";
 import { useStore } from "../state/store";
 import { XIcon } from "./icons";
@@ -424,8 +436,130 @@ function SkinMarketRow({ a }: { a: Appearance }) {
   );
 }
 
+/** One portrait slot: the small frame, the label, and the pick/clear buttons.
+ *  The file input is hidden behind the pick button (reusing the marketplace
+ *  import input's off-screen styling) and reset after every choice, so the same
+ *  file can be picked twice in a row. */
+function PortraitRow({
+  slotKey,
+  label,
+  url,
+  onPick,
+}: {
+  slotKey: string;
+  label: string;
+  url: string | null;
+  onPick: (key: string, file: File) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <div className="portrait-row">
+      <span className="portrait-thumb">{url && <img src={url} alt="" />}</span>
+      <span className="portrait-name">{label}</span>
+      <button
+        type="button"
+        className="settings-toggle portrait-set"
+        title={`Pick a picture for ${label}.`}
+        onClick={() => fileRef.current?.click()}
+      >
+        {url ? "change" : "upload"}
+      </button>
+      {url && (
+        <button
+          type="button"
+          className="settings-toggle portrait-clear"
+          title={`Remove the picture for ${label}.`}
+          onClick={() => setPortrait(slotKey, null)}
+        >
+          clear
+        </button>
+      )}
+      <input
+        ref={fileRef}
+        className="skin-import-input"
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) onPick(slotKey, file);
+        }}
+      />
+    </div>
+  );
+}
+
+/** Model portraits: the picture a thread card wears for the model behind it.
+ *  One row per model each connected agent offers, plus a per-agent default that
+ *  covers every model left unset. Pictures are downscaled on the way in and
+ *  kept in browser storage as data URLs, so they never leave the machine. */
+function PortraitsSettings() {
+  const { state } = useStore();
+  const [prefs, setPrefs] = useState<PortraitPrefs>(getPortraits);
+  const [error, setError] = useState<string | null>(null);
+
+  // Every write goes through setPortrait, which fires this back; mirroring it
+  // is what keeps a row's thumbnail and its clear button in step.
+  useEffect(() => {
+    const onEvt = () => setPrefs(getPortraits());
+    window.addEventListener(PORTRAITS_EVENT, onEvt);
+    return () => window.removeEventListener(PORTRAITS_EVENT, onEvt);
+  }, []);
+
+  async function pick(key: string, file: File) {
+    setError(null);
+    try {
+      // 256px at 0.85 is plenty for a card-sized frame and keeps the stored
+      // string small enough that a full set fits in browser storage.
+      setPortrait(key, await downscaleImage(file, 256, 0.85));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const agents = (state.hello?.agents ?? []).filter((ag) => isAgentVisible(ag.id));
+  if (agents.length === 0) return null;
+
+  return (
+    <div className="settings-block portraits-block">
+      <div className="settings-label">model portraits</div>
+      <div className="settings-hint portraits-hint">
+        Portraits ride on thread cards under the Retro-Tech skin: the model is
+        the character. Give a model its own picture, or set one default per agent
+        to cover the rest.
+      </div>
+
+      {agents.map((ag) => {
+        const fallbackKey = agentPortraitKey(ag.id);
+        return (
+          <div className="portrait-agent" key={ag.id}>
+            <div className="portrait-agent-name">{ag.name}</div>
+            <PortraitRow
+              slotKey={fallbackKey}
+              label={`default for ${ag.name}`}
+              url={prefs.byKey[fallbackKey] ?? null}
+              onPick={(k, f) => void pick(k, f)}
+            />
+            {ag.models.map((m) => (
+              <PortraitRow
+                key={m.id}
+                slotKey={m.id}
+                label={m.name}
+                url={prefs.byKey[m.id] ?? null}
+                onPick={(k, f) => void pick(k, f)}
+              />
+            ))}
+          </div>
+        );
+      })}
+
+      {error && <div className="settings-hint portraits-hint">{error}</div>}
+    </div>
+  );
+}
+
 /** The skins block itself: curated cards, live module checklist, marketplace. */
-export function SkinsSettings() {
+function SkinsBlock() {
   const a = useAppearanceState();
   // The crafted themes come from the store, so a save or a delete elsewhere
   // re-renders this block on its own; the APPEARANCE_EVENT above covers the
@@ -513,5 +647,17 @@ export function SkinsSettings() {
         />
       )}
     </div>
+  );
+}
+
+/** The whole skins section: the skin cards, then the portraits that dress the
+ *  sidebar under one. Two blocks rather than one so each keeps its own label
+ *  and can be read (and scrolled past) on its own. */
+export function SkinsSettings() {
+  return (
+    <>
+      <SkinsBlock />
+      <PortraitsSettings />
+    </>
   );
 }
