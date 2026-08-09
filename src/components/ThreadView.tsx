@@ -322,7 +322,7 @@ export function ThreadView() {
               {thread
                 ? thread.title || "Untitled thread"
                 : quickHome
-                  ? "New quick chat"
+                  ? "New quick thread"
                   : "New thread"}
               {thread && (
                 <button
@@ -513,7 +513,7 @@ function EmptyPane() {
           className="empty-quick-action"
           onClick={() => actions.openQuickDraft()}
         >
-          <span>New quick chat</span>
+          <span>New quick thread</span>
           <small>no workspace needed</small>
         </button>
       </div>

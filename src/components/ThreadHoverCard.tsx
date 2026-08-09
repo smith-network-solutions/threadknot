@@ -319,7 +319,7 @@ export function ThreadHoverCardBody({ thread }: { thread: Thread }) {
     thread.projectId === HERMES_HOME_PROJECT_ID
       ? (hermesRec?.name ?? "Hermes agent")
       : isQuickHomeProjectId(thread.projectId)
-        ? "Quick chats"
+        ? "Quick threads"
       : (state.workspaces.find((w) =>
           w.members.some((m) => m.projectId === thread.projectId),
         )?.name ??

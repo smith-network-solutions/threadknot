@@ -18,7 +18,7 @@ export const AGENT_LABELS: Record<Agent, string> = {
  *  the dedicated Hermes section, and folder-based UI must skip it. */
 export const HERMES_HOME_PROJECT_ID = "hermes-home";
 
-/** Machine-local hidden project hosting ordinary, folderless Quick Chats.
+/** Machine-local hidden project hosting ordinary, folderless Quick Threads.
  * The machine id suffix keeps every home unique when several machines' quick
  * threads are shown in one fleet client. */
 export const QUICK_HOME_PROJECT_PREFIX = "quick-home:";

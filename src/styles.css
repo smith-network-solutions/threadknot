@@ -471,7 +471,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 }
 .rail-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* Quick Chats is a fixed destination, not a reorderable project. Its face is
+/* Quick Threads is a fixed destination, not a reorderable project. Its face is
    cut from the same dark metal as the rail and carries the real brand mark so
    it reads as Threadknot's front door rather than another workspace avatar. */
 .rail-home {
@@ -633,7 +633,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 
 .project-section { margin-top: 6px; position: relative; }
 
-/* Folderless Quick Chats destination. The hairline beneath the compact masthead
+/* Folderless Quick Threads destination. The hairline beneath the compact masthead
    echoes a notebook index rather than a workspace container. */
 .quick-chats { min-width: 0; padding: 1px 0 8px; }
 .quick-chats-head {
