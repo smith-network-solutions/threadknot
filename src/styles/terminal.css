@@ -347,3 +347,105 @@
 :root[data-family="light"] .term-tab.on {
   background: #ffffff;
 }
+
+/* ===== Retro-Tech skin: terminal bay chrome =====
+   Gated on the "workspace" skin module. The tab strip matches the browser's:
+   framed slots on a checkerboard deck, pixel-face legends, the live tab lit.
+   2px var(--rt-frame) borders over a 1px var(--rt-bezel) ring, hard offset
+   shadows, padding up rather than down so no tap target shrinks. */
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .term-tabs {
+  padding: 5px 6px 0;
+  border-bottom: 2px solid var(--rt-frame, #06070d);
+  background:
+    repeating-conic-gradient(rgba(155, 170, 210, 0.05) 0% 25%, transparent 0% 50%) 0 0 / 8px 8px,
+    var(--panel, #10141d);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .term-tab {
+  border: 2px solid transparent;
+  border-bottom: none;
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .term-tab.on {
+  border-color: var(--rt-frame, #06070d);
+  color: var(--brass-hi, #f2c98a);
+  background: var(--panel-2, #141926);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), inset 0 2px 12px rgba(217, 163, 92, 0.2);
+  text-shadow: 0 0 8px rgba(217, 163, 92, 0.5);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .term-tab-label {
+  padding: 8px 8px 7px 11px;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .term-tab-edit {
+  border-width: 2px;
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .term-keys button {
+  border-width: 2px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* ===== Retro-Tech skin: green phosphor terminal =====
+   Gated on data-phosphor, which appearance.ts sets only when the whole tube is
+   live: the arcade theme applied, the "terminal" module on (NOT the workspace
+   one, so the tube can glow with the pane chrome left stock) and the terminal
+   preferences untouched. The xterm buffer colours are set in JS
+   (TerminalInstance) off the same attribute; that shared answer is what keeps
+   green scanlines from landing around an ordinary terminal. This block sits
+   last on purpose: where it overlaps the workspace tab rules above at equal
+   specificity, the green accent is meant to win over the brass one. */
+
+:root[data-phosphor="on"] .term-host {
+  position: relative;
+  box-shadow: inset 0 0 42px rgba(51, 255, 51, 0.07);
+}
+
+/* Scanlines over the tube. Purely decorative, so it never eats a pointer. */
+:root[data-phosphor="on"] .term-host::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(51, 255, 51, 0.04) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+/* The danger key keeps its red so it stays legible as the odd one out. */
+:root[data-phosphor="on"] .term-keys button {
+  border-color: rgba(51, 255, 51, 0.32);
+}
+
+:root[data-phosphor="on"] .term-keys button:not(.term-key-danger) {
+  color: #7dff7d;
+}
+
+:root[data-phosphor="on"] .term-keys button.on {
+  border-color: #33ff33;
+  color: #eaffea;
+  background: rgba(51, 255, 51, 0.16);
+}
+
+/* The one rule the workspace block above also writes (colour, both shadows).
+   The single-attribute phosphor gate is one class-level selector lighter than
+   that block's gate, so the parent .term-tabs is named here purely to put the
+   two back on equal specificity: same weight, later in the file, green wins. */
+:root[data-phosphor="on"] .term-tabs .term-tab.on {
+  color: #7dff7d;
+  text-shadow: 0 0 8px rgba(51, 255, 51, 0.5);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), inset 0 2px 12px rgba(51, 255, 51, 0.16);
+}

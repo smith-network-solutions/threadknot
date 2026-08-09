@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Access, Agent, ReviewerPersona, Thread } from "../lib/protocol";
 import { threadParticipants } from "../lib/protocol";
@@ -227,6 +227,11 @@ function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void
           />
         ) : (
           <>
+            {/* Arcade-only marquee (inert everywhere else; see styles.css). */}
+            <div className="review-fight-marquee" aria-hidden="true">
+              select your fighters <em>●</em>{" "}
+              {personas.filter((p) => agentAvailable(p.agent)).length} challengers available
+            </div>
             <div className="review-modal-scroll">
               <p className="review-modal-blurb">
                 Pick one or more reviewers — any agent can review, including the
@@ -253,8 +258,10 @@ function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void
                           title={p.personality || undefined}
                           onClick={() => toggle(p.id)}
                         >
-                          <AgentMark agent={p.agent} size={14} />
-                          <span>{p.name}</span>
+                          <span className="persona-mark">
+                            <AgentMark agent={p.agent} size={14} />
+                          </span>
+                          <span className="persona-name">{p.name}</span>
                           {offline ? (
                             <em className="agent-off">offline</em>
                           ) : p.agent === builder?.agent ? (
@@ -292,6 +299,15 @@ function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void
                 const effortOptions = currentModel?.efforts ?? [];
                 const providerDefault = p.agent === "claude";
                 const effort = overrides[p.id]?.effort ?? p.effort;
+                // Which rung of the effort ladder is lit, for the arcade
+                // theme's PWR readout (mirrors the select's displayed value).
+                const resolvedEffort =
+                  effort && effortOptions.includes(effort)
+                    ? effort
+                    : providerDefault
+                      ? currentModel?.defaultEffort
+                      : (effortForModel(currentModel) ?? effortOptions[0]);
+                const litEfforts = effortOptions.indexOf(resolvedEffort ?? "") + 1;
                 return (
                   <div className="review-grid review-pick-row" key={p.id}>
                     <label className="review-field">
@@ -352,6 +368,14 @@ function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void
                           ))}
                         </select>
                       </label>
+                    )}
+                    {effortOptions.length > 0 && (
+                      <div className="stat-pips" aria-hidden="true">
+                        <span className="stat-pips-label">pwr</span>
+                        {effortOptions.map((id, i) => (
+                          <i key={id} className={i < litEfforts ? undefined : "off"} />
+                        ))}
+                      </div>
                     )}
                   </div>
                 );
@@ -622,6 +646,52 @@ function PersonaEditor({
         </button>
       </div>
     </>
+  );
+}
+
+/** ROUND N: the arcade theme's fight-start announcement. Fires when a parley
+ *  seats its reviewers (round 0 -> 1) and again each time the debate advances
+ *  a round, driven purely by ParleyState.round so it needs no wiring into the
+ *  launch path. It mounts for every theme; the base stylesheet keeps it
+ *  display:none and only arcade gives it a box, so elsewhere the only cost is
+ *  a timer. */
+export function ParleyRoundSplash({ thread }: { thread: Thread }) {
+  const round = thread.parley?.round ?? 0;
+  const [shown, setShown] = useState(0);
+  // Keyed by thread id, because this component is never remounted per thread:
+  // a round number on its own cannot tell "the debate advanced" from "the view
+  // moved to a different thread that happens to be further along".
+  const prev = useRef<{ id: string; round: number }>({ id: thread.id, round });
+  useEffect(() => {
+    const was = prev.current;
+    prev.current = { id: thread.id, round };
+    // A different thread is being watched now. Arriving in the middle of a
+    // debate is not a round starting, and the previous thread's splash must not
+    // outlive it, so drop whatever is on screen and announce nothing.
+    if (was.id !== thread.id) {
+      setShown(0);
+      return;
+    }
+    // The parley is over (or was never seated). Clear the overlay here rather
+    // than leaving it to a hide timer that may already have been cleaned up.
+    if (round === 0) {
+      setShown(0);
+      return;
+    }
+    if (round <= was.round) return;
+    setShown(round);
+    // Matches the CSS timeline: 0.95s delay + 2.6s slam, then gone.
+    const t = window.setTimeout(() => setShown(0), 3800);
+    return () => window.clearTimeout(t);
+  }, [thread.id, round]);
+  if (shown === 0) return null;
+  return createPortal(
+    // Keyed so a round advancing mid-splash remounts and replays the slam.
+    <div className="parley-splash" key={shown} aria-hidden="true">
+      <div className="ps-round">parley</div>
+      <div className="ps-fight">round {shown}</div>
+    </div>,
+    document.body,
   );
 }
 

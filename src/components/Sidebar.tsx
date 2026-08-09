@@ -348,7 +348,7 @@ function QuickChatsSection({
   );
 }
 
-/** Discord's server rail: every project as an avatar down the left edge, the
+/** The project rail: every project as an avatar down the left edge, the
  *  selected one filling the rest of the sidebar. Switching costs one tap with
  *  no menu, and — unlike the dropdown picker — the projects you are NOT in
  *  stay on screen, so an unread badge on a project you had forgotten about is
@@ -552,17 +552,22 @@ function ProjectRail({
               onMenu({ x: e.clientX, y: e.clientY }, w);
             }}
           >
-            {/* Discord's edge pill: grows on hover, full height when open. */}
+            {/* The edge pill: grows on hover, full height when open. */}
             <span className="rail-pip" aria-hidden />
             {/* The PROJECT's identity, not the machine's: `.project-head`
                 can lean on the machine badge because the name sits beside
-                it, but here the badge is all there is. */}
+                it, but here the badge is all there is.
+
+                Which is exactly why the rail opts back INTO the shared hover
+                preview instead of suppressing it: at 38px with no label, seeing
+                the image big and reading the name is the whole point of
+                hovering a tile. The portaled badge does both, and it escapes
+                the rail's scroll clip on its own. */}
             <MachineAvatar
               image={w.image}
               color={projectAccent(w.id)}
               name={w.name}
               size={38}
-              preview={false}
             />
             {/* The ring rides OUTSIDE the avatar so an image-backed project
                 shows it as clearly as an initials one.

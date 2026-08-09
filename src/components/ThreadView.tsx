@@ -26,7 +26,7 @@ import {
 import { findThread, resolveProjectView, useStore } from "../state/store";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { FeedItemView } from "./FeedItems";
-import { LaneChips, ReviewMenu } from "./ReviewMenu";
+import { LaneChips, ParleyRoundSplash, ReviewMenu } from "./ReviewMenu";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
 import { Composer } from "./Composer";
@@ -383,6 +383,7 @@ export function ThreadView() {
         )}
         <div className="ws-toggles">
           {thread && <ReviewMenu thread={thread} />}
+          {thread && <ParleyRoundSplash thread={thread} />}
           {!hermesHome && !quickHome && VISIBLE_TABS.map(({ id, label, Icon }) => {
             const openTab = project ? state.workspace[project.id] ?? null : null;
             return (

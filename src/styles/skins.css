@@ -1,0 +1,477 @@
+/* Settings -> Appearance -> skins (SkinsSettings.tsx).
+   A skin is a whole-cabinet treatment rather than a palette, so this block has
+   to sell one before it is applied: a card with real copy, a screenshot
+   carousel behind a preview button, and the per-part toggles once it is live.
+   Everything below reuses the :root custom props from styles.css and the
+   settings idioms (.settings-block / .settings-label / .settings-toggle); the
+   only new surfaces are the skin card, the module rows and the preview modal.
+
+   Layout rule of the block: it is a normal .settings-block sibling, so vertical
+   rhythm between it and AppearanceStudio / SidebarSettings comes from the
+   shared .ss-content .settings-block spacing. Nothing here sets outer margins. */
+
+/* ---- the block ------------------------------------------------------- */
+
+.skins-intro {
+  max-width: 56ch; /* wider than the row-level hint: this one is a paragraph */
+  margin-top: 6px;
+}
+
+.skin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* ---- curated skin card ----------------------------------------------- */
+
+/* The card is a plate rather than a row because it carries four things at
+   once (name, tagline, paragraph, actions) and, when active, the module
+   checklist as well. A single border keeps that group legible against the
+   settings rows above and below it. */
+.skin-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 11px 12px 12px;
+  transition: border-color 0.14s, background 0.14s, transform 0.14s;
+}
+
+.skin-card:hover {
+  border-color: var(--line-2);
+  background: var(--panel-2);
+}
+
+/* Active reads as lit rather than merely selected: this is the only signal
+   that the skin the user is looking at is the one currently dressing the app. */
+.skin-card.on {
+  border-color: color-mix(in srgb, var(--brass) 50%, transparent);
+  background: var(--brass-dim);
+}
+
+.skin-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.skin-card-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.skin-card.on .skin-card-name { color: var(--brass-hi); }
+
+/* Small lit tag, not a button: it is state, and nothing happens if it is
+   clicked, so it must not look pressable. */
+.skin-card-active-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brass-hi);
+  border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.skin-card-hint {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+/* The long description doubles as the hover tooltip (title attribute) so the
+   copy exists for pointer users and screen readers alike; on screen it is
+   dimmed so the card still scans as name + tagline + buttons at a glance. */
+.skin-card-desc {
+  margin-top: 6px;
+  max-width: 60ch;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.skin-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.skin-apply-btn:disabled,
+.skin-preview-actions .settings-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Preview is the secondary action, so it stays outline-only while apply picks
+   up the primary treatment when it is the useful button. */
+.skin-card.on .skin-preview-btn { border-color: color-mix(in srgb, var(--brass) 35%, transparent); }
+
+.skin-card-modules-label,
+.skin-preview-modules-label {
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ---- module checklist ------------------------------------------------ */
+
+/* Five rows, each a part of the skin the user can switch off without leaving
+   it. Deliberately the same shape as a .settings-row (label + hint on the
+   left, control hard right) so it needs no learning. */
+.skin-modules {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+}
+
+.skin-module-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+.skin-module-row + .skin-module-row { border-top: 1px solid var(--line); }
+
+.skin-module-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.skin-module-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.skin-module-hint {
+  max-width: 48ch;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--faint);
+}
+
+.skin-module-seg { flex: 0 0 auto; }
+
+/* Fixed width so the column of on/off toggles lines up: "on" and "off" are
+   different widths and a ragged edge makes the list look unfinished. */
+.skin-module-toggle {
+  min-width: 44px;
+  text-align: center;
+}
+
+/* ---- marketplace row -------------------------------------------------- */
+
+.skin-market {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.skin-market-blurb {
+  max-width: 56ch;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.skin-market-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* The file input is only ever driven by the import button's click(), so it is
+   removed from layout entirely rather than merely hidden: display:none would
+   also work, but keeping it in the DOM flow at zero size avoids any browser
+   quirk around clicking a display:none input. */
+.skin-import-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.skin-market-note { color: var(--teal); }
+.skin-market-error { color: var(--red); }
+
+/* ---- preview modal ---------------------------------------------------- */
+
+/* Wider than the stock .modal because the whole point is a screenshot at a
+   size where the chrome it is showing off is actually readable. Scrolls
+   internally: description + five module rows + actions will overflow the
+   inherited max-height on a short window. */
+.skin-preview {
+  width: 620px;
+  overflow-y: auto;
+}
+
+.skin-preview-title {
+  font-family: var(--font-ui);
+  letter-spacing: 0.18em;
+}
+
+/* Stage is a fixed-ratio well so paging between shots of different heights
+   does not make the modal jump. object-fit: contain keeps a wide screenshot
+   whole rather than cropping the part being demonstrated. */
+.skin-preview-stage {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.skin-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  animation: skin-shot-in 0.16s ease-out;
+}
+
+/* Nav arrows sit on the image, so they carry their own scrim: a plain glyph
+   would vanish over a light region of a screenshot. */
+.skin-preview-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text);
+  background: rgba(6, 8, 14, 0.62);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.skin-preview-nav.prev { left: 8px; }
+.skin-preview-nav.next { right: 8px; }
+.skin-preview-nav:hover {
+  color: var(--brass-hi);
+  background: rgba(6, 8, 14, 0.82);
+}
+
+.skin-preview-caption {
+  margin-top: 7px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.skin-preview-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+/* Dots are hit targets as well as indicators, so the padded button is bigger
+   than the 7px pip it draws through its border-radius. */
+.skin-preview-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.skin-preview-dot:hover { border-color: var(--brass); }
+.skin-preview-dot.on {
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
+.skin-preview-desc {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--dim);
+}
+
+.skin-preview-actions { flex-wrap: wrap; }
+
+@keyframes skin-shot-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Phones: the modal is already width-capped by .modal-backdrop padding, but
+   the stage needs to give up its aspect ratio before it eats the viewport. */
+@media (max-width: 640px) {
+  .skin-preview { width: 100%; }
+  .skin-preview-stage { aspect-ratio: 4 / 3; }
+  .skin-module-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .skin-module-seg { align-self: flex-start; }
+}
+
+/* ---- light family ----------------------------------------------------- */
+
+/* The dark palette leans on translucent black for depth, which turns muddy on
+   a light background. These swap those to plain surface colours and firm up
+   the arrow scrim so it stays readable over a bright screenshot. */
+:root[data-family="light"] .skin-card { background: var(--panel-2); }
+:root[data-family="light"] .skin-card:hover { background: var(--panel-3, var(--panel-2)); }
+:root[data-family="light"] .skin-preview-stage { background: var(--panel); }
+:root[data-family="light"] .skin-preview-nav {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.86);
+}
+:root[data-family="light"] .skin-preview-nav:hover { background: #fff; }
+
+/* ---- Retro-Tech (data-theme="arcade") --------------------------------- */
+
+/* Under the arcade theme the settings screen itself is cabinet chrome: 2px
+   frames, hard offset shadows instead of soft blurs, square corners (the
+   theme's blanket radius reset does that for free), Silkscreen for machine
+   text and Bungee for signage. These rules are core skin chrome, not one of
+   the toggleable modules, so they are gated on the theme alone: a user who
+   switches every module off still needs this screen to look like it belongs. */
+
+:root[data-theme="arcade"] .skin-card {
+  border: 2px solid var(--line);
+  background: var(--panel-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="arcade"] .skin-card:hover {
+  border-color: var(--rt-frame, var(--line-2));
+}
+
+:root[data-theme="arcade"] .skin-card.on {
+  border-color: var(--brass);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45), 0 0 12px color-mix(in srgb, var(--brass) 22%, transparent);
+}
+
+/* The skin's own name is signage, so it gets the display face. Body copy
+   stays in the user's UI font: prose is never set in a pixel face. */
+:root[data-theme="arcade"] .skin-card-name {
+  font-family: "Bungee", var(--font-ui);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:root[data-theme="arcade"] .skin-card.on .skin-card-name {
+  text-shadow: 0 0 10px color-mix(in srgb, var(--brass) 45%, transparent);
+}
+
+/* Machine text: tags, part names, toggles, counts. Silkscreen only ships a
+   400 weight, so nothing here may ask for bold. */
+:root[data-theme="arcade"] .skin-card-active-tag,
+:root[data-theme="arcade"] .skin-module-label,
+:root[data-theme="arcade"] .skin-module-toggle,
+:root[data-theme="arcade"] .skin-card-modules-label,
+:root[data-theme="arcade"] .skin-preview-modules-label {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+}
+
+:root[data-theme="arcade"] .skin-card-active-tag {
+  font-size: 8.5px;
+  border: 2px solid var(--brass);
+  border-radius: 0;
+  padding: 1px 6px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="arcade"] .skin-module-label { font-size: 10px; text-transform: uppercase; }
+:root[data-theme="arcade"] .skin-module-toggle { font-size: 9px; }
+
+:root[data-theme="arcade"] .skin-card-modules-label,
+:root[data-theme="arcade"] .skin-preview-modules-label {
+  font-size: 9px;
+  color: var(--brass);
+}
+
+/* Divider between part rows reads as a bezel seam rather than a hairline. */
+:root[data-theme="arcade"] .skin-module-row + .skin-module-row {
+  border-top: 2px solid var(--line);
+}
+
+:root[data-theme="arcade"] .skin-market { border-top: 2px solid var(--line); }
+
+/* Preview modal: a cabinet screen. The stage gets the bezel treatment used
+   elsewhere in the theme (2px frame plus a 1px outer ring), and the arrows
+   become physical buttons with a hard shadow. */
+:root[data-theme="arcade"] .skin-preview {
+  border: 2px solid var(--line-2);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme="arcade"] .skin-preview-title {
+  font-family: "Bungee", var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+}
+
+:root[data-theme="arcade"] .skin-preview-stage {
+  border: 2px solid var(--rt-frame, var(--line-2));
+  box-shadow: 0 0 0 1px var(--rt-bezel, rgba(0, 0, 0, 0.5)) inset;
+  background: #0a0a1c;
+}
+
+:root[data-theme="arcade"] .skin-preview-nav {
+  border: 2px solid var(--line-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="arcade"] .skin-preview-caption {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--brass);
+}
+
+:root[data-theme="arcade"] .skin-preview-dot {
+  border: 2px solid var(--line-2);
+  border-radius: 0;
+  width: 8px;
+  height: 8px;
+}
+
+:root[data-theme="arcade"] .skin-preview-dot.on {
+  box-shadow: 0 0 8px color-mix(in srgb, var(--brass) 55%, transparent);
+}
+
+/* ---- reduced motion ---------------------------------------------------- */
+
+/* Everything animated here is decorative: the card hover transition, the
+   screenshot fade and the dot/arrow colour fades. Cutting them costs nothing
+   because every state is also carried by colour and border weight. */
+@media (prefers-reduced-motion: reduce) {
+  .skin-card,
+  .skin-preview-nav,
+  .skin-preview-dot {
+    transition: none;
+  }
+  .skin-preview-img { animation: none; }
+}

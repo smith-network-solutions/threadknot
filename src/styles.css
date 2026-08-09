@@ -370,7 +370,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 
 /* project sections */
 
-/* ---- rail layout (Discord-style project column) ---- */
+/* ---- rail layout (the chat-app-style project icon column) ---- */
 
 :root { --rail-w: 56px; }
 
@@ -516,7 +516,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   background: linear-gradient(90deg, transparent, var(--line-2), transparent);
 }
 
-/* Unread/approval badge, notched out of the avatar the way Discord does. */
+/* Unread/approval badge, notched out of the avatar's corner. */
 .rail-dot {
   position: absolute;
   right: 2px;
@@ -1955,6 +1955,16 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 /* Blocks reuse the popover styles; give them room in the wide layout. */
 .ss-content .settings-block { margin-bottom: 14px; }
+/* A settings section can run long enough that the next one's label reads as
+   another row of the previous list. Consecutive blocks get a rule and real air
+   between them, so a section is something you can see the edges of. First
+   block in a pane is deliberately untouched: a divider above the first thing
+   under the heading would be a line to nowhere. */
+.ss-content .settings-block + .settings-block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
 .ss-content .settings-url { user-select: all; }
 
 /* Phones / narrow windows: full screen, nav becomes horizontal chips. */
@@ -5126,7 +5136,7 @@ body.reordering { cursor: grabbing; user-select: none; }
 /* Persona rows: the selectable reviewer + its edit pencil. */
 .persona-row { display: flex; align-items: center; gap: 2px; }
 .persona-row .persona-main { flex: 1; min-width: 0; }
-.persona-row .persona-main span:first-of-type {
+.persona-row .persona-main .persona-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5145,6 +5155,17 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 .persona-editor-actions { align-items: center; }
 .persona-editor-spacer { flex: 1; }
+
+/* Arcade-only fixtures in the review dialog. They ship in the DOM for every
+   theme (the round splash's trigger must watch parley state regardless of
+   palette) but only the arcade stylesheet gives them a box; inert here so the
+   dialog renders identical everywhere else. .persona-mark wraps the persona's
+   AgentMark so arcade can frame it as a portrait cell; display:contents keeps
+   the svg a direct flex item in every other theme. */
+.review-fight-marquee { display: none; }
+.stat-pips { display: none; }
+.parley-splash { display: none; }
+.persona-mark { display: contents; }
 
 .chip {
   align-self: flex-end;
@@ -7667,10 +7688,14 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   background: linear-gradient(135deg, var(--panel-3), #1b1545);
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
 }
-:root[data-theme="arcade"] .thread-card {
+/* Sidebar cards are the "cards" module's territory, so their share of the
+   chunky-border treatment is gated with it: switching the module off has to
+   leave the sidebar exactly as the user had it, which is what the toggle's own
+   copy promises. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card {
   border-width: 2px;
 }
-:root[data-theme="arcade"] .thread-card:hover {
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card:hover {
   border-color: var(--line-2);
   box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
 }
@@ -7883,17 +7908,21 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
    the open project's tile gets a blinking corner LED (the slot with a credit in
    it), and the open thread takes a solid lit gutter. .rail-item is already
    position:relative and only spends ::after on its drag-drop marker, so ::before
-   is free for the LED. */
-:root[data-theme="arcade"] .rail-pip {
+   is free for the LED.
+
+   All of it is sidebar furniture, so all of it rides the "cards" module: with
+   that switched off the rail and the thread list go back to their stock
+   selected states. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-pip {
   width: 4px;
   background: var(--brass-hi);
   box-shadow: 0 0 11px var(--brass);
 }
-:root[data-theme="arcade"] .rail-item.on .sidebar-avatar,
-:root[data-theme="arcade"] .rail-item.on .rail-avatar {
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item.on .sidebar-avatar,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item.on .rail-avatar {
   box-shadow: 0 0 0 2px var(--brass), 0 0 18px -2px var(--glow-soft);
 }
-:root[data-theme="arcade"] .rail-item.on::before {
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item.on::before {
   content: "";
   position: absolute;
   top: 2px;
@@ -7905,8 +7934,8 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   box-shadow: 0 0 8px var(--brass);
   animation: arcade-led 1.1s steps(1, end) infinite;
 }
-:root[data-theme="arcade"] .thread-row.active,
-:root[data-theme="arcade"] .sidebar.cards-view .thread-card.active {
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-row.active,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.active {
   box-shadow: inset 3px 0 0 var(--brass), 0 0 20px -8px var(--glow);
 }
 
@@ -7969,9 +7998,15 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 :root[data-theme="arcade"] .seg-btn,
 :root[data-theme="arcade"] .settings-toggle,
 :root[data-theme="arcade"] .ctx-item,
-:root[data-theme="arcade"] .dir-entry,
-:root[data-theme="arcade"] .thread-card,
-:root[data-theme="arcade"] .rail-item {
+:root[data-theme="arcade"] .dir-entry {
+  transition: transform 0.06s ease-out, box-shadow 0.06s ease-out,
+    filter 0.12s, background 0.12s, border-color 0.12s, color 0.12s;
+}
+/* The two sidebar members of that list, split out so they can carry the
+   "cards" gate without dragging every other control through it. Same
+   declarations verbatim; only the guard differs. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item {
   transition: transform 0.06s ease-out, box-shadow 0.06s ease-out,
     filter 0.12s, background 0.12s, border-color 0.12s, color 0.12s;
 }
@@ -7985,19 +8020,23 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 :root[data-theme="arcade"] .seg-btn:active,
 :root[data-theme="arcade"] .settings-toggle:active,
 :root[data-theme="arcade"] .ctx-item:active,
-:root[data-theme="arcade"] .dir-entry:active,
-:root[data-theme="arcade"] .thread-card:active,
-:root[data-theme="arcade"] .rail-item:active {
+:root[data-theme="arcade"] .dir-entry:active {
+  transform: scale(0.9) rotate(-1deg);
+  box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+}
+/* The sidebar's two, same declarations behind the "cards" gate. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card:active,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item:active {
   transform: scale(0.9) rotate(-1deg);
   box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
 }
 /* Hover lift: interactive cards rise a pixel and square up to the pointer. */
-:root[data-theme="arcade"] .thread-card:hover,
-:root[data-theme="arcade"] .rail-item:hover {
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card:hover,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item:hover {
   transform: translate(-1px, -1px);
 }
-:root[data-theme="arcade"] .thread-card:active,
-:root[data-theme="arcade"] .rail-item:active {
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card:active,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item:active {
   transform: scale(0.94) rotate(-0.5deg);
 }
 
@@ -8128,101 +8167,110 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 }
 
 /* ---- the vitality bars: usage as a fighting-game HUD ------------------------
+   SKIN MODULE: "usage". Every rule below carries the
+   :not([data-skin-off~="usage"]) guard, so a user who keeps the cabinet but
+   wants their usage meter back as a plain progress pill can switch just this
+   piece off in Settings without leaving the theme.
+
    The subscription meter is the one gauge in the app that genuinely behaves
    like a health bar: a window opens full, every request deals damage, the
    reset is the next round. So under arcade it stops imitating a progress pill
-   and becomes one, SFII-style. The paint is three hard bands (specular row,
-   body, shaded row), never a smooth gradient. The track IS the remaining
-   health in yellow, and the base component's fill is the red damage eating it
-   from the left, the same direction P1's bar empties, so the width math
-   carries over untouched and the numbers keep their meaning (spent, not
-   remaining). Vars sit on :root, not .usage-meter, because the popover
-   portals to <body>. */
+   and becomes one, classic arcade-fighter style. The paint is three hard bands
+   (specular row, body, shaded row), never a smooth gradient. The track IS the
+   remaining health in yellow, and the base component's fill is the red damage
+   eating it from the left, the same direction player one's bar empties, so the
+   width math carries over untouched and the numbers keep their meaning (spent,
+   not remaining). Vars sit on :root, not .usage-meter, because the popover
+   portals to <body>.
+
+   The --rt-* vars stay UNGATED: the character-select dialog and the sidebar
+   cards read the same frame/bezel pair, so turning the usage module off must
+   not take their paint with it. */
 :root[data-theme="arcade"] {
-  --sf-health: linear-gradient(180deg, #fff9c4 0 30%, #f8d818 30% 74%, #c99e00 74%);
-  --sf-health-flash: linear-gradient(180deg, #ffe6da 0 30%, #ff7a3c 30% 74%, #b32000 74%);
-  --sf-damage: linear-gradient(180deg, #ff8a6a 0 30%, #e03210 30% 74%, #7c0e00 74%);
-  --sf-frame: #06070d;
-  --sf-bezel: #454c78;
+  --rt-health: linear-gradient(180deg, #fff9c4 0 30%, #f8d818 30% 74%, #c99e00 74%);
+  --rt-health-flash: linear-gradient(180deg, #ffe6da 0 30%, #ff7a3c 30% 74%, #b32000 74%);
+  --rt-damage: linear-gradient(180deg, #ff8a6a 0 30%, #e03210 30% 74%, #7c0e00 74%);
+  --rt-frame: #06070d;
+  --rt-bezel: #454c78;
 }
-:root[data-theme="arcade"] .usage-chips {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-chips {
   border-width: 2px;
   border-color: var(--line-2);
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
 }
 /* Yellow paint in a black frame on a steel bezel; a fresh window renders solid
-   yellow. Taller than the base pills — a health bar is a thing you read the
+   yellow. Taller than the base pills: a health bar is a thing you read the
    fight from, not a hairline. */
-:root[data-theme="arcade"] .usage-bar {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-bar {
   height: 10px;
-  border: 2px solid var(--sf-frame);
-  background: var(--sf-health);
-  box-shadow: 0 0 0 1px var(--sf-bezel);
+  border: 2px solid var(--rt-frame);
+  background: var(--rt-health);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
 }
-:root[data-theme="arcade"] .usage-bar-wide {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-bar-wide {
   height: 14px;
-  box-shadow: 0 0 0 1px var(--sf-bezel), 2px 2px 0 rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--rt-bezel), 2px 2px 0 rgba(0, 0, 0, 0.5);
 }
 /* Damage is red no matter how bad it is (the .warn/.hot recolors belong to the
    progress-pill reading); severity moves to the vitals strobe and the number.
    The seam shadow is the hard edge where the last hit landed, and width ticks
    off in chunks because smooth easing reads as a loading bar. */
-:root[data-theme="arcade"] .usage-bar-fill,
-:root[data-theme="arcade"] .usage-bar-fill.warn,
-:root[data-theme="arcade"] .usage-bar-fill.hot {
-  background: var(--sf-damage);
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-bar-fill,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-bar-fill.warn,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-bar-fill.hot {
+  background: var(--rt-damage);
   box-shadow: 1px 0 0 rgba(6, 7, 13, 0.9);
   transition: width 0.5s steps(12, end);
 }
 /* Critical vitals strobe square-wave, like every other LED in the cabinet. */
 @keyframes arcade-vital {
-  0%, 55% { background: var(--sf-health); }
-  56%, 100% { background: var(--sf-health-flash); }
+  0%, 55% { background: var(--rt-health); }
+  56%, 100% { background: var(--rt-health-flash); }
 }
-:root[data-theme="arcade"] .usage-bar:has(> .usage-bar-fill.hot) {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-bar:has(> .usage-bar-fill.hot) {
   animation: arcade-vital 0.5s steps(1, end) infinite;
 }
-:root[data-theme="arcade"] .usage-chip-pct.hot,
-:root[data-theme="arcade"] .usage-row-pct.hot {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-chip-pct.hot,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-row-pct.hot {
   animation: arcade-led 0.5s steps(1, end) infinite;
 }
 /* Type: provider names go up in signage like the fighters' nameplates; every
    other string the meter prints is machine text and sets in the bitmap face. */
-:root[data-theme="arcade"] .usage-provider-name {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-provider-name {
   font-family: "Bungee", var(--font-ui);
   font-size: 12px;
   letter-spacing: 0.05em;
   color: var(--brass-hi);
   text-shadow: 0 0 12px var(--glow), 0 0 30px var(--glow-soft);
 }
-:root[data-theme="arcade"] .usage-row-label,
-:root[data-theme="arcade"] .usage-chip-pct,
-:root[data-theme="arcade"] .usage-row-pct,
-:root[data-theme="arcade"] .usage-row-reset,
-:root[data-theme="arcade"] .usage-age,
-:root[data-theme="arcade"] .usage-refresh,
-:root[data-theme="arcade"] .usage-error {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-row-label,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-chip-pct,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-row-pct,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-row-reset,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-age,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-refresh,
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-error {
   font-family: "Silkscreen", var(--font-mono);
   font-weight: 400;
   letter-spacing: 0.02em;
 }
-:root[data-theme="arcade"] .usage-row-label { text-transform: uppercase; }
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-row-label { text-transform: uppercase; }
 /* The plan tag becomes the credit plate: a dark stamp on gold. */
-:root[data-theme="arcade"] .usage-plan {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-plan {
   font-family: "Silkscreen", var(--font-mono);
   font-weight: 400;
   font-size: 9px;
   letter-spacing: 0.02em;
   color: #05030f;
   background: var(--amber);
-  border: 1px solid var(--sf-frame);
-  box-shadow: 0 0 0 1px var(--sf-bezel);
+  border: 1px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
   padding: 2px 6px 1px;
 }
 /* Between two fighters goes the only word that ever goes there. Punched out of
    the divider by the popover's own surface color. */
-:root[data-theme="arcade"] .usage-provider { position: relative; }
-:root[data-theme="arcade"] .usage-provider + .usage-provider::before {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-provider { position: relative; }
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-provider + .usage-provider::before {
   content: "VS";
   position: absolute;
   top: -8px;
@@ -8238,13 +8286,13 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 }
 /* The popover joins the popover idiom (2px frame, hard drop, overshoot
    entrance) and gets the same lit-phosphor glass as every surface you look at. */
-:root[data-theme="arcade"] .usage-pop {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-pop {
   border-width: 2px;
   border-color: var(--line-2);
   box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.55);
   animation: arcade-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-:root[data-theme="arcade"] .usage-pop::after {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-pop::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -8257,25 +8305,497 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   );
 }
 /* A provider that failed to report its vitals is down for the count. */
-:root[data-theme="arcade"] .usage-error::before {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-error::before {
   content: "K.O.";
   margin-right: 7px;
   color: var(--red);
   text-shadow: 0 0 10px var(--red);
   animation: arcade-led 1.1s steps(1, end) infinite;
 }
-:root[data-theme="arcade"] .usage-refresh {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-refresh {
   text-transform: uppercase;
   font-size: 10px;
 }
-:root[data-theme="arcade"] .usage-refresh:hover {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-refresh:hover {
   color: var(--brass-hi);
   border-color: var(--brass);
   box-shadow: 0 0 14px -2px var(--glow-soft), 2px 2px 0 rgba(0, 0, 0, 0.45);
 }
-:root[data-theme="arcade"] .usage-refresh:active {
+:root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-refresh:active {
   transform: translate(2px, 2px);
   box-shadow: none;
+}
+
+/* ---- character select: the review dialog ------------------------------------
+   SKIN MODULE: "parley" (this subsection and the ROUND N splash below both
+   carry the :not([data-skin-off~="parley"]) guard, so the two halves of the
+   same bit always switch together).
+
+   Parley is the fighting game already hiding in the app: pick your fighters,
+   set their stats, count the rounds. So under arcade the review dialog sets
+   like a character-select screen. Reviewers become framed portrait slots on a
+   checkerboard; whoever is picked takes the two-tone flashing select cursor,
+   a 1P/2P corner tag in join order (a CSS counter over .persona-row.on), and
+   READY strobing where the checkmark was. Each picked reviewer's model/effort
+   pair reads as an RPG build sheet with a lit PWR row. The fixtures involved
+   (.review-fight-marquee, .stat-pips, .persona-mark, .parley-splash) ship
+   inert in the base stylesheet and only get a box here. */
+
+/* Room to breathe first. Every fixture below adds a 2px frame, a 1px bezel and
+   a hard drop shadow to something that used to be a hairline, and three of
+   those stack inside one persona row: at the base dialog's 480px the slots
+   collide and the build sheet reads as a wall. So the arcade dialog runs wider
+   and every gap goes up a notch. The width bump is held above the phone
+   breakpoint on purpose: the mobile rule (max-width 767px) makes this a
+   near-full-bleed sheet, and a 560px floor there would push the frame off the
+   right edge of the screen. */
+@media (min-width: 768px) {
+  :root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-modal { width: 560px; }
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-field { gap: 7px; }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-grid { gap: 12px; }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-modal .modal-actions { margin-top: 16px; }
+
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-fight-marquee {
+  display: block;
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--neon);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--neon) 55%, transparent);
+  margin: -2px 0 12px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-fight-marquee em {
+  font-style: normal;
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow);
+  animation: arcade-led 1s steps(1, end) infinite;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-agent-list {
+  gap: 8px;
+  border: 2px solid var(--line-2);
+  padding: 10px;
+  background:
+    repeating-conic-gradient(color-mix(in srgb, var(--neon) 4.5%, transparent) 0 25%, transparent 0 50%)
+      0 0 / 16px 16px,
+    var(--panel);
+  counter-reset: player;
+}
+/* A fighter slot: steel frame, portrait cell, Silkscreen nameplate. */
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row {
+  position: relative;
+  border: 2px solid #2a2f55;
+  background: var(--panel-2);
+  padding: 3px 6px 3px 3px;
+}
+/* The slot's breathing room is spent on the option rather than the frame: the
+   option is the click target, so padding there grows the hit area instead of
+   the dead gutter around it. The extra 3px on the right is the edit pencil's
+   lane, which sits outside the option. */
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row .agent-option { padding: 8px 10px; }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row:not(.on) { opacity: 0.82; }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row:not(.on):hover { opacity: 1; border-color: var(--line-2); }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background:
+    repeating-conic-gradient(rgba(230, 247, 255, 0.05) 0 25%, transparent 0 50%) 0 0 / 8px 8px,
+    #0a0a1c;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-name {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .agent-option .agent-off {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+/* Picked = the select-screen cursor: a hard two-tone flashing frame. */
+@keyframes arcade-cursor {
+  0%, 54% { border-color: var(--brass-hi); box-shadow: 0 0 14px -2px var(--glow); }
+  55%, 100% { border-color: #ffffff; box-shadow: 0 0 18px -2px var(--glow); }
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row.on {
+  border-color: var(--brass-hi);
+  background: linear-gradient(90deg, var(--brass-dim), transparent);
+  animation: arcade-cursor 0.55s steps(1, end) infinite;
+  counter-increment: player;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row.on .persona-mark {
+  box-shadow: 0 0 0 1px var(--brass), 0 0 12px -2px var(--glow);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row.on .persona-name {
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow-soft);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row.on::before {
+  content: counter(player) "P";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  z-index: 2;
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px 1px;
+  color: #05030f;
+  background: var(--brass-hi);
+}
+/* The checkmark becomes READY, strobing like the era's press-start text. */
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-check { font-size: 0; }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-check::before {
+  content: "READY";
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow);
+  animation: arcade-led 0.9s steps(1, end) infinite;
+}
+/* The empty slot. */
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-new {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 7px 8px 5px;
+  border: 2px dashed color-mix(in srgb, var(--faint) 55%, transparent);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-new:hover { color: var(--brass-hi); border-color: var(--brass); }
+/* The build sheet: a brass spine and stats set in the bitmap face. */
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-pick-row {
+  border: 2px solid #2a2f55;
+  border-left: 4px solid var(--brass);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brass) 5%, transparent), transparent 40%), var(--panel);
+  padding: 12px 12px 13px;
+  margin-bottom: 14px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-pick-row .review-field-label { color: var(--brass-hi); }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-modal select {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  border: 2px solid var(--line-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+  padding: 7px 24px 5px 9px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-modal select:hover:not(:disabled) { border-color: var(--brass); }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .stat-pips {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 3px;
+  margin-top: 10px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .stat-pips i {
+  width: 14px;
+  height: 6px;
+  background: var(--brass);
+  border: 1px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .stat-pips i.off { background: #1c1f3d; }
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .stat-pips-label {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-right: 6px;
+}
+/* Big pixel checkbox for the converge toggle. */
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-execute input {
+  appearance: none;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  border: 2px solid var(--line-2);
+  background: var(--panel);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-execute input:checked {
+  background: var(--brass);
+  border-color: var(--brass);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-execute input:checked::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  background: #05030f;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-focus-input {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  border-width: 2px;
+}
+/* The start button carries INSERT COIN energy: a slow invite pulse. */
+@keyframes arcade-invite {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.18); }
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-modal .btn.tone-allow:not(:disabled) {
+  animation: arcade-invite 2.6s ease-in-out infinite;
+}
+
+/* ---- ROUND N: the fight-start splash ----------------------------------------
+   SKIN MODULE: "parley" (same guard as the character-select block above, plus
+   the display:none in the reduced-motion block).
+
+   Fires when a parley seats its reviewers and again each round after
+   (ParleyRoundSplash in ReviewMenu.tsx watches ParleyState.round). The
+   sequence is the era's exactly: PARLEY announces in the second neon, then
+   ROUND N slams in oversized with a one-frame white-out and a screen shake at
+   the moment of impact, holds, and burns off. z-index 300 puts it over every
+   dialog but under the curved-glass vignette at 500 - the announcement is on
+   the playfield, not on the glass. */
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .parley-splash {
+  display: grid;
+  place-items: center;
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  pointer-events: none;
+  background: rgba(2, 2, 10, 0.82);
+  animation: arcade-splash-shake 0.3s 1.15s linear;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .parley-splash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(to bottom, rgba(186, 240, 255, 0.05) 0 1px, transparent 1px 3px);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .parley-splash::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  animation: arcade-splash-flash 0.25s 1.12s steps(1, end);
+}
+@keyframes arcade-splash-flash {
+  0% { opacity: 0.85; }
+  40% { opacity: 0; }
+  100% { opacity: 0; }
+}
+@keyframes arcade-splash-shake {
+  0% { transform: translate(0, 0); }
+  20% { transform: translate(-7px, 5px); }
+  40% { transform: translate(6px, -4px); }
+  60% { transform: translate(-4px, 3px); }
+  80% { transform: translate(3px, -2px); }
+  100% { transform: translate(0, 0); }
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .ps-round,
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .ps-fight {
+  grid-area: 1 / 1;
+  font-family: "Bungee", var(--font-ui);
+  text-transform: uppercase;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .ps-round {
+  font-size: 30px;
+  letter-spacing: 0.14em;
+  color: var(--neon);
+  text-shadow:
+    0 0 18px color-mix(in srgb, var(--neon) 75%, transparent),
+    0 0 50px color-mix(in srgb, var(--neon) 40%, transparent);
+  animation: arcade-splash-round 1s both;
+}
+@keyframes arcade-splash-round {
+  0% { opacity: 0; transform: translateX(-90px) scale(1.5); }
+  16% { opacity: 1; transform: none; }
+  78% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateX(70px) scale(0.9); }
+}
+:root[data-theme="arcade"]:not([data-skin-off~="parley"]) .ps-fight {
+  font-size: clamp(48px, 12vw, 92px);
+  letter-spacing: 0.04em;
+  color: var(--brass-hi);
+  -webkit-text-stroke: 3px #3a1400;
+  text-shadow: 0 0 24px var(--glow), 0 0 70px var(--glow-soft), 6px 6px 0 #7a2f00;
+  animation: arcade-splash-slam 2.6s 0.95s both;
+}
+@keyframes arcade-splash-slam {
+  0% { opacity: 0; transform: scale(3.4) rotate(-4deg); filter: blur(6px); }
+  7% { opacity: 1; transform: scale(0.92) rotate(1deg); filter: blur(0); }
+  11% { transform: scale(1.06) rotate(-0.5deg); }
+  15% { transform: scale(1) rotate(0); }
+  82% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.15); filter: blur(3px); }
+}
+
+/* ---- the settings screen as a service panel ---------------------------------
+   CORE CHROME: ungated. Settings is where a user goes to turn this skin's
+   modules off, so it has to look like part of the cabinet no matter which
+   modules are running.
+
+   A settings pane is a stack of unrelated groups, and hairline dividers let
+   them blur into one long list. Under arcade each block becomes a framed group
+   box, the way a real panel screen-prints its sections: 2px frame, its own
+   plate, a hard drop shadow, and a lit legend. The base break rule above still
+   supplies the gap between boxes; its 1px top rule and extra top padding are
+   both overridden here (this block wins on order at equal specificity), so a
+   framed box never carries a second line across its own top edge. */
+:root[data-theme="arcade"] .settings-block {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 12px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+/* The legend sits on the frame's shoulder, lit like the meter headers. */
+:root[data-theme="arcade"] .settings-label {
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow-soft);
+}
+
+/* ---- the card rack: thread cards, rail tiles, the settled shelf -------------
+   SKIN MODULE: "cards" (:not([data-skin-off~="cards"])). This is the module
+   that repaints the surface people stare at all day, so it is the one most
+   likely to be switched off: with it off the sidebar keeps whatever layout and
+   density the user already picked and only the chrome around it stays arcade.
+
+   The reading: a thread card is a fighter's slot on a select screen. Steel
+   frame, bezeled portrait cell, a nameplate, and a small record plate carrying
+   the turn count. The open card takes the flashing select cursor (the same
+   arcade-cursor keyframe the review dialog spends on a picked reviewer), the
+   rail becomes a row of cabinet buttons that magnify under the pointer, and
+   the settled shelf drops into attract mode. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card {
+  border: 2px solid #2a2f55;
+  background: var(--panel-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card:hover {
+  border-color: var(--brass);
+  background: var(--panel-3);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+}
+/* The open card carries two cues at once, and arcade-cursor owns box-shadow
+   while it runs. So the lit gutter moves into a background layer where the
+   animation cannot reach it: a 3px brass band painted over the card's own
+   accent wash. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.active {
+  border-color: var(--brass-hi);
+  background:
+    linear-gradient(90deg, var(--brass-hi) 0 3px, transparent 3px),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--brass) 14%, transparent),
+      color-mix(in srgb, var(--brass) 3%, transparent)
+    ),
+    var(--panel-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+  animation: arcade-cursor 0.55s steps(1, end) infinite;
+}
+/* Prose stays in the user's UI face (a thread title is something you read, not
+   a machine readout); the open one just lights up. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.active .thread-card-title {
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow-soft);
+}
+/* Portrait cell: the agent's mark behind glass, same bezel as the review
+   dialog's slots. Sized up to 26px because the frame and its padding eat into
+   the box under border-box, and a 12px glyph in a 14px cell would vanish. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card .thread-row-mark,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card .thread-row-avatar {
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  border: 2px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background: #0a0a1c;
+}
+/* Meta row: clock and turn count are machine readouts, and the count gets a
+   plate of its own, like a cabinet's record display. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card-meta .thread-row-time,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card-meta .thread-card-turns {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card-meta .thread-card-turns {
+  padding: 2px 5px 1px;
+  border: 1px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background: var(--panel-3);
+  color: var(--brass);
+}
+/* The status dot is already the cabinet LED it should be; inside a card it
+   only gains the right to blink when the thread wants a human. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card .status-dot {
+  width: 8px;
+  height: 8px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card .status-dot.unread {
+  animation: arcade-led 0.9s steps(1, end) infinite;
+}
+
+/* Hovering a rail tile shows it enlarged with its name, the way a cabinet
+   button lights when your hand is on it. That is the app's own portaled avatar
+   preview (MachineAvatar, opted into on the rail) rather than anything drawn
+   here: it hangs off document.body, so it needs no overflow surgery on a
+   column that has to keep scrolling, and it cannot strand the tiles below the
+   fold on a short window. The rail keeps its normal scroll behaviour, and
+   nothing in this module touches it. */
+
+/* The settled shelf is the attract-mode reel: parked work still on the screen,
+   dimmed, cycling past. The header becomes a framed divider plate with the
+   count on its own small LED plate, and the rows sit back at 0.7 until the
+   pointer brings one up to full lume. Row heights do not change: settling is
+   about attention, not about making the rows harder to hit. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .settled-shelf {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.35);
+  color: var(--neon);
+  text-shadow: 0 0 9px color-mix(in srgb, var(--neon) 30%, transparent);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .settled-shelf:hover {
+  background: var(--panel-2);
+  border-color: var(--brass);
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow-soft);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .settled-shelf-count {
+  padding: 1px 5px 0;
+  border: 1px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background: var(--panel-3);
+  color: var(--brass-hi);
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-row.slim { opacity: 0.7; }
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-row.slim:hover { opacity: 1; }
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-row.slim .thread-row-time {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 /* Reduced motion: all the exaggeration opts out with the OS setting; the
@@ -8287,7 +8807,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   :root[data-theme="arcade"] .status-dot,
   :root[data-theme="arcade"] .conn-pip,
   :root[data-theme="arcade"] .sonar,
-  :root[data-theme="arcade"] .rail-item.on::before,
   :root[data-theme="arcade"] .modal,
   :root[data-theme="arcade"] .ctx-menu,
   :root[data-theme="arcade"] .popover,
@@ -8299,20 +8818,37 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   :root[data-theme="arcade"] .send-btn.stop,
   :root[data-theme="arcade"] .msg-user-wrap.just-sent,
   :root[data-theme="arcade"] .msg-user-wrap.just-sent .msg-user,
-  :root[data-theme="arcade"] .usage-pop,
-  :root[data-theme="arcade"] .usage-bar:has(> .usage-bar-fill.hot),
-  :root[data-theme="arcade"] .usage-chip-pct.hot,
-  :root[data-theme="arcade"] .usage-row-pct.hot,
-  :root[data-theme="arcade"] .usage-error::before {
+  /* The module-gated entries repeat their own guard on purpose: the gate is an
+     extra attribute selector, so a bare :root[data-theme="arcade"] here would
+     lose the specificity contest to the rule it is trying to switch off. */
+  :root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-pop,
+  :root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-bar:has(> .usage-bar-fill.hot),
+  :root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-chip-pct.hot,
+  :root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-row-pct.hot,
+  :root[data-theme="arcade"]:not([data-skin-off~="usage"]) .usage-error::before,
+  :root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-fight-marquee em,
+  :root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-check::before,
+  :root[data-theme="arcade"]:not([data-skin-off~="parley"]) .persona-row.on,
+  :root[data-theme="arcade"]:not([data-skin-off~="parley"]) .review-modal .btn.tone-allow:not(:disabled),
+  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item.on::before,
+  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card.active,
+  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card .status-dot.unread {
     animation: none;
+  }
+  /* A frozen full-screen dim with no announcement is just a blackout: the
+     round splash goes entirely rather than sitting inert for four seconds. */
+  :root[data-theme="arcade"]:not([data-skin-off~="parley"]) .parley-splash {
+    display: none;
   }
   /* A frozen impact frame would just sit there as a stray ring — drop it. */
   :root[data-theme="arcade"] .msg-user-wrap.just-sent .msg-user::after {
     display: none;
   }
   :root[data-theme="arcade"] *:active,
-  :root[data-theme="arcade"] .thread-card:hover,
-  :root[data-theme="arcade"] .rail-item:hover {
+  /* Same guard as the rules they switch off, for the same specificity reason
+     spelled out above. */
+  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .thread-card:hover,
+  :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .rail-item:hover {
     transform: none;
   }
 }

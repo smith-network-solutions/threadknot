@@ -71,6 +71,7 @@ import {
   type TermPrefs,
 } from "../lib/appearance";
 import { AppearanceStudio, ThemeSync } from "./ThemeStudio";
+import { SkinsSettings } from "./SkinsSettings";
 import { FontPicker } from "./FontPicker";
 import {
   AgentMark,
@@ -145,7 +146,7 @@ const PROJECT_LAYOUT_HINTS: Record<ProjectLayout, string> = {
   sections: "Every project expanded at once — the original layout.",
   accordion: "Opening a project closes the others. All the headers stay visible, but only one list of chats is ever on screen.",
   picker: "One project at a time, chosen from a dropdown at the top. No headers, so the chat list gets the whole sidebar.",
-  rail: "A column of project icons down the left edge, like Discord. One tap to switch, every project always in view with its own unread badge.",
+  rail: "A column of project icons down the left edge. One tap to switch, every project always in view with its own unread badge.",
 };
 
 function SidebarSettings() {
@@ -3591,6 +3592,7 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
             {section === "appearance" && (
               <>
                 <AppearanceStudio />
+                <SkinsSettings />
                 <SidebarSettings />
                 <ComposerSettings />
               </>

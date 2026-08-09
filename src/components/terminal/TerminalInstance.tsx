@@ -14,6 +14,8 @@ import { termWsUrl } from "../../lib/discovery";
 import { copyText } from "../../lib/format";
 import { isNativeShell, readNativeClipboardText } from "../../lib/native";
 import {
+  APPEARANCE_EVENT,
+  SKINPREFS_EVENT,
   TERMPREFS_EVENT,
   THEME_FAMILY_EVENT,
   clamp,
@@ -116,10 +118,64 @@ const LIGHT_THEME = {
   brightWhite: "#1b2233",
 };
 
+// The Retro-Tech skin's terminal: a single-gun green phosphor tube. The ANSI
+// ramp keeps its hue ORDER (so colored output stays parseable) but every hue is
+// pulled toward green/amber, which is all a real phosphor screen could ever
+// show. Only the buffer colors live here; the scanline overlay and the glow are
+// CSS (src/styles/terminal.css).
+const PHOSPHOR_THEME = {
+  background: "#030904",
+  foreground: "#33ff33",
+  cursor: "#33ff33",
+  cursorAccent: "#030904",
+  selectionBackground: "rgba(51,255,51,0.28)",
+  black: "#0a140c",
+  red: "#d98a4a",
+  green: "#33ff33",
+  yellow: "#d6dd4a",
+  blue: "#4fbf8a",
+  magenta: "#9ad46a",
+  cyan: "#3fe0a8",
+  white: "#c8ffc8",
+  brightBlack: "#3d6b45",
+  brightRed: "#ffb07a",
+  brightGreen: "#7dff7d",
+  brightYellow: "#eaf07a",
+  brightBlue: "#7fe0b0",
+  brightMagenta: "#b8f08a",
+  brightCyan: "#6fffcf",
+  brightWhite: "#eaffea",
+};
+
 /** Pick the xterm palette from the RESOLVED family, so a light-based custom
  *  theme (whose Appearance.theme still reads a dark id) gets the light one. */
 function termTheme(family: ThemeFamily) {
   return family === "light" ? LIGHT_THEME : DARK_THEME;
+}
+
+/** Whether the phosphor tube is live right now. appearance.ts resolves the
+ *  three conditions (the arcade theme applied, its terminal module on, and
+ *  untouched terminal preferences: a hand-picked cursor or font is a deliberate
+ *  choice a skin must not overrule) and writes the answer to data-phosphor, so
+ *  the buffer palette here and the scanline CSS cannot disagree. */
+function phosphorActive(): boolean {
+  return document.documentElement.dataset.phosphor === "on";
+}
+
+/** Apply the palette + cursor look for the CURRENT theme/skin state. The
+ *  phosphor cursor override is runtime only: nothing is written back to the
+ *  stored prefs, so switching the module off restores the user's own cursor on
+ *  the very next event. */
+function applyTermLook(term: Terminal, family: ThemeFamily, prefs: TermPrefs): void {
+  if (phosphorActive()) {
+    term.options.theme = PHOSPHOR_THEME;
+    term.options.cursorStyle = "block";
+    term.options.cursorBlink = true;
+    return;
+  }
+  term.options.theme = termTheme(family);
+  term.options.cursorStyle = prefs.cursorStyle;
+  term.options.cursorBlink = prefs.cursorBlink;
 }
 
 interface Props {
@@ -179,14 +235,17 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
     initialized.current = true;
 
     const prefs = getTermPrefs();
+    // Decided once for the constructor so the very first paint is already the
+    // right tube; every later change comes through the listeners below.
+    const phosphor = phosphorActive();
     const term = new Terminal({
       scrollback: prefs.scrollback,
       fontSize: storedFontSize(termId) ?? prefs.fontSize,
       fontFamily: monoFontStack(prefs.fontFamily),
-      cursorBlink: prefs.cursorBlink,
-      cursorStyle: prefs.cursorStyle,
+      cursorBlink: phosphor ? true : prefs.cursorBlink,
+      cursorStyle: phosphor ? "block" : prefs.cursorStyle,
       allowProposedApi: true,
-      theme: termTheme(getAppliedThemeFamily()),
+      theme: phosphor ? PHOSPHOR_THEME : termTheme(getAppliedThemeFamily()),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -319,8 +378,17 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
     };
   }, []);
 
-  // Live-apply terminal + theme preference changes from the settings popover.
+  // Live-apply terminal + theme + skin preference changes from the settings
+  // popover.
   useEffect(() => {
+    // Re-decide palette + cursor from whatever the DOM says now. Callers pass
+    // the event's own detail when they have it (it is authoritative before the
+    // module-level caches settle), otherwise we read the stored values.
+    function refreshLook(family?: ThemeFamily, prefs?: TermPrefs) {
+      const term = termRef.current;
+      if (!term) return;
+      applyTermLook(term, family ?? getAppliedThemeFamily(), prefs ?? getTermPrefs());
+    }
     function onTermPrefs(e: Event) {
       const term = termRef.current;
       if (!term) return;
@@ -349,19 +417,29 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
         live.options.fontFamily = monoFontStack(p.fontFamily);
         safeFit();
       });
+      // The prefs just moved, which is exactly what can switch the phosphor
+      // tube off (or back on): re-decide AFTER the user's own values landed.
+      refreshLook(undefined, p);
     }
     function onFamily(e: Event) {
-      const term = termRef.current;
-      if (!term) return;
       // Resolved family covers presets, a custom theme's base, and live
-      // studio previews alike — unlike Appearance.theme.
-      term.options.theme = termTheme((e as CustomEvent<ThemeFamily>).detail);
+      // studio previews alike, unlike Appearance.theme.
+      refreshLook((e as CustomEvent<ThemeFamily>).detail);
+    }
+    function onSkinOrAppearance() {
+      refreshLook();
     }
     window.addEventListener(TERMPREFS_EVENT, onTermPrefs);
     window.addEventListener(THEME_FAMILY_EVENT, onFamily);
+    // A skin toggle and a theme swap within one family both leave the family
+    // event silent, so the palette has to be re-decided on these too.
+    window.addEventListener(SKINPREFS_EVENT, onSkinOrAppearance);
+    window.addEventListener(APPEARANCE_EVENT, onSkinOrAppearance);
     return () => {
       window.removeEventListener(TERMPREFS_EVENT, onTermPrefs);
       window.removeEventListener(THEME_FAMILY_EVENT, onFamily);
+      window.removeEventListener(SKINPREFS_EVENT, onSkinOrAppearance);
+      window.removeEventListener(APPEARANCE_EVENT, onSkinOrAppearance);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
