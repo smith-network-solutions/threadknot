@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -25,6 +32,24 @@ import { ensureFontLoaded } from "../../lib/fonts";
 const WHEEL_FONT_MIN = 8;
 const WHEEL_FONT_MAX = 28;
 const WHEEL_NOTCH = 100;
+
+interface TermCell {
+  col: number;
+  /** Absolute row in xterm's active buffer (including scrollback). */
+  row: number;
+}
+
+interface TouchRange {
+  anchor: TermCell;
+  focus: TermCell;
+}
+
+interface SelectionDrag {
+  pointerId: number;
+  end: "new" | "anchor" | "focus";
+  origin: TermCell;
+  moved: boolean;
+}
 
 function fontKey(termId: string): string {
   return `threadknot.termfont.${termId}`;
@@ -134,10 +159,19 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
   const replaying = useRef(false);
   const expectReplay = useRef(false);
   const answering = useRef(true);
-  const [pasteOpen, setPasteOpen] = useState(false);
-  const [pasteText, setPasteText] = useState("");
+  const readingClipboardRef = useRef(false);
+  const noticeTimer = useRef<number | null>(null);
+  const touchSelectingRef = useRef(false);
+  const touchRangeRef = useRef<TouchRange | null>(null);
+  const selectionDrag = useRef<SelectionDrag | null>(null);
   const [readingClipboard, setReadingClipboard] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; sel: string } | null>(null);
+  const [termNotice, setTermNotice] = useState<string | null>(null);
+  const [touchSelecting, setTouchSelecting] = useState(false);
+  const [touchRange, setTouchRange] = useState<TouchRange | null>(null);
+  // xterm owns the actual selection, so tick React when its viewport/selection
+  // changes in order to keep our touch handles aligned with the painted cells.
+  const [, setSelectionTick] = useState(0);
 
   // Lazy-init the terminal + socket once the tab first becomes active.
   useEffect(() => {
@@ -217,6 +251,9 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
       }
       send(data);
     });
+    term.onScroll(() => {
+      if (touchSelectingRef.current) setSelectionTick((tick) => tick + 1);
+    });
 
     const setCtrl = (on: boolean) => {
       ctrlArmed.current = on;
@@ -278,6 +315,7 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
       wsRef.current = null;
       termRef.current?.dispose();
       termRef.current = null;
+      if (noticeTimer.current != null) window.clearTimeout(noticeTimer.current);
     };
   }, []);
 
@@ -338,6 +376,7 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
     } catch {
       return;
     }
+    if (touchSelectingRef.current) setSelectionTick((tick) => tick + 1);
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
@@ -487,8 +526,22 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
     termRef.current?.focus();
   }
 
+  function showTermNotice(message: string) {
+    if (noticeTimer.current != null) window.clearTimeout(noticeTimer.current);
+    setTermNotice(message);
+    noticeTimer.current = window.setTimeout(() => {
+      setTermNotice(null);
+      noticeTimer.current = null;
+    }, 3200);
+  }
+
+  function hasTouchPrimaryInput() {
+    return window.matchMedia?.("(hover: none) and (pointer: coarse)").matches === true;
+  }
+
   async function pasteFromClipboard() {
-    if (readingClipboard) return;
+    if (readingClipboardRef.current) return;
+    readingClipboardRef.current = true;
     setReadingClipboard(true);
     let text: string | null = null;
     try {
@@ -498,9 +551,10 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
         text = await navigator.clipboard.readText();
       }
     } catch {
-      // HTTP phone browsers and denied clipboard permissions use the manual
-      // paste sheet below.
+      // A normal paste event into xterm still works. Programmatic clipboard
+      // reads are the part browsers block on HTTP or after a permission denial.
     } finally {
+      readingClipboardRef.current = false;
       setReadingClipboard(false);
     }
 
@@ -508,24 +562,204 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
       pasteIntoTerminal(text);
       return;
     }
-    setPasteText("");
-    setPasteOpen(true);
-  }
-
-  function submitManualPaste() {
-    if (!pasteText) return;
-    pasteIntoTerminal(pasteText);
-    setPasteText("");
-    setPasteOpen(false);
+    // Do not open a second editing box. xterm already receives ordinary paste
+    // events through its focused textarea; on touch browsers its own context
+    // menu handler moves that textarea under the press so the OS Paste command
+    // can target it. We merely explain the gesture when async clipboard access
+    // is unavailable.
+    termRef.current?.focus();
+    showTermNotice(
+      hasTouchPrimaryInput()
+        ? "Touch and hold in the terminal, then choose Paste."
+        : "Use Ctrl+Shift+V (or Cmd+V) to paste into the terminal.",
+    );
   }
 
   function openContextMenu(e: ReactMouseEvent) {
     const term = termRef.current;
     if (!term) return;
+    // xterm's native context-menu path positions and focuses its hidden input,
+    // which is exactly what a phone needs for the OS Paste command. The old
+    // preventDefault here suppressed that path and forced the manual textarea.
+    if (hasTouchPrimaryInput() && !touchSelecting) {
+      setMenu(null);
+      return;
+    }
     // Replace the webview's (broken, always-grayed) native menu with our own
-    // that reads xterm's selection.
+    // on desktop, where right-click and xterm's mouse selection work well.
     e.preventDefault();
     setMenu({ x: e.clientX, y: e.clientY, sel: term.getSelection() });
+  }
+
+  function cellFromClientPoint(clientX: number, clientY: number): TermCell | null {
+    const term = termRef.current;
+    const screen = term?.element?.querySelector<HTMLElement>(".xterm-screen");
+    if (!term || !screen) return null;
+    const rect = screen.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const col = clamp(Math.floor(((clientX - rect.left) / rect.width) * term.cols), 0, term.cols - 1);
+    const viewportRow = clamp(
+      Math.floor(((clientY - rect.top) / rect.height) * term.rows),
+      0,
+      term.rows - 1,
+    );
+    return { col, row: term.buffer.active.viewportY + viewportRow };
+  }
+
+  function applyTouchRange(anchor: TermCell, focus: TermCell) {
+    const term = termRef.current;
+    if (!term) return;
+    const anchorIndex = anchor.row * term.cols + anchor.col;
+    const focusIndex = focus.row * term.cols + focus.col;
+    const first = Math.min(anchorIndex, focusIndex);
+    const last = Math.max(anchorIndex, focusIndex);
+    const range = { anchor, focus };
+    touchRangeRef.current = range;
+    setTouchRange(range);
+    term.select(first % term.cols, Math.floor(first / term.cols), last - first + 1);
+    setSelectionTick((tick) => tick + 1);
+  }
+
+  function wordAtCell(cell: TermCell): TouchRange {
+    const term = termRef.current;
+    const line = term?.buffer.active.getLine(cell.row);
+    if (!term || !line) return { anchor: cell, focus: cell };
+    const chars = (col: number) => line.getCell(col)?.getChars() ?? "";
+    const hit = chars(cell.col);
+    if (!hit || /\s/u.test(hit)) return { anchor: cell, focus: cell };
+    let first = cell.col;
+    let last = cell.col;
+    while (first > 0) {
+      const value = chars(first - 1);
+      if (!value || /\s/u.test(value)) break;
+      first -= 1;
+    }
+    while (last + 1 < term.cols) {
+      const value = chars(last + 1);
+      if (!value || /\s/u.test(value)) break;
+      last += 1;
+    }
+    return {
+      anchor: { col: first, row: cell.row },
+      focus: { col: last, row: cell.row },
+    };
+  }
+
+  function beginTouchSelection(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!touchSelecting) return;
+    const cell = cellFromClientPoint(e.clientX, e.clientY);
+    if (!cell) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    selectionDrag.current = {
+      pointerId: e.pointerId,
+      end: "new",
+      origin: cell,
+      moved: false,
+    };
+    applyTouchRange(cell, cell);
+  }
+
+  function moveTouchSelection(e: ReactPointerEvent<HTMLElement>) {
+    const drag = selectionDrag.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const cell = cellFromClientPoint(e.clientX, e.clientY);
+    const range = touchRangeRef.current;
+    if (!cell || !range) return;
+    e.preventDefault();
+    if (cell.col !== drag.origin.col || cell.row !== drag.origin.row) drag.moved = true;
+    if (drag.end === "anchor") applyTouchRange(cell, range.focus);
+    else if (drag.end === "focus") applyTouchRange(range.anchor, cell);
+    else applyTouchRange(range.anchor, cell);
+  }
+
+  function finishTouchSelection(e: ReactPointerEvent<HTMLElement>) {
+    const drag = selectionDrag.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    if (drag.end === "new" && !drag.moved) {
+      const word = wordAtCell(drag.origin);
+      applyTouchRange(word.anchor, word.focus);
+    }
+    selectionDrag.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* capture can already be gone after a browser-level gesture */
+    }
+  }
+
+  function beginHandleDrag(end: "anchor" | "focus", e: ReactPointerEvent<HTMLButtonElement>) {
+    const range = touchRangeRef.current;
+    if (!range) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    selectionDrag.current = {
+      pointerId: e.pointerId,
+      end,
+      origin: end === "anchor" ? range.anchor : range.focus,
+      moved: false,
+    };
+  }
+
+  function handleStyle(cell: TermCell, trailing: boolean): CSSProperties | null {
+    const term = termRef.current;
+    const host = hostRef.current;
+    const screen = term?.element?.querySelector<HTMLElement>(".xterm-screen");
+    const instance = host?.parentElement;
+    if (!term || !screen || !instance) return null;
+    const viewportRow = cell.row - term.buffer.active.viewportY;
+    if (viewportRow < 0 || viewportRow >= term.rows) return null;
+    const screenRect = screen.getBoundingClientRect();
+    const instanceRect = instance.getBoundingClientRect();
+    const cellWidth = screenRect.width / term.cols;
+    const cellHeight = screenRect.height / term.rows;
+    return {
+      left:
+        screenRect.left - instanceRect.left +
+        (cell.col + (trailing ? 1 : 0)) * cellWidth,
+      top: screenRect.top - instanceRect.top + (viewportRow + 1) * cellHeight,
+    };
+  }
+
+  function stopTouchSelection(clear = true) {
+    selectionDrag.current = null;
+    touchSelectingRef.current = false;
+    touchRangeRef.current = null;
+    setTouchRange(null);
+    setTouchSelecting(false);
+    if (clear) termRef.current?.clearSelection();
+    setSelectionTick((tick) => tick + 1);
+    termRef.current?.focus();
+  }
+
+  function toggleTouchSelection() {
+    if (touchSelecting) {
+      stopTouchSelection();
+      return;
+    }
+    setMenu(null);
+    touchSelectingRef.current = true;
+    setTouchSelecting(true);
+    termRef.current?.clearSelection();
+    setSelectionTick((tick) => tick + 1);
+  }
+
+  async function copyTouchSelection() {
+    const text = termRef.current?.getSelection() ?? "";
+    if (!text) return;
+    const copied = await copyText(text);
+    stopTouchSelection();
+    showTermNotice(copied ? "Copied terminal selection." : "Couldn’t copy this selection.");
+  }
+
+  function selectAllForTouch() {
+    termRef.current?.selectAll();
+    touchRangeRef.current = null;
+    setTouchRange(null);
+    setSelectionTick((tick) => tick + 1);
   }
 
   // Dismiss the context menu on any click/scroll/resize/Escape elsewhere.
@@ -547,9 +781,26 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
     };
   }, [menu]);
 
+  const selectedText = touchSelecting ? (termRef.current?.getSelection() ?? "") : "";
+  const rangeRunsForward = touchRange
+    ? touchRange.anchor.row < touchRange.focus.row ||
+      (touchRange.anchor.row === touchRange.focus.row &&
+        touchRange.anchor.col <= touchRange.focus.col)
+    : true;
+  const anchorStyle = touchRange ? handleStyle(touchRange.anchor, !rangeRunsForward) : null;
+  const focusStyle = touchRange ? handleStyle(touchRange.focus, rangeRunsForward) : null;
+
   return (
     <div className="term-instance" hidden={!active}>
-      <div className="term-host" ref={hostRef} onContextMenu={openContextMenu} />
+      <div
+        className={`term-host${touchSelecting ? " selecting" : ""}`}
+        ref={hostRef}
+        onContextMenu={openContextMenu}
+        onPointerDown={beginTouchSelection}
+        onPointerMove={moveTouchSelection}
+        onPointerUp={finishTouchSelection}
+        onPointerCancel={finishTouchSelection}
+      />
       {menu && (
         <div className="term-ctx" style={{ left: menu.x, top: menu.y }} role="menu">
           <button
@@ -578,42 +829,49 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
           </button>
         </div>
       )}
-      {pasteOpen && (
-        <form
-          className="term-paste-sheet"
-          aria-label="Paste text into terminal"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submitManualPaste();
-          }}
+      {termNotice && (
+        <div className="term-notice" role="status">
+          {termNotice}
+        </div>
+      )}
+      {touchSelecting && (
+        <div
+          className="term-selection-bar"
+          role="toolbar"
+          aria-label="Terminal selection"
+          onMouseDown={(event) => event.preventDefault()}
         >
-          <label htmlFor={`term-paste-${termId}`}>
-            Paste text here
-            <span>Clipboard access is blocked, so use your phone’s Paste command.</span>
-          </label>
-          <textarea
-            id={`term-paste-${termId}`}
-            value={pasteText}
-            autoFocus
-            rows={3}
-            placeholder="Touch and hold here, then tap Paste"
-            onChange={(event) => setPasteText(event.currentTarget.value)}
-          />
-          <div className="term-paste-actions">
-            <button
-              type="button"
-              onClick={() => {
-                setPasteText("");
-                setPasteOpen(false);
-              }}
-            >
-              Cancel
-            </button>
-            <button type="submit" className="primary" disabled={!pasteText}>
-              Send to terminal
-            </button>
-          </div>
-        </form>
+          <span>{selectedText ? `${selectedText.length} selected` : "Drag across text"}</span>
+          <button type="button" disabled={!selectedText} onClick={() => void copyTouchSelection()}>
+            Copy
+          </button>
+          <button type="button" onClick={selectAllForTouch}>All</button>
+          <button type="button" onClick={() => stopTouchSelection()}>Done</button>
+        </div>
+      )}
+      {touchSelecting && anchorStyle && (
+        <button
+          type="button"
+          className="term-selection-handle"
+          style={anchorStyle}
+          aria-label="Move selection start"
+          onPointerDown={(event) => beginHandleDrag("anchor", event)}
+          onPointerMove={moveTouchSelection}
+          onPointerUp={finishTouchSelection}
+          onPointerCancel={finishTouchSelection}
+        />
+      )}
+      {touchSelecting && focusStyle && (
+        <button
+          type="button"
+          className="term-selection-handle end"
+          style={focusStyle}
+          aria-label="Move selection end"
+          onPointerDown={(event) => beginHandleDrag("focus", event)}
+          onPointerMove={moveTouchSelection}
+          onPointerUp={finishTouchSelection}
+          onPointerCancel={finishTouchSelection}
+        />
       )}
       {/* Tapping an accessory key must NOT move focus off the terminal. A
        * blur/refocus pair emits DECSET-1004 focus reports (\x1b[O, \x1b[I) into
@@ -630,6 +888,14 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
         <button type="button" onClick={() => key("\x1b")}>Esc</button>
         <button type="button" onClick={() => key("\t")}>Tab</button>
         <button type="button" ref={ctrlBtnRef} onClick={toggleCtrl}>Ctrl</button>
+        <button
+          type="button"
+          className={touchSelecting ? "on" : undefined}
+          aria-pressed={touchSelecting}
+          onClick={toggleTouchSelection}
+        >
+          Select
+        </button>
         <button
           type="button"
           aria-label="Paste into terminal"
