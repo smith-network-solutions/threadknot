@@ -40,6 +40,7 @@ import {
 } from "../lib/skins";
 import {
   agentPortraitKey,
+  defaultPortrait,
   getPortraits,
   PORTRAITS_EVENT,
   setPortrait,
@@ -444,17 +445,22 @@ function PortraitRow({
   slotKey,
   label,
   url,
+  defaultUrl,
   onPick,
 }: {
   slotKey: string;
   label: string;
   url: string | null;
+  /** The shipped character sprite shown (and used) until a custom picture is
+   *  set; "clear" returns to it rather than to an empty slot. */
+  defaultUrl: string | null;
   onPick: (key: string, file: File) => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const shown = url ?? defaultUrl;
   return (
     <div className="portrait-row">
-      <span className="portrait-thumb">{url && <img src={url} alt="" />}</span>
+      <span className="portrait-thumb">{shown && <img src={shown} alt="" />}</span>
       <span className="portrait-name">{label}</span>
       <button
         type="button"
@@ -471,7 +477,7 @@ function PortraitRow({
           title={`Remove the picture for ${label}.`}
           onClick={() => setPortrait(slotKey, null)}
         >
-          clear
+          {defaultUrl ? "reset" : "clear"}
         </button>
       )}
       <input
@@ -538,6 +544,7 @@ function PortraitsSettings() {
               slotKey={fallbackKey}
               label={`default for ${ag.name}`}
               url={prefs.byKey[fallbackKey] ?? null}
+              defaultUrl={defaultPortrait(undefined, ag.id)}
               onPick={(k, f) => void pick(k, f)}
             />
             {ag.models.map((m) => (
@@ -546,6 +553,7 @@ function PortraitsSettings() {
                 slotKey={m.id}
                 label={m.name}
                 url={prefs.byKey[m.id] ?? null}
+                defaultUrl={defaultPortrait(m.id, ag.id)}
                 onPick={(k, f) => void pick(k, f)}
               />
             ))}

@@ -4,7 +4,43 @@
 // Mirrors the lightweight preference pattern in appearance.ts: read + normalize
 // -> setItem -> CustomEvent.
 
+import fableSprite from "../assets/portraits/fable.svg";
+import opusSprite from "../assets/portraits/opus.svg";
+import sonnetSprite from "../assets/portraits/sonnet.svg";
+import haikuSprite from "../assets/portraits/haiku.svg";
+import claudeSprite from "../assets/portraits/claude.svg";
+import codexSprite from "../assets/portraits/codex.svg";
+import kimiSprite from "../assets/portraits/kimi.svg";
+import hermesSprite from "../assets/portraits/hermes.svg";
+
 const P_KEY = "threadknot.portraits";
+
+/* The shipped character set: original pixel sprites drawn for this app
+   (scripts/gen-portraits.mjs regenerates them from their pixel maps). Model
+   families match on the model id; an agent with no family match falls back to
+   its own emblem. A user-set portrait always wins over these. */
+const MODEL_DEFAULTS: ReadonlyArray<[RegExp, string]> = [
+  [/fable/i, fableSprite],
+  [/opus/i, opusSprite],
+  [/sonnet/i, sonnetSprite],
+  [/haiku/i, haikuSprite],
+];
+const AGENT_DEFAULTS: Readonly<Record<string, string>> = {
+  claude: claudeSprite,
+  claudex: claudeSprite,
+  codex: codexSprite,
+  kimi: kimiSprite,
+  hermes: hermesSprite,
+};
+
+/** The built-in sprite for a chat, before any user customization: the model
+ *  family's character, else the agent's emblem, else nothing. */
+export function defaultPortrait(model: string | undefined, agent: string): string | null {
+  if (model) {
+    for (const [re, sprite] of MODEL_DEFAULTS) if (re.test(model)) return sprite;
+  }
+  return AGENT_DEFAULTS[agent] ?? null;
+}
 
 /** Fired after any portrait is set or cleared. detail: the new PortraitPrefs. */
 export const PORTRAITS_EVENT = "threadknot:portraits";
@@ -81,9 +117,14 @@ export function setPortrait(key: string, dataUrl: string | null): void {
   window.dispatchEvent(new CustomEvent<PortraitPrefs>(PORTRAITS_EVENT, { detail: next }));
 }
 
-/** The portrait for a chat: the model's own picture, else the agent's fallback,
- *  else nothing (the card keeps whatever mark it already renders). */
+/** The portrait for a chat: the user's picture for the model, else the user's
+ *  agent fallback, else the shipped character set, else nothing (the card
+ *  keeps whatever mark it already renders). */
 export function resolvePortrait(model: string | undefined, agent: string): string | null {
   const { byKey } = getPortraits();
-  return (model ? byKey[model] : undefined) ?? byKey[agentPortraitKey(agent)] ?? null;
+  return (
+    (model ? byKey[model] : undefined) ??
+    byKey[agentPortraitKey(agent)] ??
+    defaultPortrait(model, agent)
+  );
 }
