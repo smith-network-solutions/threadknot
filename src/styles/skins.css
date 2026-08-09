@@ -216,7 +216,8 @@
    internally: description + five module rows + actions will overflow the
    inherited max-height on a short window. */
 .skin-preview {
-  width: 620px;
+  width: min(860px, 94vw);
+  max-height: 92dvh;
   overflow-y: auto;
 }
 
@@ -227,9 +228,15 @@
 
 /* Stage is a fixed-ratio well so paging between shots of different heights
    does not make the modal jump. object-fit: contain keeps a wide screenshot
-   whole rather than cropping the part being demonstrated. */
+   whole rather than cropping the part being demonstrated. flex-shrink: 0 is
+   load-bearing: the modal is a capped flex column, and without it the stage
+   is the child that collapses (to a sliver) when description + module rows
+   overflow, instead of the modal scrolling. The dvh cap keeps short windows
+   from a stage so tall the actions land below the fold. */
 .skin-preview-stage {
   position: relative;
+  flex-shrink: 0;
+  max-height: 58dvh;
   aspect-ratio: 16 / 10;
   background: var(--bg);
   border: 1px solid var(--line);
