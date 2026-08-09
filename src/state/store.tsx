@@ -24,6 +24,7 @@ import type {
   ThreadStatus,
   Workspace,
 } from "../lib/protocol";
+import { isQuickHomeProjectId } from "../lib/protocol";
 import type { ConnState } from "../lib/ws";
 import { isAgentVisible } from "../lib/agentVisibility";
 import { applyEvent, type FeedItem } from "./feed";
@@ -527,7 +528,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const keep = new Set(action.projects.map((p) => p.id));
       const threads: Record<string, Thread[]> = {};
       for (const pid of Object.keys(state.threads)) {
-        if (keep.has(pid)) threads[pid] = state.threads[pid];
+        if (keep.has(pid) || isQuickHomeProjectId(pid)) threads[pid] = state.threads[pid];
       }
       return { ...state, projects: action.projects, threads };
     }
@@ -954,6 +955,8 @@ export interface ThreadknotActions {
   /** Full text of a historical tool call whose replay copy was elided. */
   toolOutput: (threadId: string, callId: string) => Promise<string | null>;
   openDraft: (projectId: string, machineId?: string) => void;
+  /** Start a folderless chat in an isolated scratch directory on a machine. */
+  openQuickDraft: (machineId?: string) => void;
   /** Start a chat with one Hermes gateway: a draft in the hidden Hermes home
    *  project, locked to agent "hermes" with `model` = the registry agent id. */
   openHermesDraft: (hermesAgentId: string) => void;

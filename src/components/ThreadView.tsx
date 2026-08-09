@@ -6,7 +6,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { HERMES_HOME_PROJECT_ID, threadParticipants } from "../lib/protocol";
+import {
+  HERMES_HOME_PROJECT_ID,
+  isQuickHomeProjectId,
+  threadParticipants,
+} from "../lib/protocol";
 import {
   formatCompactDateTime,
   formatDuration,
@@ -138,6 +142,10 @@ export function ThreadView() {
   // Hermes home threads have no folder: no path chip, no Files/Git/Terminal.
   const hermesHome =
     (thread ? thread.projectId : draft?.projectId) === HERMES_HOME_PROJECT_ID;
+  const quickHome = isQuickHomeProjectId(
+    thread ? thread.projectId : draft?.projectId,
+  );
+  const quickAccess = (thread ? thread.settings : draft?.settings)?.access;
   const hermesGatewayName = hermesHome
     ? state.hello?.agents
         .find((a) => a.id === "hermes")
@@ -311,7 +319,11 @@ export function ThreadView() {
             />
           ) : (
             <h1 className="thread-title">
-              {thread ? thread.title || "Untitled thread" : "New thread"}
+              {thread
+                ? thread.title || "Untitled thread"
+                : quickHome
+                  ? "New quick chat"
+                  : "New thread"}
               {thread && (
                 <button
                   className="icon-btn title-edit"
@@ -341,7 +353,19 @@ export function ThreadView() {
             )}
             {chipPreview.portal}
             {thread && <LaneChips thread={thread} />}
-            {project && !hermesHome && (
+            {quickHome && (
+              <span
+                className={`thread-scope-chip${quickAccess === "full" ? " broad" : ""}`}
+                title={
+                  quickAccess === "full"
+                    ? "Full access is enabled for this computer"
+                    : "Starts in an isolated scratch directory"
+                }
+              >
+                {quickAccess === "full" ? "computer access" : "scratch cwd"}
+              </span>
+            )}
+            {project && !hermesHome && !quickHome && (
               <span className="thread-path">{project.path}</span>
             )}
             {thread && <ThreadTiming createdAt={thread.createdAt} feed={state.feed} />}
@@ -359,7 +383,7 @@ export function ThreadView() {
         )}
         <div className="ws-toggles">
           {thread && <ReviewMenu thread={thread} />}
-          {!hermesHome && VISIBLE_TABS.map(({ id, label, Icon }) => {
+          {!hermesHome && !quickHome && VISIBLE_TABS.map(({ id, label, Icon }) => {
             const openTab = project ? state.workspace[project.id] ?? null : null;
             return (
               <button
@@ -414,7 +438,9 @@ export function ThreadView() {
                 {draft
                   ? hermesHome
                     ? `Direct line to ${hermesGatewayName ?? "your Hermes agent"}. Say hello.`
-                    : `Fresh thread in ${project?.name ?? "project"}. Set your course below.`
+                    : quickHome
+                      ? "A private scratch conversation. Ask anything."
+                      : `Fresh thread in ${project?.name ?? "project"}. Set your course below.`
                   : "No traffic on this channel yet."}
               </p>
             </div>
@@ -460,7 +486,7 @@ export function ThreadView() {
 }
 
 function EmptyPane() {
-  const { dispatch } = useStore();
+  const { dispatch, actions } = useStore();
   return (
     <section className="thread-pane empty-pane">
       <button
@@ -475,8 +501,16 @@ function EmptyPane() {
         <div className="empty-wordmark">THREADKNOT</div>
         <p className="empty-tag">every coding agent on one thread</p>
         <p className="empty-hint">
-          Add a project in the sidebar, then launch a thread to put an agent to work.
+          Ask something now, or choose a workspace when the work belongs to a project.
         </p>
+        <button
+          type="button"
+          className="empty-quick-action"
+          onClick={() => actions.openQuickDraft()}
+        >
+          <span>New quick chat</span>
+          <small>no workspace needed</small>
+        </button>
       </div>
     </section>
   );

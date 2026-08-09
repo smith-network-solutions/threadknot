@@ -963,10 +963,14 @@ impl Hub {
                     // A reattach resumes the lane that was mid-run when the app
                     // died, which `active_speaker` still names.
                     let lane = thread.speaking_participant();
+                    let cwd = self
+                        .store
+                        .thread_working_dir(&thread)
+                        .unwrap_or_else(|_| std::path::PathBuf::from(project.path));
                     self.session_cmd_tx(
                         &thread,
                         &lane,
-                        project.path,
+                        cwd.to_string_lossy().into_owned(),
                         None,
                         None,
                         Some(run_id),
@@ -1195,10 +1199,10 @@ impl Hub {
         let Some(thread) = self.store.thread(thread_id) else {
             return;
         };
-        let Some(project) = self.store.project(&thread.project_id) else {
+        let Ok(root) = self.store.thread_working_dir(&thread) else {
             return;
         };
-        let baseline = crate::artifacts::scan_deliverables(std::path::Path::new(&project.path));
+        let baseline = crate::artifacts::scan_deliverables(&root);
         self.artifact_baselines
             .lock()
             .unwrap()
@@ -1226,7 +1230,10 @@ impl Hub {
         let Some(project) = self.store.project(&thread.project_id) else {
             return;
         };
-        let current = crate::artifacts::scan_deliverables(std::path::Path::new(&project.path));
+        let Ok(root) = self.store.thread_working_dir(&thread) else {
+            return;
+        };
+        let current = crate::artifacts::scan_deliverables(&root);
         let indexed: std::collections::HashSet<String> = self
             .store
             .list_artifacts_for_thread(thread_id)
@@ -1249,7 +1256,16 @@ impl Hub {
             crate::artifacts::select_artifacts(candidates, &user_text, &assistant_text);
         let source = agent_source(thread.agent);
         for rel in selected {
-            self.produce_artifact(thread_id, &project, &rel, source, None, None, "detected");
+            self.produce_artifact(
+                thread_id,
+                &project,
+                &root,
+                &rel,
+                source,
+                None,
+                None,
+                "detected",
+            );
         }
     }
 
@@ -1272,8 +1288,8 @@ impl Hub {
             .store
             .project(&thread.project_id)
             .ok_or_else(|| anyhow::anyhow!("unknown project"))?;
-        let project_root = std::fs::canonicalize(&project.path)
-            .unwrap_or_else(|_| std::path::PathBuf::from(&project.path));
+        let working_dir = self.store.thread_working_dir(&thread)?;
+        let project_root = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
         let raw = std::path::Path::new(path);
         let abs = if raw.is_absolute() {
             raw.to_path_buf()
@@ -1292,6 +1308,7 @@ impl Hub {
             .produce_artifact(
                 thread_id,
                 &project,
+                &project_root,
                 &rel,
                 agent_source(thread.agent),
                 title,
@@ -1336,13 +1353,14 @@ impl Hub {
         &self,
         thread_id: &str,
         project: &Project,
+        root: &std::path::Path,
         rel: &str,
         source: &str,
         title: Option<&str>,
         description: Option<&str>,
         origin: &str,
     ) -> Option<crate::protocol::ArtifactRecord> {
-        let abs = std::path::Path::new(&project.path).join(rel);
+        let abs = root.join(rel);
         let meta = match std::fs::metadata(&abs) {
             Ok(m) if m.is_file() => m,
             _ => return None,
@@ -1635,10 +1653,11 @@ impl Hub {
             .store
             .thread(thread_id)
             .ok_or_else(|| anyhow::anyhow!("unknown thread"))?;
-        let project = self
+        let cwd = self
             .store
-            .project(&thread.project_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown project"))?;
+            .thread_working_dir(&thread)?
+            .to_string_lossy()
+            .into_owned();
         anyhow::ensure!(
             thread.status == ThreadStatus::Idle,
             "thread is busy (interrupt it first)"
@@ -1782,7 +1801,7 @@ impl Hub {
         let tx = self.session_cmd_tx(
             &thread,
             &lane,
-            project.path,
+            cwd,
             seed,
             resume_fallback_seed,
             None,

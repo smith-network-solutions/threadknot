@@ -3458,6 +3458,15 @@ pub async fn handle_request(
             {
                 hub.broadcast_state("projects", None);
             }
+            if crate::store::is_quick_home_project_id(&project_id) {
+                anyhow::ensure!(
+                    project_id == crate::store::quick_home_project_id(&store.local_machine_id()),
+                    "quick-chat home belongs to another machine"
+                );
+                if store.ensure_quick_home()? {
+                    hub.broadcast_state("projects", None);
+                }
+            }
             let agent: Agent = serde_json::from_value(
                 p.get("agent").cloned().unwrap_or(json!("claude")),
             )?;

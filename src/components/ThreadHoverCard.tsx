@@ -10,7 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { Thread, ThreadPreview } from "../lib/protocol";
-import { HERMES_HOME_PROJECT_ID } from "../lib/protocol";
+import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { timeAgo } from "../lib/format";
 import { machineLook } from "./MachineAvatar";
 import { useStore } from "../state/store";
@@ -318,6 +318,8 @@ export function ThreadHoverCardBody({ thread }: { thread: Thread }) {
   const workspaceName =
     thread.projectId === HERMES_HOME_PROJECT_ID
       ? (hermesRec?.name ?? "Hermes agent")
+      : isQuickHomeProjectId(thread.projectId)
+        ? "Quick chats"
       : (state.workspaces.find((w) =>
           w.members.some((m) => m.projectId === thread.projectId),
         )?.name ??

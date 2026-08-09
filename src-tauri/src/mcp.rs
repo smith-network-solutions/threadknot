@@ -324,12 +324,12 @@ fn normalized_browser_args(
         .store
         .thread(thread_id)
         .ok_or_else(|| "unknown thread".to_string())?;
-    let project = state
+    let working_dir = state
         .hub
         .store
-        .project(&thread.project_id)
-        .ok_or_else(|| "unknown project".to_string())?;
-    let root = std::fs::canonicalize(&project.path)
+        .thread_working_dir(&thread)
+        .map_err(|error| format!("project root is unavailable: {error}"))?;
+    let root = std::fs::canonicalize(&working_dir)
         .map_err(|error| format!("project root is unavailable: {error}"))?;
     let paths = args
         .get("paths")
@@ -381,12 +381,12 @@ fn normalized_screenshot_args(
         .store
         .thread(thread_id)
         .ok_or_else(|| "unknown thread".to_string())?;
-    let project = state
+    let working_dir = state
         .hub
         .store
-        .project(&thread.project_id)
-        .ok_or_else(|| "unknown project".to_string())?;
-    let root = std::fs::canonicalize(&project.path)
+        .thread_working_dir(&thread)
+        .map_err(|error| format!("project root is unavailable: {error}"))?;
+    let root = std::fs::canonicalize(&working_dir)
         .map_err(|error| format!("project root is unavailable: {error}"))?;
     let candidate = {
         let path = std::path::Path::new(raw);

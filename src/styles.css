@@ -471,6 +471,51 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 }
 .rail-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+/* Quick Chats is a fixed destination, not a reorderable project. Its face is
+   cut from the same dark metal as the rail and carries the real brand mark so
+   it reads as Threadknot's front door rather than another workspace avatar. */
+.rail-home {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 1px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+}
+.rail-quick { opacity: 0.78; }
+.rail-quick-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--brass) 22%, var(--line));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 25%, color-mix(in srgb, var(--brass) 10%, transparent), transparent 58%),
+    var(--panel-2);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+}
+.rail-quick-face svg { color: var(--brass-hi); stroke-width: 1.7; }
+.rail-quick.on .rail-quick-face {
+  border-color: color-mix(in srgb, var(--brass-hi) 48%, var(--line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--brass) 18%, transparent),
+    inset 0 1px rgba(255, 255, 255, 0.05);
+}
+.rail-divider {
+  flex: none;
+  width: 28px;
+  height: 1px;
+  margin: 1px 0 2px;
+  background: linear-gradient(90deg, transparent, var(--line-2), transparent);
+}
+
 /* Unread/approval badge, notched out of the avatar the way Discord does. */
 .rail-dot {
   position: absolute;
@@ -587,6 +632,76 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 }
 
 .project-section { margin-top: 6px; position: relative; }
+
+/* Folderless Quick Chats destination. The hairline beneath the compact masthead
+   echoes a notebook index rather than a workspace container. */
+.quick-chats { min-width: 0; padding: 1px 0 8px; }
+.quick-chats-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 2px 5px 3px 4px;
+}
+.quick-chats-mark,
+.quick-entry-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, var(--brass) 24%, var(--line));
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.quick-chats-mark svg,
+.quick-entry-mark svg { color: var(--brass-hi); stroke-width: 1.8; }
+.quick-chats-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 760;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.quick-chats-head .quick-new { color: var(--brass); }
+.quick-chats-head .quick-new:hover { color: var(--brass-hi); background: var(--brass-dim); }
+.quick-chats-rule {
+  height: 1px;
+  margin: 0 7px 7px 4px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--brass) 34%, transparent), var(--line), transparent);
+}
+.quick-chats-empty {
+  width: calc(100% - 10px);
+  margin: 5px;
+  padding: 15px 14px 13px;
+  border: 1px dashed color-mix(in srgb, var(--brass) 24%, var(--line));
+  border-radius: 10px;
+  color: var(--faint);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--brass) 5%, transparent), transparent 55%),
+    color-mix(in srgb, var(--panel-2) 72%, transparent);
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.quick-chats-empty span { display: block; font-size: 11.5px; line-height: 1.45; }
+.quick-chats-empty strong {
+  display: block;
+  margin-top: 9px;
+  color: var(--brass-hi);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.quick-chats-empty:hover {
+  border-color: color-mix(in srgb, var(--brass) 48%, var(--line));
+  color: var(--dim);
+  background: var(--brass-dim);
+}
+.quick-search-empty { padding-top: 12px; }
+.quick-entry { border-style: solid; }
+.quick-entry-mark { width: 20px; height: 20px; border-radius: 7px; }
 
 /* --- Drag to reorder projects -------------------------------------------
    Projects hold the position you put them in, so moving one is a deliberate
@@ -3160,6 +3275,58 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 .feed-empty-glyph { color: var(--brass); opacity: 0.55; }
 .feed-empty p { font-size: 13.5px; }
+
+.thread-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--teal) 24%, var(--line));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--teal) 70%, var(--dim));
+  background: color-mix(in srgb, var(--teal) 7%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.thread-scope-chip.broad {
+  border-color: color-mix(in srgb, var(--amber) 34%, var(--line));
+  color: color-mix(in srgb, var(--amber) 76%, var(--dim));
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+
+.empty-quick-action {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 190px;
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--brass) 38%, var(--line));
+  border-radius: 10px;
+  color: var(--brass-hi);
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--brass) 10%, transparent), transparent 62%),
+    var(--panel-2);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+  text-align: left;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.empty-quick-action span {
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.empty-quick-action small { color: var(--faint); font-size: 10.5px; }
+.empty-quick-action:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--brass-hi) 58%, var(--line));
+  background: var(--brass-dim);
+}
 
 .working-row {
   display: flex;

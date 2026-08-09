@@ -9,7 +9,7 @@ import type {
   ThreadSettings,
 } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
-import { HERMES_HOME_PROJECT_ID } from "../lib/protocol";
+import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { effortForModel, useStore } from "../state/store";
 import type { FeedItem } from "../state/feed";
 import {
@@ -248,6 +248,9 @@ export function Composer({ thread }: ComposerProps) {
   // so they stay pinned to Hermes — the gateway picker below is the real choice.
   const hermesLocked =
     (thread ? thread.projectId : draft?.projectId) === HERMES_HOME_PROJECT_ID;
+  const quickHome = isQuickHomeProjectId(
+    thread ? thread.projectId : draft?.projectId,
+  );
   const agentInfo: AgentInfo | undefined = agents.find((a) => a.id === agent);
   const models = agentInfo?.models ?? [];
   const currentModel = models.find((m) => m.id === settings?.model);
@@ -831,7 +834,9 @@ export function Composer({ thread }: ComposerProps) {
         ? "Chart a course — describe what to plan…"
         : agentInfo && !agentInfo.available
           ? (agentInfo.authHint ?? `${agentInfo.name} is not available`)
-          : "Give your orders…";
+          : quickHome
+            ? "Ask anything…"
+            : "Give your orders…";
 
   return (
     <div className="composer">

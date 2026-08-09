@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Access, Agent, Cadence, Schedule, ThreadSettings } from "../lib/protocol";
-import { HERMES_HOME_PROJECT_ID } from "../lib/protocol";
+import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
 import { cadenceLabel, DAY_CHIP, nextOccurrence, untilLabel } from "../lib/schedule";
 import { timeAgo } from "../lib/format";
@@ -255,9 +255,11 @@ function ScheduleForm({
           value={form.projectId}
           onChange={(e) => patch({ projectId: e.target.value })}
         >
-          {/* The Hermes home isn't a folder — schedules need a real project. */}
+          {/* Hidden conversation homes aren't folders — schedules need a real project. */}
           {state.projects
-            .filter((p) => p.id !== HERMES_HOME_PROJECT_ID)
+            .filter(
+              (p) => p.id !== HERMES_HOME_PROJECT_ID && !isQuickHomeProjectId(p.id),
+            )
             .map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -458,12 +460,16 @@ export function SchedulesPanel({ onClose }: { onClose: () => void }) {
   function blankForm(): FormState {
     const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
     const preferred = agents.find((a) => a.available) ?? agents[0];
-    const realProjects = state.projects.filter((p) => p.id !== HERMES_HOME_PROJECT_ID);
+    const realProjects = state.projects.filter(
+      (p) => p.id !== HERMES_HOME_PROJECT_ID && !isQuickHomeProjectId(p.id),
+    );
     const contextProjectId =
       (state.activeThreadId && findThread(state, state.activeThreadId)?.projectId) ||
       state.draft?.projectId;
     const activeProjectId =
-      (contextProjectId !== HERMES_HOME_PROJECT_ID && contextProjectId) ||
+      (contextProjectId !== HERMES_HOME_PROJECT_ID &&
+        !isQuickHomeProjectId(contextProjectId) &&
+        contextProjectId) ||
       realProjects[0]?.id ||
       "";
     const model = preferred?.defaultModel ?? preferred?.models[0]?.id ?? "";
@@ -545,7 +551,11 @@ export function SchedulesPanel({ onClose }: { onClose: () => void }) {
                 type="button"
                 className="btn tone-allow sched-new-btn"
                 disabled={
-                  state.projects.filter((p) => p.id !== HERMES_HOME_PROJECT_ID)
+                  state.projects.filter(
+                    (p) =>
+                      p.id !== HERMES_HOME_PROJECT_ID &&
+                      !isQuickHomeProjectId(p.id),
+                  )
                     .length === 0
                 }
                 onClick={() => setForm(blankForm())}

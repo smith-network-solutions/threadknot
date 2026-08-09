@@ -21,7 +21,7 @@ import {
 } from "../lib/appearance";
 import { createPortal } from "react-dom";
 import type { Project, Thread, Workspace } from "../lib/protocol";
-import { HERMES_HOME_PROJECT_ID } from "../lib/protocol";
+import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { SHOW_HERMES_AGENTS } from "../lib/agentVisibility";
 import { timeAgo } from "../lib/format";
 import {
@@ -253,6 +253,101 @@ function SettledShelf({
   );
 }
 
+/** The folderless conversation home. It borrows the thread rows and settled
+ * shelf from workspaces, but is deliberately a destination rather than a fake
+ * workspace: no folder avatar, roots menu, pop-out, or project actions. */
+function QuickChatsSection({
+  threads,
+  forceOpen,
+  autoSettleDays,
+  now,
+  view,
+}: {
+  threads: Thread[];
+  forceOpen: boolean;
+  autoSettleDays: number | null;
+  now: number;
+  view: SidebarLayout["view"];
+}) {
+  const { state, actions } = useStore();
+  const [visibleThreadCount, setVisibleThreadCount] = useState(SOLO_PROJECT_PAGE_SIZE);
+  const { active, settled } = useSettledSplit(threads, autoSettleDays, now);
+  const shown = forceOpen
+    ? active
+    : pageActiveThreads(
+        active,
+        visibleThreadCount,
+        (thread) =>
+          threadNeedsAttention(state, thread) ||
+          state.activeThreadId === thread.id ||
+          isRecentlyKeptActive(thread, now),
+      );
+  const remaining = active.length - shown.length;
+  const activity = projectActivity(state, threads);
+
+  return (
+    <section className="quick-chats" aria-label="Quick chats">
+      <header className="quick-chats-head">
+        <span className="quick-chats-mark" aria-hidden>
+          <PlusIcon size={15} />
+        </span>
+        <span className="quick-chats-title">Quick chats</span>
+        <ProjectPulse activity={activity} />
+        <span className="project-count">{active.length}</span>
+        <button
+          type="button"
+          className="icon-btn quick-new"
+          aria-label="New quick chat"
+          title="New quick chat"
+          onClick={() => actions.openQuickDraft()}
+        >
+          <PlusIcon size={14} />
+        </button>
+      </header>
+      <div className="quick-chats-rule" aria-hidden />
+      {shown.length === 0 && settled.length === 0 && forceOpen ? (
+        <div className="sidebar-empty quick-search-empty">
+          <p>No matching quick chats.</p>
+        </div>
+      ) : shown.length === 0 && settled.length === 0 ? (
+        <button
+          type="button"
+          className="quick-chats-empty"
+          onClick={() => actions.openQuickDraft()}
+        >
+          <span>Ask an odd question, compare a file, or diagnose this computer.</span>
+          <strong>Start a quick chat</strong>
+        </button>
+      ) : (
+        <div className="project-threads quick-chat-threads">
+          {shown.map((thread) => (
+            <ThreadRow
+              key={thread.id}
+              thread={thread}
+              active={state.activeThreadId === thread.id}
+              view={view}
+            />
+          ))}
+          {remaining > 0 && (
+            <button
+              className="load-more-threads"
+              onClick={() =>
+                setVisibleThreadCount((count) => count + SOLO_PROJECT_PAGE_SIZE)
+              }
+            >
+              <span>load more</span>
+              <span className="load-more-count">
+                {Math.min(SOLO_PROJECT_PAGE_SIZE, remaining)} of {remaining}
+              </span>
+            </button>
+          )}
+          <SettledShelf threads={settled} forceOpen={forceOpen} view={view} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Discord's server rail: every project as an avatar down the left edge, the
  *  selected one filling the rest of the sidebar. Switching costs one tap with
  *  no menu, and — unlike the dropdown picker — the projects you are NOT in
@@ -331,16 +426,21 @@ function projectAccent(id: string): string {
 }
 
 function ProjectRail({
+  quickThreads,
+  quickOn,
   workspaces,
   hidden,
   threadsByWorkspace,
   shownId,
+  onPickQuick,
   onPick,
   onMenu,
   onStash,
   onReorder,
   reorderEnabled,
 }: {
+  quickThreads: Thread[];
+  quickOn: boolean;
   workspaces: Workspace[];
   /** Every stashed workspace, whether or not the view toggle is currently
    *  showing them inline — the stash button is how you get them back, so it has
@@ -348,6 +448,7 @@ function ProjectRail({
   hidden: Workspace[];
   threadsByWorkspace: Map<string, Thread[]>;
   shownId: string | null;
+  onPickQuick: () => void;
   onPick: (id: string) => void;
   /** Right-click on a tile: the same workspace menu the section headers and
    *  the picker bar open, for the project under the cursor (not necessarily
@@ -382,8 +483,41 @@ function ProjectRail({
     },
     null,
   );
+  const quickActivity = projectActivity(state, quickThreads);
   return (
-    <nav className="project-rail" aria-label="Projects" ref={railRef}>
+    <nav className="project-rail" aria-label="Destinations" ref={railRef}>
+      <div className="rail-home">
+        <button
+          type="button"
+          className={`rail-item rail-quick${quickOn ? " on" : ""}${
+            quickActivity ? ` rail-${quickActivity}` : ""
+          }`}
+          aria-current={quickOn ? "true" : undefined}
+          aria-label={`Quick chats${
+            quickActivity === "attention"
+              ? " — needs you"
+              : quickActivity === "working"
+                ? " — working"
+                : ""
+          }`}
+          title="Quick chats"
+          onClick={onPickQuick}
+        >
+          <span className="rail-pip" aria-hidden />
+          <span className="rail-quick-face" aria-hidden>
+            <PlusIcon size={21} />
+          </span>
+          <span
+            className={`rail-ring${quickActivity === "working" ? " underway" : ""}`}
+            aria-hidden
+          />
+          <span
+            className={`rail-dot${quickActivity === "attention" ? " lit" : ""}`}
+            aria-hidden
+          />
+        </button>
+        <span className="rail-divider" aria-hidden />
+      </div>
       {workspaces.map((w) => {
         const threads = threadsByWorkspace.get(w.id) ?? [];
         const activity = projectActivity(state, threads);
@@ -544,7 +678,7 @@ function PickerRenameInput({
 
 /** Which list the sidebar shows: the workspace fleet, or the dedicated
  *  Hermes-agents view. Persisted so the choice survives restarts. */
-type SidebarView = "fleet" | "agents";
+type SidebarView = "fleet" | "agents" | "quick";
 const LS_SIDEBAR_VIEW = "threadknot.sidebarView";
 
 function chooseSidebarImage(save: (image: string) => Promise<unknown>) {
@@ -2278,11 +2412,11 @@ export function Sidebar({
   const [filterOpen, setFilterOpen] = useState(false);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
   const [view, setView] = useState<SidebarView>(() => {
-    if (!SHOW_HERMES_AGENTS) return "fleet";
     try {
-      return localStorage.getItem(LS_SIDEBAR_VIEW) === "agents"
-        ? "agents"
-        : "fleet";
+      const stored = localStorage.getItem(LS_SIDEBAR_VIEW);
+      if (stored === "quick") return "quick";
+      if (SHOW_HERMES_AGENTS && stored === "agents") return "agents";
+      return "fleet";
     } catch {
       return "fleet";
     }
@@ -2296,16 +2430,20 @@ export function Sidebar({
     }
     // Keep whatever's on screen relevant to the view you just switched to, so a
     // lingering workspace chat doesn't sit under the agents list (or vice-versa).
-    // `activeIsHermes`: true → a Hermes thread/draft is open, false → a workspace
-    // one is, null → nothing is open.
+    // Keep the pane and destination list in agreement. Quick Chats and Hermes
+    // are global homes, so neither should leave a workspace thread stranded
+    // beneath its list (or vice versa).
     const active = state.activeThreadId
       ? findThread(state, state.activeThreadId)
       : null;
-    const activeIsHermes = active
-      ? active.agent === "hermes"
-      : state.draft
-        ? state.draft.projectId === HERMES_HOME_PROJECT_ID
-        : null;
+    const activeProjectId = active?.projectId ?? state.draft?.projectId;
+    const activeKind: SidebarView | null = !activeProjectId
+      ? null
+      : isQuickHomeProjectId(activeProjectId)
+        ? "quick"
+        : activeProjectId === HERMES_HOME_PROJECT_ID || active?.agent === "hermes"
+          ? "agents"
+          : "fleet";
     if (v === "agents") {
       // Jump straight to a Hermes chat that wants attention; otherwise leave a
       // Hermes chat (or nothing) in place, and clear only a workspace one — we
@@ -2314,11 +2452,10 @@ export function Sidebar({
       if (needy.length > 0) {
         if (needy[0].id !== state.activeThreadId)
           void actions.selectThread(needy[0].id);
-      } else if (activeIsHermes === false) {
+      } else if (activeKind !== null && activeKind !== "agents") {
         dispatch({ type: "closeActive" });
       }
-    } else if (activeIsHermes === true) {
-      // Returning to the fleet: don't strand a Hermes chat under the workspaces.
+    } else if (activeKind !== null && activeKind !== v) {
       dispatch({ type: "closeActive" });
     }
   };
@@ -2419,6 +2556,36 @@ export function Sidebar({
   // Solo windows are project-dedicated — the agents view only exists in the
   // fleet window.
   const agentsView = SHOW_HERMES_AGENTS && view === "agents" && !soloId;
+  const quickView = view === "quick" && !soloId;
+  const quickThreads = useMemo(
+    () =>
+      Object.values(state.threads)
+        .flat()
+        .filter((thread) => isQuickHomeProjectId(thread.projectId))
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)),
+    [state.threads],
+  );
+  const matchingQuickThreads = useMemo(
+    () =>
+      filter
+        ? quickThreads.filter((thread) =>
+            threadMatches(thread, filter, contentMatches),
+          )
+        : quickThreads,
+    [quickThreads, filter, contentMatches],
+  );
+  const openProjectId = state.activeThreadId
+    ? findThread(state, state.activeThreadId)?.projectId
+    : state.draft?.projectId;
+  useEffect(() => {
+    if (soloId || !isQuickHomeProjectId(openProjectId) || view === "quick") return;
+    setView("quick");
+    try {
+      localStorage.setItem(LS_SIDEBAR_VIEW, "quick");
+    } catch {
+      // Navigation persistence is a convenience only.
+    }
+  }, [openProjectId, soloId, view]);
   // Hermes chats asking to be looked at — badges the fleet-view button so a
   // finished turn / pending approval is visible without leaving the workspaces.
   const hermesAttention = useMemo(
@@ -2454,7 +2621,12 @@ export function Sidebar({
     const synthetic: Workspace[] = state.projects
       // The Hermes home project renders as the dedicated section, never as a
       // workspace.
-      .filter((p) => p.id !== HERMES_HOME_PROJECT_ID && !covered.has(p.id))
+      .filter(
+        (p) =>
+          p.id !== HERMES_HOME_PROJECT_ID &&
+          !isQuickHomeProjectId(p.id) &&
+          !covered.has(p.id),
+      )
       .map((p) => ({
         id: p.id,
         name: p.name,
@@ -2741,6 +2913,7 @@ export function Sidebar({
    *  Switching the list alone left the previous project's chat filling the
    *  screen, so the rail said one project and the pane showed another. */
   function pickRailProject(id: string) {
+    if (quickView || agentsView) switchView("fleet");
     setPickedId(id);
     const threads = sectionData.get(id)?.threads ?? [];
     // Already reading something in this project (a re-tap, or the chat that
@@ -2813,10 +2986,13 @@ export function Sidebar({
           hanging off it) and just gains a gutter. */}
       {railMode && (
         <ProjectRail
+          quickThreads={quickThreads}
+          quickOn={quickView}
           workspaces={visibleWorkspaces}
           hidden={hiddenWorkspaces}
           threadsByWorkspace={threadsByWorkspace}
-          shownId={shownWorkspaceId}
+          shownId={quickView ? null : shownWorkspaceId}
+          onPickQuick={() => switchView("quick")}
           onPick={pickRailProject}
           onMenu={(point, workspace) =>
             setMenu({
@@ -2844,7 +3020,13 @@ export function Sidebar({
         <SearchIcon size={14} className="search-glyph" />
         <input
           type="search"
-          placeholder={agentsView ? "Search agent threads…" : "Search threads…"}
+          placeholder={
+            quickView
+              ? "Search quick chats…"
+              : agentsView
+                ? "Search agent threads…"
+                : "Search threads…"
+          }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-busy={!!filter && searchingContent}
@@ -2875,6 +3057,24 @@ export function Sidebar({
       )}
 
       <div className="sidebar-scroll" ref={scrollRef} onScroll={onSidebarScroll}>
+        {quickView && (
+          <QuickChatsSection
+            threads={matchingQuickThreads}
+            forceOpen={!!filter}
+            autoSettleDays={sidebarPrefs.autoSettleDays}
+            now={now}
+            view={layout.view}
+          />
+        )}
+        {!quickView && !agentsView && !!filter && matchingQuickThreads.length > 0 && (
+          <QuickChatsSection
+            threads={matchingQuickThreads}
+            forceOpen
+            autoSettleDays={sidebarPrefs.autoSettleDays}
+            now={now}
+            view={layout.view}
+          />
+        )}
         {agentsView && (
           <HermesSection
             filter={filter}
@@ -2885,17 +3085,21 @@ export function Sidebar({
             view={layout.view}
           />
         )}
-        {!agentsView && !soloId && sections.length === 0 && (
+        {!quickView && !agentsView && !soloId && sections.length === 0 && (
           <div className="sidebar-empty">
             <p>No projects in the fleet yet.</p>
           </div>
         )}
-        {!agentsView && soloId && visibleWorkspaces.length === 0 && !filter && (
+        {!quickView && !agentsView && soloId && visibleWorkspaces.length === 0 && !filter && (
           <div className="sidebar-empty">
             <p>This project was removed from the fleet.</p>
           </div>
         )}
-        {!agentsView && filter && visibleWorkspaces.length === 0 && (
+        {!quickView &&
+          !agentsView &&
+          filter &&
+          visibleWorkspaces.length === 0 &&
+          matchingQuickThreads.length === 0 && (
           <div className="sidebar-empty">
             <p>
               {searchingContent ? "Searching thread content…" : "No matching threads."}
@@ -2905,7 +3109,7 @@ export function Sidebar({
         {/* Rendered for exactly the layouts that pass `hideHeader` below: this
             bar IS the header there, so it has to carry the header's actions
             (new thread, workspace menu) or they are reachable from nowhere. */}
-        {!agentsView &&
+        {!quickView && !agentsView &&
           (projectLayout === "picker" || projectLayout === "rail") &&
           pickedWorkspace && (
             <div className="project-picker">
@@ -3009,7 +3213,7 @@ export function Sidebar({
             }))}
           />
         )}
-        {!agentsView &&
+        {!quickView && !agentsView &&
           laidOutWorkspaces.map((w) => {
             const data = sectionData.get(w.id) ?? {
               projects: [],
@@ -3085,7 +3289,7 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-actions">
-        {!soloId && !agentsView && (
+        {!soloId && !agentsView && !quickView && (
           <button className="add-project" onClick={onAddProject}>
             <PlusIcon size={14} />
             <span>add workspace</span>
@@ -3093,7 +3297,10 @@ export function Sidebar({
         )}
         {!soloId &&
           !agentsView &&
-          state.projects.some((p) => p.id !== HERMES_HOME_PROJECT_ID) && (
+          !quickView &&
+          state.projects.some(
+            (p) => p.id !== HERMES_HOME_PROJECT_ID && !isQuickHomeProjectId(p.id),
+          ) && (
             <button
               className="add-project sched-entry"
               onClick={onOpenSchedules}
@@ -3107,7 +3314,15 @@ export function Sidebar({
               )}
             </button>
           )}
-        {SHOW_HERMES_AGENTS && !soloId && !agentsView && (
+        {!soloId && !agentsView && !quickView && !railMode && (
+          <button className="add-project quick-entry" onClick={() => switchView("quick")}>
+            <span className="quick-entry-mark" aria-hidden>
+              <PlusIcon size={13} />
+            </span>
+            <span>quick chats</span>
+          </button>
+        )}
+        {SHOW_HERMES_AGENTS && !soloId && !agentsView && !quickView && (
           <button
             className={`add-project hermes-entry${hermesAttention > 0 ? " has-attention" : ""}`}
             onClick={() => switchView("agents")}
@@ -3124,7 +3339,7 @@ export function Sidebar({
             )}
           </button>
         )}
-        {agentsView && (
+        {(agentsView || quickView) && (
           <button className="add-project" onClick={() => switchView("fleet")}>
             <FolderIcon size={14} />
             <span>workspaces</span>

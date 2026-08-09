@@ -9,6 +9,18 @@ use anyhow::{Context, Result};
 /// wrapped in a workspace by `migrate_mesh`, and the frontend renders its
 /// threads in the sidebar's dedicated Hermes section.
 pub const HERMES_HOME_PROJECT_ID: &str = "hermes-home";
+/// Prefix for the hidden, machine-local project that owns folderless Quick
+/// Chats. Unlike Hermes, local coding agents still need a real cwd, so each
+/// thread gets an isolated directory beneath the project's private root.
+pub const QUICK_HOME_PROJECT_PREFIX: &str = "quick-home:";
+
+pub fn quick_home_project_id(machine_id: &str) -> String {
+    format!("{QUICK_HOME_PROJECT_PREFIX}{machine_id}")
+}
+
+pub fn is_quick_home_project_id(project_id: &str) -> bool {
+    project_id.starts_with(QUICK_HOME_PROJECT_PREFIX)
+}
 const RETIRED_CLAUDE_OPUS_MODEL: &str = "claude-opus-4-8";
 const CURRENT_CLAUDE_OPUS_MODEL: &str = "claude-opus-5";
 use serde::{Deserialize, Serialize};
@@ -172,7 +184,7 @@ impl Store {
             .iter()
             // The Hermes home project is deliberately workspace-less: its
             // threads render in the sidebar's dedicated Hermes section.
-            .filter(|p| p.id != HERMES_HOME_PROJECT_ID)
+            .filter(|p| p.id != HERMES_HOME_PROJECT_ID && !is_quick_home_project_id(&p.id))
             .filter(|p| {
                 !data
                     .workspaces
@@ -747,6 +759,47 @@ impl Store {
         Ok(true)
     }
 
+    /// Lazily create this machine's hidden Quick Chats home. The project gives
+    /// the existing thread protocol a stable owner while remaining absent from
+    /// workspaces; its path is private application data, never a user-chosen
+    /// project folder.
+    pub fn ensure_quick_home(&self) -> Result<bool> {
+        let machine_id = self.local_machine_id();
+        anyhow::ensure!(!machine_id.is_empty(), "machine identity is not ready");
+        let id = quick_home_project_id(&machine_id);
+        let root = self.dir.join("quick");
+        std::fs::create_dir_all(&root)?;
+        restrict_dir(&root);
+        let mut data = self.data.lock().unwrap();
+        if data.projects.iter().any(|p| p.id == id) {
+            return Ok(false);
+        }
+        data.projects.push(Project {
+            id,
+            name: "Quick chats".into(),
+            path: root.to_string_lossy().into_owned(),
+            created_at: now_iso(),
+        });
+        self.flush(&data)?;
+        Ok(true)
+    }
+
+    /// Effective cwd for a thread. Folder threads use their project's real
+    /// root; Quick Chats get one private scratch directory apiece so files and
+    /// attachments from unrelated questions cannot bleed into each other.
+    pub fn thread_working_dir(&self, thread: &Thread) -> Result<PathBuf> {
+        if is_quick_home_project_id(&thread.project_id) {
+            let dir = self.dir.join("quick").join(&thread.id);
+            std::fs::create_dir_all(&dir)?;
+            restrict_dir(&dir);
+            return Ok(dir);
+        }
+        let project = self
+            .project(&thread.project_id)
+            .context("unknown project")?;
+        Ok(PathBuf::from(project.path))
+    }
+
     pub fn create_thread(
         &self,
         project_id: String,
@@ -755,8 +808,14 @@ impl Store {
     ) -> Result<Thread> {
         anyhow::ensure!(self.project(&project_id).is_some(), "unknown project");
         let now = now_iso();
+        let id = new_id();
+        if is_quick_home_project_id(&project_id) {
+            let dir = self.dir.join("quick").join(&id);
+            std::fs::create_dir_all(&dir)?;
+            restrict_dir(&dir);
+        }
         let thread = Thread {
-            id: new_id(),
+            id,
             project_id,
             machine_id: self.local_machine_id(),
             agent,
@@ -886,11 +945,19 @@ impl Store {
 
     pub fn delete_thread(&self, thread_id: &str) -> Result<()> {
         let mut data = self.data.lock().unwrap();
+        let quick_dir = data
+            .threads
+            .iter()
+            .find(|t| t.id == thread_id && is_quick_home_project_id(&t.project_id))
+            .map(|t| self.dir.join("quick").join(&t.id));
         data.threads.retain(|t| t.id != thread_id);
         data.artifacts.retain(|a| a.thread_id != thread_id);
         self.flush(&data)?;
         let _ = std::fs::remove_file(self.events_path(thread_id));
         let _ = std::fs::remove_dir_all(self.thread_artifacts_dir(thread_id));
+        if let Some(dir) = quick_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         Ok(())
     }
 
@@ -1777,6 +1844,62 @@ mod secret_permissions_tests {
         assert_eq!(cfg.token, "legacy-token");
         assert!(!cfg.server_id.is_empty(), "server id was minted on disk");
         assert_eq!(mode(&dir.join("server.json")), 0o600);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod quick_home_tests {
+    use super::*;
+
+    fn settings() -> ThreadSettings {
+        ThreadSettings {
+            model: "test-model".into(),
+            effort: None,
+            wide_context: false,
+            claude_chrome: false,
+            access: Access::Read,
+            mode: Mode::Build,
+            browser_profile_id: None,
+        }
+    }
+
+    #[test]
+    fn quick_threads_are_hidden_and_get_isolated_scratch_directories() {
+        let dir = std::env::temp_dir().join(format!(
+            "threadknot-quick-home-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open_at(dir.clone()).unwrap();
+        store.migrate_mesh("machine-quick").unwrap();
+        assert!(store.ensure_quick_home().unwrap());
+        assert!(!store.ensure_quick_home().unwrap());
+
+        let project_id = quick_home_project_id("machine-quick");
+        assert!(store.project(&project_id).is_some());
+        // Even a later migration must not turn the private home into a visible
+        // workspace section.
+        store.migrate_mesh("machine-quick").unwrap();
+        assert!(store.workspace_for_project(&project_id).is_none());
+
+        let first = store
+            .create_thread(project_id.clone(), Agent::Claude, settings())
+            .unwrap();
+        let second = store
+            .create_thread(project_id, Agent::Codex, settings())
+            .unwrap();
+        let first_dir = store.thread_working_dir(&first).unwrap();
+        let second_dir = store.thread_working_dir(&second).unwrap();
+        assert_ne!(first_dir, second_dir);
+        assert!(first_dir.is_dir());
+        assert!(second_dir.is_dir());
+
+        std::fs::write(first_dir.join("only-here.txt"), b"private").unwrap();
+        assert!(!second_dir.join("only-here.txt").exists());
+        store.delete_thread(&first.id).unwrap();
+        assert!(!first_dir.exists());
+        assert!(second_dir.exists());
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

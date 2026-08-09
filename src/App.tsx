@@ -34,7 +34,11 @@ import type {
   ReviewerPersona,
   ThreadSettings,
 } from "./lib/protocol";
-import { HERMES_HOME_PROJECT_ID } from "./lib/protocol";
+import {
+  HERMES_HOME_PROJECT_ID,
+  isQuickHomeProjectId,
+  quickHomeProjectId,
+} from "./lib/protocol";
 import { isAgentVisible } from "./lib/agentVisibility";
 import { ThreadknotClient } from "./lib/ws";
 import {
@@ -127,6 +131,15 @@ function makeActions(
   const refreshPeers = async () => {
     const { peers, discovered } = await client.request("peer.list", {});
     dispatch({ type: "peers", peers, discovered });
+    // Quick Chats are deliberately absent from the replicated workspace
+    // catalog, so discover each online machine's hidden home directly.
+    for (const peer of peers) {
+      if (peer.online) {
+        void refreshThreads(quickHomeProjectId(peer.machineId), peer.machineId).catch(
+          () => undefined,
+        );
+      }
+    }
   };
 
   const listThemes = async () => {
@@ -151,13 +164,22 @@ function makeActions(
     const local = s.hello?.machineId;
     if (!local) return;
     await Promise.all(
-      s.workspaces.flatMap((w) =>
-        w.members
-          .filter((m) => m.machineId && m.machineId !== local)
-          .map((m) =>
-            refreshThreads(m.projectId, m.machineId).catch(() => undefined),
+      [
+        ...s.workspaces.flatMap((w) =>
+          w.members
+            .filter((m) => m.machineId && m.machineId !== local)
+            .map((m) =>
+              refreshThreads(m.projectId, m.machineId).catch(() => undefined),
+            ),
+        ),
+        ...s.peers
+          .filter((peer) => peer.online)
+          .map((peer) =>
+            refreshThreads(quickHomeProjectId(peer.machineId), peer.machineId).catch(
+              () => undefined,
+            ),
           ),
-      ),
+      ],
     );
   };
 
@@ -633,6 +655,23 @@ function makeActions(
       });
     },
 
+    openQuickDraft(machineId?: string) {
+      const s = getState();
+      const owner = machineId ?? s.hello?.machineId ?? "";
+      if (!owner) return;
+      const draft = defaultDraft(s, quickHomeProjectId(owner), owner);
+      dispatch({
+        type: "openDraft",
+        draft: {
+          ...draft,
+          // A casual question should never inherit a project's broad authority.
+          // The existing composer control can deliberately raise this when the
+          // user actually wants a computer task.
+          settings: { ...draft.settings, access: "read", mode: "build" },
+        },
+      });
+    },
+
     openHermesDraft(hermesAgentId: string) {
       const s = getState();
       const model = s.hello?.agents
@@ -1022,7 +1061,11 @@ function makeActions(
               (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
           )[0];
         if (next) await selectThread(next.id);
-        else dispatch({ type: "openDraft", draft: defaultDraft(s, thread.projectId) });
+        else
+          dispatch({
+            type: "openDraft",
+            draft: defaultDraft(s, thread.projectId, thread.machineId),
+          });
       }
     },
 
@@ -1641,7 +1684,9 @@ export default function App() {
         const projectId = frame.projectId;
         coalesce(`threads:${projectId}`, () => {
           const s = stateRef.current;
-          const owner = remoteMachineId(s, projectOwner(s, projectId));
+          const owner = isQuickHomeProjectId(projectId)
+            ? remoteMachineId(s, frame.origin)
+            : remoteMachineId(s, projectOwner(s, projectId));
           void actionsRef.current.refreshThreads(projectId, owner).catch(() => undefined);
         });
       } else {
