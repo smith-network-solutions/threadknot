@@ -24,6 +24,7 @@ pub mod limits;
 pub mod mcp;
 pub mod mesh;
 pub mod mobile;
+pub mod notices;
 pub mod notifications;
 pub mod peernet;
 pub mod peers;

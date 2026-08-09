@@ -12,6 +12,8 @@ export type NotifyScope = "all" | "selected" | "none";
 export interface NotifyPrefs {
   enabled: boolean;
   sound: boolean;
+  /** Whether user-visible event text may be shown in notification previews. */
+  previews: boolean;
   scope: NotifyScope;
   /** Workspace ids — muted when scope is "all", subscribed when "selected".
    *  One list read two ways, so the UI only ever says "notify me: yes/no". */
@@ -27,6 +29,7 @@ export interface NativeNotificationReceipt {
 
 const LS_NOTIFY_OFF = "threadknot.notifyOff";
 const LS_SOUND_OFF = "threadknot.soundOff";
+const LS_PREVIEWS_OFF = "threadknot.notifyPreviewsOff";
 const LS_SCOPE = "threadknot.notifyScope";
 const LS_WORKSPACES = "threadknot.notifyWorkspaces";
 
@@ -56,6 +59,7 @@ export function getNotifyPrefs(): NotifyPrefs {
   cached ??= {
     enabled: localStorage.getItem(LS_NOTIFY_OFF) == null,
     sound: localStorage.getItem(LS_SOUND_OFF) == null,
+    previews: localStorage.getItem(LS_PREVIEWS_OFF) == null,
     scope: readScope(),
     workspaces: readWorkspaces(),
   };
@@ -67,6 +71,8 @@ export function setNotifyPrefs(p: NotifyPrefs): void {
   else localStorage.setItem(LS_NOTIFY_OFF, "1");
   if (p.sound) localStorage.removeItem(LS_SOUND_OFF);
   else localStorage.setItem(LS_SOUND_OFF, "1");
+  if (p.previews) localStorage.removeItem(LS_PREVIEWS_OFF);
+  else localStorage.setItem(LS_PREVIEWS_OFF, "1");
   localStorage.setItem(LS_SCOPE, p.scope);
   localStorage.setItem(LS_WORKSPACES, JSON.stringify(p.workspaces));
   cached = p;
@@ -153,6 +159,7 @@ async function syncNotifyPrefsToShell(p: NotifyPrefs): Promise<void> {
     // profile on every launch. Scope "none" already silences the device.
     notifyScope: p.enabled ? p.scope : "none",
     notifyWorkspaces: p.workspaces,
+    notificationPreviews: p.previews,
   };
   if (native.token) {
     body.credential = native.token;

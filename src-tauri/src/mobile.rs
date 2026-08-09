@@ -317,6 +317,10 @@ pub struct MobileDevice {
     pub expo_push_token: Option<String>,
     #[serde(default = "default_true")]
     pub notifications_enabled: bool,
+    /// Whether push bodies may include the agent's response, question,
+    /// approval detail, or error. False keeps only generic lifecycle copy.
+    #[serde(default = "default_true")]
+    pub notification_previews: bool,
     /// Whether agent `error` events should also push (noisier).
     #[serde(default)]
     pub notify_errors: bool,
@@ -537,6 +541,7 @@ impl MobileStore {
             credential_hash: hash_credential(&credential),
             expo_push_token: None,
             notifications_enabled: true,
+            notification_previews: true,
             notify_errors: false,
             notify_scope: NotifyScope::All,
             notify_workspaces: Vec::new(),
@@ -849,6 +854,10 @@ mod tests {
         let grant = store.authenticate(credential).unwrap();
         assert_eq!(grant.capabilities, default_capabilities());
         assert_eq!(store.list()[0].capabilities_version, CAPABILITIES_VERSION);
+        assert!(
+            store.list()[0].notification_previews,
+            "legacy devices default to detailed notification previews"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

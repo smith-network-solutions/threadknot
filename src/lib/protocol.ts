@@ -1701,6 +1701,13 @@ export interface EventFrame {
   /** Producing lane; see `PersistedEvent.speaker`. */
   speaker?: string;
   event: AgentEvent;
+  /** Canonical server-composed notification copy. Absent on older peers. */
+  notice?: EventNotice;
+}
+
+export interface EventNotice {
+  title: string;
+  body: string;
 }
 
 export interface StateChangedFrame {

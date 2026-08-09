@@ -812,7 +812,12 @@ impl Hub {
     /// Mirror attention-worthy events to paired phones. Fired at the same
     /// boundary where the event is persisted, so delivery does not depend on
     /// any client holding a WebSocket open.
-    fn push_for_event(&self, thread_id: &str, event: &AgentEvent) {
+    fn push_for_event(
+        &self,
+        thread_id: &str,
+        event: &AgentEvent,
+        notice: Option<&crate::protocol::EventNotice>,
+    ) {
         let Some(push) = self.push.get() else { return };
         let kind = match event {
             AgentEvent::TurnCompleted { .. } => crate::push::PushKind::TurnCompleted,
@@ -841,8 +846,42 @@ impl Hub {
             project_name,
             thread_id: thread_id.to_string(),
             thread_title: thread.title,
+            notice: notice.cloned(),
             only_device: None,
         });
+    }
+
+    /// Build notification copy only after persistence: a completion can then
+    /// safely read the final assistant message and artifact/diff events that
+    /// precede its boundary.
+    fn notice_for_event(
+        &self,
+        thread_id: &str,
+        event: &AgentEvent,
+    ) -> Option<crate::protocol::EventNotice> {
+        if !matches!(
+            event,
+            AgentEvent::TurnCompleted { .. }
+                | AgentEvent::ApprovalRequest { .. }
+                | AgentEvent::QuestionRequest { .. }
+                | AgentEvent::Error { .. }
+        ) {
+            return None;
+        }
+        let thread = self.store.thread(thread_id)?;
+        let project_name = self
+            .store
+            .project(&thread.project_id)
+            .map(|project| project.name)
+            .unwrap_or_default();
+        let completion = matches!(event, AgentEvent::TurnCompleted { .. })
+            .then(|| self.store.completion_notice_context(thread_id));
+        crate::notices::for_event(
+            &thread.title,
+            &project_name,
+            event,
+            completion.as_ref(),
+        )
     }
 
     /// Classify and close work orphaned by the previous Threadknot process.
@@ -1118,7 +1157,8 @@ impl Hub {
             });
         }
 
-        self.push_for_event(thread_id, &event);
+        let notice = self.notice_for_event(thread_id, &event);
+        self.push_for_event(thread_id, &event, notice.as_ref());
 
         let _ = self.broadcast.send(ServerMessage::Event {
             thread_id: thread_id.to_string(),
@@ -1126,6 +1166,7 @@ impl Hub {
             ts,
             speaker: speaker.map(|s| s.to_string()),
             event: event.clone(),
+            notice,
         });
 
         // Parley scheduler: a turn boundary (or a fatal error) scores the

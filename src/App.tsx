@@ -1434,8 +1434,9 @@ function coalesced(delayMs: number): (key: string, run: () => void) => void {
   };
 }
 
-/** What (if anything) an incoming event should announce. */
-function noticeBody(frame: EventFrame): string | null {
+/** Legacy copy for events received from a peer that predates server-composed
+ * notification previews. */
+function legacyNoticeBody(frame: EventFrame): string | null {
   if (frame.seq < 0) return null; // deltas / local-only errors
   switch (frame.event.kind) {
     case "turn_completed":
@@ -1465,8 +1466,8 @@ function maybeNotify(
   dispatch: React.Dispatch<Action>,
   actions: ThreadknotActions,
 ) {
-  const body = noticeBody(frame);
-  if (!body) return;
+  const legacyBody = legacyNoticeBody(frame);
+  if (!frame.notice && !legacyBody) return;
   const prefs = getNotifyPrefs();
   if (!prefs.enabled) return;
   const evThread = findThread(state, frame.threadId);
@@ -1492,7 +1493,9 @@ function maybeNotify(
   if (focused && viewing) return;
 
   const thread = findThread(state, frame.threadId);
-  const title = thread?.title?.trim() || "Threadknot";
+  const detailed = prefs.previews ? frame.notice : undefined;
+  const title = detailed?.title || thread?.title?.trim() || "Threadknot";
+  const body = detailed?.body || legacyBody || "Update available";
   // Inside the mobile shell the server pushes the same moment through Expo —
   // chime/vibrate/system-notify here would double up. Keep only the toast.
   const native = isNativeShell();

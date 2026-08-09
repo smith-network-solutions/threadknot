@@ -327,6 +327,7 @@ async fn a_client_that_stops_reading_is_disconnected_not_buffered_forever() {
             event: threadknot_lib::protocol::AgentEvent::AssistantMessage {
                 text: filler.clone(),
             },
+            notice: None,
         });
     }
 
@@ -365,6 +366,7 @@ async fn a_delta_is_discardable_where_a_persisted_event_is_not() {
             ts: threadknot_lib::protocol::now_iso(),
             speaker: None,
             event: threadknot_lib::protocol::AgentEvent::AssistantMessage { text: text.into() },
+            notice: None,
         });
     };
     // Nothing has been opened on this socket, so it is viewing nothing.

@@ -1184,6 +1184,24 @@ impl Store {
         }
     }
 
+    /// Collect just enough current-turn context to write a useful completion
+    /// notification. The scan stays streaming so a long-running chat does not
+    /// need to materialize its transcript at the turn boundary.
+    pub fn completion_notice_context(&self, thread_id: &str) -> crate::notices::CompletionContext {
+        use std::io::BufRead as _;
+        let mut context = crate::notices::CompletionContext::default();
+        if let Ok(file) = std::fs::File::open(self.events_path(thread_id)) {
+            for line in std::io::BufReader::new(file).lines() {
+                let Ok(line) = line else { break };
+                let Ok(persisted) = serde_json::from_str::<PersistedEvent>(&line) else {
+                    continue;
+                };
+                context.observe(&persisted.event);
+            }
+        }
+        context
+    }
+
     /// Find the requested threads whose persisted transcript contains `query`.
     ///
     /// Only user-visible text is searched (messages, reasoning, tool cards,

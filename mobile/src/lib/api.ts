@@ -361,6 +361,7 @@ export async function updatePushRegistration(
   body: {
     expoPushToken?: string;
     notificationsEnabled?: boolean;
+    notificationPreviews?: boolean;
     notifyErrors?: boolean;
     deviceName?: string;
   },

@@ -834,6 +834,16 @@ pub struct PersistedEvent {
     pub event: AgentEvent,
 }
 
+/// Human-readable copy for an attention-worthy event. This lives on the live
+/// event envelope rather than in [`AgentEvent`], so notification presentation
+/// is not duplicated into the durable transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventNotice {
+    pub title: String,
+    pub body: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
@@ -1088,6 +1098,11 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         speaker: Option<String>,
         event: AgentEvent,
+        /// Precomposed by the thread's owning server so desktop, browser and
+        /// phone pushes all describe the event consistently. Optional for wire
+        /// compatibility with older peers.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        notice: Option<EventNotice>,
     },
     #[serde(rename = "state.changed", rename_all = "camelCase")]
     StateChanged {

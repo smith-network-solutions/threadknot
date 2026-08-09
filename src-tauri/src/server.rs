@@ -1585,6 +1585,7 @@ async fn mobile_push_handler(
         .and_then(|v| v.as_str())
         .map(String::from);
     let enabled = body.get("notificationsEnabled").and_then(|v| v.as_bool());
+    let previews = body.get("notificationPreviews").and_then(|v| v.as_bool());
     let errors = body.get("notifyErrors").and_then(|v| v.as_bool());
     let name = body.get("deviceName").and_then(|v| v.as_str()).map(String::from);
     let scope = body
@@ -1605,6 +1606,9 @@ async fn mobile_push_handler(
         }
         if let Some(v) = enabled {
             d.notifications_enabled = v;
+        }
+        if let Some(v) = previews {
+            d.notification_previews = v;
         }
         if let Some(v) = errors {
             d.notify_errors = v;
@@ -1652,6 +1656,7 @@ async fn mobile_push_test_handler(
         project_name: state.server_name(),
         thread_id: String::new(),
         thread_title: format!("Threadknot {}", env!("CARGO_PKG_VERSION")),
+        notice: None,
         only_device: Some(device_id),
     });
     axum::Json(json!({})).into_response()

@@ -420,6 +420,20 @@ function NotifySettings({ isTauri }: { isTauri: boolean }) {
         </button>
       </div>
       <div className="settings-row">
+        <span className="settings-value">message previews</span>
+        <button
+          type="button"
+          className={`settings-toggle ${prefs.previews ? "on" : ""}`}
+          onClick={() => update({ ...prefs, previews: !prefs.previews })}
+          title="Show response, question, approval, and error text in notifications"
+        >
+          {prefs.previews ? "detailed" : "status only"}
+        </button>
+      </div>
+      <div className="settings-value dim">
+        detailed previews may be visible on your lock screen
+      </div>
+      <div className="settings-row">
         <span className="settings-value">notify me about</span>
         <div className="settings-seg">
           {(Object.keys(SCOPE_LABELS) as NotifyScope[]).map((scope) => (

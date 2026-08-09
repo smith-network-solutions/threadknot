@@ -69,6 +69,9 @@ pub struct PushJob {
     pub project_name: String,
     pub thread_id: String,
     pub thread_title: String,
+    /// Canonical copy shared with desktop/browser notifications. `None` is
+    /// retained for transport tests and callers from older code paths.
+    pub notice: Option<crate::protocol::EventNotice>,
     /// Test pushes target exactly one device; agent events fan out.
     pub only_device: Option<String>,
 }
@@ -131,12 +134,28 @@ async fn worker(
             continue;
         }
 
-        let title = if job.project_name.is_empty() {
+        let (title, body) = match &job.notice {
+            Some(notice) => (notice.title.clone(), notice.body.clone()),
+            None => {
+                let title = if job.project_name.is_empty() {
+                    "Threadknot".to_string()
+                } else {
+                    job.project_name.clone()
+                };
+                let body = if job.thread_title.is_empty() {
+                    job.kind.label().to_string()
+                } else {
+                    format!("{} — {}", job.kind.label(), job.thread_title)
+                };
+                (title, body)
+            }
+        };
+        let status_title = if job.project_name.is_empty() {
             "Threadknot".to_string()
         } else {
             job.project_name.clone()
         };
-        let body = if job.thread_title.is_empty() {
+        let status_body = if job.thread_title.is_empty() {
             job.kind.label().to_string()
         } else {
             format!("{} — {}", job.kind.label(), job.thread_title)
@@ -155,20 +174,30 @@ async fn worker(
         // three times. Expo accepts duplicate recipients without complaint, which
         // is why this went unnoticed — the duplication is only visible on the
         // phone.
-        let messages: Vec<Value> = distinct_tokens(targets.iter().map(|d| d.expo_push_token.as_deref()))
-            .into_iter()
-            .map(|token| {
-                json!({
-                    "to": token,
-                    "title": title,
-                    "body": body,
-                    "data": data,
-                    "sound": "default",
-                    "priority": "high",
-                    "channelId": "threadknot",
+        // Duplicate rows for one physical phone can briefly disagree while a
+        // re-pair is being cleaned up. Privacy fails closed: one row disabling
+        // previews disables them for that token.
+        let previews_by_token = token_preview_preferences(
+            targets
+                .iter()
+                .map(|device| (device.expo_push_token.as_deref(), device.notification_previews)),
+        );
+        let messages: Vec<Value> =
+            distinct_tokens(targets.iter().map(|d| d.expo_push_token.as_deref()))
+                .into_iter()
+                .map(|token| {
+                    let show_preview = previews_by_token.get(token).copied().unwrap_or(false);
+                    json!({
+                        "to": token,
+                        "title": if show_preview { &title } else { &status_title },
+                        "body": if show_preview { &body } else { &status_body },
+                        "data": data,
+                        "sound": "default",
+                        "priority": "high",
+                        "channelId": "threadknot",
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
         for chunk in messages.chunks(BATCH_SIZE) {
             send_batch(&client, &mobile, &receipts, chunk).await;
@@ -190,6 +219,24 @@ fn distinct_tokens<'a>(tokens: impl IntoIterator<Item = Option<&'a str>>) -> Vec
         .flatten()
         .filter(|token| seen.insert(*token))
         .collect()
+}
+
+/// Resolve preview permission per physical push token. Duplicate device rows
+/// fail closed so a stale registration can never expose content a newer row
+/// asked to hide.
+fn token_preview_preferences<'a>(
+    devices: impl IntoIterator<Item = (Option<&'a str>, bool)>,
+) -> HashMap<&'a str, bool> {
+    let mut by_token = HashMap::new();
+    for (token, previews) in devices {
+        if let Some(token) = token {
+            by_token
+                .entry(token)
+                .and_modify(|show| *show &= previews)
+                .or_insert(previews);
+        }
+    }
+    by_token
 }
 
 /// Split a `PUSH_TOO_MANY_EXPERIENCE_IDS` rejection into one token group per
@@ -531,7 +578,7 @@ mod tests {
 
 #[cfg(test)]
 mod dedupe_tests {
-    use super::distinct_tokens;
+    use super::{distinct_tokens, token_preview_preferences};
 
     #[test]
     fn a_phone_paired_more_than_once_is_notified_once() {
@@ -555,6 +602,19 @@ mod dedupe_tests {
             ],
             "first-seen order, one message per phone"
         );
+    }
+
+    #[test]
+    fn duplicate_rows_disable_previews_if_either_row_opts_out() {
+        let prefs = token_preview_preferences([
+            (Some("ExponentPushToken[A]"), true),
+            (Some("ExponentPushToken[A]"), false),
+            (Some("ExponentPushToken[B]"), true),
+            (None, false),
+        ]);
+        assert_eq!(prefs.get("ExponentPushToken[A]"), Some(&false));
+        assert_eq!(prefs.get("ExponentPushToken[B]"), Some(&true));
+        assert_eq!(prefs.len(), 2);
     }
 
     #[test]

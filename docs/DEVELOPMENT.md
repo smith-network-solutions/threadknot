@@ -538,8 +538,11 @@ threadknot` matches your own shell's cmdline.
   (sparse — merge, don't clobber the plan) which `codex.rs` feeds back via
   `usage::publish`. Smoke: `/tmp/threadknot-usage-smoke.mjs` (node ≥22, native
   WebSocket, same port-override procedure as the other smokes).
-- **Notifications** are client-side only (no wire change): `App.tsx::maybeNotify`
-  on persisted turn_completed/error/approval_request/question_request, Traycer's
+- **Notifications** use optional server-composed `notice {title,body}` copy on
+  persisted turn_completed/error/approval_request/question_request frames;
+  older peers omit it and `App.tsx::maybeNotify` retains generic fallback copy. The
+  server composer uses the final assistant message or the actual question,
+  approval detail, and error, and the same copy feeds Expo push. Traycer's
   presence rule (focused + viewing that exact thread → silence; focused on a
   different thread still gets a native alert). Desktop native path is
   the Tauri `notify` command (`notifications.rs`, notify-rust) because the WebKit webview has

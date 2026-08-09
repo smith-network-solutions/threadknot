@@ -962,19 +962,27 @@ sees prior history and reopens where they were. cwd tracking reads `/proc/<pid>/
 (Linux); on macOS/Windows it falls back to the project root. The shell's own command
 history is preserved by the shell itself.
 
-## Notifications (client side)
+## Notifications
 
-Not a wire feature — clients decide from the event stream. Threadknot's frontend
-notifies on persisted `turn_completed` ("Done"), `error` ("Failed"),
-`approval_request` ("Approval needed") and `question_request` ("Question
-waiting"), suppressed when the window is focused AND that thread is open
-(Traycer's presence rule). Being focused on a different Threadknot chat does not
-suppress the OS notification. Surfaces: native desktop notification via the Tauri
+The owning server attaches optional `notice: {title, body}` copy to live,
+persisted `turn_completed`, `error`, `approval_request`, and `question_request`
+event frames. Completion bodies use the current turn's final assistant message,
+with deterministic file/artifact/task fallbacks; the other event kinds use their
+actual question, approval detail, or error. The field is optional so older peers
+remain compatible, and clients retain generic copy as a fallback.
+
+The frontend suppresses the alert when the window is focused AND that thread is
+open (Traycer's presence rule). Being focused on a different Threadknot chat does
+not suppress the OS notification. The same server-composed copy feeds Expo push,
+so desktop/browser and sleeping-phone alerts agree. Surfaces: native desktop notification via the Tauri
 `notify` command (notify-rust with `desktop-entry=threadknot` on Linux and the
 installed `com.smithnetwork.threadknot` AppUserModelID on Windows), Web Notification API where it exists (needs
 HTTPS — not the LAN phone URL), and always an in-app toast + WebAudio chime
 (+ vibration on phones). Toggles persist in localStorage
-(`threadknot.notifyOff`, `threadknot.soundOff`). Settings has a native **send test**
+(`threadknot.notifyOff`, `threadknot.soundOff`,
+`threadknot.notifyPreviewsOff`). Disabling previews keeps generic status copy and
+syncs that privacy choice to the paired-phone record when running in the mobile
+shell. Settings has a native **send test**
 button; `threadknot --test-notification` exercises the same backend without opening
 a window. Windows native notifications require the NSIS-installed build (the
 portable CI executable has no registered toast identity).

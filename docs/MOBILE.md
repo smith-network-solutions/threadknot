@@ -59,7 +59,7 @@ Threadknot server C ─┘                          ├─ biometric/privacy gat
     A bad, expired, or already-redeemed code returns 401 with one message for
     all three — which it was is not something an unauthenticated caller learns.
   - `POST /api/mobile/push` (device cred) — `{expoPushToken?, notificationsEnabled?,
-    notifyErrors?, notifyScope?, notifyWorkspaces?, deviceName?}`. Every field is
+    notificationPreviews?, notifyErrors?, notifyScope?, notifyWorkspaces?, deviceName?}`. Every field is
     optional and absent means "leave unchanged" — an empty `notifyWorkspaces`
     array is a real instruction to clear the list, so the two stay distinct.
   - `POST /api/mobile/push/test` (device cred) — round-trip test notification
