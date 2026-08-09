@@ -86,6 +86,13 @@ yamux = "0.13"
 tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
 
+# Cancelling an `exec` job has to kill the whole process group, not just the
+# shell that launched it — otherwise "cancel" returns instantly and leaves
+# rustc pinning every core. Already in the tree via tokio; named here so the
+# server can call killpg directly.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 strip = true
 lto = true

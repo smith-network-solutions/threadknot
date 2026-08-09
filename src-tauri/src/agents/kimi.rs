@@ -1208,6 +1208,7 @@ fn maybe_start_kimi_subagent(
         subagent_type,
         background,
         prompt,
+        dispatch: None,
     });
     ctx.emit(AgentEvent::SubagentProgress {
         task_id: task_id.clone(),

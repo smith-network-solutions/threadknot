@@ -14,6 +14,8 @@ pub mod clipboard;
 pub mod connector;
 pub mod device;
 pub mod dictation;
+pub mod dispatch;
+pub mod exec;
 pub mod files;
 pub mod git;
 pub mod claudex;
@@ -22,6 +24,7 @@ pub mod ingress;
 pub mod library;
 pub mod limits;
 pub mod mcp;
+pub mod mcp_fleet;
 pub mod mesh;
 pub mod mobile;
 pub mod notices;
@@ -490,6 +493,7 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
         peernet,
         mesh: mesh_identity,
         pairing_challenges: Arc::new(mesh::PairingChallenges::new()),
+        exec: Arc::new(exec::ExecRegistry::new()),
         connector,
         lan_url,
         agents_cache: Arc::new(RwLock::new(None)),

@@ -3,6 +3,7 @@ import type {
   AgentEvent,
   ApprovalKind,
   AttachmentMeta,
+  DispatchAttribution,
   ApprovalOption,
   Question,
   TurnUsage,
@@ -29,9 +30,13 @@ export interface SubagentInfo {
   summary?: string;
   /** Rolling tail of recent activity lines (synchronous subagents stream these). */
   activity: { activity: string; text: string }[];
+  /** Set when this is a dispatched worker rather than a provider's own
+   *  subagent: which machine and harness it runs on, and the thread to open. */
+  dispatch?: DispatchAttribution;
 }
 
 const SUBAGENT_ACTIVITY_TAIL = 8;
+
 
 function isAgentTool(name: string): boolean {
   return name === "Agent" || /^Launching .* agent(?::|$)/i.test(name);
@@ -107,9 +112,29 @@ export function activeSubagents(items: FeedItem[]): SubagentInfo[] {
     }
   }
   const out: SubagentInfo[] = [];
+  const seen = new Set<string>();
   for (let i = start; i < items.length; i++) {
     const it = items[i];
-    if (it.type === "tool" && it.subagent) out.push(it.subagent);
+    if (it.type === "tool" && it.subagent) {
+      out.push(it.subagent);
+      seen.add(it.subagent.taskId);
+    }
+  }
+  // A dispatched worker outlives the turn that sent it — `dispatch` returns
+  // immediately and the planner's turn ends while the worker is still going, so
+  // scoping strictly to the current turn would make live workers vanish from
+  // the HUD the moment the user says anything else. Anything still running is
+  // still worth showing, whichever turn started it.
+  for (let i = 0; i < start; i++) {
+    const it = items[i];
+    if (
+      it.type === "tool" &&
+      it.subagent?.status === "running" &&
+      !seen.has(it.subagent.taskId)
+    ) {
+      out.push(it.subagent);
+      seen.add(it.subagent.taskId);
+    }
   }
   return out;
 }
@@ -510,6 +535,7 @@ function foldEvent(items: FeedItem[], ev: AgentEvent, timestamp?: string): FeedI
         prompt: ev.prompt,
         startedAt: timestamp,
         activity: [],
+        dispatch: ev.dispatch,
       };
       // Attach to the launching tool card (its callId is the toolUseId).
       for (let i = items.length - 1; i >= 0; i--) {
@@ -534,7 +560,10 @@ function foldEvent(items: FeedItem[], ev: AgentEvent, timestamp?: string): FeedI
           id: iid(),
           type: "tool",
           callId: ev.toolUseId || ev.taskId,
-          name: ev.background ? "Agent" : "Task",
+          // A dispatch has no launching tool card by design — there is no
+          // provider tool call behind it — so this synthesized card is its
+          // normal home, not a replay-trimming fallback.
+          name: ev.dispatch ? "Dispatched" : ev.background ? "Agent" : "Task",
           detail: ev.description,
           output: "",
           isError: false,

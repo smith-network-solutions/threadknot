@@ -168,6 +168,89 @@ pub const MAX_LIVE_TERMINAL_SESSIONS: usize = 32;
 /// pleasant to use.
 pub const MAX_LIVE_BROWSER_SESSIONS: usize = 8;
 
+// ------------------------------------------------------------- dispatch ---
+
+/// Hops from a human-driven thread that a dispatch may travel. `1` means a
+/// person's thread can dispatch workers, and those workers cannot dispatch
+/// further.
+///
+/// Prevents: the fork bomb. An agent that can delegate to agents that can
+/// delegate is unbounded work against the owner's subscription, spread across
+/// every machine they own, with nobody in the loop. Raising this to 2 buys
+/// planner → lead → workers and doubles the blast radius; it is deliberately
+/// not a setting.
+pub const MAX_DISPATCH_DEPTH: u8 = 1;
+
+/// Workers one parent thread may have out at once.
+///
+/// A legitimate heavy user: a build fanned out to every machine in the fleet,
+/// plus a couple of parallel implementation jobs. Eight covers that; more is a
+/// planner in a loop.
+pub const MAX_LIVE_DISPATCHES_PER_PARENT: usize = 8;
+
+/// Workers running on one machine, across every parent.
+///
+/// Each is a full agent CLI with its own context and its own compiler; four is
+/// already more than a laptop enjoys.
+pub const MAX_LIVE_DISPATCHES_PER_MACHINE: usize = 4;
+
+/// Finished dispatches kept in the ledger. Live ones are never trimmed.
+pub const MAX_REMEMBERED_DISPATCHES: usize = 200;
+
+/// Longest summary a worker can report back. The summary is the whole channel
+/// between the two agents, so it has to be generous — but it lands in the
+/// parent's context, so it cannot be a transcript.
+pub const DISPATCH_SUMMARY_MAX: usize = 8_000;
+
+/// How often a running worker's activity is forwarded to its parent. Progress
+/// is a reassurance, not a transcript: one line every few seconds is enough to
+/// show a build is alive, and anything faster spends the parent's context on
+/// its own subordinate's tool calls.
+pub const DISPATCH_PROGRESS_INTERVAL: Duration = Duration::from_secs(4);
+
+// ------------------------------------------------------------ exec jobs ---
+
+/// Commands running at once on this machine, across every caller.
+///
+/// Prevents: a fan-out that dispatches a build to every root in a workspace and
+/// discovers the machine has eleven of them. Each job is a shell plus whatever
+/// it spawned — a compiler saturates the box on its own.
+///
+/// A legitimate heavy user: a build, a test run and a couple of quick queries
+/// in flight together. Eight is comfortably past that and still leaves the
+/// desktop usable.
+pub const MAX_LIVE_EXEC_JOBS: usize = 8;
+
+/// Finished jobs kept so their output can still be fetched. Running jobs are
+/// never evicted; these are the corpses, and 64 of them is a few hundred KB.
+pub const MAX_REMEMBERED_EXEC_JOBS: usize = 64;
+
+/// Captured output per stream, per job, front-trimmed like terminal scrollback.
+/// A build that prints a million lines must not become this process's memory
+/// problem, and the *end* of a log is the part that says what went wrong.
+pub const EXEC_STREAM_BUFFER: usize = 256 * 1024;
+
+/// How long `exec.start` waits before answering, so a command that takes 40 ms
+/// comes back complete in one round trip instead of forcing a poll. Must stay
+/// far below `PEER_REQUEST_TIMEOUT` — a routed start that outlives it wedges a
+/// link shared with every other user of that machine.
+pub const EXEC_START_GRACE: Duration = Duration::from_millis(1500);
+
+/// The longest a single `exec.status` may park server-side. Also bounded by the
+/// peer request timeout, for the same reason.
+pub const EXEC_MAX_ROUTED_WAIT: Duration = Duration::from_secs(20);
+
+/// Default wall-clock ceiling for one command.
+pub const EXEC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// The most a caller may ask for. A release build of a Tauri app on a cold
+/// cache genuinely takes tens of minutes, so this is high on purpose; the job
+/// is killed rather than left to run forever.
+pub const EXEC_MAX_TIMEOUT: Duration = Duration::from_secs(3 * 3600);
+
+/// Grace between SIGTERM and SIGKILL when cancelling a job's process group.
+pub const EXEC_KILL_GRACE: Duration = Duration::from_secs(5);
+
 /// Requests that may be queued for one connected peer before the queue is
 /// treated as evidence that the peer is not draining it.
 ///

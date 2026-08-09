@@ -99,6 +99,36 @@ pub struct Participant {
     pub color: String,
 }
 
+/// Why a thread exists, when the answer is "another thread sent it work".
+///
+/// Lives on the *child*, and names the machine to report back to as well as the
+/// thread — the parent may be on a different machine entirely, which is the
+/// whole point. Deliberately the only footprint Dispatch has on [`Thread`]:
+/// everything else about a dispatch lives in the ledger (`dispatch.rs`), so an
+/// install that has never dispatched anything carries no new thread state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchOrigin {
+    /// The `DispatchRecord` id, shared by both machines' ledgers.
+    pub id: String,
+    pub parent_thread_id: String,
+    pub parent_machine_id: String,
+    /// Short human label ("build: macOS"), shown on the child's header.
+    pub label: String,
+}
+
+/// Who is doing a dispatched job, for the parent's agent panel: which machine,
+/// which harness, and which thread to open to watch it work.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchAttribution {
+    pub machine_id: String,
+    /// Display name, so an offline peer's row reads "mac-mini", not a uuid.
+    pub machine_name: String,
+    pub agent: Agent,
+    pub child_thread_id: String,
+}
+
 /// Per-participant native session state for one thread. `covered_until_seq` is
 /// the highest persisted event seq this lane's session has absorbed — either by
 /// running the turns itself or via an injected handoff seed. Events past it are
@@ -426,6 +456,11 @@ pub struct Thread {
     /// back at each turn boundary rather than trusting memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parley: Option<ParleyState>,
+    /// Set when this thread is a dispatched worker — another thread handed it a
+    /// brief. Absent on every thread a human started, which is almost all of
+    /// them. See [`DispatchOrigin`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<DispatchOrigin>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -776,6 +811,8 @@ pub enum AgentEvent {
     #[serde(rename_all = "camelCase")]
     SubagentStarted {
         task_id: String,
+        /// Empty for a Threadknot dispatch: there is no provider tool call to
+        /// nest under, and the client already synthesizes a card in that case.
         tool_use_id: String,
         description: String,
         subagent_type: String,
@@ -783,6 +820,14 @@ pub enum AgentEvent {
         /// The brief delegated to the child, when the provider exposes it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
+        /// Present only for a Threadknot dispatch; absent for a provider's own
+        /// in-process subagent, which by definition runs right here on this
+        /// agent. Boxed and grouped rather than four inline `Option<String>`s:
+        /// `AgentEvent` is a variant of `ServerMessage`, every one of which is
+        /// sized by its largest member, and four more optionals on the rarest
+        /// variant would widen every event this process sends.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dispatch: Option<Box<DispatchAttribution>>,
     },
     /// Live activity from a synchronous subagent (its own assistant text /
     /// tool use), attributed to `taskId`. Transient — a running summary line,
@@ -1197,3 +1242,4 @@ mod tests {
         assert_eq!(artifact_file_name(&rec("Makefile copy", "Makefile")), "Makefile copy");
     }
 }
+

@@ -716,10 +716,54 @@ export type AgentEvent =
       subagentType: string;
       background: boolean;
       prompt?: string;
+      /** Present only for a Threadknot dispatch — a whole agent handed a brief,
+       *  possibly on another machine. Absent for a provider's own subagent. */
+      dispatch?: DispatchAttribution;
     }
   | { kind: "subagent_progress"; taskId: string; activity: string; text: string }
   | { kind: "subagent_completed"; taskId: string; status: string; summary?: string }
   | { kind: "error"; message: string };
+
+/** Who is doing a dispatched job: which machine, which harness, and the thread
+ *  to open to watch it. */
+export interface DispatchAttribution {
+  machineId: string;
+  machineName: string;
+  agent: Agent;
+  childThreadId: string;
+}
+
+export type DispatchStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+/** A ledger entry: one brief handed to one agent on one machine. */
+export interface DispatchRecord {
+  id: string;
+  parentThreadId: string;
+  parentMachineId: string;
+  childThreadId: string;
+  machineId: string;
+  projectId: string;
+  agent: Agent;
+  label: string;
+  status: DispatchStatus;
+  briefPreview?: string;
+  result?: {
+    summary: string;
+    changed?: string[];
+    inferred?: boolean;
+    artifacts?: { id: string; name: string; machineId: string }[];
+  };
+  isLocal: boolean;
+  roleHere: "parent" | "worker" | "both" | "neither";
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
 
 export interface PersistedEvent {
   seq: number;

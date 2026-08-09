@@ -260,7 +260,14 @@ fn safe_file_name(name: &str) -> String {
 
 /// Model a review runs on when the client doesn't name one. Profile-backed
 /// kinds have no guessable default — their "model" is a registry entry.
-fn default_review_model(agent: Agent) -> Result<String> {
+/// The model to use when an agent kind is chosen but a model is not.
+///
+/// Needed anywhere one agent's settings are carried over to a different agent
+/// kind — seating a Parley reviewer, and dispatching a worker. Model ids are
+/// per-provider and do not survive the crossing: handing Codex a
+/// `claude-opus-*` id fails at the API with a message about ChatGPT accounts
+/// that says nothing about the real mistake.
+pub(crate) fn default_model_for(agent: Agent) -> Result<String> {
     Ok(match agent {
         Agent::Claude => claude::DEFAULT_MODEL.to_string(),
         Agent::Codex => "gpt-5.5".to_string(),
@@ -732,6 +739,21 @@ pub struct Hub {
     pub claudex: Arc<crate::claudex::ClaudexRegistry>,
     /// Named reviewer presets for Parley debates (personas.json).
     pub personas: Arc<crate::personas::PersonaRegistry>,
+    /// The dispatch ledger (dispatches.json) — every worker this machine sent
+    /// out and every one it is running for somebody else.
+    pub dispatch: Arc<crate::dispatch::DispatchLedger>,
+    /// What a dispatched worker passed to `report_result`, keyed by its thread,
+    /// waiting for that turn to end. Held here rather than on the record so a
+    /// worker that reports and then keeps talking still ends with its own
+    /// words rather than an inferred summary.
+    dispatch_reports: Mutex<HashMap<String, (bool, crate::dispatch::DispatchResult)>>,
+    /// When each running worker last forwarded progress to its parent, so the
+    /// forwarding can be throttled without a timer per dispatch.
+    dispatch_progress_at: Mutex<HashMap<String, std::time::Instant>>,
+    /// The mesh, attached after construction like `push` — `Hub::new` runs
+    /// before the peer runtime exists, and a worker still has to be able to
+    /// report home from a turn boundary deep inside a driver.
+    peernet: OnceLock<Arc<crate::peernet::PeerNet>>,
     /// User-installed MCP servers (mcp-servers.json). Every local driver reads
     /// this at spawn and injects the enabled entries alongside Threadknot's own
     /// browser server — see `library.rs`.
@@ -778,6 +800,9 @@ impl Hub {
         let library = Arc::new(
             crate::library::McpLibrary::open(store.dir()).expect("open MCP library"),
         );
+        let dispatch = Arc::new(
+            crate::dispatch::DispatchLedger::open(store.dir()).expect("open dispatch ledger"),
+        );
         Arc::new_cyclic(|self_weak| Self {
             self_weak: self_weak.clone(),
             store,
@@ -789,6 +814,10 @@ impl Hub {
             personas,
             library,
             themes,
+            dispatch,
+            dispatch_reports: Mutex::new(HashMap::new()),
+            dispatch_progress_at: Mutex::new(HashMap::new()),
+            peernet: OnceLock::new(),
             claudex_sidecars: Arc::new(crate::claudex::SidecarSupervisor::default()),
             usage: crate::usage::UsageState::default(),
             updates: crate::update::UpdateState::default(),
@@ -807,6 +836,94 @@ impl Hub {
 
     pub fn push(&self) -> Option<&Arc<crate::push::PushService>> {
         self.push.get()
+    }
+
+    pub fn attach_peernet(&self, peernet: Arc<crate::peernet::PeerNet>) {
+        let _ = self.peernet.set(peernet);
+    }
+
+    pub fn peernet(&self) -> Option<Arc<crate::peernet::PeerNet>> {
+        self.peernet.get().cloned()
+    }
+
+    /// Start a dispatched worker's only turn. Separate from `start_turn` so the
+    /// brief is marked `injected` — it is machine-issued, like a Parley role
+    /// prompt, and the transcript should not claim a human typed it.
+    pub fn start_dispatch_turn(self: &Arc<Self>, thread_id: &str, brief: String) -> Result<()> {
+        self.start_turn_as(thread_id, None, brief, Vec::new(), true)
+    }
+
+    /// Record what a worker passed to `report_result`. Kept until its turn ends
+    /// so the last word is the structured one.
+    pub fn stash_dispatch_report(
+        &self,
+        thread_id: &str,
+        ok: bool,
+        result: crate::dispatch::DispatchResult,
+    ) {
+        self.dispatch_reports
+            .lock()
+            .unwrap()
+            .insert(thread_id.to_string(), (ok, result));
+    }
+
+    fn take_dispatch_report(
+        &self,
+        thread_id: &str,
+    ) -> Option<(bool, crate::dispatch::DispatchResult)> {
+        self.dispatch_reports.lock().unwrap().remove(thread_id)
+    }
+
+    /// Forward a worker's activity to the thread that sent it, throttled. The
+    /// parent sees a live row in its agent panel without inheriting its
+    /// subordinate's entire tool stream.
+    fn forward_dispatch_progress(self: &Arc<Self>, thread_id: &str, activity: &str, text: &str) {
+        let Some(record) = self.dispatch.by_child_thread(thread_id) else {
+            return;
+        };
+        if record.status.is_done() {
+            return;
+        }
+        {
+            let mut last = self.dispatch_progress_at.lock().unwrap();
+            let now = std::time::Instant::now();
+            if let Some(previous) = last.get(thread_id) {
+                if now.duration_since(*previous) < crate::limits::DISPATCH_PROGRESS_INTERVAL {
+                    return;
+                }
+            }
+            last.insert(thread_id.to_string(), now);
+        }
+        let text = text.chars().take(240).collect::<String>();
+        if record.is_local() {
+            self.emit(
+                &record.parent_thread_id,
+                AgentEvent::SubagentProgress {
+                    task_id: record.id.clone(),
+                    activity: activity.to_string(),
+                    text,
+                },
+            );
+            return;
+        }
+        let Some(peernet) = self.peernet() else {
+            return;
+        };
+        let activity = activity.to_string();
+        tokio::spawn(async move {
+            let _ = peernet
+                .request(
+                    &record.parent_machine_id,
+                    "mesh.dispatchProgress",
+                    serde_json::json!({
+                        "dispatchId": record.id,
+                        "activity": activity,
+                        "text": text,
+                    }),
+                    None,
+                )
+                .await;
+        });
     }
 
     /// Mirror attention-worthy events to paired phones. Fired at the same
@@ -1183,6 +1300,27 @@ impl Hub {
         };
         if let (Some(completed), Some(hub)) = (boundary, self.self_weak.upgrade()) {
             hub.advance_parley(thread_id, completed, speaker);
+            // A dispatched worker's turn ending IS the dispatch ending. After
+            // parley, because a worker could itself be running a debate, and
+            // the result should reflect where that landed.
+            let reported = hub.take_dispatch_report(thread_id);
+            crate::dispatch::conclude_worker(&hub, thread_id, completed, reported);
+        }
+
+        // Live activity from a worker, forwarded to whoever sent it. Only the
+        // shapes that say something a human would want on a status row —
+        // assistant text and tool starts — never deltas, which would be a
+        // torrent.
+        if let Some(hub) = self.self_weak.upgrade() {
+            match &event {
+                AgentEvent::AssistantMessage { text } => {
+                    hub.forward_dispatch_progress(thread_id, "text", text)
+                }
+                AgentEvent::ToolStart { name, .. } => {
+                    hub.forward_dispatch_progress(thread_id, "tool", name)
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1884,7 +2022,7 @@ impl Hub {
         );
         let model = match spec.model {
             Some(m) if !m.trim().is_empty() => m,
-            _ => default_review_model(agent)?,
+            _ => default_model_for(agent)?,
         };
         let builder = thread.primary_participant();
         let name = spec

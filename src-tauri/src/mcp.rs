@@ -148,7 +148,13 @@ async fn handle_message(state: &ServerState, thread_id: &str, msg: &Value) -> Op
             })
         }
         "ping" => json!({}),
-        "tools/list" => json!({ "tools": tool_specs() }),
+        "tools/list" => {
+            let mut tools = tool_specs();
+            if let Some(list) = tools.as_array_mut() {
+                list.extend(crate::mcp_fleet::tool_specs_for(state, thread_id));
+            }
+            json!({ "tools": tools })
+        }
         "tools/call" => {
             let params = msg.get("params").cloned().unwrap_or(json!({}));
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -215,6 +221,14 @@ async fn call_tool(
 ) -> Value {
     if name == "publish_artifact" {
         return match publish_artifact(state, thread_id, args) {
+            Ok(text) => tool_text_result(id, text, false),
+            Err(e) => tool_text_result(id, format!("error: {e}"), true),
+        };
+    }
+    // The fleet + dispatch family (`mcp_fleet.rs`). Checked before the browser
+    // prefix strip below, which would otherwise mangle a name it doesn't own.
+    if let Some(result) = crate::mcp_fleet::call(state, thread_id, name, args).await {
+        return match result {
             Ok(text) => tool_text_result(id, text, false),
             Err(e) => tool_text_result(id, format!("error: {e}"), true),
         };

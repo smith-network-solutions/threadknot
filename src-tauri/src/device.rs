@@ -21,7 +21,13 @@ use std::sync::Mutex;
 /// in a plaintext URL, so v1 pairs are refused rather than downgraded to.
 pub const MESH_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// `Default` is written out rather than derived because the derive and serde's
+/// field defaults are two different things: a *missing file* takes
+/// `Default::default()`, a *missing field* takes `#[serde(default = …)]`, and
+/// `#[derive(Default)]` would have given a first-run machine
+/// `accepts_dispatch: false` while every upgraded machine got `true`. One
+/// source of truth for both paths.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceFile {
     #[serde(default)]
@@ -38,6 +44,37 @@ struct DeviceFile {
     /// incoming timestamp is newer.
     #[serde(default)]
     profile_updated_at: String,
+    /// Whether this machine will run work another machine's thread sends it.
+    ///
+    /// Being in the mesh is not consent to this. Pairing already lets a peer
+    /// read files and drive threads that exist here; a dispatch starts a *new*
+    /// agent with a brief written by a model on somebody else's box. Default on,
+    /// because a single-owner fleet is the case Threadknot is built for — but
+    /// the knob has to exist before the first dispatch, not after the first
+    /// surprise.
+    #[serde(default = "accept_default")]
+    accepts_dispatch: bool,
+    /// The most access a dispatched worker may run with here, whatever the
+    /// sender asked for. `None` = no ceiling beyond the sender's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_dispatch_access: Option<crate::protocol::Access>,
+}
+
+fn accept_default() -> bool {
+    true
+}
+
+impl Default for DeviceFile {
+    fn default() -> Self {
+        Self {
+            friendly_name: String::new(),
+            avatar: None,
+            color: None,
+            profile_updated_at: String::new(),
+            accepts_dispatch: accept_default(),
+            max_dispatch_access: None,
+        }
+    }
 }
 
 pub struct Device {
@@ -159,7 +196,35 @@ impl Device {
             "version": env!("THREADKNOT_VERSION"),
             "meshVersion": MESH_VERSION,
             "capabilities": capabilities(),
+            "acceptsDispatch": self.accepts_dispatch(),
+            "maxDispatchAccess": self.max_dispatch_access(),
         })
+    }
+
+    pub fn accepts_dispatch(&self) -> bool {
+        self.file.lock().unwrap().accepts_dispatch
+    }
+
+    pub fn max_dispatch_access(&self) -> Option<crate::protocol::Access> {
+        self.file.lock().unwrap().max_dispatch_access
+    }
+
+    /// Settings → machines → "accept dispatched work". Machine-local and never
+    /// gossiped: it is this machine's own policy about itself, and a peer
+    /// learns it by asking (`device.info`), not by being told.
+    pub fn set_dispatch_policy(
+        &self,
+        accepts: Option<bool>,
+        ceiling: Option<Option<crate::protocol::Access>>,
+    ) -> Result<()> {
+        let mut file = self.file.lock().unwrap();
+        if let Some(accepts) = accepts {
+            file.accepts_dispatch = accepts;
+        }
+        if let Some(ceiling) = ceiling {
+            file.max_dispatch_access = ceiling;
+        }
+        self.save(&file)
     }
 }
 
@@ -258,6 +323,14 @@ mod tests {
         assert_eq!(info["machineId"], "machine-1");
         assert_eq!(info["meshVersion"], MESH_VERSION);
         assert!(info["capabilities"].as_array().unwrap().len() >= 2);
+        // A first-run machine and an upgraded one must agree: the derive and
+        // the serde field default are different code paths, and they disagreed.
+        assert_eq!(
+            info["acceptsDispatch"], true,
+            "a machine created from scratch accepts dispatch, like an upgraded one"
+        );
+        let upgraded: DeviceFile = serde_json::from_str("{}").unwrap();
+        assert!(upgraded.accepts_dispatch);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

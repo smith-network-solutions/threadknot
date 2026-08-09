@@ -483,7 +483,10 @@ export function ThreadView() {
             present
           </button>
         )}
-        <AgentHud subagents={subagents} />
+        <AgentHud
+          subagents={subagents}
+          onOpenThread={(threadId) => void actions.selectThread(threadId)}
+        />
         <Composer thread={thread ?? null} />
       </div>
     </section>

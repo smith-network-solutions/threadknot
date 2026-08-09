@@ -31,6 +31,10 @@ pub struct ServerState {
     pub browser_profiles: Arc<crate::browser_profiles::BrowserProfileStore>,
     pub mobile: Arc<MobileStore>,
     pub dictation: Arc<crate::dictation::Dictation>,
+    /// Non-interactive command jobs (`exec.*`). Machine-local and in-memory: a
+    /// job's process dies with this one, so a handle that outlived a restart
+    /// could only ever resolve to a lie.
+    pub exec: Arc<crate::exec::ExecRegistry>,
     /// Every live authenticated socket, so revoking a device (or narrowing its
     /// grants) closes the connections it already holds.
     pub sessions: Arc<crate::sessions::SessionRegistry>,
@@ -283,6 +287,11 @@ pub async fn run(state: ServerState) {
         Arc::clone(&state.mobile),
         state.config.server_id.clone(),
     ));
+    // A dispatched worker reports home from a turn boundary deep inside a
+    // driver, which has no ServerState — so the hub needs its own handle to the
+    // mesh. Attached here for the same reason push is: `Hub::new` runs before
+    // the peer runtime exists.
+    state.hub.attach_peernet(Arc::clone(&state.peernet));
 
     // Probe agent availability/models in the background so `hello` is fast.
     {
@@ -2165,6 +2174,10 @@ const ROUTABLE: &[&str] = &[
     // Editing another machine's REAL profile: the request is forwarded to the
     // owning machine (which strips machineId, runs as master, updates its own
     // device.json, and gossips the change out).
+    // Asking a machine what it is: os, arch, and which agent CLIs it has. The
+    // fleet roster an orchestrating agent reads before choosing where to send
+    // work, and nothing in it is secret (pairing hands out more).
+    "device.info",
     "device.rename",
     "device.setAppearance",
     "thread.list",
@@ -2199,6 +2212,14 @@ const ROUTABLE: &[&str] = &[
     "fs.mkdir",
     "fs.tree",
     "fs.read",
+    // Running a command on a named machine is the point of the family: a thread
+    // pinned to one box still has to build on another. Every arm answers
+    // immediately (the job is the handle), so none of these can hold a peer
+    // request open past its timeout.
+    "exec.start",
+    "exec.status",
+    "exec.cancel",
+    "exec.list",
     "term.list",
     "term.create",
     "term.rename",
@@ -2250,6 +2271,24 @@ fn required_capability(kind: &str) -> Option<Capability> {
     }
     if kind.starts_with("term.") {
         return Some(Capability::Terminal);
+    }
+    // Same authority as a pty, because it is the same authority: arbitrary code
+    // in a project directory. That it captures output instead of echoing it
+    // changes the ergonomics, not the blast radius.
+    if kind.starts_with("exec.") {
+        return Some(Capability::Terminal);
+    }
+    // Sending a dispatch starts an agent that will run commands — on this
+    // machine or on another one — so it needs the grant that running commands
+    // needs. Deliberately not a new capability: an existing phone's stored
+    // grants would have to be re-issued to mean anything, and "may open a
+    // terminal" is exactly the authority being delegated. Reading the ledger is
+    // ordinary thread information.
+    if kind.starts_with("dispatch.") {
+        return Some(match kind {
+            "dispatch.list" | "dispatch.get" => Capability::Threads,
+            _ => Capability::Terminal,
+        });
     }
     if kind.starts_with("fs.") || kind.starts_with("artifacts.") {
         return Some(Capability::Files);
@@ -3947,6 +3986,10 @@ pub async fn handle_request(
         k if k.starts_with("git.") => crate::git::handle(state, k, &p).await,
         "fs.tree" => crate::files::tree(state, &p),
         "fs.read" => crate::files::read(state, &p),
+        k if k.starts_with("exec.") => crate::exec::handle(state, k, &p).await,
+        k if k.starts_with("dispatch.") || k.starts_with("mesh.dispatch") => {
+            crate::dispatch::handle(state, principal, k, &p).await
+        }
         "artifacts.list" => {
             let project_id = field(&p, "projectId")?;
             let artifacts = match p.get("threadId").and_then(|v| v.as_str()) {

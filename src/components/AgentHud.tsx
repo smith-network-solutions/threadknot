@@ -41,9 +41,26 @@ function detailLine(s: SubagentInfo, now: number): string {
   return `working${age ? ` · ${age}` : "…"}`;
 }
 
-function AgentRow({ s, now }: { s: SubagentInfo; now: number }) {
+const AGENT_LABEL: Record<string, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  kimi: "Kimi",
+  hermes: "Hermes",
+  claudex: "Claudex",
+};
+
+function AgentRow({
+  s,
+  now,
+  onOpenThread,
+}: {
+  s: SubagentInfo;
+  now: number;
+  onOpenThread?: (threadId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const expandable = s.status === "running" || s.activity.length > 0 || !!s.summary || !!s.prompt;
+  const d = s.dispatch;
   return (
     <div className={`agent-hud-row status-${s.status}${open ? " open" : ""}`}>
       <button
@@ -57,12 +74,36 @@ function AgentRow({ s, now }: { s: SubagentInfo; now: number }) {
         <div className="agent-hud-row-body">
           <div className="agent-hud-row-head">
             <span className="agent-hud-row-name">{s.description || "subagent"}</span>
-            <span className="agent-hud-badge">{s.background ? "bg" : s.subagentType || "agent"}</span>
+            {d ? (
+              <>
+                <span className="agent-hud-badge is-agent">
+                  {AGENT_LABEL[d.agent] ?? d.agent}
+                </span>
+                <span className="agent-hud-badge is-machine" title={d.machineId}>
+                  {d.machineName}
+                </span>
+              </>
+            ) : (
+              <span className="agent-hud-badge">
+                {s.background ? "bg" : s.subagentType || "agent"}
+              </span>
+            )}
           </div>
           {!open && <div className="agent-hud-row-detail">{detailLine(s, now)}</div>}
         </div>
         {expandable && <ChevronIcon size={13} open={open} className="agent-hud-row-chevron" />}
       </button>
+      {/* A dispatched worker has a real thread of its own. Keeping it one click
+          away is the whole reason a dispatch is a thread and not a summary. */}
+      {d?.childThreadId && onOpenThread && (
+        <button
+          type="button"
+          className="agent-hud-open-thread"
+          onClick={() => onOpenThread(d.childThreadId)}
+        >
+          open its thread →
+        </button>
+      )}
       {open && (
         <div className="agent-hud-activity">
           {s.prompt && (
@@ -100,7 +141,15 @@ function AgentRow({ s, now }: { s: SubagentInfo; now: number }) {
  * (stays visible as the main agent's replies push the cards up); the count is
  * how many are still running. Click to reveal every subagent's status + result.
  */
-export function AgentHud({ subagents }: { subagents: SubagentInfo[] }) {
+export function AgentHud({
+  subagents,
+  onOpenThread,
+}: {
+  subagents: SubagentInfo[];
+  /** Open a dispatched worker's own thread. Absent in contexts that cannot
+   *  navigate (the mobile feed), where the row simply is not clickable. */
+  onOpenThread?: (threadId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ right: number; bottom: number; maxHeight: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -195,7 +244,7 @@ export function AgentHud({ subagents }: { subagents: SubagentInfo[] }) {
             </div>
             <div className="agent-hud-pop-list">
               {ordered(subagents).map((s) => (
-                <AgentRow key={s.taskId} s={s} now={now} />
+                <AgentRow key={s.taskId} s={s} now={now} onOpenThread={onOpenThread} />
               ))}
             </div>
           </div>,

@@ -1347,6 +1347,9 @@ fn handle_task_started(ctx: &DriverCtx, session: &mut Session, v: &Value) {
         subagent_type: str_field(v, "subagent_type"),
         background,
         prompt: None,
+        // A provider's own subagent runs in this process on this machine, so
+        // none of the dispatch attribution applies.
+        dispatch: None,
     });
 }
 

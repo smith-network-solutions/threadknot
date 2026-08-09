@@ -5071,6 +5071,7 @@ dependencies = [
  "hmac",
  "hyper",
  "hyper-util",
+ "libc",
  "local-ip-address",
  "mdns-sd",
  "notify-rust",

@@ -858,6 +858,7 @@ impl Store {
             title: "New thread".into(),
             settings,
             provider_session_id: None,
+            dispatch: None,
             session_anchors: HashMap::new(),
             provider_run_id: None,
             status: ThreadStatus::Idle,
@@ -1253,6 +1254,20 @@ impl Store {
         text.lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect()
+    }
+
+    /// The last thing the assistant actually said, if anything.
+    ///
+    /// The salvage path for a dispatched worker that finished without calling
+    /// `report_result`. Reuses `thread_preview`, which already scans the log
+    /// line-by-line for exactly this value rather than materializing the
+    /// transcript — a worker's log can be long, and this runs at every turn
+    /// boundary on the machine that just did the work.
+    pub fn last_assistant_text(&self, thread_id: &str) -> Option<String> {
+        self.thread_preview(thread_id)
+            .summary
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     /// Summarize a thread's persisted log for a hover card (`thread.preview`):

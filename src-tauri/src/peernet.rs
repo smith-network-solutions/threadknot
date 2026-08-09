@@ -517,6 +517,12 @@ impl PeerNet {
                 });
                 ws.send(Message::Text(frame.to_string().into())).await?;
             }
+            // Any dispatch this machine finished while that one was away still
+            // owes it an answer. Completion is pushed rather than awaited — a
+            // build outlives every timeout between here and there — so this
+            // reconnect is the only thing that closes the loop for a worker
+            // that finished into a void.
+            crate::dispatch::flush_pending_reports(&self.hub, machine_id);
 
             let mut announce_rx = self.announce.subscribe();
             let mut ping = tokio::time::interval(Duration::from_secs(20));
