@@ -22,7 +22,7 @@ import {
 import { createPortal } from "react-dom";
 import type { Project, Thread, Workspace } from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
-import { SHOW_HERMES_AGENTS } from "../lib/agentVisibility";
+import { showHermesAgents } from "../lib/agentVisibility";
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
@@ -2442,7 +2442,7 @@ export function Sidebar({
     try {
       const stored = localStorage.getItem(LS_SIDEBAR_VIEW);
       if (stored === "quick") return "quick";
-      if (SHOW_HERMES_AGENTS && stored === "agents") return "agents";
+      if (showHermesAgents() && stored === "agents") return "agents";
       return "fleet";
     } catch {
       return "fleet";
@@ -2582,7 +2582,7 @@ export function Sidebar({
   const localId = state.hello?.machineId ?? "";
   // Solo windows are project-dedicated — the agents view only exists in the
   // fleet window.
-  const agentsView = SHOW_HERMES_AGENTS && view === "agents" && !soloId;
+  const agentsView = showHermesAgents() && view === "agents" && !soloId;
   const quickView = view === "quick" && !soloId;
   const quickThreads = useMemo(
     () =>
@@ -2616,7 +2616,7 @@ export function Sidebar({
   // Hermes chats asking to be looked at — badges the fleet-view button so a
   // finished turn / pending approval is visible without leaving the workspaces.
   const hermesAttention = useMemo(
-    () => (SHOW_HERMES_AGENTS ? hermesAttentionThreads(state).length : 0),
+    () => (showHermesAgents() ? hermesAttentionThreads(state).length : 0),
     [state],
   );
   // A newer master exists than the build that is running. Pulses regardless of
@@ -3349,7 +3349,7 @@ export function Sidebar({
             <span>quick threads</span>
           </button>
         )}
-        {SHOW_HERMES_AGENTS && !soloId && !agentsView && !quickView && (
+        {showHermesAgents() && !soloId && !agentsView && !quickView && (
           <button
             className={`add-project hermes-entry${hermesAttention > 0 ? " has-attention" : ""}`}
             onClick={() => switchView("agents")}

@@ -25,7 +25,7 @@ import { pickAvatarImage } from "../lib/sidebarImage";
 import { MachineAvatar, machineLook } from "./MachineAvatar";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { hermesPresence } from "./HermesPresence";
-import { isAgentVisible, SHOW_HERMES_AGENTS } from "../lib/agentVisibility";
+import { isAgentVisible, showHermesAgents } from "../lib/agentVisibility";
 import { CustomizeProfileModal } from "./CustomizeProfileModal";
 import { ConfirmRemoveMachineModal } from "./ConfirmRemoveMachineModal";
 import { PairPhoneModal } from "./PairPhoneModal";
@@ -2209,7 +2209,7 @@ function AgentsSettings() {
           ))}
         </div>
       )}
-      {SHOW_HERMES_AGENTS && <HermesAgents />}
+      {showHermesAgents() && <HermesAgents />}
       <ClaudexProfiles />
     </>
   );
