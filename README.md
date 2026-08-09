@@ -5,7 +5,6 @@
 <p align="center"><strong>Every coding agent on one thread.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/smith-network-solutions/threadknot/actions/workflows/build.yml"><img src="https://github.com/smith-network-solutions/threadknot/actions/workflows/build.yml/badge.svg" alt="build"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue" alt="license: FSL-1.1-ALv2"></a>
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey" alt="platforms">
   <img src="https://img.shields.io/badge/rust-stable-orange" alt="rust: stable">
