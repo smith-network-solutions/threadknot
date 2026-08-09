@@ -1,44 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactRecord, Project } from "../lib/protocol";
 import { useStore } from "../state/store";
 import { artifactFileUrl } from "../lib/discovery";
 import { downloadViaShell } from "../lib/download";
 import { timeAgo } from "../lib/format";
-import { Markdown } from "./Markdown";
 import { ChevronIcon, DownloadIcon, FileIcon, TrashIcon } from "./icons";
 import { absoluteProjectPath, ViewerClipboardActions } from "./files/ViewerActions";
+import { ArtifactPreview } from "./artifacts/ArtifactPreview";
 import "../styles/files.css";
-
-const PdfViewer = lazy(() =>
-  import("./files/PdfViewer").then((module) => ({ default: module.PdfViewer })),
-);
-
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "avif", "bmp"]);
-const MARKDOWN_EXTS = new Set(["md", "markdown"]);
-/** Playable inline. Recorded walkthroughs (`browser_record_flow`) land here, and
- *  a training video the user has to download first is a training video nobody
- *  watches. */
-const VIDEO_EXTS = new Set(["mp4", "m4v", "webm", "mov", "ogv"]);
-
-function extOf(path: string): string {
-  const base = path.slice(path.lastIndexOf("/") + 1);
-  const dot = base.lastIndexOf(".");
-  return dot <= 0 ? "" : base.slice(dot + 1).toLowerCase();
-}
-
-/** The artifact's real file extension.
- *
- *  Deliberately NOT taken from `name`: for a published artifact that is the
- *  agent-supplied title ("BTC-USD price — Yahoo Finance"), which usually has no
- *  extension — and a title like "report v1.2" would parse as ext "2". Typing a
- *  PNG off its title sent it down the "can't preview this" path and offered it
- *  as an extensionless download. `relPath` is the file we actually stored. */
-function artifactExt(artifact: ArtifactRecord): string {
-  const ext = extOf(artifact.relPath);
-  if (ext) return ext;
-  const sub = artifact.mimeType.split(";")[0].split("/")[1] ?? "";
-  return sub === "jpeg" ? "jpg" : sub.toLowerCase();
-}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -60,23 +29,9 @@ function ArtifactViewer({
 }) {
   const { state, actions } = useStore();
   const http = state.http;
-  const ext = artifactExt(artifact);
-  const isImage = IMAGE_EXTS.has(ext) || artifact.mimeType.startsWith("image/");
-  const isVideo = VIDEO_EXTS.has(ext) || artifact.mimeType.startsWith("video/");
-  const isPdf = ext === "pdf" || artifact.mimeType === "application/pdf";
-  const isMarkdown = MARKDOWN_EXTS.has(ext);
-  const textLike =
-    !isImage &&
-    !isVideo &&
-    !isPdf &&
-    (/text|json|csv|xml|html|svg/.test(artifact.mimeType) ||
-      ["txt", "csv", "tsv", "json", "html", "htm", "md", "markdown"].includes(ext));
-
   const url = http ? artifactFileUrl(http, artifact.id, { machineId }) : null;
   const absolutePath = absoluteProjectPath(project.path, artifact.relPath);
-  const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const dlRef = useRef<HTMLAnchorElement | null>(null);
@@ -87,27 +42,11 @@ function ArtifactViewer({
     return () => window.clearTimeout(timeout);
   }, [deleteArmed]);
 
-  useEffect(() => {
-    if (!url || isImage || isVideo || isPdf || !textLike) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setText(null);
-    fetch(url)
-      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((t) => !cancelled && setText(t))
-      .catch((e) => !cancelled && setError(String(e?.message ?? e)))
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [url, isImage, isVideo, isPdf, textLike]);
-
   const download = () => {
     if (!http) return;
     const href = artifactFileUrl(http, artifact.id, { download: true, machineId });
     // Prefer relPath's basename: it carries the real extension, whereas `name`
-    // may be an extensionless display title. See `artifactExt`.
+    // may be an extensionless display title.
     const suggested = artifact.relPath.slice(artifact.relPath.lastIndexOf("/") + 1) || artifact.name;
     void downloadViaShell(href, suggested)
       .then((handled) => {
@@ -181,42 +120,8 @@ function ArtifactViewer({
 
       <div className="files-viewer-body">
         {!http && <div className="files-empty">Server connection unavailable.</div>}
-        {loading && <div className="files-empty">Loading…</div>}
         {error && <div className="files-empty files-error">{error}</div>}
-
-        {url && isImage && (
-          <div className="files-media">
-            <img src={url} alt={artifact.name} />
-          </div>
-        )}
-        {url && isVideo && (
-          <div className="files-media">
-            {/* No autoplay: a walkthrough should start when the viewer decides
-                to watch it, not when they happen to open the tab. */}
-            <video src={url} controls playsInline preload="metadata" />
-          </div>
-        )}
-        {url && isPdf && (
-          <Suspense fallback={<div className="files-empty">Opening PDF viewer…</div>}>
-            <PdfViewer src={url} title={artifact.name} />
-          </Suspense>
-        )}
-        {text != null && isMarkdown && (
-          <div className="files-md">
-            <Markdown text={text} />
-          </div>
-        )}
-        {text != null && !isMarkdown && <pre className="files-code">{text}</pre>}
-
-        {url && !isImage && !isVideo && !isPdf && !textLike && (
-          <div className="files-download-prompt">
-            <p className="files-dp-title">{ext ? `.${ext} file` : "File"}</p>
-            <p className="files-dp-sub">{formatBytes(artifact.sizeBytes)}</p>
-            <button type="button" className="files-dl-big" onClick={download}>
-              Download
-            </button>
-          </div>
-        )}
+        {url && <ArtifactPreview artifact={artifact} url={url} mode="full" />}
       </div>
     </div>
   );

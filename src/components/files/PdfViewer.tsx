@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   getDocument,
   GlobalWorkerOptions,
@@ -19,6 +19,107 @@ function errorMessage(error: unknown): string {
   return "The PDF could not be opened.";
 }
 
+function ContinuousPdfPage({
+  document,
+  pageNumber,
+  stageWidth,
+  zoom,
+  scrollRoot,
+}: {
+  document: PDFDocumentProxy;
+  pageNumber: number;
+  stageWidth: number;
+  zoom: number;
+  scrollRoot: RefObject<HTMLDivElement>;
+}) {
+  const shellRef = useRef<HTMLElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [active, setActive] = useState(pageNumber <= 2);
+  const [aspectRatio, setAspectRatio] = useState(8.5 / 11);
+  const [rendering, setRendering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Render shortly before a page reaches the viewport, then keep the bitmap.
+  // This makes a 200-page document scroll like one document without allocating
+  // 200 high-DPI canvases on open.
+  useEffect(() => {
+    const shell = shellRef.current;
+    const root = scrollRoot.current;
+    if (!shell || !root || active) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setActive(true);
+          observer.disconnect();
+        }
+      },
+      { root, rootMargin: "900px 0px", threshold: 0.01 },
+    );
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, [active, scrollRoot]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!active || !canvas || stageWidth <= 0) return;
+    let disposed = false;
+    let renderTask: RenderTask | null = null;
+    setRendering(true);
+    setError(null);
+
+    const render = async () => {
+      const page = await document.getPage(pageNumber);
+      if (disposed) return;
+      const unscaled = page.getViewport({ scale: 1 });
+      setAspectRatio(unscaled.width / unscaled.height);
+      const availableWidth = Math.max(180, stageWidth - 40);
+      const viewport = page.getViewport({ scale: (availableWidth / unscaled.width) * zoom });
+      const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(viewport.width * outputScale);
+      canvas.height = Math.floor(viewport.height * outputScale);
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
+      renderTask = page.render({
+        canvas,
+        viewport,
+        transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
+      });
+      await renderTask.promise;
+    };
+
+    void render()
+      .catch((renderError) => {
+        if (!disposed && !(renderError instanceof RenderingCancelledException)) {
+          setError(errorMessage(renderError));
+        }
+      })
+      .finally(() => !disposed && setRendering(false));
+
+    return () => {
+      disposed = true;
+      renderTask?.cancel();
+    };
+  }, [active, document, pageNumber, stageWidth, zoom]);
+
+  const estimatedWidth = Math.max(180, stageWidth - 40) * zoom;
+  return (
+    <section
+      ref={shellRef}
+      className="files-pdf-page-shell"
+      data-pdf-page={pageNumber}
+      aria-label={`Page ${pageNumber}`}
+      style={{ width: estimatedWidth, minHeight: estimatedWidth / aspectRatio }}
+    >
+      {(rendering || !active) && !error && (
+        <span className="files-pdf-page-status">{active ? `Rendering page ${pageNumber}…` : `Page ${pageNumber}`}</span>
+      )}
+      {error && <span className="files-pdf-page-status files-error">Page {pageNumber} unavailable</span>}
+      <canvas ref={canvasRef} className={rendering ? "is-rendering" : ""} />
+      <span className="files-pdf-page-number" aria-hidden="true">{pageNumber}</span>
+    </section>
+  );
+}
+
 /**
  * PDF.js canvas viewer. Tauri's Linux WebKit runtime has no dependable native
  * PDF plug-in, so an iframe can succeed at loading while displaying a blank
@@ -26,16 +127,12 @@ function errorMessage(error: unknown): string {
  */
 export function PdfViewer({ src, title }: { src: string; title: string }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const renderQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const renderGenerationRef = useRef(0);
 
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [stageWidth, setStageWidth] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,95 +174,34 @@ export function PdfViewer({ src, title }: { src: string; title: string }) {
     };
   }, [src]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!document || !canvas || stageWidth <= 0) return;
-
-    let disposed = false;
-    let renderTask: RenderTask | null = null;
-    const generation = ++renderGenerationRef.current;
-    setRendering(true);
-    setError(null);
-
-    const render = async () => {
-      if (disposed) return;
-      const page = await document.getPage(pageNumber);
-      if (disposed) return;
-
-      const unscaled = page.getViewport({ scale: 1 });
-      const availableWidth = Math.max(180, stageWidth - 40);
-      const fitScale = availableWidth / unscaled.width;
-      const viewport = page.getViewport({ scale: fitScale * zoom });
-      const outputScale = Math.min(window.devicePixelRatio || 1, 2);
-
-      canvas.width = Math.floor(viewport.width * outputScale);
-      canvas.height = Math.floor(viewport.height * outputScale);
-      canvas.style.width = `${Math.floor(viewport.width)}px`;
-      canvas.style.height = `${Math.floor(viewport.height)}px`;
-
-      renderTask = page.render({
-        canvas,
-        viewport,
-        transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
-      });
-      await renderTask.promise;
-    };
-
-    const queued = renderQueueRef.current.catch(() => undefined).then(render);
-    renderQueueRef.current = queued;
-    void queued
-      .catch((renderError) => {
-        if (!disposed && !(renderError instanceof RenderingCancelledException)) {
-          setError(errorMessage(renderError));
-        }
-      })
-      .finally(() => {
-        if (!disposed && renderGenerationRef.current === generation) setRendering(false);
-      });
-
-    return () => {
-      disposed = true;
-      renderTask?.cancel();
-    };
-  }, [document, pageNumber, stageWidth, zoom]);
-
   const pageCount = document?.numPages ?? 0;
-  const goToPage = (next: number) => {
-    if (!pageCount) return;
-    setPageNumber(Math.max(1, Math.min(pageCount, next)));
-    stageRef.current?.scrollTo({ top: 0, left: 0 });
-  };
   const changeZoom = (delta: number) => {
     setZoom((current) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current + delta)));
   };
+  const updateCurrentPage = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const center = stage.scrollTop + stage.clientHeight * 0.42;
+    let nearest = 1;
+    let distance = Number.POSITIVE_INFINITY;
+    stage.querySelectorAll<HTMLElement>("[data-pdf-page]").forEach((page) => {
+      const pageCenter = page.offsetTop + page.offsetHeight / 2;
+      const nextDistance = Math.abs(center - pageCenter);
+      if (nextDistance < distance) {
+        distance = nextDistance;
+        nearest = Number(page.dataset.pdfPage) || 1;
+      }
+    });
+    setPageNumber((current) => current === nearest ? current : nearest);
+  }, []);
 
   return (
     <div className="files-pdf-viewer" aria-label={`PDF viewer: ${title}`}>
       <div className="files-pdf-toolbar">
-        <div className="files-pdf-controls" aria-label="Page navigation">
-          <button
-            type="button"
-            className="files-pdf-tool"
-            aria-label="Previous page"
-            title="Previous page"
-            disabled={!document || pageNumber <= 1}
-            onClick={() => goToPage(pageNumber - 1)}
-          >
-            ‹
-          </button>
+        <div className="files-pdf-controls" aria-label="Current page">
           <span className="files-pdf-page" aria-live="polite">
-            {pageCount ? `${pageNumber} / ${pageCount}` : "— / —"}
+            {pageCount ? `Page ${pageNumber} / ${pageCount}` : "— / —"}
           </span>
-          <button
-            type="button"
-            className="files-pdf-tool"
-            aria-label="Next page"
-            title="Next page"
-            disabled={!document || pageNumber >= pageCount}
-            onClick={() => goToPage(pageNumber + 1)}
-          >
-            ›
-          </button>
         </div>
 
         <div className="files-pdf-controls" aria-label="Zoom controls">
@@ -201,13 +237,86 @@ export function PdfViewer({ src, title }: { src: string; title: string }) {
         </div>
       </div>
 
-      <div ref={stageRef} className="files-pdf-stage">
-        {(loading || rendering) && !error && (
-          <div className="files-pdf-status">{loading ? "Opening PDF…" : "Rendering…"}</div>
-        )}
+      <div ref={stageRef} className="files-pdf-stage" onScroll={updateCurrentPage}>
+        {loading && !error && <div className="files-pdf-status">Opening PDF…</div>}
         {error && <div className="files-pdf-status files-error">{error}</div>}
-        <canvas ref={canvasRef} className={rendering ? "is-rendering" : ""} />
+        {document && (
+          <div className="files-pdf-pages">
+            {Array.from({ length: document.numPages }, (_, index) => (
+              <ContinuousPdfPage
+                key={index + 1}
+                document={document}
+                pageNumber={index + 1}
+                stageWidth={stageWidth}
+                zoom={zoom}
+                scrollRoot={stageRef}
+              />
+            ))}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** Lightweight first-page renderer for an artifact sitting in the chat log.
+ * It deliberately has no toolbar: tapping the preview opens the full viewer. */
+export function PdfPreview({ src, title }: { src: string; title: string }) {
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    const canvas = canvasRef.current;
+    if (!stage || !canvas) return;
+
+    let disposed = false;
+    let renderTask: RenderTask | null = null;
+    const task = getDocument({ url: src });
+
+    const render = async () => {
+      const pdf = await task.promise;
+      if (disposed) return;
+      const page = await pdf.getPage(1);
+      if (disposed) return;
+      const base = page.getViewport({ scale: 1 });
+      const width = Math.max(220, stage.clientWidth);
+      const viewport = page.getViewport({ scale: width / base.width });
+      const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(viewport.width * outputScale);
+      canvas.height = Math.floor(viewport.height * outputScale);
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
+      renderTask = page.render({
+        canvas,
+        viewport,
+        transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
+      });
+      await renderTask.promise;
+    };
+
+    setLoading(true);
+    setError(null);
+    void render()
+      .catch((reason) => {
+        if (!disposed && !(reason instanceof RenderingCancelledException)) setError(errorMessage(reason));
+      })
+      .finally(() => !disposed && setLoading(false));
+
+    return () => {
+      disposed = true;
+      renderTask?.cancel();
+      void task.destroy();
+    };
+  }, [src]);
+
+  return (
+    <div ref={stageRef} className="artifact-pdf-preview" aria-label={`First page of ${title}`}>
+      {loading && !error && <div className="artifact-preview-status">Rendering first page…</div>}
+      {error && <div className="artifact-preview-status is-error">PDF preview unavailable</div>}
+      <canvas ref={canvasRef} />
     </div>
   );
 }

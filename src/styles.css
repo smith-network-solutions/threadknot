@@ -3473,30 +3473,424 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 .row-chevron { color: var(--faint); flex: none; }
 
-.artifact-card { display: flex; align-items: center; }
-.artifact-card .row-head { flex: 1; min-width: 0; }
-.artifact-card .row-glyph { color: var(--brass-hi); }
-.artifact-card .row-name {
-  flex: 0 1 auto;
-  min-width: 0;
+/* Produced files live in the conversation as real media, not receipts that
+   send the reader somewhere else. The preview is deliberately quieter than a
+   user bubble: it reads as a pinned deliverable on the shared timeline. */
+.artifact-card {
+  width: min(100%, 680px);
+  max-width: 74ch;
   overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+.artifact-inline-preview {
+  position: relative;
+  min-height: 148px;
+  max-height: 380px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.018) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.018) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.018) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.018) 75%),
+    var(--bg-raise);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
+}
+
+.artifact-preview-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.artifact-preview-hit:hover { background: rgba(242, 201, 138, 0.025); }
+.artifact-preview-hit:focus-visible { outline: 2px solid var(--brass); outline-offset: -3px; }
+
+.artifact-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 380px;
+  object-fit: contain;
+}
+
+.artifact-preview-video-wrap,
+.artifact-preview-video {
+  display: block;
+  width: 100%;
+}
+.artifact-preview-video-wrap { position: relative; background: #050609; }
+.artifact-preview-video { max-height: 380px; aspect-ratio: 16 / 9; object-fit: contain; }
+.artifact-video-hint {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(8px);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* Full media viewer: custom pinch/pan is necessary because the app viewport is
+   intentionally non-scalable. The transform stays inside this clipped stage,
+   so zooming an image or video never scales Threadknot's surrounding chrome. */
+.artifact-zoom-stage {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: #07090d;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.artifact-zoom-stage.is-zoomed { cursor: grab; }
+.artifact-zoom-stage.is-zoomed:active { cursor: grabbing; }
+.artifact-media-transform {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  transform-origin: center;
+  will-change: transform;
+}
+.artifact-zoom-stage .artifact-preview-image {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+  pointer-events: none;
+}
+.artifact-zoom-stage .artifact-preview-video-wrap {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.artifact-zoom-stage .artifact-preview-video {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+}
+.artifact-media-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  background: rgba(7, 9, 13, 0.76);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+}
+.artifact-media-zoom button {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.84);
+  background: transparent;
+  font: 600 12px/1 var(--font-mono);
+}
+.artifact-media-zoom button:nth-child(2) { min-width: 58px; }
+.artifact-media-zoom button:last-child { border-right: 0; }
+.artifact-media-zoom button:hover:not(:disabled) { color: #fff; background: rgba(255, 255, 255, 0.09); }
+.artifact-media-zoom button:disabled { color: rgba(255, 255, 255, 0.28); }
+.artifact-zoom-stage.kind-video .artifact-media-zoom { top: 12px; bottom: auto; }
+.artifact-pinch-hint {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: 15px;
+  z-index: 3;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(7, 9, 13, 0.66);
+  font: 9px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.artifact-zoom-stage.kind-video .artifact-pinch-hint { top: 15px; bottom: auto; }
+@media (pointer: coarse) {
+  .artifact-pinch-hint { display: block; animation: pinchHintFade 4s 1.2s both; }
+}
+@keyframes pinchHintFade {
+  0%, 72% { opacity: 0.82; }
+  100% { opacity: 0; visibility: hidden; }
+}
+
+.artifact-pdf-preview {
+  position: relative;
+  align-self: stretch;
+  width: 100%;
+  min-height: 220px;
+  max-height: 380px;
+  overflow: hidden;
+  text-align: center;
+  background: #272a31;
+}
+.artifact-pdf-preview canvas {
+  display: inline-block;
+  max-width: 100%;
+  height: auto !important;
+  background: #fff;
+  box-shadow: 0 7px 24px rgba(0, 0, 0, 0.42);
+}
+
+.artifact-preview-status {
+  display: grid;
+  place-items: center;
+  min-height: 148px;
+  width: 100%;
+  padding: 20px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+}
+.artifact-preview-status.is-error { color: var(--red); }
+
+.artifact-preview-markdown {
+  width: 100%;
+  min-height: 200px;
+  padding: 20px 24px;
+  background: var(--panel);
+}
+.artifact-preview-markdown.mode-inline {
+  max-height: 310px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text) 90%, transparent);
+  -webkit-mask-image: linear-gradient(#000 74%, transparent 100%);
+  mask-image: linear-gradient(#000 74%, transparent 100%);
+}
+.artifact-preview-text {
+  align-self: stretch;
+  width: 100%;
+  min-height: 180px;
+  margin: 0;
+  padding: 18px 20px;
+  overflow: auto;
+  color: #b7c1d5;
+  background: #090c12;
+  font: 11.5px/1.58 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.artifact-preview-text.mode-inline { max-height: 290px; overflow: hidden; }
+.artifact-preview-html { width: 100%; height: 100%; min-height: 420px; border: 0; background: #fff; }
+
+.artifact-document-sheet {
+  position: relative;
+  width: min(78%, 410px);
+  min-height: 230px;
+  margin: 26px auto;
+  padding: 28px 30px 24px;
+  overflow: hidden;
+  color: #222936;
+  background: #f6f4ef;
+  border-radius: 3px;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.36), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.artifact-document-corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 42px;
+  height: 42px;
+  background: linear-gradient(225deg, var(--bg-raise) 49%, #d9d6ce 50%);
+}
+.artifact-document-mark { display: flex; align-items: center; gap: 9px; color: #8d5521; }
+.artifact-document-mark strong { font: 800 14px/1 var(--font-ui); letter-spacing: 0.12em; }
+.artifact-document-lines { display: grid; gap: 9px; margin: 28px 0 20px; }
+.artifact-document-lines i { display: block; height: 4px; border-radius: 4px; background: #d5d3cd; }
+.artifact-document-lines i:nth-child(2) { width: 84%; }
+.artifact-document-lines i:nth-child(3) { width: 93%; }
+.artifact-document-lines i:nth-child(4) { width: 58%; }
+.artifact-document-name { overflow: hidden; color: #353c49; font-size: 15px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-document-sheet p { margin: 7px 0 0; color: #777b83; font-size: 11px; line-height: 1.45; }
+.artifact-document-sheet.kind-sheet .artifact-document-mark { color: #237a55; }
+.artifact-document-sheet.kind-slides .artifact-document-mark { color: #b44f32; }
+.artifact-document-sheet.kind-archive .artifact-document-mark { color: #805e9f; }
+
+.artifact-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 9px 10px 9px 12px;
+}
+.artifact-type-badge {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 40px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--brass) 34%, transparent);
+  border-radius: 6px;
+  color: var(--brass-hi);
+  background: var(--brass-dim);
+  font: 700 9px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.artifact-card-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.artifact-card-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.artifact-card .row-detail { flex: 1; }
-.artifact-dl {
-  flex: none;
-  margin-right: 8px;
-  padding: 4px 11px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--brass-hi);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  text-decoration: none;
+.artifact-card-copy span {
+  overflow: hidden;
+  color: var(--faint);
+  font: 10.5px/1.3 var(--font-mono);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.artifact-dl:hover { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 10%, transparent); }
+.artifact-card-copy span i { margin: 0 6px; color: var(--line-2); font-style: normal; }
+.artifact-open-btn {
+  flex: none;
+  min-height: 32px;
+  padding: 5px 13px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--brass-hi);
+  background: transparent;
+  font: 600 11px/1 var(--font-ui);
+}
+.artifact-open-btn:hover { border-color: var(--brass); background: var(--brass-dim); }
+
+.artifact-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background: rgba(4, 5, 8, 0.78);
+  backdrop-filter: blur(9px);
+  animation: artifactBackdropIn 0.14s ease-out;
+}
+.artifact-lightbox {
+  width: min(1160px, 96vw);
+  height: min(900px, 92dvh);
+  min-height: 360px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-2);
+  border-radius: 15px;
+  background: var(--panel);
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.62);
+  animation: artifactViewerIn 0.18s cubic-bezier(.2,.75,.25,1);
+}
+.artifact-lightbox-head {
+  flex: none;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-2) 88%, transparent);
+}
+.artifact-lightbox-close {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--dim);
+  background: transparent;
+}
+.artifact-lightbox-close:hover { color: var(--text); background: var(--panel-3); }
+.artifact-lightbox-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.artifact-lightbox-title strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-lightbox-title span { overflow: hidden; color: var(--faint); font: 10px/1.3 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.artifact-lightbox-actions { display: inline-flex; gap: 4px; }
+.artifact-lightbox-actions button,
+.artifact-lightbox-mobile-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--dim);
+  background: transparent;
+  font: 600 11px/1 var(--font-ui);
+}
+.artifact-lightbox-actions button:hover,
+.artifact-lightbox-mobile-actions button:hover { color: var(--text); border-color: var(--line-2); background: var(--panel-3); }
+.artifact-lightbox-actions button:disabled,
+.artifact-lightbox-mobile-actions button:disabled { opacity: 0.4; }
+.artifact-lightbox-error { flex: none; padding: 7px 12px; color: var(--red); background: var(--red-dim); font-size: 11px; text-align: center; }
+.artifact-lightbox-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: var(--bg-raise);
+  -webkit-overflow-scrolling: touch;
+}
+.artifact-lightbox-body > .artifact-preview-image,
+.artifact-lightbox-body > .artifact-preview-video-wrap {
+  align-self: center;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+.artifact-lightbox-body > .artifact-preview-image { height: auto; object-fit: contain; }
+.artifact-lightbox-body > .artifact-preview-video-wrap .artifact-preview-video { width: min(100%, 1160px); max-height: calc(92dvh - 60px); }
+.artifact-lightbox-body > .artifact-preview-markdown { max-width: 880px; min-height: 100%; padding: 28px clamp(20px, 5vw, 64px); }
+.artifact-lightbox-body > .artifact-preview-text { min-height: 100%; }
+.artifact-lightbox-body > .artifact-document-sheet { align-self: center; min-height: min(70vh, 640px); padding: 48px; }
+.artifact-lightbox-body > .artifact-preview-status { min-height: 100%; }
+.artifact-lightbox-body > .files-pdf-viewer { height: 100%; }
+.artifact-lightbox-body > .artifact-zoom-stage { height: 100%; }
+.artifact-lightbox-mobile-actions { display: none; }
+
+@keyframes artifactBackdropIn { from { opacity: 0; } }
+@keyframes artifactViewerIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
 
 .tool-row.is-error { border-color: rgba(224, 101, 95, 0.4); background: rgba(224, 101, 95, 0.06); }
 .tool-row.is-error .row-glyph, .tool-row.is-error .row-name { color: var(--red); }
@@ -5761,6 +6155,56 @@ body.reordering { cursor: grabbing; user-select: none; }
 
   .feed-inner { padding: 14px 12px 22px; }
   .msg-user { max-width: 88%; }
+  .artifact-card { width: 100%; max-width: none; border-radius: 11px; }
+  .artifact-inline-preview { min-height: 132px; max-height: 310px; }
+  .artifact-preview-image,
+  .artifact-preview-video { max-height: 310px; }
+  .artifact-pdf-preview { min-height: 190px; max-height: 310px; }
+  .artifact-preview-markdown { padding: 16px 18px; }
+  .artifact-document-sheet { width: min(84%, 340px); min-height: 200px; margin: 20px auto; padding: 23px; }
+  .artifact-card-foot { gap: 8px; min-height: 56px; padding-inline: 9px; }
+  .artifact-type-badge { min-width: 36px; padding-inline: 5px; }
+  .artifact-open-btn { min-width: 58px; min-height: 36px; }
+
+  /* The chat viewer becomes a true app surface on phones: no inset desktop
+     dialog, no hidden actions below the home indicator, and no dependency on
+     hover-only controls. */
+  .artifact-lightbox-backdrop { padding: 0; }
+  .artifact-lightbox {
+    width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .artifact-lightbox-head {
+    min-height: calc(54px + env(safe-area-inset-top));
+    padding: calc(7px + env(safe-area-inset-top)) 8px 7px;
+  }
+  .artifact-lightbox-title span { display: none; }
+  .artifact-lightbox-actions { display: none; }
+  .artifact-lightbox-body .files-pdf-toolbar { padding-inline: 6px; }
+  .artifact-lightbox-body .files-pdf-stage { padding: 10px; }
+  .artifact-lightbox-body > .artifact-preview-markdown { padding: 20px 16px; }
+  .artifact-lightbox-body > .artifact-document-sheet {
+    width: min(86%, 430px);
+    min-height: min(66vh, 540px);
+    padding: 28px;
+  }
+  .artifact-lightbox-mobile-actions {
+    flex: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .artifact-lightbox-mobile-actions button {
+    min-height: 42px;
+    border-color: var(--line-2);
+    background: var(--panel-2);
+  }
   /* No width overrides here any more: the bubble IS the phone width, and the
      desktop rules already cap against it (see .msg-user-attachments). Only the
      portrait ceiling is worth keeping, and in px rather than the old 52vh so

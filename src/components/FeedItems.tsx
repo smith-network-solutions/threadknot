@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { FeedItem } from "../state/feed";
 import { findThread, remoteMachineId, useStore } from "../state/store";
 import {
@@ -9,7 +10,8 @@ import {
   formatTokens,
 } from "../lib/format";
 import { repoForPath } from "../lib/git";
-import { attachmentUrl } from "../lib/discovery";
+import { artifactFileUrl, attachmentUrl } from "../lib/discovery";
+import { downloadViaShell } from "../lib/download";
 import { claimJustSent } from "../lib/justSent";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
@@ -20,10 +22,17 @@ import {
   ChevronIcon,
   CopyIcon,
   DiffIcon,
+  DownloadIcon,
+  PopoutIcon,
   ShieldIcon,
   ToolGlyph,
   XIcon,
 } from "./icons";
+import {
+  ArtifactPreview,
+  artifactKind,
+  artifactTypeLabel,
+} from "./artifacts/ArtifactPreview";
 
 import { AGENT_LABELS as AGENT_NAMES, threadParticipant, threadParticipants } from "../lib/protocol";
 
@@ -138,30 +147,132 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** A deliverable the agent produced this turn; opens it in the artifact viewer. */
+/** A deliverable the agent produced this turn. Its durable snapshot is shown
+ * right in the log; a larger viewer is portaled above the feed so conversation
+ * zoom and narrow workspace panes cannot constrain it. */
 function ArtifactCard({ item }: { item: Extract<FeedItem, { type: "artifact" }> }) {
   const { state, dispatch } = useStore();
   const thread = state.feedThreadId ? findThread(state, state.feedThreadId) : null;
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const machineId = remoteMachineId(state, thread?.machineId);
+  const url = state.http ? artifactFileUrl(state.http, item.artifactId, { machineId }) : null;
+  const kind = artifactKind({ ...item, id: item.artifactId });
+  const typeLabel = artifactTypeLabel({ ...item, id: item.artifactId });
 
-  const openViewer = () => {
+  const openArtifacts = () => {
     if (!thread) return;
+    setViewerOpen(false);
     dispatch({ type: "workspace", projectId: thread.projectId, tab: "artifacts" });
     dispatch({ type: "artifactFocus", artifactId: item.artifactId });
   };
 
+  const download = () => {
+    if (!state.http) return;
+    setDownloadError(null);
+    const href = artifactFileUrl(state.http, item.artifactId, { download: true, machineId });
+    const suggested = item.relPath.slice(item.relPath.lastIndexOf("/") + 1) || item.name;
+    void downloadViaShell(href, suggested)
+      .then((handled) => {
+        if (handled) return;
+        const anchor = document.createElement("a");
+        anchor.href = href;
+        anchor.download = suggested;
+        anchor.click();
+      })
+      .catch((error) => setDownloadError(String((error as Error)?.message ?? error)));
+  };
+
+  useEffect(() => {
+    if (!viewerOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setViewerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [viewerOpen]);
+
   return (
-    <div className="row-card artifact-card">
-      <button className="row-head" onClick={openViewer} title="Open in viewer">
-        <span className="row-glyph"><ArchiveIcon size={14} /></span>
-        <span className="row-name">{item.name}</span>
-        <span className="row-detail">
-          {item.description ?? `${item.op === "modified" ? "updated" : "new"} · ${formatBytes(item.sizeBytes)}`}
-        </span>
-      </button>
-      <button className="artifact-dl" onClick={openViewer}>
-        Open
-      </button>
-    </div>
+    <>
+      <article className={`artifact-card artifact-kind-${kind}`}>
+        <div className="artifact-inline-preview">
+          <ArtifactPreview artifact={{ ...item, id: item.artifactId }} url={url} mode="inline" />
+          {kind !== "video" && (
+            <button
+              type="button"
+              className="artifact-preview-hit"
+              onClick={() => setViewerOpen(true)}
+              aria-label={`Open ${item.name} in chat`}
+              title="Open large preview"
+            />
+          )}
+        </div>
+        <div className="artifact-card-foot">
+          <span className="artifact-type-badge" aria-hidden="true">{typeLabel}</span>
+          <div className="artifact-card-copy">
+            <strong title={item.name}>{item.name}</strong>
+            <span>
+              {item.description ?? (item.op === "modified" ? "Updated file" : "New file")}
+              <i>·</i>{formatBytes(item.sizeBytes)}
+            </span>
+          </div>
+          <button type="button" className="artifact-open-btn" onClick={() => setViewerOpen(true)}>
+            Open
+          </button>
+        </div>
+      </article>
+
+      {viewerOpen && createPortal(
+        <div
+          className="artifact-lightbox-backdrop"
+          onMouseDown={(event) => event.target === event.currentTarget && setViewerOpen(false)}
+        >
+          <section className="artifact-lightbox" role="dialog" aria-modal="true" aria-label={`Preview ${item.name}`}>
+            <header className="artifact-lightbox-head">
+              <button
+                type="button"
+                className="artifact-lightbox-close"
+                onClick={() => setViewerOpen(false)}
+                aria-label="Close preview"
+                autoFocus
+              >
+                <XIcon size={17} />
+              </button>
+              <span className="artifact-type-badge">{typeLabel}</span>
+              <div className="artifact-lightbox-title">
+                <strong>{item.name}</strong>
+                <span>{formatBytes(item.sizeBytes)}{item.description ? ` · ${item.description}` : ""}</span>
+              </div>
+              <div className="artifact-lightbox-actions">
+                <button type="button" onClick={openArtifacts} title="Open in Artifacts">
+                  <ArchiveIcon size={14} /><span>Artifacts</span>
+                </button>
+                <button type="button" onClick={download} disabled={!state.http} title="Download file">
+                  <DownloadIcon size={14} /><span>Download</span>
+                </button>
+                <button type="button" onClick={() => setViewerOpen(false)} title="Close preview">
+                  <XIcon size={15} /><span>Close</span>
+                </button>
+              </div>
+            </header>
+            {downloadError && <div className="artifact-lightbox-error">{downloadError}</div>}
+            <div className="artifact-lightbox-body">
+              <ArtifactPreview artifact={{ ...item, id: item.artifactId }} url={url} mode="full" />
+            </div>
+            <footer className="artifact-lightbox-mobile-actions">
+              <button type="button" onClick={openArtifacts}><PopoutIcon size={15} /> Artifacts</button>
+              <button type="button" onClick={download} disabled={!state.http}><DownloadIcon size={15} /> Download</button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
