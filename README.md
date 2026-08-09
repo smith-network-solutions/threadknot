@@ -4,6 +4,13 @@
 
 <p align="center"><strong>Every coding agent on one thread.</strong></p>
 
+<p align="center">
+  <a href="https://github.com/smith-network-solutions/threadknot/actions/workflows/build.yml"><img src="https://github.com/smith-network-solutions/threadknot/actions/workflows/build.yml/badge.svg" alt="build"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue" alt="license: FSL-1.1-ALv2"></a>
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey" alt="platforms">
+  <img src="https://img.shields.io/badge/rust-stable-orange" alt="rust: stable">
+</p>
+
 A Tauri (Rust) desktop app that drives Claude Code, OpenAI Codex, and Kimi Code
 natively over their wire protocols — no terminal wrapping, no Node server — and
 serves the same UI to any browser on your LAN.
@@ -43,46 +50,6 @@ under [Build & run](#build--run).
 Packaged `.deb`/`.rpm`/installer downloads will appear on
 [Releases](https://github.com/smith-network-solutions/threadknot/releases) once
 there's a tagged version; the workflow that builds them is in the repo.
-
-## How it works
-
-```
-┌───────────────────────────────────────────────┐
-│ Tauri shell (desktop window)                  │
-│   └─ React UI  ←────────────┐                 │
-├─────────────────────────────┼─────────────────┤
-│ Rust core (threadknot_lib)  │  same UI, phone │
-│   axum server :42800 ───────┴──── browser ────┼──→ http://<lan-ip>:42800/?token=…
-│   ├─ /ws  (token-gated JSON protocol)         │
-│   ├─ /browser (shared Chrome screencast)      │
-│   ├─ /mcp (agent browser + artifacts)         │
-│   ├─ agent hub (events → JSONL + fanout)      │
-│   ├─ claude driver ── spawns `claude`         │   stream-json + control_request
-│   ├─ codex driver ─── spawns `codex`          │   app-server (JSON-RPC/stdio)
-│   ├─ kimi driver ──── spawns `kimi acp`       │   ACP (JSON-RPC/stdio)
-│   └─ claudex ──────── `claude` + gateway env  │   any model, Claude harness
-└───────────────────────────────────────────────┘
-```
-
-- **Auth is your existing subscriptions**: the local drivers spawn the
-  installed `claude`, `codex`, and `kimi` CLIs, which use their own
-  `claude login` / `codex login` / `kimi login` credentials. No API keys for
-  the local agents. (Claudex is the exception: it runs the same `claude`
-  harness against a compatible gateway, so it takes a base URL and key.)
-- **Projects are folders**; each thread runs one agent in that folder with its
-  own model / effort / access / plan-build settings.
-- **Everything is event-sourced**: normalized agent events are appended to
-  `~/.threadknot/threads/<id>.jsonl` and broadcast to every connected client, so
-  desktop and phone stay in sync and threads replay on reconnect.
-- Provider sessions resume: Claude via `--resume <session_id>`, Codex via
-  `thread/resume`, and Kimi via ACP `session/resume`.
-- **Agent and human share one browser:** the agent gets semantic page snapshots
-  and deterministic browser tools while the Browser workspace shows the same
-  live Chrome, including the agent cursor, target, action status, and failures.
-  You can take over its mouse and keyboard at any time.
-
-Protocol contract: [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Codex app-server
-schemas vendored in [`docs/protocol/`](docs/protocol/).
 
 ## One phone, every machine
 
@@ -135,6 +102,35 @@ Still machine-local: git panes, terminals, and artifact bytes are served only by
 the machine owning the thread, and push notifications don't yet fire for remote
 threads. Details and the remaining work: [`docs/MULTI-MACHINE.md`](docs/MULTI-MACHINE.md).
 
+## Make them argue
+
+Agents are confidently wrong in ways another model often catches immediately.
+So point one at another one's work.
+
+**Review with…** throws one or more reviewers at a live thread. Claude planned
+a refactor; hand the plan to Codex and let it argue. Reviewers are read-only —
+they cannot touch a file, only make a case — and any agent can review, including
+the one that did the work.
+
+```
+ thread: "Rewrite the sync layer"
+
+   Claude  ── plans the refactor ──▶
+                                     Codex    ── "this drops writes on
+                                                  reconnect; here's the case"
+                                     Kimi     ── "agreed, and the retry is
+                                                  unbounded"
+   Claude  ── concedes, revises ──▶
+                                     …until everyone concedes, or you call it
+```
+
+One reviewer at one round is a plain critique. Add reviewers, or raise the round
+count, and it becomes a debate that runs until the participants stop objecting.
+They can be different providers, different models, or the same model twice —
+each with its own model, effort, and access.
+
+Design notes and the reasoning behind the roles: [`docs/PARLEY.md`](docs/PARLEY.md).
+
 ## Controls (per thread)
 
 | Control | Options |
@@ -144,6 +140,46 @@ threads. Details and the remaining work: [`docs/MULTI-MACHINE.md`](docs/MULTI-MA
 | Effort | K3: low / high / max (high default) · other models expose their supported levels (+ **1M context** toggle on supported Claude models via the `[1m]` suffix) |
 | Access | **Read-only** (ask for everything) / **Edits** (auto-accept edits) / **Full** (no prompts) |
 | Mode | **Plan** (read-only planning, plan approval card → one-click "Approve & build") / **Build** |
+
+## How it works
+
+```
+┌───────────────────────────────────────────────┐
+│ Tauri shell (desktop window)                  │
+│   └─ React UI  ←────────────┐                 │
+├─────────────────────────────┼─────────────────┤
+│ Rust core (threadknot_lib)  │  same UI, phone │
+│   axum server :42800 ───────┴──── browser ────┼──→ http://<lan-ip>:42800/?token=…
+│   ├─ /ws  (token-gated JSON protocol)         │
+│   ├─ /browser (shared Chrome screencast)      │
+│   ├─ /mcp (agent browser + artifacts)         │
+│   ├─ agent hub (events → JSONL + fanout)      │
+│   ├─ claude driver ── spawns `claude`         │   stream-json + control_request
+│   ├─ codex driver ─── spawns `codex`          │   app-server (JSON-RPC/stdio)
+│   ├─ kimi driver ──── spawns `kimi acp`       │   ACP (JSON-RPC/stdio)
+│   └─ claudex ──────── `claude` + gateway env  │   any model, Claude harness
+└───────────────────────────────────────────────┘
+```
+
+- **Auth is your existing subscriptions**: the local drivers spawn the
+  installed `claude`, `codex`, and `kimi` CLIs, which use their own
+  `claude login` / `codex login` / `kimi login` credentials. No API keys for
+  the local agents. (Claudex is the exception: it runs the same `claude`
+  harness against a compatible gateway, so it takes a base URL and key.)
+- **Projects are folders**; each thread runs one agent in that folder with its
+  own model / effort / access / plan-build settings.
+- **Everything is event-sourced**: normalized agent events are appended to
+  `~/.threadknot/threads/<id>.jsonl` and broadcast to every connected client, so
+  desktop and phone stay in sync and threads replay on reconnect.
+- Provider sessions resume: Claude via `--resume <session_id>`, Codex via
+  `thread/resume`, and Kimi via ACP `session/resume`.
+- **Agent and human share one browser:** the agent gets semantic page snapshots
+  and deterministic browser tools while the Browser workspace shows the same
+  live Chrome, including the agent cursor, target, action status, and failures.
+  You can take over its mouse and keyboard at any time.
+
+Protocol contract: [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Codex app-server
+schemas vendored in [`docs/protocol/`](docs/protocol/).
 
 ## Prerequisites
 
