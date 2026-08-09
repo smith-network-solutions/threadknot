@@ -8,9 +8,18 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+## v0.1.31 · 2026-08-09
+
+- **Your models become the characters.** Under the Retro-Tech skin, sidebar thread cards and the thread hover preview are full fighter plates: a framed character portrait for the model driving the thread, the title in pixel type, and a vitality strip that turns red and blinks when a thread needs you. An original set of pixel characters ships built in (one per model family), and you can replace any of them under Settings → appearance → model portraits (any image works; it is downscaled automatically), with a per-agent default and one-click reset.
+- **The Arcade theme is now Retro-Tech, and it reaches the whole app.** Files, Git, Artifacts, and the Browser workspace pick up the cabinet look: pixel-face labels and tabs, framed rows, lit active states. The reviewer dialog got more breathing room, sidebar cards read like fighter cards with a bezeled portrait and a framed turn counter, the settled shelf goes attract-mode dim, and hovering a project icon in the rail pops an enlarged badge with its name.
+- **Starting a review debate announces the fight.** ROUND 1 slams across the screen when the reviewers seat, and every following back-and-forth round calls out ROUND 2, ROUND 3, and so on. Retro-Tech only.
+- **The terminal goes green phosphor.** With Retro-Tech on and no custom terminal settings, the terminal turns classic green-on-black with a blinking block cursor and scanlines. Any terminal preference you have set yourself is always respected instead.
+- **New Skins area under Settings → appearance.** See what a skin looks like before applying it (click Preview for screenshots), and switch any part of it off: usage bars, review and rounds, sidebar cards, terminal, or workspace panels, so your own setup survives the skin. Crafted themes can be exported to a file, imported from one, and shared through the community marketplace.
+- **Appearance settings are easier to scan.** Each section now has a clear break, in every theme.
+
 ## v0.1.21 · 2026-08-09
 
-- **The Arcade theme's usage meter is now a Street Fighter health bar.** With the Arcade theme on (Settings → appearance), each subscription window draws as a yellow vitality bar that red damage eats from the left as you spend it. The last sliver strobes when a window is nearly gone, providers square off around a VS badge in the usage popover, and a provider that fails to report its usage is marked K.O. Every other theme looks exactly as before.
+- **The Arcade theme's usage meter is now a retro arcade health bar.** With the Arcade theme on (Settings → appearance), each subscription window draws as a yellow vitality bar that red damage eats from the left as you spend it. The last sliver strobes when a window is nearly gone, providers square off around a VS badge in the usage popover, and a provider that fails to report its usage is marked K.O. Every other theme looks exactly as before.
 
 ## v0.1.176 · 2026-08-08
 

@@ -26,7 +26,7 @@ import type {
 } from "../lib/protocol";
 import { isQuickHomeProjectId } from "../lib/protocol";
 import type { ConnState } from "../lib/ws";
-import { isAgentVisible } from "../lib/agentVisibility";
+import { isAgentVisible, setHermesConfigured } from "../lib/agentVisibility";
 import { applyEvent, type FeedItem } from "./feed";
 
 export const LS_LAST_THREAD = "threadknot.lastThread";
@@ -511,6 +511,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case "http":
       return { ...state, http: action.value };
     case "hello":
+      // The hermes surfaces render only on machines whose registry has
+      // gateways; the hello's hermes entry carries that fact (available is
+      // computed from the registry, not a probe). Fed to the module gate here
+      // because every hello, from every transport, lands in this reducer.
+      setHermesConfigured(
+        action.data.agents.some((a) => a.id === "hermes" && a.available),
+      );
       return { ...state, hello: action.data };
     case "attentionSync":
       return { ...state, attention: action.attention };

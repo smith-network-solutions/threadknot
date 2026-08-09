@@ -947,3 +947,127 @@
     animation: none !important;
   }
 }
+
+/* ===== Retro-Tech skin: browser cockpit chrome =====
+   Gated on the "workspace" skin module. The chrome strip becomes a framed
+   control deck, the tab strip sits on a checkerboard backdrop, and each tab
+   is a slot that lights brass when it holds the live page. House rules: 2px
+   var(--rt-frame) borders over a 1px var(--rt-bezel) ring, hard 2px offset
+   shadows, pixel face for machine text. Nothing here animates, so the
+   reduced-motion block above still covers this file. */
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-chrome {
+  padding: 7px 8px;
+  border-bottom: 2px solid var(--rt-frame, #06070d);
+  box-shadow: inset 0 -1px 0 var(--rt-bezel, #454c78), 0 4px 18px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-btn {
+  border-width: 2px;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"])
+  .browser-btn:hover:not(:disabled):not([aria-disabled="true"]),
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-btn.on {
+  color: var(--brass-hi, #f2c98a);
+  border-color: var(--rt-frame, #06070d);
+  background: var(--panel-2, #141926);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* Heights stay exactly as the base sets them (34px, 40px on touch widths): the
+   frame thickens inward under border-box, so no field or button gets smaller. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-url {
+  border: 2px solid var(--rt-frame, #06070d);
+  box-shadow: inset 0 0 0 1px var(--rt-bezel, #454c78);
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-url::placeholder {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-url:focus {
+  border-color: var(--brass, #d9a35c);
+  box-shadow: inset 0 0 0 1px var(--rt-bezel, #454c78), 0 0 10px rgba(217, 163, 92, 0.28);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-device,
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-profile {
+  border-width: 2px;
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+/* Tab strip on a checkerboard deck, framed off the page below it. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-tabs {
+  min-height: 33px;
+  border-bottom: 2px solid var(--rt-frame, #06070d);
+  background:
+    repeating-conic-gradient(rgba(155, 170, 210, 0.05) 0% 25%, transparent 0% 50%) 0 0 / 8px 8px,
+    var(--bg-raise, #0e111a);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-tab {
+  border-right: 2px solid var(--rt-frame, #06070d);
+  border-top: 2px solid transparent;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-tab.active {
+  border-top-color: var(--brass, #d9a35c);
+  color: var(--brass-hi, #f2c98a);
+  background: var(--panel-2, #141926);
+  box-shadow: inset 0 2px 12px rgba(217, 163, 92, 0.22), 0 0 9px rgba(217, 163, 92, 0.2);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-tab-title {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.01em;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-tab.active .browser-tab-state {
+  border-color: var(--brass-hi, #f2c98a);
+  background: var(--brass-hi, #f2c98a);
+  box-shadow: 0 0 8px rgba(217, 163, 92, 0.75);
+}
+
+/* The new-tab control is the empty slot at the end of the rack: a dashed
+   outline waiting to be filled, echoing the persona roster's add tile. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-new-tab {
+  width: 31px;
+  height: 27px;
+  border: 2px dashed color-mix(in srgb, var(--faint, #687188) 55%, transparent);
+  background: none;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-new-tab:hover {
+  color: var(--brass-hi, #f2c98a);
+  border-color: var(--brass, #d9a35c);
+  background: none;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-connection {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  border-width: 2px;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .browser-connection.live {
+  text-shadow: 0 0 8px rgba(111, 213, 189, 0.6);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"])
+  .browser-connection.live
+  .browser-connection-dot {
+  box-shadow: 0 0 0 3px rgba(111, 213, 189, 0.14), 0 0 12px rgba(111, 213, 189, 0.85);
+}

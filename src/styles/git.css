@@ -748,3 +748,164 @@
   color: var(--text, #d8dde9);
   opacity: 0.85;
 }
+
+/* ===== Retro-Tech skin: git bay chrome =====
+   Gated on the "workspace" skin module. Repo cards become framed plates on a
+   cabinet shelf, chips become small LED tags that keep their existing status
+   colours, and every machine label sits in the pixel face. House rules: 2px
+   var(--rt-frame) borders over a 1px var(--rt-bezel) ring, hard 2px offset
+   shadows, padding up rather than down so nothing gets harder to hit. */
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-head {
+  border-bottom: 2px solid var(--rt-frame, #06070d);
+  box-shadow: inset 0 -1px 0 var(--rt-bezel, #454c78);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-count {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--brass, #d9a35c);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-refresh,
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-mini {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 2px solid var(--rt-frame, #06070d);
+  background: var(--panel-2, #141926);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-refresh {
+  font-size: 10px;
+  padding: 6px 12px 5px;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-mini {
+  font-size: 9px;
+  padding: 4px 8px 3px;
+  min-height: 26px;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-refresh:hover:not(:disabled),
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-mini:hover:not(:disabled) {
+  color: var(--brass-hi, #f2c98a);
+  border-color: var(--brass, #d9a35c);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-mini.danger:hover:not(:disabled) {
+  color: var(--red, #d97b7b);
+  border-color: var(--red, #d97b7b);
+}
+
+/* Fleet cards: one framed plate per repo, sitting proud of the shelf. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-card {
+  padding: 11px 12px 12px;
+  margin-bottom: 10px;
+  border: 2px solid var(--rt-frame, #06070d);
+  background: var(--panel-2, #141926);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-card:hover:not(:disabled) {
+  border-color: var(--brass, #d9a35c);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), 3px 3px 0 rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(217, 163, 92, 0.22);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-card-name {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-card-branch {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--brass-hi, #f2c98a);
+}
+
+/* Chips keep their status colour and gain a frame, so they read as lit tags. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-chip {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 7px 3px;
+  border-width: 2px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  text-shadow: 0 0 7px currentColor;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-section-title {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 5px 4px 4px 7px;
+  border-left: 2px solid var(--brass, #d9a35c);
+  color: var(--brass-hi, #f2c98a);
+  text-shadow: 0 0 8px rgba(217, 163, 92, 0.45);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-section-title.conflict {
+  border-left-color: var(--red, #d97b7b);
+  color: var(--red, #d97b7b);
+  text-shadow: 0 0 8px rgba(217, 123, 123, 0.45);
+}
+
+/* The status letter becomes a stamped cell, framed in its own status colour. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-letter {
+  width: 20px;
+  padding: 2px 0 1px;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10px;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-commit-msg {
+  border: 2px solid var(--rt-frame, #06070d);
+  box-shadow: inset 0 0 0 1px var(--rt-bezel, #454c78);
+}
+
+/* Commit is the pane's one primary action, so it gets the signage face. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-commit-btn {
+  font-family: "Bungee", var(--font-ui, system-ui, sans-serif);
+  font-weight: 400;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 10px 16px;
+  min-height: 36px;
+  border: 2px solid var(--rt-frame, #06070d);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-commit-btn:hover:not(:disabled) {
+  filter: brightness(1.14);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), 2px 2px 0 rgba(0, 0, 0, 0.45),
+    0 0 14px rgba(217, 163, 92, 0.4);
+}
+
+/* Diff gutters: added and removed lines keep their colours and gain a solid
+   bar down the left edge, the way a scoreboard marks a changed row. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-diff-line.add {
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 var(--green, #86c68c);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-diff-line.del {
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 var(--red, #d97b7b);
+}
