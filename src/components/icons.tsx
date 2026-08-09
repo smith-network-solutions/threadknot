@@ -28,29 +28,6 @@ function svg(
   );
 }
 
-/** The brand mark as line art: a serif T with rope turns down the stem.
- * Line weight only — the app icon's version is a rendered bevel, which does
- * not survive being drawn at 26px in a single stroke colour. */
-export const KnotIcon = (p: IconProps) =>
-  svg(
-    <>
-      {/* Crossbar, curling inward at each end the way the mark's serif does. */}
-      <path d="M3.2 6.6c-.7-1 0-2 1.5-2h15.6c1.5 0 2.2 1 1.5 2" />
-      {/* Stem, flaring into the foot. */}
-      <path d="M12 4.6v14.2" />
-      <path d="M9.3 20.7c1-.5 1.8-1.2 2.7-2 .9.8 1.7 1.5 2.7 2" />
-      {/* Three turns of rope. The bows are the strand passing in front of the
-          stem; the short arcs at alternating edges carry it around the back,
-          which is what makes it read as a coil rather than as ribs. */}
-      <path d="M8.6 8.8Q12 10.7 15.4 8.8" />
-      <path d="M15.4 8.8Q16.6 10.6 15.4 12.4" />
-      <path d="M8.6 12.4Q12 14.3 15.4 12.4" />
-      <path d="M8.6 12.4Q7.4 14.2 8.6 16" />
-      <path d="M8.6 16Q12 17.9 15.4 16" />
-    </>,
-    p,
-  );
-
 export const PlusIcon = (p: IconProps) => svg(<path d="M12 5v14M5 12h14" />, p);
 
 /** Two stacked rails — the universal "grab here to reorder" handle. */

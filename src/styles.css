@@ -3273,7 +3273,15 @@ body.reordering { cursor: grabbing; user-select: none; }
   color: var(--faint);
   max-width: 380px;
 }
-.feed-empty-glyph { color: var(--brass); opacity: 0.55; }
+.feed-empty-icon {
+  display: block;
+  width: 38px;
+  height: 38px;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 9px;
+  opacity: 0.72;
+}
 .feed-empty p { font-size: 13.5px; }
 
 .thread-scope-chip {

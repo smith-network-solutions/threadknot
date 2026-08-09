@@ -30,7 +30,7 @@ import { LaneChips, ReviewMenu } from "./ReviewMenu";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
 import { Composer } from "./Composer";
-import { AgentMark, ArrowDownIcon, KnotIcon, MenuIcon, PencilIcon } from "./icons";
+import { AgentMark, ArrowDownIcon, MenuIcon, PencilIcon } from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
 
 /** How close to the end we can be before showing the jump-to-present button. */
@@ -433,7 +433,12 @@ export function ThreadView() {
           {state.feedLoading && <div className="feed-note note-status">loading log…</div>}
           {!state.feedLoading && feedLen === 0 && (
             <div className="feed-empty">
-              <KnotIcon size={26} className="feed-empty-glyph" />
+              <img
+                src="/threadknot-logo.png"
+                alt=""
+                aria-hidden="true"
+                className="feed-empty-icon"
+              />
               <p>
                 {draft
                   ? hermesHome
