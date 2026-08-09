@@ -149,9 +149,14 @@ async fn worker(
             "eventKind": job.kind.event_kind(),
         });
 
-        let messages: Vec<Value> = targets
-            .iter()
-            .filter_map(|d| d.expo_push_token.as_ref())
+        // One message per *token*, not per device row. Re-pairing a phone creates
+        // a new row while the OS keeps handing out the same Expo token, so a
+        // device that had been paired three times received every notification
+        // three times. Expo accepts duplicate recipients without complaint, which
+        // is why this went unnoticed — the duplication is only visible on the
+        // phone.
+        let messages: Vec<Value> = distinct_tokens(targets.iter().map(|d| d.expo_push_token.as_deref()))
+            .into_iter()
             .map(|token| {
                 json!({
                     "to": token,
@@ -171,13 +176,81 @@ async fn worker(
     }
 }
 
+/// Distinct push tokens, in first-seen order.
+///
+/// Re-pairing a phone creates a new device row while the OS keeps handing back
+/// the same Expo token, so a device paired three times appeared three times in
+/// `push_targets` and was sent every notification three times. Expo accepts
+/// duplicate recipients without complaining — it issues a ticket per message —
+/// so nothing upstream reports this. The only place it shows is the phone.
+fn distinct_tokens<'a>(tokens: impl IntoIterator<Item = Option<&'a str>>) -> Vec<&'a str> {
+    let mut seen = std::collections::HashSet::new();
+    tokens
+        .into_iter()
+        .flatten()
+        .filter(|token| seen.insert(*token))
+        .collect()
+}
+
+/// Split a `PUSH_TOO_MANY_EXPERIENCE_IDS` rejection into one token group per
+/// Expo project.
+///
+/// Expo refuses any request whose messages target more than one project, and it
+/// answers with the partition it wants: `details` maps each project slug to the
+/// tokens belonging to it. That is the only way to learn which project a token
+/// belongs to — the token itself does not say, and nothing on this side records
+/// it — so the error body is not merely a diagnostic, it is the fix.
+///
+/// This is not hypothetical tidiness. The Armada→Threadknot rename changed the
+/// EAS project slug, so a device store that had ever paired with the old build
+/// held `@servicestorm/armada-mobile` tokens alongside `.../threadknot-mobile`
+/// ones. Every batch then mixed projects, every batch was rejected whole, and
+/// **no device received anything at all** — including phones running the current
+/// app, whose own token was perfectly valid.
+fn experience_groups(body: &Value) -> Option<Vec<Vec<String>>> {
+    let errors = body.get("errors")?.as_array()?;
+    let conflict = errors
+        .iter()
+        .find(|e| e.get("code").and_then(|c| c.as_str()) == Some("PUSH_TOO_MANY_EXPERIENCE_IDS"))?;
+    let details = conflict.get("details")?.as_object()?;
+    let groups: Vec<Vec<String>> = details
+        .values()
+        .map(|tokens| {
+            tokens
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .filter(|g: &Vec<String>| !g.is_empty())
+        .collect();
+    // One group is not a partition — resending it unchanged would loop.
+    (groups.len() > 1).then_some(groups)
+}
+
 /// POST one batch, retrying transient failures (429 / 5xx / network) with
 /// exponential backoff. Per-ticket errors are terminal for that message.
+///
+/// `allow_split` is false on the retry of a partitioned batch, so a server that
+/// kept reporting a conflict could not drive this into unbounded recursion.
 async fn send_batch(
     client: &reqwest::Client,
     mobile: &MobileStore,
     receipts: &Mutex<Vec<PendingReceipt>>,
     messages: &[Value],
+) {
+    send_batch_inner(client, mobile, receipts, messages, true).await
+}
+
+async fn send_batch_inner(
+    client: &reqwest::Client,
+    mobile: &MobileStore,
+    receipts: &Mutex<Vec<PendingReceipt>>,
+    messages: &[Value],
+    allow_split: bool,
 ) {
     let mut delay = Duration::from_secs(1);
     for attempt in 1..=MAX_ATTEMPTS {
@@ -201,7 +274,40 @@ async fn send_batch(
                 );
             }
             Ok(resp) => {
-                tracing::error!("expo push rejected: HTTP {}", resp.status());
+                let status = resp.status();
+                // Read the body before deciding anything. Logging the status
+                // alone is what made this class of failure undiagnosable: a bare
+                // "HTTP 400" hid a message that named both the cause and the
+                // remedy, and notifications were silently dead for days.
+                let body: Value = resp.json().await.unwrap_or_default();
+
+                if allow_split {
+                    if let Some(groups) = experience_groups(&body) {
+                        tracing::warn!(
+                            "expo push spans {} projects; resending one request per project",
+                            groups.len()
+                        );
+                        for tokens in groups {
+                            let subset: Vec<Value> = messages
+                                .iter()
+                                .filter(|m| {
+                                    m.get("to")
+                                        .and_then(|t| t.as_str())
+                                        .is_some_and(|t| tokens.iter().any(|k| k == t))
+                                })
+                                .cloned()
+                                .collect();
+                            if subset.is_empty() {
+                                continue;
+                            }
+                            Box::pin(send_batch_inner(client, mobile, receipts, &subset, false))
+                                .await;
+                        }
+                        return;
+                    }
+                }
+
+                tracing::error!("expo push rejected: HTTP {status}: {body}");
                 return;
             }
             Err(e) => {
@@ -317,5 +423,141 @@ async fn receipt_loop(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The verbatim body Expo returned for this machine on 2026-08-09, when the
+    /// device store still held tokens from the pre-rename `armada-mobile`
+    /// project. Kept as-is rather than paraphrased: the shape of this response is
+    /// the contract this parsing depends on, and a hand-written approximation
+    /// would not have caught that `details` is keyed by project slug.
+    const CONFLICT: &str = r#"{"errors":[{"code":"PUSH_TOO_MANY_EXPERIENCE_IDS","type":"USER",
+      "message":"All push notification messages in the same request must be for the same project; check the details field to investigate conflicting tokens.",
+      "details":{"@servicestorm/armada-mobile":["ExponentPushToken[EXAMPLEtokenOldOne0001]","ExponentPushToken[EXAMPLEtokenOldTwo0002]","ExponentPushToken[EXAMPLEtokenOldThree03]"],
+                 "@servicestorm/threadknot-mobile":["ExponentPushToken[EXAMPLEtokenCurrent001]"]},
+      "isTransient":false,"requestId":"b81f8eb5-4ae7-4be5-bfa8-542d95226530"}]}"#;
+
+    #[test]
+    fn a_project_conflict_is_split_into_one_group_per_project() {
+        let body: Value = serde_json::from_str(CONFLICT).unwrap();
+        let groups = experience_groups(&body).expect("two projects must partition");
+        assert_eq!(groups.len(), 2);
+        let sizes = {
+            let mut s: Vec<usize> = groups.iter().map(Vec::len).collect();
+            s.sort_unstable();
+            s
+        };
+        assert_eq!(sizes, vec![1, 3], "three old-project tokens and one current");
+        assert!(
+            groups
+                .iter()
+                .flatten()
+                .all(|t| t.starts_with("ExponentPushToken[")),
+            "groups carry push tokens, which is what messages are matched on"
+        );
+    }
+
+    /// Only a genuine partition may be retried. A single group means resending
+    /// the same set, which would spin.
+    #[test]
+    fn a_single_group_is_not_treated_as_a_partition() {
+        let body: Value = serde_json::json!({
+            "errors": [{
+                "code": "PUSH_TOO_MANY_EXPERIENCE_IDS",
+                "details": { "@servicestorm/threadknot-mobile": ["ExponentPushToken[only]"] }
+            }]
+        });
+        assert!(experience_groups(&body).is_none());
+    }
+
+    #[test]
+    fn unrelated_rejections_are_not_mistaken_for_a_project_conflict() {
+        for body in [
+            serde_json::json!({"errors": [{"code": "PUSH_TOO_MANY_NOTIFICATIONS"}]}),
+            serde_json::json!({"errors": []}),
+            serde_json::json!({"data": [{"status": "ok", "id": "x"}]}),
+            serde_json::json!({}),
+        ] {
+            assert!(
+                experience_groups(&body).is_none(),
+                "must not split on {body}"
+            );
+        }
+    }
+
+    /// The partition Expo returns has to be usable to filter the messages we
+    /// already built, which means matching on the `to` field.
+    #[test]
+    fn groups_select_the_messages_they_describe() {
+        let body: Value = serde_json::from_str(CONFLICT).unwrap();
+        let groups = experience_groups(&body).unwrap();
+        let messages: Vec<Value> = [
+            "ExponentPushToken[EXAMPLEtokenOldOne0001]",
+            "ExponentPushToken[EXAMPLEtokenCurrent001]",
+            "ExponentPushToken[EXAMPLEtokenOldThree03]",
+        ]
+        .iter()
+        .map(|t| serde_json::json!({ "to": t, "title": "x", "body": "y" }))
+        .collect();
+
+        let mut selected = 0;
+        for tokens in &groups {
+            let subset: Vec<&Value> = messages
+                .iter()
+                .filter(|m| {
+                    m.get("to")
+                        .and_then(|t| t.as_str())
+                        .is_some_and(|t| tokens.iter().any(|k| k == t))
+                })
+                .collect();
+            selected += subset.len();
+        }
+        assert_eq!(
+            selected,
+            messages.len(),
+            "every message must land in exactly one project's request"
+        );
+    }
+}
+
+#[cfg(test)]
+mod dedupe_tests {
+    use super::distinct_tokens;
+
+    #[test]
+    fn a_phone_paired_more_than_once_is_notified_once() {
+        // Exactly the state found on this machine: six device rows, four tokens,
+        // two of them repeated because the phone and iPad had re-paired.
+        let rows = [
+            Some("ExponentPushToken[A]"),
+            Some("ExponentPushToken[B]"),
+            Some("ExponentPushToken[A]"),
+            Some("ExponentPushToken[B]"),
+            Some("ExponentPushToken[C]"),
+            Some("ExponentPushToken[D]"),
+        ];
+        assert_eq!(
+            distinct_tokens(rows),
+            vec![
+                "ExponentPushToken[A]",
+                "ExponentPushToken[B]",
+                "ExponentPushToken[C]",
+                "ExponentPushToken[D]"
+            ],
+            "first-seen order, one message per phone"
+        );
+    }
+
+    #[test]
+    fn devices_without_a_token_are_skipped_rather_than_sent_empty() {
+        assert_eq!(
+            distinct_tokens([None, Some("ExponentPushToken[A]"), None]),
+            vec!["ExponentPushToken[A]"]
+        );
+        assert!(distinct_tokens([None, None]).is_empty());
     }
 }

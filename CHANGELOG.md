@@ -10,6 +10,8 @@ Format (parsed by build.rs, keep it exact):
 
 ## v0.1.176 · 2026-08-08
 
+- **Push notifications work again.** Every notification had been failing since the rename: phones paired with the old Armada app left push tokens behind, and the notification service rejects a batch that mixes two apps — so one stale token stopped notifications reaching *every* phone, including ones running the current app. Threadknot now sends each app's phones their own batch.
+- A phone paired more than once no longer gets the same notification two or three times.
 - **Connecting a machine to the hosted relay is now one button.** Settings → reachable from anywhere → **connect this machine** opens app.threadknot.ai, you sign in and press Approve, and the machine picks it up by itself — there is nothing to copy, and no code to carry to your phone. Pasting a token still works and is tucked under "or paste a token from the console" for scripted setups.
 - **Your trial now starts when you connect your first machine, not when you sign up.** Signing up to look around no longer quietly burns trial days before you have used anything.
 - **Threadknot warns you before the trial ends.** Settings shows the days remaining once you are inside the last week, and says what happens when it runs out: sessions already running are never cut off, only new ones stop.
