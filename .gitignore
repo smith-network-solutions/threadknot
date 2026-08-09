@@ -11,11 +11,23 @@ build-tauri.log
 *.pem
 *.key
 
-# The hosted relay and its console live in a separate private repository:
-# a separate private repository. They are ignored here rather than
-# merely absent, because both directories still exist in a working copy that was
-# split from the monorepo — and a single `git add -A` would put the sellable
-# service back into the repository that is intended to be published. Do not
+# Maintainer-only agent context: the working-tree layout, the cross-repository
+# routine, this machine's launchers. `CLAUDE.md` IS tracked and public — anything
+# that names the private repository or an absolute path on this box goes in
+# `CLAUDE.local.md`, which CLAUDE.md imports and which never leaves this disk.
+CLAUDE.local.md
+**/CLAUDE.local.md
+.claude/
+**/.claude/
+
+# Screenshots and crops dropped at the repository root while working on the UI.
+# They are throwaway, and `git add -A` would publish them.
+/*.png
+
+# The hosted relay and its console are a separate, private service. They are
+# ignored here rather than merely absent, because both directories still exist in
+# a working copy split from the old monorepo — and a single `git add -A` would put
+# the service back into the repository that is intended to be published. Do not
 # remove these two lines to "tidy up".
 /relay/
 /console/

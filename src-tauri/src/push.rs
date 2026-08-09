@@ -430,16 +430,21 @@ async fn receipt_loop(
 mod tests {
     use super::*;
 
-    /// The verbatim body Expo returned for this machine on 2026-08-09, when the
-    /// device store still held tokens from the pre-rename `armada-mobile`
-    /// project. Kept as-is rather than paraphrased: the shape of this response is
-    /// the contract this parsing depends on, and a hand-written approximation
-    /// would not have caught that `details` is keyed by project slug.
+    /// The body Expo returned for this machine on 2026-08-09, when the device
+    /// store still held tokens from the pre-rename `armada-mobile` project. The
+    /// structure is verbatim rather than paraphrased: it is the contract this
+    /// parsing depends on, and a hand-written approximation would not have caught
+    /// that `details` is keyed by project slug.
+    ///
+    /// The **token values and request id are synthetic**, and must stay that way.
+    /// A real `ExponentPushToken` is enough for anyone to push to that device, so
+    /// they do not belong in a published repository. Only their shape and their
+    /// grouping matter here, both of which are preserved.
     const CONFLICT: &str = r#"{"errors":[{"code":"PUSH_TOO_MANY_EXPERIENCE_IDS","type":"USER",
       "message":"All push notification messages in the same request must be for the same project; check the details field to investigate conflicting tokens.",
       "details":{"@servicestorm/armada-mobile":["ExponentPushToken[EXAMPLEtokenOldOne0001]","ExponentPushToken[EXAMPLEtokenOldTwo0002]","ExponentPushToken[EXAMPLEtokenOldThree03]"],
                  "@servicestorm/threadknot-mobile":["ExponentPushToken[EXAMPLEtokenCurrent001]"]},
-      "isTransient":false,"requestId":"b81f8eb5-4ae7-4be5-bfa8-542d95226530"}]}"#;
+      "isTransient":false,"requestId":"00000000-0000-4000-8000-000000000000"}]}"#;
 
     #[test]
     fn a_project_conflict_is_split_into_one_group_per_project() {

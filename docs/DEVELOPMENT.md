@@ -38,7 +38,6 @@ threadknot/
 ├── skills/                     ← Threadknot's OWN clean-room document skills
 │   └── {docx,xlsx,pptx,pdf}/   ← SKILL.md + scripts/, embedded via bundled.rs
 ├── relay-protocol/             ← connector↔relay wire contract; STANDALONE crate (see below)
-├── relay/                      ← the hosted relay: its own workspace (relayd + control-plane)
 ├── scripts/mesh-smoke.py       ← two sandboxed instances, pairs them, asserts the mesh forms
 └── docs/{PROTOCOL.md, DEVELOPMENT.md, protocol/*}
 ```
@@ -171,9 +170,9 @@ so two instances need at least three ports of clearance between them.
 > its source port. It is intermittent, it looks like a stale process, and killing
 > things does not fix it. Two test instances hit this the first time
 > `mesh-smoke.py` was run. **Give test instances ports below 32768** (the smoke
-> script uses 22810 and 22820 for exactly this reason). The relay box takes the
-> other route and reserves its 42900–42901 with `ip_local_reserved_ports`, which
-> is the right fix for a fixed service port but not something to demand of a
+> script uses 22810 and 22820 for exactly this reason). A dedicated server takes
+> the other route and reserves its fixed ports with `ip_local_reserved_ports`,
+> which is the right fix for a service but not something to demand of a
 > developer's machine.
 
 A second instance needs three things separated, not two:
@@ -211,12 +210,8 @@ cd src-tauri && cargo build && cargo clippy      # Rust
 cd ..        && npm run build                     # frontend typecheck + bundle
 ```
 
-The relay is a separate workspace with its own gate — see
-[the relay section](#the-relay-workspace-relay) below. It must build **and test
-with no `DATABASE_URL` set**: the Postgres-backed tests skip loudly rather than
-failing, because the production box carries a `DATABASE_URL` pointing at the live
-database in its service environment and a `cargo test` run there must not migrate
-or write to it.
+A change to `relay-protocol/` has a second gate that is **not in this
+repository** — see [the wire contract](#the-wire-contract-relay-protocol) below.
 
 Then a **behavioral** smoke test with a real agent turn (do NOT just trust compiles):
 run `threadknot-headless`, grab the token from its stdout (or `~/.threadknot/server.json`),
@@ -808,39 +803,29 @@ in a temp directory and published only once complete. Nothing executes during an
 install. Guards: `safe_join` refuses any path escaping the skill folder, and
 `MAX_SKILL_FILES`/`MAX_SKILL_BYTES` stop someone pointing it at a repository.
 
-## The relay workspace (`relay/`)
+## The wire contract (`relay-protocol/`)
 
-The hosted relay is **its own cargo workspace**, deliberately: the desktop build
-must not be slowed by (or coupled to) server-only dependencies, and the relay has
-to be buildable from a checkout that never compiles Tauri. It has its own verify
-gate — `cargo build && cargo clippy && cargo test` inside `relay/` — and that gate
-must pass with **no `DATABASE_URL` set** (see the Verify gate section).
+Everything in this repository works with no account and no internet. The
+**hosted relay** — the optional paid tier that gives an installation a stable
+public HTTPS origin — is a separate, private service, and it is not here. What is
+here is the client half: `connector.rs`, which dials out to it, and
+`relay-protocol/`, the contract the two speak.
 
 `relay-protocol/` is a **standalone crate on purpose**, and its manifest carries
-an empty `[workspace]` table for that reason. It is a path dependency of *both*
-`src-tauri` and `relay/`, and a crate that belongs to one workspace cannot be
-path-depended on from another. Someone will eventually try to tidy it into a
-member of one of the two; it will not build. Keeping it a shared crate is also
-what makes a change that would break the connector fail to compile the relay in
-the same `cargo build`, which is the point.
+an empty `[workspace]` table for that reason. It is a path dependency of
+`src-tauri` *and* of the service, which is a different workspace entirely — and a
+crate that belongs to one workspace cannot be path-depended on from another.
+Someone will eventually try to tidy it into a member of `src-tauri`; it will not
+build.
 
-**Build the relay for musl, not for this machine.** The box is Ubuntu 24.04
-(glibc 2.39) and this machine is newer (glibc 2.43), so a dynamically linked
-binary built here dies on the box with a `GLIBC_2.4x not found` loader error —
-after a deploy, not at build time. Target `x86_64-unknown-linux-musl` and the
-binary is static and version-independent. A local Docker image
-`tk-relay-musl:latest` (the official Rust image plus `musl-tools` and that target
-added) exists for it. Mount the **repository root**, not `relay/` — the workspace
-path-depends on `../relay-protocol`, so a mount of `relay/` alone cannot resolve
-it:
+There is deliberately **one** copy of it. Two definitions of "what gets signed"
+is the pair that drifts silently, and the failure that drift produces — a
+signature that verifies on one side and not the other — is indistinguishable from
+a network fault. So changing a signed message layout, a frame, or a DTO in here
+is a change to **both** ends at once, and the service adopts it as a deliberate
+step rather than by tracking this branch.
 
-```bash
-docker run --rm -v "$PWD:/src" -w /src/relay tk-relay-musl:latest \
-  cargo build --release --target x86_64-unknown-linux-musl
-```
-
-Build plan, infrastructure and stage status: **`docs/RELAY-BUILD-PLAN.md`**.
-Threat model and release gate: **`docs/REMOTE-ACCESS-SECURITY.md`**.
+Threat model and release gate for remote access: **`docs/REMOTE-ACCESS-SECURITY.md`**.
 
 ### Connector escape hatches (test only)
 

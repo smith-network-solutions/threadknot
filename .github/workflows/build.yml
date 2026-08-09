@@ -1,9 +1,15 @@
 name: build
 
+# Manual only, deliberately. This workflow builds a Tauri app on three runners,
+# and nothing about an ordinary push needs that: the real verify gate runs
+# locally (`cargo clippy`, `cargo test`, `npm run build`) before anything is
+# pushed. Do NOT add a `push:` or `pull_request:` trigger back — a CI run should
+# be something you asked for.
+#
+# To cut a release, dispatch this against the tag rather than pushing the tag and
+# hoping: `gh workflow run build.yml --ref vX.Y.Z`. `github.ref` is then
+# `refs/tags/vX.Y.Z`, so the release job below still recognises it.
 on:
-  push:
-    branches: [master]
-    tags: ["v*"]
   workflow_dispatch:
 
 jobs:

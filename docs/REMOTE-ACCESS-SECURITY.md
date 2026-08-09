@@ -17,10 +17,10 @@
 > The relay-side half (per-installation bandwidth quotas) lives in the relay's
 > own limits.
 >
-> The TLS-termination decision is settled: edge termination, see
-> `RELAY-BUILD-PLAN.md`. Do not expose the LAN listener through a relay; point a
-> connector at the strict loopback ingress instead. Remaining before beta: the
-> **physical mobile download test** (SEC-011), and the load test in Stage 8.
+> The TLS-termination decision is settled: **edge termination**. Do not expose
+> the LAN listener through a relay; point a connector at the strict loopback
+> ingress instead. Remaining before beta: the **physical mobile download test**
+> (SEC-011).
 
 ## Purpose
 

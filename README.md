@@ -23,14 +23,26 @@ talk to each other directly.
 
 ## Install
 
-Grab the latest build for your platform from
-[**Releases**](https://github.com/smith-network-solutions/threadknot/releases) —
-a `.deb`/`.rpm` on Linux, an installer on Windows, a binary on macOS. Each
-release also ships `threadknot-headless`, the LAN server on its own.
+There are no prebuilt downloads yet. Build it — with Rust and Node 22+ present,
+that's two commands:
 
-You also need at least one agent CLI installed and already logged in — see
-[Prerequisites](#prerequisites). Building from source is covered under
-[Build & run](#build--run).
+```bash
+npm install
+npx tauri build --no-bundle
+./src-tauri/target/release/threadknot
+```
+
+The same build produces `threadknot-headless`, the LAN server with no desktop
+window, which is what you want on a spare machine or a homelab box.
+
+You also need at least one agent CLI installed and already logged in, plus your
+platform's webview toolchain — both under [Prerequisites](#prerequisites). More
+build detail, including the one mistake that produces a binary with no UI, is
+under [Build & run](#build--run).
+
+Packaged `.deb`/`.rpm`/installer downloads will appear on
+[Releases](https://github.com/smith-network-solutions/threadknot/releases) once
+there's a tagged version; the workflow that builds them is in the repo.
 
 ## How it works
 
@@ -102,10 +114,10 @@ machine's registered folders, it runs in. From then on the thread is pinned
 there — and its events stream to every paired device.
 
 ```
-Workspace "ServiceStorm"
- ├─ desktop   ~/projects/storefront   ← Claude, mid-refactor
- ├─ macbook   ~/work/servicestorm-seo              ← Codex, running tests
- └─ homelab   /srv/servicestorm                    ← Kimi, on a long build
+Workspace "Storefront"
+ ├─ desktop   ~/projects/storefront        ← Claude, mid-refactor
+ ├─ macbook   ~/work/storefront-seo        ← Codex, running tests
+ └─ homelab   /srv/storefront              ← Kimi, on a long build
 ```
 
 Three agents, on three machines, working at once. Open a new thread on any of
@@ -192,3 +204,23 @@ Inspired by [t3code](https://github.com/pingdotgg/t3code) and
 
 t3code is MIT-licensed, © 2026 T3 Tools Inc.; its notice is in
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+
+## License
+
+[**Functional Source License 1.1**](LICENSE), with an Apache-2.0 future grant
+(`FSL-1.1-ALv2`). In plain terms:
+
+- **Use it for anything** — personally, at work, on as many of your own machines
+  as you like. No account, no key, no seat count.
+- **Modify it, fork it, improve it.** Please do; the interesting parts are the
+  agent drivers and the mesh.
+- **Keep the copyright notice** if you redistribute it, modified or not.
+- **Don't sell it back to us.** You may not ship it — or a fork of it — as a
+  commercial product or service that competes with Threadknot. Everything else
+  is fair game.
+- **It becomes Apache-2.0 anyway.** Every release is irrevocably licensed under
+  Apache 2.0 two years after it ships. The restriction has a clock on it.
+
+The hosted relay that backs the optional paid tier is a separate service and is
+not in this repository. Nothing here needs it: the LAN server, the mesh, and the
+mobile companion all work with no account and no internet.

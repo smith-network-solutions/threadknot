@@ -3,8 +3,8 @@
 # Refuse to push the paid service, or a secret, out of this repository.
 #
 # This repository is the one intended to be published. The relay data plane, the
-# control plane and the console live in the private
-# a separate private repository. `.gitignore` covers the ordinary
+# control plane and the console live in a separate private repository.
+# `.gitignore` covers the ordinary
 # mistake — `git add -A` cannot pick `relay/` up — but it does not cover
 # `git add -f`, a path nobody thought to ignore, or a file resurrected by a
 # cherry-pick or a merge from an older branch.
@@ -78,7 +78,7 @@ cat >&2 <<EOF
 
 $offences
   This repository is the public one. Those paths belong to the private
-  a separate private repository.
+  service repository.
 
   If the file is genuinely part of the local product, move the check rather than
   the file: edit the pattern in scripts/hooks/pre-push and say why in the commit.

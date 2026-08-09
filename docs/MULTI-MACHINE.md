@@ -51,9 +51,9 @@ exactly that. We do NOT overload it. The new cross-machine container sits
 above it:
 
 ```
-Workspace "ServiceStorm"            ← renameable, sidebar element, mesh-wide
+Workspace "Storefront"              ← renameable, sidebar element, mesh-wide
  ├─ root: Project A (this machine, ~/projects/storefront)
- ├─ root: Project B (Mac,          ~/work/servicestorm-seo)
+ ├─ root: Project B (Mac,          ~/work/storefront-seo)
  └─ threads: every thread of A and B, each pinned to its machine
 ```
 
