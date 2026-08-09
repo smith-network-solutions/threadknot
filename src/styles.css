@@ -5171,6 +5171,7 @@ body.reordering { cursor: grabbing; user-select: none; }
    card rack gives it a box. Inert here, so a card in any other theme lays out
    byte-identical to before the slot existed. */
 .fighter-portrait { display: none; }
+.hover-card-portrait { display: none; }
 
 .chip {
   align-self: flex-end;
@@ -8962,6 +8963,78 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 }
 :root[data-theme="arcade"]:not([data-skin-off~="cards"]) .sidebar.cards-view .thread-card .status-dot.unread {
   animation: arcade-led 0.9s steps(1, end) infinite;
+}
+
+/* The thread hover preview is the fighter's bio plate: the same portrait
+   window as the cards (a size up, since this surface exists to be read), the
+   name set in the bitmap face over its own vitality strip, and the meta lines
+   as machine readouts. Portaled to <body>, so nothing here can borrow the
+   .sidebar scope; the module gate alone decides. The portrait slot ships
+   display:none at base, so every other theme's card is untouched, and the
+   :has(img) guard keeps an unset portrait from leaving an empty frame. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-portrait:has(img) {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border: 2px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background: repeating-conic-gradient(#0a0a1c 0% 25%, #14163a 0% 50%) 0 0 / 8px 8px;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-portrait img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+/* Same rule as the cards: with a portrait up, the small glyph or photo beside
+   it is the same fact twice. The plate wins. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-head:has(.hover-card-portrait img) .hover-card-mark,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-head:has(.hover-card-portrait img) .hover-card-avatar {
+  display: none;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-title {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow-soft);
+}
+/* The head wraps so the vitality strip can claim a full line under the name,
+   the same flex-basis trick the cards use. */
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-head {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-head::after {
+  content: "";
+  flex: 0 0 100%;
+  height: 5px;
+  margin-top: 5px;
+  border: 1px solid var(--rt-frame);
+  background: var(--rt-health);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-meta-line,
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-foot {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+:root[data-theme="arcade"]:not([data-skin-off~="cards"]) .hover-card-foot {
+  align-self: flex-start;
+  padding: 2px 5px 1px;
+  border: 1px solid var(--rt-frame);
+  box-shadow: 0 0 0 1px var(--rt-bezel);
+  background: var(--panel-3);
+  color: var(--brass);
 }
 
 /* Hovering a rail tile shows it enlarged with its name, the way a cabinet
