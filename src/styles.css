@@ -6814,6 +6814,734 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 :root[data-theme="solar"] * { scrollbar-color: #d8cbb0 transparent; }
 :root[data-theme="solar"] *::-webkit-scrollbar-thumb { background: #ddd0b5; }
 
+/* ================= arcade =================
+   The console as an 80s coin-op cabinet. Not a dark theme with square corners:
+   a machine. A switched-off tube lit by two neons — the user's accent (--brass)
+   and a fixed cyan (--neon) — with phosphor bloom on everything lit, scanlines
+   and a rolling scan across the glass, Bungee for the signage, Silkscreen for
+   the machine's own micro-labels, and press/entrance motion carrying the
+   overshoot of a physical button.
+
+   This goes far past what the theme model can express (it carries colors, fonts
+   and a wallpaper, nothing else), so everything after the neutral vars lives in
+   this one attribute-scoped section — every selector is rooted at
+   :root[data-theme="arcade"], which both out-specifies the base rules and
+   guarantees the other themes render byte-identical. The ~225 hardcoded pixel
+   radii in the base stylesheet are defeated with a scoped
+   `border-radius: 0 !important` list rather than by editing them.
+
+   Where the loudness stops is a decision, not an oversight: scanlines land on
+   the surfaces you look AT (sidebar, header, modals, menus) and never on the
+   ones you read or type into (the conversation, the composer). Message body
+   copy keeps the user's own font at full contrast. This is a tool someone reads
+   code in all day; the cabinet is the room it sits in, not the page. */
+
+/* Palette: a dead tube lit by two neons. The accent trio stays user-driven
+   (applyAppearance sets it inline) and is the first light; --neon is the fixed
+   cyan it plays against — every cabinet of the era was lit by two tubes, and a
+   single-accent dark UI is exactly the generic thing this is not. Signal colors
+   go full saturation, the way attract-mode text and cabinet LEDs actually do. */
+:root[data-theme="arcade"] {
+  --bg: #04030c;
+  --bg-raise: #080618;
+  --panel: #0b0820;
+  --panel-2: #120c33;
+  --panel-3: #1b1150;
+  --line: rgba(34, 232, 255, 0.13);
+  --line-2: rgba(34, 232, 255, 0.34);
+  --text: #e6f7ff;
+  --dim: #93a9cc;
+  --faint: #5a6690;
+  --teal: #2bffc3;
+  --teal-dim: rgba(43, 255, 195, 0.14);
+  --red: #ff3b5c;
+  --red-dim: rgba(255, 59, 92, 0.14);
+  --amber: #ffc635;
+  --blue: #4fc3ff;
+  /* Theme-local. --glow / --glow-soft are the two bloom strengths every lit
+     element reuses, so the whole interface blooms in one color instead of each
+     control inventing its own halo. */
+  --neon: #22e8ff;
+  --glow: color-mix(in srgb, var(--brass) 60%, transparent);
+  --glow-soft: color-mix(in srgb, var(--brass) 26%, transparent);
+}
+:root[data-theme="arcade"] * { scrollbar-color: #2b1a63 transparent; }
+:root[data-theme="arcade"] *::-webkit-scrollbar-thumb { background: #2b1a63; }
+:root[data-theme="arcade"] ::selection {
+  background: var(--brass);
+  color: #05030f;
+}
+
+/* ---- the tube ---------------------------------------------------------------
+   Two corner light-spills, one per neon, over near-black. The vignette is fixed
+   over the whole window at the top of the stack because it is the curved glass,
+   not a page decoration: it has to fall across modals and toasts too or the
+   illusion breaks the moment anything opens. Inert via pointer-events. */
+:root[data-theme="arcade"] .app {
+  background:
+    radial-gradient(900px 520px at 84% -14%, color-mix(in srgb, var(--brass) 15%, transparent), transparent 62%),
+    radial-gradient(780px 470px at -8% 108%, color-mix(in srgb, var(--neon) 12%, transparent), transparent 60%),
+    var(--bg);
+}
+:root[data-theme="arcade"] .app::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  pointer-events: none;
+  background: radial-gradient(125% 115% at 50% 48%, transparent 46%, rgba(0, 0, 0, 0.62) 100%);
+}
+
+/* ---- the glass: scanlines ---------------------------------------------------
+   One shared overlay for every surface you look at. The lines are LIT, not
+   dark: the palette bottoms out near black, and a dark line over #080618 moves
+   nothing — the texture only exists if the line is the bright part, which is
+   also how a phosphor line actually works. 1px lit every 3px is the sweet spot,
+   unmistakably a CRT at a glance and invisible as an artifact on a 10px label.
+   The overlay rides above its host's content (local z-index) because a scanline
+   is on the glass, not under it, and pointer-events:none so it never eats a
+   click.
+
+   .modal and .ctx-menu/.hover-card need no position of their own: the former
+   already carries a filter (drop-shadow, below) and the latter are fixed, and
+   both make themselves the containing block. .thread-head and .settings-screen
+   are static in flow, so they get it here. */
+:root[data-theme="arcade"] .thread-head,
+:root[data-theme="arcade"] .settings-screen { position: relative; }
+:root[data-theme="arcade"] .sidebar::after,
+:root[data-theme="arcade"] .thread-head::after,
+:root[data-theme="arcade"] .modal::after,
+:root[data-theme="arcade"] .settings-screen::after,
+:root[data-theme="arcade"] .ctx-menu::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(186, 240, 255, 0.055) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+/* The rolling scan: one soft band drifting down the sidebar forever, because an
+   idle cabinet's tube never quite holds still. Sidebar only — it is the panel
+   you glance at, not one you read. Travel is bounded by the window (.app clips
+   at 100dvh and the sidebar is exactly that tall), so the band never escapes
+   and the sidebar needs no overflow rule that would clip its popovers. */
+:root[data-theme="arcade"] .sidebar {
+  background: linear-gradient(180deg, var(--bg-raise), #04030d 72%);
+  border-right: 2px solid var(--line-2);
+}
+:root[data-theme="arcade"] .sidebar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 160px;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--neon) 9%, transparent),
+    transparent
+  );
+  animation: arcade-roll 7.5s linear infinite;
+}
+@keyframes arcade-roll {
+  0% { transform: translateY(-160px); }
+  100% { transform: translateY(100dvh); }
+}
+
+/* ---- the marquee ------------------------------------------------------------
+   A cabinet's name is a backlit sign bolted over the screen, so the wordmark
+   takes the display face and a real bloom and the brand row grows the light bar
+   the sign sits on. Bungee's glyphs run ~1.3x wider than Archivo's, so the
+   0.42em base tracking comes down to 0.22em to keep the mark inside the brand
+   row at the sidebar's narrow end (the negative margin still reclaims the dead
+   column after the last letter). */
+:root[data-theme="arcade"] .sidebar-brand {
+  border-bottom: 2px solid color-mix(in srgb, var(--brass) 55%, transparent);
+  box-shadow: 0 1px 20px -3px var(--glow-soft);
+}
+:root[data-theme="arcade"] .brand-word {
+  font-family: "Bungee", var(--font-ui);
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  margin-right: -0.22em;
+  color: var(--brass-hi);
+  text-shadow: 0 0 10px var(--glow), 0 0 30px var(--glow-soft);
+}
+
+/* ---- the header: a status bar, not frosted glass ---------------------------- */
+:root[data-theme="arcade"] .thread-head {
+  background: linear-gradient(180deg, rgba(12, 8, 32, 0.96), rgba(5, 3, 14, 0.93));
+  backdrop-filter: none; /* frosted blur reads as modern web app, not cabinet */
+  border-bottom: 2px solid var(--line-2);
+  box-shadow: 0 1px 22px -8px color-mix(in srgb, var(--neon) 55%, transparent);
+}
+
+/* ---- shape: hard angles everywhere ----------------------------------------
+   A blanket reset, not a curated list: the base stylesheet has ~225 hardcoded
+   pixel radii plus ~74 pill/circle radii, and cherry-picking classes always
+   leaves "normal" stragglers. Everything squares off — avatars, status dots
+   (they become square LEDs), pills, rings — because circles read as "default
+   web UI", which is what this theme is not. Scoped to the attribute, so other
+   themes are byte-identical. */
+:root[data-theme="arcade"] * { border-radius: 0 !important; }
+
+/* ---- shape: chamfered hero surfaces ---------------------------------------
+   clip-path cuts the corners of the two loudest popups. clip-path also clips
+   box-shadow, so their shadow moves to a drop-shadow filter, which follows
+   the clipped silhouette. */
+:root[data-theme="arcade"] .modal {
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+  box-shadow: none;
+  filter: drop-shadow(6px 6px 0 rgba(0, 0, 0, 0.6));
+}
+:root[data-theme="arcade"] .toast {
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  box-shadow: none;
+  filter: drop-shadow(4px 4px 0 rgba(0, 0, 0, 0.55));
+}
+
+/* ---- surface: chunky borders + hard offset shadows ------------------------ */
+:root[data-theme="arcade"] .modal,
+:root[data-theme="arcade"] .ctx-menu,
+:root[data-theme="arcade"] .settings-screen,
+:root[data-theme="arcade"] .popover,
+:root[data-theme="arcade"] .hover-card {
+  border-width: 2px;
+  border-color: var(--line-2);
+}
+:root[data-theme="arcade"] .ctx-menu,
+:root[data-theme="arcade"] .settings-screen,
+:root[data-theme="arcade"] .popover,
+:root[data-theme="arcade"] .hover-card {
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.55);
+}
+:root[data-theme="arcade"] .toast {
+  border-width: 2px;
+  border-left-width: 5px;
+  border-left-color: var(--brass);
+}
+/* The composer is the control deck: a lit top edge with the tube's spill coming
+   up off it, so the thing you drive the machine with reads as the lit part of
+   the cabinet even before you focus it. */
+:root[data-theme="arcade"] .composer-card {
+  border-width: 2px;
+  border-top-width: 3px;
+  border-top-color: color-mix(in srgb, var(--brass) 50%, transparent);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45), 0 -10px 30px -16px var(--glow);
+}
+:root[data-theme="arcade"] .composer-card:focus-within {
+  border-color: var(--brass);
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--brass) 35%, transparent),
+    0 0 26px -4px var(--glow-soft);
+}
+:root[data-theme="arcade"] .msg-user {
+  border-width: 2px;
+  border-right-width: 4px;
+  background: linear-gradient(135deg, var(--panel-3), #1b1545);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
+}
+:root[data-theme="arcade"] .thread-card {
+  border-width: 2px;
+}
+:root[data-theme="arcade"] .thread-card:hover {
+  border-color: var(--line-2);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* The chip-style controls (agent picker, attach, mic, segs, machine pill) ship
+   with 1px hairlines or no border at all — under arcade they get the full
+   game-UI treatment: 2px frame + a small hard offset shadow at rest. */
+:root[data-theme="arcade"] .agent-trigger,
+:root[data-theme="arcade"] .attach-btn,
+:root[data-theme="arcade"] .mic-btn,
+:root[data-theme="arcade"] .chip,
+:root[data-theme="arcade"] .seg-btn,
+:root[data-theme="arcade"] .settings-toggle,
+:root[data-theme="arcade"] .usage-refresh,
+:root[data-theme="arcade"] .machine-pill,
+:root[data-theme="arcade"] .composer-card select {
+  border-width: 2px;
+  border-color: var(--line-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+/* Bare icon buttons have no frame to thicken, so arcade gives them one. */
+:root[data-theme="arcade"] .icon-btn {
+  border: 1px solid var(--line);
+}
+:root[data-theme="arcade"] .icon-btn:hover {
+  border-color: var(--line-2);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* ---- neon: everything lit actually glows ------------------------------------
+   The hard offset shadows above are the screenprint on the cabinet's plastic;
+   this is the tube burning behind it. Lit surfaces take an outer bloom, lit
+   glyphs take a text bloom, and both draw from --glow / --glow-soft so the
+   whole interface blooms one color instead of each control inventing a halo.
+   Only genuinely "on" things glow — a UI where everything glows has no way left
+   to say which one you picked. */
+:root[data-theme="arcade"] .seg-btn.on,
+:root[data-theme="arcade"] .chip.on {
+  box-shadow: 0 0 15px var(--glow), 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="arcade"] .sidebar-filter-btn.on,
+:root[data-theme="arcade"] .sidebar-filter-btn.active,
+:root[data-theme="arcade"] .ss-nav-item.on {
+  box-shadow: inset 3px 0 0 var(--brass), 0 0 18px -6px var(--glow);
+}
+:root[data-theme="arcade"] .sidebar-search input:focus,
+:root[data-theme="arcade"] .composer-card select:focus {
+  box-shadow: 0 0 16px -2px var(--glow-soft);
+}
+/* Keyboard focus is a lit outline, not the browser's default ring — except
+   where a container already owns the focus affordance. The composer's textarea
+   sets outline:none in the base stylesheet on purpose: the whole card lights up
+   through :focus-within, so a ring around the textarea draws a second box
+   inside the first and reads as an input nested in an input. Its edge is the
+   card's edge. */
+:root[data-theme="arcade"] :focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 1px;
+}
+:root[data-theme="arcade"] .composer-card textarea:focus-visible {
+  outline: none;
+}
+
+/* ---- type: Bungee for the signage -------------------------------------------
+   Loaded lazily by applyAppearance when this theme is active. Body copy keeps
+   the user's chosen UI font; only the loud bits go arcade. The headings that
+   name a surface are treated as backlit signs and get the bloom. */
+:root[data-theme="arcade"] .modal-head,
+:root[data-theme="arcade"] .ss-title,
+:root[data-theme="arcade"] .thread-head .thread-title,
+:root[data-theme="arcade"] .toast-title,
+:root[data-theme="arcade"] .ctx-title,
+:root[data-theme="arcade"] .btn,
+:root[data-theme="arcade"] .send-btn {
+  font-family: "Bungee", var(--font-ui);
+  letter-spacing: 0.06em;
+}
+:root[data-theme="arcade"] .modal-head,
+:root[data-theme="arcade"] .ss-title,
+:root[data-theme="arcade"] .ctx-title {
+  color: var(--brass-hi);
+  text-shadow: 0 0 12px var(--glow), 0 0 32px var(--glow-soft);
+}
+:root[data-theme="arcade"] .btn,
+:root[data-theme="arcade"] .send-btn {
+  text-transform: uppercase;
+  font-size: 11.5px;
+}
+
+/* ---- type: Silkscreen for what the machine says ------------------------------
+   The base stylesheet already sorts its text: roughly forty classes are set
+   uppercase, tracked out and shrunk, and every one of them is a label the
+   machine prints AT you — a status, a count, a kind, a section name — never
+   prose a person wrote. Arcade takes that existing distinction at its word and
+   gives the whole class a bitmap face, which is the single strongest "this is a
+   game" signal available at 10px and costs nothing in readability, because none
+   of these were being read as sentences anyway.
+
+   Bitmap type does not synthesize: weight is pinned to 400 (faux-bold smears a
+   pixel grid) and the base tracking comes down to 0.02em, since Silkscreen
+   already carries its spacing in the glyph and the inherited 0.08–0.2em would
+   pull these labels apart into loose dots. 0.92em holds the label's footprint
+   against Silkscreen's wider advance so nothing reflows. */
+:root[data-theme="arcade"] .add-project,
+:root[data-theme="arcade"] .hermes-band-label,
+:root[data-theme="arcade"] .project-picker-btn,
+:root[data-theme="arcade"] .machine-badge,
+:root[data-theme="arcade"] .project-name,
+:root[data-theme="arcade"] .load-more-threads,
+:root[data-theme="arcade"] .settled-shelf,
+:root[data-theme="arcade"] .changelog-head,
+:root[data-theme="arcade"] .sidebar-view-label,
+:root[data-theme="arcade"] .project-local-chip,
+:root[data-theme="arcade"] .settings-head,
+:root[data-theme="arcade"] .settings-label,
+:root[data-theme="arcade"] .studio-label,
+:root[data-theme="arcade"] .agent-chip,
+:root[data-theme="arcade"] .head-status,
+:root[data-theme="arcade"] .msg-user-midturn,
+:root[data-theme="arcade"] .code-lang,
+:root[data-theme="arcade"] .tool-flag,
+:root[data-theme="arcade"] .subagent-type,
+:root[data-theme="arcade"] .subagent-line-tag,
+:root[data-theme="arcade"] .agent-hud-pop-head,
+:root[data-theme="arcade"] .agent-hud-badge,
+:root[data-theme="arcade"] .agent-hud-act-tag,
+:root[data-theme="arcade"] .diff-repo,
+:root[data-theme="arcade"] .approval-kind,
+:root[data-theme="arcade"] .question-eyebrow,
+:root[data-theme="arcade"] .handoff-chip,
+:root[data-theme="arcade"] .ctl-label,
+:root[data-theme="arcade"] .lane-chip,
+:root[data-theme="arcade"] .speaker-chip,
+:root[data-theme="arcade"] .brief-chip,
+:root[data-theme="arcade"] .review-field-label,
+:root[data-theme="arcade"] .empty-tag,
+:root[data-theme="arcade"] .avatar-preview-name,
+:root[data-theme="arcade"] .profile-section-label,
+:root[data-theme="arcade"] .seg-btn,
+:root[data-theme="arcade"] .chip,
+:root[data-theme="arcade"] .thread-card-turns,
+:root[data-theme="arcade"] .turn-meta,
+:root[data-theme="arcade"] .working-row {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 0.92em;
+  letter-spacing: 0.02em;
+}
+/* Settings' left column is a menu of the machine's subsystems, so its entries
+   set like menu entries. The one-line blurb under each stays prose in the
+   user's font — it is written for a person and reads as a sentence. */
+:root[data-theme="arcade"] .ss-nav-label {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+/* The section eyebrows are what you actually see first in Settings, so they get
+   lit as well as set — they read as the machine naming its own subsystems. */
+:root[data-theme="arcade"] .settings-head,
+:root[data-theme="arcade"] .profile-section-label,
+:root[data-theme="arcade"] .studio-label {
+  color: var(--neon);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--neon) 45%, transparent);
+}
+
+/* ---- LEDs -------------------------------------------------------------------
+   The status dots squared off with the blanket radius reset; here they stop
+   breathing and start blinking. A cabinet LED is driven by a square wave — it
+   is on, or it is off — so every attention state switches with steps() instead
+   of easing, and carries a hard halo in its own signal color rather than the
+   accent (a red alarm that glows pink is not an alarm). */
+@keyframes arcade-led {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0.2; }
+}
+:root[data-theme="arcade"] .status-dot { width: 7px; height: 7px; }
+:root[data-theme="arcade"] .status-dot.st-running {
+  box-shadow: 0 0 10px var(--teal), 0 0 3px var(--teal);
+  animation: arcade-led 0.9s steps(1, end) infinite;
+}
+:root[data-theme="arcade"] .status-dot.st-waiting_approval {
+  box-shadow: 0 0 10px var(--amber), 0 0 3px var(--amber);
+  animation: arcade-led 0.5s steps(1, end) infinite;
+}
+:root[data-theme="arcade"] .status-dot.st-idle.unread {
+  box-shadow: 0 0 9px var(--amber);
+}
+:root[data-theme="arcade"] .conn-pip.conn-online { box-shadow: 0 0 10px var(--teal); }
+:root[data-theme="arcade"] .conn-pip.conn-connecting,
+:root[data-theme="arcade"] .conn-pip.conn-offline {
+  animation: arcade-led 0.7s steps(1, end) infinite;
+}
+/* The working pip's soft expanding ping is a radar, not a machine: swap it for
+   a blinking LED and let the row's text carry the rest. */
+:root[data-theme="arcade"] .sonar {
+  box-shadow: 0 0 11px var(--teal), 0 0 3px var(--teal);
+  animation: arcade-led 0.6s steps(1, end) infinite;
+}
+:root[data-theme="arcade"] .sonar::after { display: none; }
+:root[data-theme="arcade"] .working-row {
+  text-transform: uppercase;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--teal) 50%, transparent);
+}
+
+/* ---- player select ----------------------------------------------------------
+   What is currently open should read like a cabinet's character-select cursor,
+   not a five-percent background tint. The rail's edge pip becomes a lit bar,
+   the open project's tile gets a blinking corner LED (the slot with a credit in
+   it), and the open thread takes a solid lit gutter. .rail-item is already
+   position:relative and only spends ::after on its drag-drop marker, so ::before
+   is free for the LED. */
+:root[data-theme="arcade"] .rail-pip {
+  width: 4px;
+  background: var(--brass-hi);
+  box-shadow: 0 0 11px var(--brass);
+}
+:root[data-theme="arcade"] .rail-item.on .sidebar-avatar,
+:root[data-theme="arcade"] .rail-item.on .rail-avatar {
+  box-shadow: 0 0 0 2px var(--brass), 0 0 18px -2px var(--glow-soft);
+}
+:root[data-theme="arcade"] .rail-item.on::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 4px;
+  height: 4px;
+  pointer-events: none;
+  background: var(--brass-hi);
+  box-shadow: 0 0 8px var(--brass);
+  animation: arcade-led 1.1s steps(1, end) infinite;
+}
+:root[data-theme="arcade"] .thread-row.active,
+:root[data-theme="arcade"] .sidebar.cards-view .thread-card.active {
+  box-shadow: inset 3px 0 0 var(--brass), 0 0 20px -8px var(--glow);
+}
+
+/* ---- the context gauge ------------------------------------------------------
+   The only circle the blanket radius reset can't reach: it is an SVG ring, and
+   border-radius has no say over a <circle>. Rather than leave one soft round
+   dial in a squared-off interface, it becomes a segmented gauge — the track
+   dashes into ticks and the fill loses its rounded cap, so the arc fills tick
+   by tick like a cabinet's power meter, and the fill glows in the accent. */
+:root[data-theme="arcade"] .ctx-track {
+  stroke-dasharray: 1.9 1.9;
+  stroke: color-mix(in srgb, var(--neon) 40%, transparent);
+}
+:root[data-theme="arcade"] .ctx-fill {
+  stroke-linecap: butt;
+  filter: drop-shadow(0 0 3px var(--brass));
+}
+:root[data-theme="arcade"] .ctx-ring {
+  border: 2px solid var(--line);
+}
+:root[data-theme="arcade"] .ctx-ring:hover { border-color: var(--line-2); }
+
+/* ---- motion: exaggerated entrances -----------------------------------------
+   arcade-pop overshoots (grow past 100%, settle back) with a whisper of
+   rotation; arcade-slide-in is the toast/banner variant. Both run ~2x slower
+   than the base theme's entrances so the overshoot reads. */
+@keyframes arcade-pop {
+  0% { opacity: 0; transform: scale(0.82) rotate(-1.5deg); }
+  60% { opacity: 1; transform: scale(1.045) rotate(0.6deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+@keyframes arcade-slide-in {
+  0% { opacity: 0; transform: translateX(26px) scale(0.94); }
+  60% { opacity: 1; transform: translateX(-4px) scale(1.02); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+:root[data-theme="arcade"] .modal,
+:root[data-theme="arcade"] .ctx-menu,
+:root[data-theme="arcade"] .popover,
+:root[data-theme="arcade"] .hover-card,
+:root[data-theme="arcade"] .avatar-preview {
+  animation: arcade-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+:root[data-theme="arcade"] .toast {
+  animation: arcade-slide-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ---- motion: exaggerated clicks --------------------------------------------
+   Press = hard stamp: fast squash + counter-rotation, and any offset shadow
+   collapses to 1px so the element looks physically slammed into the page.
+   The 0.06s press transition makes the downstroke snappy; release springs
+   back on the same curve. */
+:root[data-theme="arcade"] .btn,
+:root[data-theme="arcade"] .send-btn,
+:root[data-theme="arcade"] .icon-btn,
+:root[data-theme="arcade"] .chip,
+:root[data-theme="arcade"] .agent-trigger,
+:root[data-theme="arcade"] .attach-btn,
+:root[data-theme="arcade"] .mic-btn,
+:root[data-theme="arcade"] .seg-btn,
+:root[data-theme="arcade"] .settings-toggle,
+:root[data-theme="arcade"] .ctx-item,
+:root[data-theme="arcade"] .dir-entry,
+:root[data-theme="arcade"] .thread-card,
+:root[data-theme="arcade"] .rail-item {
+  transition: transform 0.06s ease-out, box-shadow 0.06s ease-out,
+    filter 0.12s, background 0.12s, border-color 0.12s, color 0.12s;
+}
+:root[data-theme="arcade"] .btn:not(:disabled):active,
+:root[data-theme="arcade"] .send-btn:not(:disabled):active,
+:root[data-theme="arcade"] .icon-btn:not(:disabled):active,
+:root[data-theme="arcade"] .chip:active,
+:root[data-theme="arcade"] .agent-trigger:not(:disabled):active,
+:root[data-theme="arcade"] .attach-btn:not(:disabled):active,
+:root[data-theme="arcade"] .mic-btn:not(:disabled):active,
+:root[data-theme="arcade"] .seg-btn:active,
+:root[data-theme="arcade"] .settings-toggle:active,
+:root[data-theme="arcade"] .ctx-item:active,
+:root[data-theme="arcade"] .dir-entry:active,
+:root[data-theme="arcade"] .thread-card:active,
+:root[data-theme="arcade"] .rail-item:active {
+  transform: scale(0.9) rotate(-1deg);
+  box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+}
+/* Hover lift: interactive cards rise a pixel and square up to the pointer. */
+:root[data-theme="arcade"] .thread-card:hover,
+:root[data-theme="arcade"] .rail-item:hover {
+  transform: translate(-1px, -1px);
+}
+:root[data-theme="arcade"] .thread-card:active,
+:root[data-theme="arcade"] .rail-item:active {
+  transform: scale(0.94) rotate(-0.5deg);
+}
+
+/* Primary action gets a thick accent shadow at rest, collapsing on press. */
+:root[data-theme="arcade"] .btn.tone-allow:not(:disabled) {
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--brass) 45%, transparent);
+}
+:root[data-theme="arcade"] .btn.tone-allow:not(:disabled):active {
+  box-shadow: 1px 1px 0 color-mix(in srgb, var(--brass) 45%, transparent);
+}
+
+/* ---- the SEND button: an arcade-cabinet plunger -----------------------------
+   Juiciness recipe. Rest: the cap sits on a thick solid "base" (the offset
+   shadow in a darkened accent tone) and breathes with a slow brightness pulse
+   so it invites the press. Hover: lifts off the base, shadow grows, arrow
+   cocks upward. Press: the cap slides INTO the base (translate along the
+   shadow vector) with a brightness flash and a square shockwave ring — fast
+   0.05s in. Release: the base transition is a springy 0.3s overshoot, so the
+   cap pops back up harder than it went down. */
+:root[data-theme="arcade"] .send-btn:not(:disabled) {
+  position: relative;
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--brass) 45%, black),
+    0 0 20px -2px var(--glow-soft);
+  transition: transform 0.3s cubic-bezier(0.34, 1.8, 0.64, 1),
+    box-shadow 0.06s ease-out, filter 0.12s;
+  animation: arcade-send-idle 2.6s ease-in-out infinite;
+}
+@keyframes arcade-send-idle {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.15); }
+}
+:root[data-theme="arcade"] .send-btn svg { transition: transform 0.15s ease-out; }
+:root[data-theme="arcade"] .send-btn:not(:disabled):hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 color-mix(in srgb, var(--brass) 45%, black);
+  filter: brightness(1.18);
+}
+:root[data-theme="arcade"] .send-btn:not(:disabled):hover svg {
+  transform: translateY(-1.5px) scale(1.12);
+}
+:root[data-theme="arcade"] .send-btn:not(:disabled):active {
+  transform: translate(4px, 4px) scale(0.92);
+  box-shadow: 0 0 0 color-mix(in srgb, var(--brass) 45%, black);
+  filter: brightness(1.45);
+  transition-duration: 0.05s;
+  animation: none; /* hold the flash steady while slammed */
+}
+/* Shockwave: a square ring that flares out from the cap on press. */
+:root[data-theme="arcade"] .send-btn:not(:disabled)::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--brass);
+  opacity: 0;
+  pointer-events: none;
+}
+:root[data-theme="arcade"] .send-btn:not(:disabled):active::after {
+  animation: arcade-burst 0.35s ease-out;
+}
+@keyframes arcade-burst {
+  0% { opacity: 0.9; transform: scale(1); }
+  100% { opacity: 0; transform: scale(2.2); }
+}
+/* The stop twin mounts the instant the turn starts — that pop IS the "message
+   away" confirmation, arriving exactly when the user's finger lifts. */
+:root[data-theme="arcade"] .send-btn.stop {
+  animation: arcade-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ---- send: the message SLAMS into the thread -------------------------------
+   Where the send feels good. The payoff isn't on the button — it's the sent
+   message itself arriving like a thrown object: it comes in hot from off to
+   the upper right, oversized and tilted, accelerating (the 0% timing function
+   governs the flight, so it speeds UP into the hit rather than easing out),
+   lands hard with a squash, and rings out through a shrinking rebound wobble.
+   A brightness flash and a single expanding impact frame mark the moment of
+   contact. FeedItems tags the bubble .just-sent only for messages this client
+   sent (see lib/justSent.ts), so scrollback and remote traffic stay still.
+
+   Deliberately transform/filter-only: the bubble occupies its final box for
+   the whole animation, so the feed's stick-to-bottom scrolling measures the
+   same geometry it always did while the thing is still flying. */
+@keyframes arcade-slam {
+  0% {
+    opacity: 0;
+    transform: translate(150px, -60px) scale(1.5) rotate(7deg);
+    animation-timing-function: cubic-bezier(0.72, 0, 0.9, 0.4);
+  }
+  46% { opacity: 1; transform: translate(0, 0) scale(0.9, 1.08) rotate(-2.5deg); }
+  58% { transform: translate(3px, -3px) scale(1.06, 0.95) rotate(1.6deg); }
+  70% { transform: translate(-2px, 2px) scale(0.98, 1.02) rotate(-0.8deg); }
+  82% { transform: translate(1px, -1px) scale(1.01, 0.99) rotate(0.3deg); }
+  100% { transform: none; }
+}
+/* Speed reads as blur on the way in; the hit reads as a one-frame white-out. */
+@keyframes arcade-slam-flash {
+  0% { filter: blur(3px) brightness(1.4); }
+  40% { filter: blur(0) brightness(1.4); }
+  46% { filter: blur(0) brightness(2.3) saturate(0.5); }
+  64%, 100% { filter: blur(0) brightness(1); }
+}
+/* The impact frame: a hard accent ring that snaps on at contact and blows
+   outward once. Insets rather than scale — a scaled ring on a wide bubble
+   flies off sideways; an inset one expands evenly on all four edges. */
+@keyframes arcade-slam-ring {
+  0%, 42% { opacity: 0; inset: 0; }
+  46% { opacity: 0.95; inset: -1px; }
+  100% { opacity: 0; inset: -14px; }
+}
+:root[data-theme="arcade"] .msg-user-wrap.just-sent {
+  position: relative;
+  z-index: 2; /* in flight it passes over its neighbours, not under them */
+  transform-origin: 100% 50%;
+  animation: arcade-slam 0.52s backwards;
+}
+:root[data-theme="arcade"] .msg-user-wrap.just-sent .msg-user {
+  position: relative;
+  animation: arcade-slam-flash 0.52s backwards;
+}
+:root[data-theme="arcade"] .msg-user-wrap.just-sent .msg-user::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--brass);
+  pointer-events: none;
+  opacity: 0;
+  animation: arcade-slam-ring 0.5s ease-out;
+}
+
+/* Reduced motion: all the exaggeration opts out with the OS setting; the
+   shape/border/glow styling stays, and so do the LEDs' colors and halos — only
+   their blinking stops, so "running" is still legible without the flicker.
+   The rolling scan goes entirely; a frozen band is just a stray gradient. */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="arcade"] .sidebar::before { display: none; }
+  :root[data-theme="arcade"] .status-dot,
+  :root[data-theme="arcade"] .conn-pip,
+  :root[data-theme="arcade"] .sonar,
+  :root[data-theme="arcade"] .rail-item.on::before,
+  :root[data-theme="arcade"] .modal,
+  :root[data-theme="arcade"] .ctx-menu,
+  :root[data-theme="arcade"] .popover,
+  :root[data-theme="arcade"] .hover-card,
+  :root[data-theme="arcade"] .avatar-preview,
+  :root[data-theme="arcade"] .toast,
+  :root[data-theme="arcade"] .send-btn:not(:disabled),
+  :root[data-theme="arcade"] .send-btn:not(:disabled)::after,
+  :root[data-theme="arcade"] .send-btn.stop,
+  :root[data-theme="arcade"] .msg-user-wrap.just-sent,
+  :root[data-theme="arcade"] .msg-user-wrap.just-sent .msg-user {
+    animation: none;
+  }
+  /* A frozen impact frame would just sit there as a stray ring — drop it. */
+  :root[data-theme="arcade"] .msg-user-wrap.just-sent .msg-user::after {
+    display: none;
+  }
+  :root[data-theme="arcade"] *:active,
+  :root[data-theme="arcade"] .thread-card:hover,
+  :root[data-theme="arcade"] .rail-item:hover {
+    transform: none;
+  }
+}
+
 /* ================= custom theme wallpaper =================
    A user-crafted theme may carry a background image. appearance.ts sets
    --app-bg-image / --app-bg-dim inline and puts data-has-bg on :root; every

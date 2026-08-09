@@ -8,7 +8,7 @@ import { ensureFontLoaded } from "./fonts";
 /** The theme palettes. "dark" (original) and "light" are unchanged; the four
  *  extra ids are curated data-theme blocks in styles.css. "light" and "solar"
  *  are the light-family palettes (pale backgrounds), the rest are dark. */
-export type Theme = "dark" | "midnight" | "slate" | "carbon" | "light" | "solar";
+export type Theme = "dark" | "midnight" | "slate" | "carbon" | "light" | "solar" | "arcade";
 export type TermCursorStyle = "block" | "bar" | "underline";
 
 /** The 10 neutral palette CSS vars a custom theme may override, WITHOUT the
@@ -148,6 +148,7 @@ export const THEMES: readonly ThemeInfo[] = [
   { id: "carbon", label: "Carbon", dark: true, preview: { bg: "#050506", panel: "#101013", accentDefault: "#d9a35c" } },
   { id: "light", label: "Light", dark: false, preview: { bg: "#f3f5f9", panel: "#ffffff", accentDefault: "#b07322" } },
   { id: "solar", label: "Solar", dark: false, preview: { bg: "#f4efe4", panel: "#fffdf7", accentDefault: "#b07322" } },
+  { id: "arcade", label: "Arcade", dark: true, preview: { bg: "#04030c", panel: "#0b0820", accentDefault: "#ff3d8a" } },
 ];
 
 /** The bg color each palette lands on, for the browser/PWA theme-color meta. */
@@ -158,6 +159,7 @@ const THEME_BG: Record<Theme, string> = {
   carbon: "#050506",
   light: "#f3f5f9",
   solar: "#f4efe4",
+  arcade: "#04030c",
 };
 
 const LIGHT_FAMILY: ReadonlySet<Theme> = new Set<Theme>(["light", "solar"]);
@@ -854,6 +856,13 @@ export function applyAppearance(
   ensureFontLoaded(uiFontEntry(a.fontUi));
   ensureFontLoaded(monoFontEntry(a.fontMono));
   ensureFontLoaded(monoFontEntry(getTermPrefs().fontFamily));
+  // The arcade theme's two faces: Bungee for the cabinet signage, Silkscreen
+  // for the machine's own micro-labels. Body and code text stay on the user's
+  // font choices — see the arcade section in styles.css.
+  if (paletteTheme === "arcade") {
+    ensureFontLoaded({ google: "Bungee" });
+    ensureFontLoaded({ google: "Silkscreen" });
+  }
   // Composer size knobs: a separate preference record, but applied from here so
   // main.tsx's single boot call still lands every root-level var.
   applyComposerPrefs();

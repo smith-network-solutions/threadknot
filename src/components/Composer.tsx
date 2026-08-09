@@ -22,6 +22,7 @@ import {
   XIcon,
 } from "./icons";
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
+import { markJustSent } from "../lib/justSent";
 import { ContextMeter, isRenderableUsage } from "./ContextMeter";
 import { hermesPresence } from "./HermesPresence";
 
@@ -578,6 +579,7 @@ export function Composer({ thread }: ComposerProps) {
       const typed = text;
       updateText("");
       setAttachError(null);
+      markJustSent();
       try {
         await actions.steer(note);
       } catch {
@@ -596,6 +598,7 @@ export function Composer({ thread }: ComposerProps) {
     updateText("");
     updateAttachments([]);
     setAttachError(null);
+    markJustSent();
     try {
       await actions.send(body, outgoing);
     } catch {

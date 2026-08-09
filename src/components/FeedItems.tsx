@@ -10,6 +10,7 @@ import {
 } from "../lib/format";
 import { repoForPath } from "../lib/git";
 import { attachmentUrl } from "../lib/discovery";
+import { claimJustSent } from "../lib/justSent";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
 import {
@@ -507,8 +508,12 @@ function UserMessage({ item }: { item: Extract<FeedItem, { type: "user" }> }) {
   const threadId = state.feedThreadId;
   const images = (item.attachments ?? []).filter((a) => a.mimeType.startsWith("image/"));
   const hasText = item.text.trim().length > 0;
+  // Claimed once, at first render: this bubble is the echo of a send from this
+  // client, so it gets the arcade slam entrance. Scrollback and messages from
+  // other devices find the beacon empty and mount silently.
+  const [justSent] = useState(claimJustSent);
   return (
-    <div className="msg-user-wrap">
+    <div className={`msg-user-wrap${justSent ? " just-sent" : ""}`}>
       {item.midTurn && <div className="msg-user-midturn">added while working</div>}
       <div
         className={`msg-user${images.length > 0 ? " has-attachments" : ""}${!hasText ? " image-only" : ""}`}
