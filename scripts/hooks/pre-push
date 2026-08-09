@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# Refuse to push the paid service, or a secret, out of this repository.
+#
+# This repository is the one intended to be published. The relay data plane, the
+# control plane and the console live in the private
+# a separate private repository. `.gitignore` covers the ordinary
+# mistake — `git add -A` cannot pick `relay/` up — but it does not cover
+# `git add -f`, a path nobody thought to ignore, or a file resurrected by a
+# cherry-pick or a merge from an older branch.
+#
+# So the check runs at the last possible moment, against what is actually about
+# to leave the machine, and it inspects **history** rather than just the current
+# tree. A file added in one commit and deleted in the next is still published
+# forever once pushed; that is the whole reason the split had to be done as a
+# branch from a clean master rather than as a deletion commit.
+#
+# Installed via `core.hooksPath = scripts/hooks`, so it is version-controlled and
+# survives a fresh clone — a hook in `.git/hooks` would not. Run
+# `scripts/hooks/install` after cloning.
+#
+# Deliberate override, for the one time it is genuinely wrong:
+#   THREADKNOT_ALLOW_SERVICE_PUSH=1 git push ...
+# If you find yourself typing that twice, the boundary is in the wrong place.
+
+set -uo pipefail
+
+readonly EMPTY=0000000000000000000000000000000000000000
+
+# Paths that belong to the paid service, plus anything that looks like a
+# credential. Anchored at the repository root: `src/relay-protocol` is fine, a
+# top-level `relay/` is not.
+forbidden() {
+  grep -E '^(relay/|console/|docs/(OPERATIONS|INCIDENT-RESPONSE|RELAY-BUILD-PLAN|DISCLOSURES)\.md$|scripts/relay|\.keys|.*\.pem$|.*\.key$|.*/relay\.env$)'
+}
+
+remote_name="${1:-origin}"
+offences=""
+
+while read -r _local_ref local_sha remote_ref remote_sha; do
+  # Branch deletion: nothing is being published.
+  [ "$local_sha" = "$EMPTY" ] && continue
+
+  if [ "$remote_sha" = "$EMPTY" ]; then
+    # New branch on the remote. Everything not already published is in scope;
+    # `--not --remotes` keeps this from re-scanning the entire history.
+    commits=$(git rev-list "$local_sha" --not --remotes="$remote_name" 2>/dev/null)
+  else
+    commits=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null)
+  fi
+
+  # Every path touched by the commits being pushed — added, modified or removed.
+  touched=""
+  if [ -n "$commits" ]; then
+    # shellcheck disable=SC2086
+    touched=$(git diff-tree -r --no-commit-id --name-only --root $commits 2>/dev/null | sort -u)
+  fi
+
+  # And the tree at the tip, which catches a path that arrived on an ancestor
+  # this range does not include.
+  tip=$(git ls-tree -r --name-only "$local_sha" 2>/dev/null)
+
+  hits=$(printf '%s\n%s\n' "$touched" "$tip" | sed '/^$/d' | sort -u | forbidden)
+  if [ -n "$hits" ]; then
+    offences="${offences}${remote_ref:-$local_sha}:
+$(printf '%s\n' "$hits" | sed 's/^/    /')
+"
+  fi
+done
+
+if [ -z "$offences" ]; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+
+  ✖  push refused: this would publish the paid service or a secret.
+
+$offences
+  This repository is the public one. Those paths belong to the private
+  a separate private repository.
+
+  If the file is genuinely part of the local product, move the check rather than
+  the file: edit the pattern in scripts/hooks/pre-push and say why in the commit.
+
+  If a commit merely *touched* one of these paths in history, the fix is to
+  rebuild the branch without that commit — deleting the file in a later commit
+  does not unpublish it.
+
+EOF
+
+if [ "${THREADKNOT_ALLOW_SERVICE_PUSH:-}" = "1" ]; then
+  echo "  THREADKNOT_ALLOW_SERVICE_PUSH=1 — proceeding anyway." >&2
+  echo >&2
+  exit 0
+fi
+
+exit 1

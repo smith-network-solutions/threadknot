@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# Point git at the tracked hooks in this directory.
+#
+# Hooks in `.git/hooks` are not cloned and not version-controlled, so a guard
+# that lives there protects exactly one working copy and silently protects
+# nothing after the next `git clone`. `core.hooksPath` makes the hooks part of
+# the repository.
+#
+# Safe to run repeatedly.
+
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+existing=$(find .git/hooks -maxdepth 1 -type f ! -name '*.sample' 2>/dev/null || true)
+if [ -n "$existing" ]; then
+  echo "Refusing: .git/hooks already has active hooks that core.hooksPath would bypass:" >&2
+  printf '%s\n' "$existing" | sed 's/^/  /' >&2
+  echo "Move them into scripts/hooks/ first." >&2
+  exit 1
+fi
+
+chmod +x scripts/hooks/pre-push
+git config core.hooksPath scripts/hooks
+echo "core.hooksPath = $(git config core.hooksPath)"
+echo "pre-push guard active — see scripts/hooks/pre-push for what it refuses."
