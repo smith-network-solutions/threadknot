@@ -8,6 +8,10 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+## v0.1.21 · 2026-08-09
+
+- **The Arcade theme's usage meter is now a retro arcade health bar.** With the Arcade theme on (Settings → appearance), each subscription window draws as a yellow vitality bar that red damage eats from the left as you spend it. The last sliver strobes when a window is nearly gone, providers square off around a VS badge in the usage popover, and a provider that fails to report its usage is marked K.O. Every other theme looks exactly as before.
+
 ## v0.1.176 · 2026-08-08
 
 - **Quick Chats give one-off questions their own home.** Open the pinned Threadknot tile in rail mode (or **quick chats** in the sidebar), start a chat without choosing a workspace, and return to its recent or settled conversations later. Each one starts read-only in its own private scratch folder; choose Full access only when you want the agent to work on the computer itself.
