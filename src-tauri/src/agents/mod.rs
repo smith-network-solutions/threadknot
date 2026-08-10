@@ -750,6 +750,17 @@ pub struct Hub {
     /// When each running worker last forwarded progress to its parent, so the
     /// forwarding can be throttled without a timer per dispatch.
     dispatch_progress_at: Mutex<HashMap<String, std::time::Instant>>,
+    /// WORKER side: the latest activity line per dispatch, kept whether or not
+    /// the push that would have carried it succeeded. A worker that cannot
+    /// reach its parent still knows what it is doing; this is what lets the
+    /// parent *ask* and get real progress instead of only a terminal status.
+    /// In memory, not in the ledger: this changes every couple of seconds and
+    /// is worth nothing after the process dies.
+    dispatch_activity: Mutex<HashMap<String, (String, String)>>,
+    /// PARENT side: when we last heard anything at all about a dispatch from
+    /// its worker. Drives "has the push channel gone quiet?" — the only trigger
+    /// for polling, so a healthy dispatch is never polled.
+    dispatch_heard_at: Mutex<HashMap<String, std::time::Instant>>,
     /// The mesh, attached after construction like `push` — `Hub::new` runs
     /// before the peer runtime exists, and a worker still has to be able to
     /// report home from a turn boundary deep inside a driver.
@@ -817,6 +828,8 @@ impl Hub {
             dispatch,
             dispatch_reports: Mutex::new(HashMap::new()),
             dispatch_progress_at: Mutex::new(HashMap::new()),
+            dispatch_activity: Mutex::new(HashMap::new()),
+            dispatch_heard_at: Mutex::new(HashMap::new()),
             peernet: OnceLock::new(),
             claudex_sidecars: Arc::new(crate::claudex::SidecarSupervisor::default()),
             usage: crate::usage::UsageState::default(),
@@ -874,6 +887,38 @@ impl Hub {
         self.dispatch_reports.lock().unwrap().remove(thread_id)
     }
 
+    /// Worker side: the latest activity line for a dispatch, for a parent that
+    /// has had to come and ask.
+    pub fn dispatch_activity(&self, dispatch_id: &str) -> Option<(String, String)> {
+        self.dispatch_activity.lock().unwrap().get(dispatch_id).cloned()
+    }
+
+    /// Parent side: note that we heard from a worker just now, which is what
+    /// keeps the reconciler from polling a dispatch whose pushes are arriving.
+    pub fn note_dispatch_heard(&self, dispatch_id: &str) {
+        self.dispatch_heard_at
+            .lock()
+            .unwrap()
+            .insert(dispatch_id.to_string(), std::time::Instant::now());
+    }
+
+    /// How long since the parent last heard about this dispatch. `None` means
+    /// never — which counts as silence, so a worker that cannot reach us at all
+    /// is polled from the first tick rather than after a grace period.
+    pub fn dispatch_silence(&self, dispatch_id: &str) -> Option<std::time::Duration> {
+        self.dispatch_heard_at
+            .lock()
+            .unwrap()
+            .get(dispatch_id)
+            .map(|t| t.elapsed())
+    }
+
+    /// Drop the per-dispatch scratch state once it can no longer change.
+    pub fn forget_dispatch_tracking(&self, dispatch_id: &str) {
+        self.dispatch_activity.lock().unwrap().remove(dispatch_id);
+        self.dispatch_heard_at.lock().unwrap().remove(dispatch_id);
+    }
+
     /// Forward a worker's activity to the thread that sent it, throttled. The
     /// parent sees a live row in its agent panel without inheriting its
     /// subordinate's entire tool stream.
@@ -884,6 +929,16 @@ impl Hub {
         if record.status.is_done() {
             return;
         }
+        // Remember it locally FIRST, and unconditionally. The push below may be
+        // throttled, or may fail because this machine cannot reach the parent
+        // at all — in either case the parent can still come and ask for this.
+        self.dispatch_activity.lock().unwrap().insert(
+            record.id.clone(),
+            (
+                activity.to_string(),
+                text.chars().take(240).collect::<String>(),
+            ),
+        );
         {
             let mut last = self.dispatch_progress_at.lock().unwrap();
             let now = std::time::Instant::now();
@@ -1316,8 +1371,18 @@ impl Hub {
                 AgentEvent::AssistantMessage { text } => {
                     hub.forward_dispatch_progress(thread_id, "text", text)
                 }
-                AgentEvent::ToolStart { name, .. } => {
-                    hub.forward_dispatch_progress(thread_id, "tool", name)
+                // Name AND detail: "shell" twenty times in a row is
+                // indistinguishable from a frozen worker, and the parent
+                // de-duplicates identical lines. "shell · cargo build
+                // --release" both varies and says something.
+                AgentEvent::ToolStart { name, detail, .. } => {
+                    let detail = detail.trim().replace('\n', " ");
+                    let line = if detail.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{name} · {detail}")
+                    };
+                    hub.forward_dispatch_progress(thread_id, "tool", &line)
                 }
                 _ => {}
             }

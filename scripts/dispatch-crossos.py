@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import sys
 import time
 from websockets.sync.client import connect
@@ -113,6 +114,30 @@ def start_linux():
     raise SystemExit("the Linux instance never came up; see /tmp/tk-x-linux.log")
 
 
+def watch_events(port, token, sink, stop, thread_id):
+    """Collect live event frames, the way the UI receives them.
+
+    Two things make this subtle. Progress events are TRANSIENT — never
+    persisted — so `thread.get` cannot see them after the fact; you have to be
+    connected while they happen. And the server only sends deltas to a socket
+    that is *viewing* the thread, which it learns from a `thread.get` issued on
+    that same socket (deltas for other threads are dropped rather than
+    firehosed at phones). So this must ask for the thread on its own
+    connection, exactly as the real client does, or it sees nothing."""
+    try:
+        with connect(f"ws://127.0.0.1:{port}/ws?token={token}", open_timeout=30,
+                     max_size=1 << 26) as ws:
+            ws.send(json.dumps({"id": 99, "type": "thread.get",
+                                "payload": {"threadId": thread_id}}))
+            while not stop.is_set():
+                try:
+                    sink.append(json.loads(ws.recv(timeout=2)))
+                except TimeoutError:
+                    continue
+    except Exception:
+        pass
+
+
 def main():
     print("== starting a scratch instance on each machine ==")
     mac_token = start_mac()
@@ -200,13 +225,25 @@ def main():
     check(bool(record["childThreadId"]), "a worker thread was created ON THE MAC")
     check(record["machineId"] == mac_id, "the ledger records the Mac as its machine")
 
+    events, stop = [], threading.Event()
+    watcher = threading.Thread(target=watch_events,
+                               args=(LINUX_PORT, linux_token, events, stop, parent),
+                               daemon=True)
+    watcher.start()
+
     print("  waiting for the Mac's agent to finish (up to 6 min)…")
     deadline = time.time() + 360
+    progress_seen = 0
     while time.time() < deadline:
         record = ok(LINUX_PORT, linux_token, "dispatch.get", {"dispatchId": record["id"]})
+        # Count live progress reaching the parent WHILE the worker runs. With
+        # the return link down these can only have arrived by the parent asking.
+        progress_seen = sum(
+            1 for e in list(events)
+            if (e.get("event") or {}).get("kind") == "subagent_progress")
         if record["status"] not in ("queued", "running"):
             break
-        time.sleep(5)
+        time.sleep(3)
 
     check(record["status"] == "succeeded",
           f"the dispatch succeeded (was {record['status']})")
@@ -221,6 +258,12 @@ def main():
     check(not result.get("inferred"),
           "the Mac's agent filed a STRUCTURED report, not an inferred one")
 
+    if not back:
+        check(progress_seen > 0,
+              f"live progress reached the parent while the worker could not "
+              f"reach it ({progress_seen} updates, polled not pushed)")
+
+    stop.set()
     on_disk = sh(f"cat {MAC_WORK}/from-the-mac.txt 2>/dev/null || true")
     check("Darwin" in on_disk,
           f"the work really landed on the Mac's disk: {on_disk[:40]!r}")

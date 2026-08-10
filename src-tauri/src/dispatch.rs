@@ -607,12 +607,26 @@ pub fn flush_pending_reports(hub: &Arc<Hub>, machine_id: &str) {
 /// forever on the parent: the work was done, and the answer is simply stranded.
 /// So the side that *can* reach the other also checks, and either direction
 /// working is enough.
+/// Whether the parent should fall back to asking a worker directly.
+///
+/// Pure, so the rule that decides how chatty the mesh gets is testable rather
+/// than buried in a loop. `None` — never heard anything — counts as silence:
+/// a worker that could never reach us must not get a grace period before we
+/// notice, or its first minutes look identical to a hung one.
+pub(crate) fn should_poll(silence: Option<std::time::Duration>) -> bool {
+    silence.is_none_or(|since| since >= limits::DISPATCH_PUSH_SILENCE)
+}
+
 pub fn spawn_reconciler(state: crate::server::ServerState) {
     tokio::spawn(async move {
+        // Last activity line we relayed from a poll, so polling does not
+        // re-emit the same line every couple of seconds.
+        let mut echoed: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         loop {
             tokio::time::sleep(limits::DISPATCH_RECONCILE_INTERVAL).await;
             let local = state.device.machine_id.clone();
-            let stale: Vec<DispatchRecord> = state
+            let quiet: Vec<DispatchRecord> = state
                 .hub
                 .dispatch
                 .list()
@@ -622,9 +636,12 @@ pub fn spawn_reconciler(state: crate::server::ServerState) {
                         && matches!(r.role_here(&local), Role::Parent)
                         && !r.child_thread_id.is_empty()
                         && state.peernet.is_online(&r.machine_id)
+                        // The whole point: a worker whose pushes are arriving is
+                        // never polled. Only silence costs a request.
+                        && should_poll(state.hub.dispatch_silence(&r.id))
                 })
                 .collect();
-            for record in stale {
+            for record in quiet {
                 let asked = state
                     .peernet
                     .request(
@@ -634,7 +651,47 @@ pub fn spawn_reconciler(state: crate::server::ServerState) {
                         None,
                     )
                     .await;
-                let Ok(remote) = asked else { continue };
+                let remote = match asked {
+                    Ok(remote) => remote,
+                    Err(e) => {
+                        tracing::debug!("reconcile poll of {} failed: {e:#}", record.id);
+                        continue;
+                    }
+                };
+                tracing::debug!(
+                    "reconcile poll {} -> status={:?} lastActivity={:?}",
+                    record.id,
+                    remote.get("status"),
+                    remote.get("lastActivity")
+                );
+
+                // Progress first: a worker that cannot reach us is still doing
+                // something, and "building… 4m elapsed" is the difference
+                // between a live row and one that looks hung.
+                if let Some(line) = remote.get("lastActivity").and_then(|v| v.as_object()) {
+                    let text = line
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let activity = line
+                        .get("activity")
+                        .and_then(Value::as_str)
+                        .unwrap_or("status")
+                        .to_string();
+                    if !text.is_empty() && echoed.get(&record.id) != Some(&text) {
+                        echoed.insert(record.id.clone(), text.clone());
+                        state.hub.emit(
+                            &record.parent_thread_id,
+                            AgentEvent::SubagentProgress {
+                                task_id: record.id.clone(),
+                                activity,
+                                text,
+                            },
+                        );
+                    }
+                }
+
                 let status: Option<DispatchStatus> = remote
                     .get("status")
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
@@ -650,6 +707,7 @@ pub fn spawn_reconciler(state: crate::server::ServerState) {
                     record.id,
                     record.machine_id
                 );
+                echoed.remove(&record.id);
                 accept_report(&state.hub, &record.id, status, result);
             }
         }
@@ -688,6 +746,8 @@ pub fn accept_report(
         .as_ref()
         .map(|r| r.summary.clone())
         .unwrap_or_default();
+    hub.note_dispatch_heard(&updated.id);
+    hub.forget_dispatch_tracking(&updated.id);
     hub.emit(
         &updated.parent_thread_id,
         AgentEvent::SubagentCompleted {
@@ -1087,11 +1147,16 @@ pub async fn handle(
         }
 
         "dispatch.get" => {
-            let record = hub
-                .dispatch
-                .get(&field("dispatchId")?)
-                .context("unknown dispatch")?;
-            Ok(to_wire(&record, &local))
+            let id = field("dispatchId")?;
+            let record = hub.dispatch.get(&id).context("unknown dispatch")?;
+            let mut wire = to_wire(&record, &local);
+            // Ride the worker's latest activity along, so a parent that has had
+            // to fall back to asking still gets live progress and not just a
+            // status word.
+            if let Some((activity, text)) = hub.dispatch_activity(&id) {
+                wire["lastActivity"] = json!({ "activity": activity, "text": text });
+            }
+            Ok(wire)
         }
 
         "dispatch.cancel" => {
@@ -1254,6 +1319,8 @@ pub async fn handle(
                 record.machine_id == caller,
                 "only the machine running a dispatch may report on it"
             );
+            // Hearing a push is what keeps this dispatch off the poll list.
+            hub.note_dispatch_heard(&record.id);
             hub.emit(
                 &record.parent_thread_id,
                 AgentEvent::SubagentProgress {
@@ -1531,6 +1598,38 @@ mod tests {
             brief.contains("does not read this thread"),
             "the worker must know the summary is the whole channel"
         );
+    }
+
+    /// The rule that decides whether the fallback costs anything. A healthy
+    /// dispatch pushes every `DISPATCH_PROGRESS_INTERVAL`, so it must never be
+    /// polled; a worker that cannot reach us must be polled from the first tick.
+    #[test]
+    fn only_a_worker_that_has_gone_quiet_is_polled() {
+        use std::time::Duration;
+        assert!(
+            should_poll(None),
+            "never having heard from a worker is silence, not a grace period"
+        );
+        assert!(
+            !should_poll(Some(Duration::from_secs(0))),
+            "a worker that just pushed is not polled"
+        );
+        assert!(
+            !should_poll(Some(limits::DISPATCH_PROGRESS_INTERVAL)),
+            "one push interval is normal cadence, not silence"
+        );
+        assert!(
+            !should_poll(Some(limits::DISPATCH_PROGRESS_INTERVAL * 2)),
+            "a single missed push is jitter, not a broken channel"
+        );
+        assert!(
+            should_poll(Some(limits::DISPATCH_PUSH_SILENCE)),
+            "sustained silence starts the fallback"
+        );
+        assert!(should_poll(Some(Duration::from_secs(600))));
+        // The threshold has to sit above the push cadence or every healthy
+        // dispatch gets polled as well as pushed.
+        assert!(limits::DISPATCH_PUSH_SILENCE > limits::DISPATCH_PROGRESS_INTERVAL * 2);
     }
 
     #[test]

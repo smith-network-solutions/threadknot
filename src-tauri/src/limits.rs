@@ -202,18 +202,29 @@ pub const MAX_REMEMBERED_DISPATCHES: usize = 200;
 /// parent's context, so it cannot be a transcript.
 pub const DISPATCH_SUMMARY_MAX: usize = 8_000;
 
-/// How often a parent re-checks workers that have not reported.
+/// How often the parent's reconcile loop wakes.
 ///
-/// Only a safety net — the worker pushes the moment it finishes — so this is
-/// slow on purpose: one small request per unfinished dispatch, and a dispatch
-/// whose report was merely delayed has usually landed long before the next tick.
-pub const DISPATCH_RECONCILE_INTERVAL: Duration = Duration::from_secs(20);
+/// This is a *tick*, not a poll rate: on each tick it only contacts workers
+/// whose push channel has gone quiet (see `DISPATCH_PUSH_SILENCE`). While
+/// pushes are arriving — the normal case — the loop costs nothing but a wakeup,
+/// so this can be fast enough that the degraded path still feels live.
+pub const DISPATCH_RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
 
-/// How often a running worker's activity is forwarded to its parent. Progress
-/// is a reassurance, not a transcript: one line every few seconds is enough to
-/// show a build is alive, and anything faster spends the parent's context on
-/// its own subordinate's tool calls.
-pub const DISPATCH_PROGRESS_INTERVAL: Duration = Duration::from_secs(4);
+/// How long the parent waits to hear from a worker before it starts asking.
+///
+/// Deliberately a small multiple of `DISPATCH_PROGRESS_INTERVAL`: one missed
+/// push is jitter, three in a row means the worker cannot reach us and polling
+/// is the only channel left. Too low and every healthy dispatch gets polled as
+/// well as pushed; too high and a one-way-reachable worker looks frozen.
+pub const DISPATCH_PUSH_SILENCE: Duration = Duration::from_secs(7);
+
+/// How often a running worker's activity is forwarded to its parent.
+///
+/// Progress is a reassurance, not a transcript. It is also *transient* — never
+/// persisted, so it never lands in the parent model's context — which means the
+/// only cost of being prompt is a small frame on an already-open socket. Two
+/// seconds reads as live; slower reads as stalled.
+pub const DISPATCH_PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
 
 // ------------------------------------------------------------ exec jobs ---
 
