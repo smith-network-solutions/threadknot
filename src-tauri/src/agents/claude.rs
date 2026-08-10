@@ -14,6 +14,7 @@ use crate::protocol::*;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -69,7 +70,71 @@ type SpawnedClaude = (
     mpsc::UnboundedReceiver<Value>,
     StderrTail,
     tokio::task::JoinHandle<()>,
+    Option<McpConfigLease>,
 );
+
+/// Keeps a file-backed MCP configuration alive for one Claude process.
+///
+/// Claude's native Windows executable does not reliably preserve the quotes in
+/// inline JSON passed through Rust's Windows command-line encoder. When that
+/// happens it treats the mangled JSON as a relative filename and aborts before
+/// the stream starts. A real JSON file avoids the quoting boundary entirely.
+/// The Windows handle is opened delete-on-close so an app crash cannot strand
+/// the browser bearer token (or Library MCP credentials) in the temp folder.
+struct McpConfigLease {
+    path: PathBuf,
+    _file: std::fs::File,
+}
+
+impl Drop for McpConfigLease {
+    fn drop(&mut self) {
+        // On Windows the open handle's delete-on-close flag is the final
+        // backstop. This explicit removal handles ordinary shutdown on every
+        // platform and is intentionally best-effort during process teardown.
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Return the value handed to `--mcp-config` and, when needed, the lease that
+/// keeps its backing file alive until the Claude child retires.
+fn mcp_config_for_spawn(json: String) -> Result<(String, Option<McpConfigLease>)> {
+    #[cfg(not(windows))]
+    {
+        Ok((json, None))
+    }
+
+    #[cfg(windows)]
+    {
+        use std::io::Write as _;
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        // WinBase FILE_FLAG_DELETE_ON_CLOSE. std's Windows OpenOptions shares
+        // read/write/delete access, so Claude can still open the file by name.
+        const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x0400_0000;
+
+        let path = std::env::temp_dir().join(format!(
+            "threadknot-claude-mcp-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .custom_flags(FILE_FLAG_DELETE_ON_CLOSE);
+        let mut file = options
+            .open(&path)
+            .with_context(|| format!("create temporary Claude MCP config {}", path.display()))?;
+        file.write_all(json.as_bytes())
+            .with_context(|| format!("write temporary Claude MCP config {}", path.display()))?;
+        file.flush()
+            .with_context(|| format!("flush temporary Claude MCP config {}", path.display()))?;
+
+        let arg = path.to_string_lossy().into_owned();
+        Ok((arg, Some(McpConfigLease { path, _file: file })))
+    }
+}
 
 /// Render the retained stderr tail as a single string, or a placeholder when the
 /// process died without printing anything.
@@ -584,6 +649,7 @@ fn mcp_config_json(endpoint: &str, token: &str, library: &[crate::library::McpSe
     json!({ "mcpServers": servers }).to_string()
 }
 
+#[cfg(test)]
 fn command_args(
     settings: &ThreadSettings,
     profile: Option<&ClaudexProfile>,
@@ -591,6 +657,20 @@ fn command_args(
     mcp_endpoint: &str,
     mcp_token: &str,
     library: &[crate::library::McpServer],
+) -> Vec<String> {
+    command_args_with_mcp_config(
+        settings,
+        profile,
+        resume_session_id,
+        mcp_config_json(mcp_endpoint, mcp_token, library),
+    )
+}
+
+fn command_args_with_mcp_config(
+    settings: &ThreadSettings,
+    profile: Option<&ClaudexProfile>,
+    resume_session_id: Option<&str>,
+    mcp_config: String,
 ) -> Vec<String> {
     let model = api_model_id(settings, profile);
     let mut args = [
@@ -616,10 +696,7 @@ fn command_args(
     .map(String::from)
     .collect::<Vec<_>>();
     // Wire the agent-driven browser MCP server (see mcp.rs) plus the Library.
-    args.extend([
-        "--mcp-config".into(),
-        mcp_config_json(mcp_endpoint, mcp_token, library),
-    ]);
+    args.extend(["--mcp-config".into(), mcp_config]);
     if let Some(mode) = permission_mode(settings) {
         args.extend(["--permission-mode".into(), mode.into()]);
     }
@@ -678,6 +755,13 @@ fn spawn_claude(
             }
         }
     }
+    let mcp_json = mcp_config_json(
+        &ctx.mcp_endpoint,
+        &ctx.mcp_token,
+        &ctx.hub.library.for_agent(ctx.agent),
+    );
+    let (mcp_config, mcp_config_lease) = mcp_config_for_spawn(mcp_json)?;
+
     let mut cmd = Command::new(bin);
     cmd.env("PATH", super::agent_path());
     if let Some(profile) = profile {
@@ -685,13 +769,11 @@ fn spawn_claude(
             cmd.env(name, value);
         }
     }
-    cmd.args(command_args(
+    cmd.args(command_args_with_mcp_config(
         settings,
         profile,
         resume_session_id,
-        &ctx.mcp_endpoint,
-        &ctx.mcp_token,
-        &ctx.hub.library.for_agent(ctx.agent),
+        mcp_config,
     ));
     super::no_console(&mut cmd);
     let mode = permission_mode(settings);
@@ -763,7 +845,14 @@ fn spawn_claude(
         // turn (first message, or the mid-turn reconnect replay).
         turn_active: true,
     };
-    Ok((child, session, rx, stderr_tail, stderr_task))
+    Ok((
+        child,
+        session,
+        rx,
+        stderr_tail,
+        stderr_task,
+        mcp_config_lease,
+    ))
 }
 
 pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentCommand>) -> Result<()> {
@@ -814,8 +903,14 @@ async fn run_with_policy(
 
     let mut active_text = super::transcript::seeded_message(ctx.seed.as_deref(), &first.0);
     let mut active_attachments = first.2;
-    let (mut child, mut session, mut out_rx, mut stderr_tail, mut stderr_task) =
-        spawn_claude(ctx, &first.1, ctx.resume_session_id.as_deref())?;
+    let (
+        mut child,
+        mut session,
+        mut out_rx,
+        mut stderr_tail,
+        mut stderr_task,
+        mut _mcp_config_lease,
+    ) = spawn_claude(ctx, &first.1, ctx.resume_session_id.as_deref())?;
     // A handoff seed (mid-thread agent switch) rides in the first message: a
     // standalone user frame would itself start a turn.
     session
@@ -886,7 +981,14 @@ async fn run_with_policy(
                                     .map(|anchor| anchor.session_id.clone())
                             })
                             .or_else(|| ctx.resume_session_id.clone());
-                        (child, session, out_rx, stderr_tail, stderr_task) = spawn_claude(
+                        (
+                            child,
+                            session,
+                            out_rx,
+                            stderr_tail,
+                            stderr_task,
+                            _mcp_config_lease,
+                        ) = spawn_claude(
                             ctx,
                             &current_settings,
                             resume_session_id.as_deref(),
@@ -2146,6 +2248,27 @@ mod tests {
             .find(|pair| pair[0] == "--permission-mode")
             .map(|pair| pair[1].as_str());
         assert_eq!(permission, Some("bypassPermissions"));
+    }
+
+    #[test]
+    fn mcp_config_spawn_argument_matches_platform_contract() {
+        let json = r#"{"mcpServers":{"threadknot-browser":{"type":"http"}}}"#.to_string();
+        let (arg, lease) = mcp_config_for_spawn(json.clone()).unwrap();
+
+        #[cfg(windows)]
+        {
+            let lease = lease.expect("Windows should use a file-backed MCP config");
+            assert_eq!(std::fs::read_to_string(&arg).unwrap(), json);
+            let path = lease.path.clone();
+            drop(lease);
+            assert!(!path.exists(), "temporary MCP config should be removed");
+        }
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(arg, json);
+            assert!(lease.is_none());
+        }
     }
 
     #[test]
