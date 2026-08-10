@@ -10,7 +10,7 @@ Format (parsed by build.rs, keep it exact):
 
 ## v0.1.32 · 2026-08-10
 
-- **New About section, at the foot of Settings.** What Threadknot is, the exact build you are running (version, build date, commit and machine), the Apache-2.0 licence with links to the source, the third-party notices and the security policy, and the credits. It ends with a dedication to the developers and gamers who came before us, and it rewards reading all the way to the bottom.
+- **New About section, at the foot of Settings.** What Threadknot is, the exact build you are running (version, build date, commit and machine), the Apache-2.0 licence with links to the source, the third-party notices and the security policy, and the credits. It rewards reading all the way to the bottom.
 
 ## v0.1.31 · 2026-08-09
 

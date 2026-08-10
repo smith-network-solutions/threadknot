@@ -49,14 +49,6 @@
   color: var(--dim);
   max-width: 62ch;
 }
-.about-dedication {
-  margin-top: 12px;
-  padding-left: 10px;
-  border-left: 2px solid var(--brass-dim, var(--line));
-  color: var(--faint);
-  font-style: italic;
-}
-
 .about-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -175,10 +167,32 @@
 
 /* ---- the cabinet ------------------------------------------------------- */
 
-.lc-frame {
-  position: absolute;
+/* The settings dialog while the cabinet is up. Hidden rather than unmounted so
+   leaving the cabinet returns to the same screen, on the same section. */
+.settings-screen.ss-eclipsed {
+  visibility: hidden;
+}
+
+/* Above .modal-backdrop (100) as well as the settings backdrop (95): while the
+   cabinet is up it is the only thing on screen, and the dialog it was opened
+   from should not be readable behind it. */
+.lc-backdrop {
+  position: fixed;
   inset: 0;
-  z-index: 8;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 2, 8, 0.94);
+  backdrop-filter: blur(6px);
+}
+
+.lc-frame {
+  position: relative;
+  width: min(1680px, 97vw);
+  height: min(1180px, 96vh);
+  border: 2px solid #241c60;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.7);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -401,10 +415,26 @@
 }
 .lc-card-body {
   margin: 0;
-  max-width: 46ch;
-  font-size: 12px;
+  max-width: 52ch;
+  font-size: clamp(12px, 1.2vw, 15px);
   line-height: 1.65;
   color: #9ea8d8;
+}
+
+/* The dedication. It is the point of the whole thing, so on the landing screen
+   it gets the room a dedication deserves rather than being another line of
+   body copy. */
+.lc-card-dedication {
+  margin: 6px 0 0;
+  max-width: 58ch;
+  padding: 12px 18px;
+  border-top: 2px solid #342c78;
+  border-bottom: 2px solid #342c78;
+  font-size: clamp(12.5px, 1.25vw, 16px);
+  line-height: 1.7;
+  font-style: italic;
+  color: var(--lc-gold);
+  text-shadow: 0 0 14px rgba(255, 207, 77, 0.22);
 }
 .lc-card-foot {
   margin-top: 4px;
@@ -465,6 +495,12 @@
 }
 
 @media (max-width: 720px) {
+  /* Full bleed: there is no room to spare for a frame around a frame. */
+  .lc-frame {
+    width: 100vw;
+    height: 100dvh;
+    border: none;
+  }
   .lc-hud {
     gap: 12px;
     overflow-x: auto;

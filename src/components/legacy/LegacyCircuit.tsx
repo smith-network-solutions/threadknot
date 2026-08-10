@@ -14,6 +14,7 @@
 //     never depends on a closure catching the right render.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   awardLegacyCrest,
   CIRCUIT_TRIBUTE,
@@ -143,7 +144,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       const r = wrap.getBoundingClientRect();
       if (r.width < 4 || r.height < 4) return;
       const fit = Math.min(r.width / VIEW_W, r.height / VIEW_H);
-      setScale(Math.max(1, Math.min(3, Math.floor(fit))));
+      // Up to 5x now that the cabinet owns the window: a 1600x1200 picture on a
+      // tall screen, still every pixel landing on a whole number of real ones.
+      setScale(Math.max(1, Math.min(5, Math.floor(fit))));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -382,7 +385,10 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         return {
           kicker: "LEGACY CIRCUIT",
           heading: "A HIDDEN CABINET",
-          body: CIRCUIT_TRIBUTE,
+          body: "Three stages. Three lives. One run.",
+          // The reason the whole thing exists, on the first screen anyone who
+          // finds their way in will see.
+          dedication: CIRCUIT_TRIBUTE,
           foot: "PRESS ENTER TO BEGIN",
         };
       case "intro":
@@ -417,7 +423,8 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         return {
           kicker: "ALL STAGES CLEAR",
           heading: CREST_NAME,
-          body: `You found the circuit. You finished the run. Carry the thread forward. ${CIRCUIT_TRIBUTE}`,
+          body: "You found the circuit. You finished the run. Carry the thread forward.",
+          dedication: CIRCUIT_TRIBUTE,
           foot: "ENTER to run it again · ESC to leave",
         };
       default:
@@ -425,7 +432,11 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     }
   })();
 
-  return (
+  // Portaled to <body> and sized against the viewport, not against the settings
+  // dialog it was opened from. A cabinet is the only thing on the screen while
+  // you are at it, and 880 by 660 is a postcard to play a game through.
+  return createPortal(
+    <div className="lc-backdrop">
     <div
       className={`lc-frame${calm ? " calm" : ""}${phase === "boot" ? " booting" : ""}`}
       ref={frameRef}
@@ -507,6 +518,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
             {phase === "win" && <Crest size={54} className="lc-card-crest" title={CREST_NAME} />}
             <div className="lc-card-heading">{card.heading}</div>
             <p className="lc-card-body">{card.body}</p>
+            {"dedication" in card && card.dedication && (
+              <p className="lc-card-dedication">{card.dedication}</p>
+            )}
             <div className="lc-card-foot">{card.foot}</div>
           </div>
         )}
@@ -527,5 +541,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       </footer>
       </div>
     </div>
+    </div>,
+    document.body,
   );
 }

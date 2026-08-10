@@ -1943,8 +1943,6 @@ body.reordering { cursor: grabbing; user-select: none; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* The About screen's full-dialog takeover positions against this. */
-  position: relative;
   background: var(--bg-raise);
   border: 1px solid var(--line);
   border-radius: 14px;

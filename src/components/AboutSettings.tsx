@@ -9,11 +9,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
+// The dedication is deliberately NOT imported here. It names the circuit, and
+// a line about a hidden circuit sitting in plain sight on the About screen
+// announces the secret to everyone who never goes looking. It belongs on the
+// cabinet's own landing screen, which only someone who found the way in sees.
 import {
   advanceCircuit,
   CIRCUIT_LENGTH,
   CIRCUIT_SEQUENCE,
-  CIRCUIT_TRIBUTE,
   CREST_NAME,
 } from "../lib/legacyCircuit";
 import { Crest, useLegacyAward } from "./legacy/Crest";
@@ -199,7 +202,6 @@ export function AboutSettings({ onUnlock }: { onUnlock: () => void }) {
           stands on a long stack of other people's work: Rust, Tauri, React,
           axum, xterm.js and the rest, all named in the third-party notices.
         </p>
-        <p className="about-copy about-dedication">{CIRCUIT_TRIBUTE}</p>
 
         {award.earned && (
           <div className="about-earned">
