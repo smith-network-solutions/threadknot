@@ -4,6 +4,10 @@
 > `MULTI-MACHINE.md` (the mesh this rides on), `PARLEY.md` (the multi-agent
 > primitive this is deliberately *not*), and `PROTOCOL.md`.
 >
+> **This file is the design record — why it is built this way, and what is not
+> built. For how to actually drive it, read `USING-DISPATCH.md`.** Keep usage
+> there and rationale here: two copies of either is the pair that drifts.
+>
 > What is proven, and how: `scripts/dispatch-smoke.py` pairs two headless
 > instances and asserts local exec, routed exec, unattended long jobs, routed
 > cancel, cross-machine dispatch creation, report delivery, and a report raised

@@ -26,6 +26,10 @@ on the LAN, so the app is usable from a phone.
 - **Mobile app** (`mobile/`): Expo SDK 57 companion — biometric-locked WebView
   shell with multi-server switching + push notifications. Read
   **`docs/MOBILE.md`** first.
+- **Dispatch** (`dispatch.rs`, `exec.rs`, `mcp_fleet.rs`): one thread hands a
+  brief to another agent — a different harness, a different machine — and gets
+  a report back. How to drive it: **`docs/USING-DISPATCH.md`**. Why it is built
+  this way, and what is still missing: `docs/DISPATCH.md`.
 - **Auth**: uses the installed `claude` / `codex` / `kimi` CLIs' own
   subscription logins.
 

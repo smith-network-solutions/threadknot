@@ -35,11 +35,25 @@ Threadknot server C ─┘                          ├─ biometric/privacy gat
   shared display, and a master token leaked that way is permanent and silent,
   whereas a scanned code is worthless seconds later. The pasted-LAN-URL path is
   unchanged and still works.
-- **`push.rs`** — Expo push dispatcher. `Hub::emit` mirrors `turn_completed`,
+- **`push.rs`** — push dispatcher. `Hub::emit` mirrors `turn_completed`,
   `approval_request`, `question_request` (+ opt-in `error`) into a bounded
-  queue; the worker batches to the Expo API with retry/backoff, tracks
-  tickets→receipts, and disables `DeviceNotRegistered` tokens. Override the
-  API with `THREADKNOT_EXPO_PUSH_URL` / `THREADKNOT_EXPO_RECEIPTS_URL` for tests.
+  queue; the worker batches with retry/backoff, tracks tickets→receipts, and
+  disables `DeviceNotRegistered` tokens.
+  **Sends go to Threadknot's push gateway (`https://remote.threadknot.ai/v1/push/send`),
+  not to `exp.host`.** Expo authenticates a send with the *recipient's* token, so
+  every build in the world sharing one Expo project could notify any phone it held
+  a token for, at any rate, on shared Apple/Google credentials; the alternative
+  needs a project access token in every sender, and a secret inside an
+  open-source binary is not one. The gateway holds that credential, validates the
+  message, and rate-limits per device. Nothing else changes: no account, no
+  signup, and pairing stays a matter between the phone and this machine.
+  **There is deliberately no fallback to `exp.host`** — it would bypass the
+  control and would stop working once enhanced push security is on.
+  Point a build elsewhere with `THREADKNOT_PUSH_GATEWAY` (base URL), or override
+  one endpoint with `THREADKNOT_PUSH_SEND_URL` / `THREADKNOT_PUSH_RECEIPTS_URL`
+  (the older `THREADKNOT_EXPO_*` names still work). A ticket whose
+  `details.error` is `RateLimited` is the gateway refusing that message; it is
+  never `DeviceNotRegistered`, so a rate limit can never unsubscribe a phone.
 - **Per-device workspace subscriptions** — `MobileDevice` carries
   `notifyScope` (`all` | `selected` | `none`) plus `notifyWorkspaces`, one list
   read two ways: a mute list under `all`, an allowlist under `selected`. The

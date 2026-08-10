@@ -2,6 +2,27 @@
 //! network I/O: `Hub::emit` never waits on Expo. The worker batches messages,
 //! retries transient failures with backoff, tracks tickets → receipts, and
 //! disables tokens Expo reports as dead (`DeviceNotRegistered`).
+//!
+//! ## Sends go through Threadknot's push gateway, not straight to Expo
+//!
+//! Expo authenticates a send with the *recipient's* push token, so anybody
+//! holding one can notify that phone — which, for a project anyone can build and
+//! run, means every instance in the world shares one notification budget and one
+//! set of APNs/FCM credentials, and any one of them can spend or discredit both.
+//! The alternative Expo offers (enhanced push security) needs a project access
+//! token on every sender, and a secret shipped in an open-source binary is not a
+//! secret.
+//!
+//! So the credential stays on Threadknot's server and this posts there instead.
+//! The gateway validates the message, rate-limits per device, and forwards under
+//! the project token. Nothing about the local product changes: no account, no
+//! signup, no data beyond the notification itself, and pairing a phone is still
+//! a matter between the phone and this machine.
+//!
+//! **There is deliberately no fallback to `exp.host`.** One would be a bypass of
+//! the control this exists to add, and it would stop working the moment enhanced
+//! push security is switched on anyway. If the gateway is unreachable, the
+//! retry/backoff below is the whole answer, and notifications wait.
 
 use crate::mobile::MobileStore;
 use serde_json::{json, Value};
@@ -17,14 +38,42 @@ const BATCH_SIZE: usize = 100;
 const RECEIPT_DELAY: Duration = Duration::from_secs(15 * 60);
 const RECEIPT_POLL: Duration = Duration::from_secs(60);
 
+/// Threadknot's push gateway. Fronted at the relay's apex hostname, but this is
+/// not the relay service: it answers to every installation, paid or not,
+/// enrolled or not.
+const PUSH_GATEWAY: &str = "https://remote.threadknot.ai";
+
+fn join(base: &str, path: &str) -> String {
+    format!("{}{path}", base.trim_end_matches('/'))
+}
+
+/// The old `THREADKNOT_EXPO_*` names still work: they were only ever test knobs,
+/// and they are the escape hatch for pointing a build at a local gateway — or,
+/// with a full `exp.host` URL, at Expo directly.
+fn endpoint(var: &str, legacy: &str, path: &str) -> String {
+    std::env::var(var)
+        .or_else(|_| std::env::var(legacy))
+        .unwrap_or_else(|_| {
+            let base =
+                std::env::var("THREADKNOT_PUSH_GATEWAY").unwrap_or_else(|_| PUSH_GATEWAY.into());
+            join(&base, path)
+        })
+}
+
 fn push_url() -> String {
-    std::env::var("THREADKNOT_EXPO_PUSH_URL")
-        .unwrap_or_else(|_| "https://exp.host/--/api/v2/push/send".into())
+    endpoint(
+        "THREADKNOT_PUSH_SEND_URL",
+        "THREADKNOT_EXPO_PUSH_URL",
+        "/v1/push/send",
+    )
 }
 
 fn receipts_url() -> String {
-    std::env::var("THREADKNOT_EXPO_RECEIPTS_URL")
-        .unwrap_or_else(|_| "https://exp.host/--/api/v2/push/getReceipts".into())
+    endpoint(
+        "THREADKNOT_PUSH_RECEIPTS_URL",
+        "THREADKNOT_EXPO_RECEIPTS_URL",
+        "/v1/push/receipts",
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,6 +296,54 @@ fn token_preview_preferences<'a>(
     by_token
 }
 
+/// What a log line may say about a push token.
+///
+/// A token is a capability: whoever holds one can notify that phone, for as long
+/// as the app stays installed. Four trailing characters are enough to tell two
+/// devices apart in a log and not enough to be one, which matters because these
+/// logs get pasted into bug reports.
+fn redact_token(token: &str) -> String {
+    let tail: String = token
+        .strip_suffix(']')
+        .unwrap_or(token)
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<char>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("ExponentPushToken[…{tail}]")
+}
+
+/// The same treatment for anything Expo hands back.
+///
+/// Its error bodies are full of tokens — `PUSH_TOO_MANY_EXPERIENCE_IDS` lists
+/// every conflicting one, grouped by project — and that body is logged in full,
+/// deliberately, because losing it is what once made a total notification outage
+/// undiagnosable. Both facts can be true at once: log the body, redact the
+/// capabilities in it.
+fn redact_tokens(value: &Value) -> Value {
+    match value {
+        Value::String(s) if is_push_token(s) => Value::String(redact_token(s)),
+        Value::Array(items) => Value::Array(items.iter().map(redact_tokens).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(k, v)| {
+                    let key = if is_push_token(k) { redact_token(k) } else { k.clone() };
+                    (key, redact_tokens(v))
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn is_push_token(value: &str) -> bool {
+    value.starts_with("ExponentPushToken[") || value.starts_with("ExpoPushToken[")
+}
+
 /// Split a `PUSH_TOO_MANY_EXPERIENCE_IDS` rejection into one token group per
 /// Expo project.
 ///
@@ -362,7 +459,7 @@ async fn send_batch_inner(
                     }
                 }
 
-                tracing::error!("expo push rejected: HTTP {status}: {body}");
+                tracing::error!("expo push rejected: HTTP {status}: {}", redact_tokens(&body));
                 return;
             }
             Err(e) => {
@@ -412,7 +509,7 @@ fn handle_tickets(
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
                 if detail == "DeviceNotRegistered" && !token.is_empty() {
-                    tracing::info!("expo token dead (ticket), disabling: {token}");
+                    tracing::info!("expo token dead (ticket), disabling: {}", redact_token(token));
                     mobile.disable_push_token(token);
                 } else {
                     tracing::warn!("expo push ticket error: {detail}");
@@ -469,7 +566,10 @@ async fn receipt_loop(
                         .unwrap_or("unknown");
                     if detail == "DeviceNotRegistered" {
                         if let Some(token) = by_id.get(id) {
-                            tracing::info!("expo token dead (receipt), disabling: {token}");
+                            tracing::info!(
+                                "expo token dead (receipt), disabling: {}",
+                                redact_token(token)
+                            );
                             mobile.disable_push_token(token);
                         }
                     } else {
@@ -532,6 +632,57 @@ mod tests {
             }]
         });
         assert!(experience_groups(&body).is_none());
+    }
+
+    #[test]
+    fn the_endpoints_are_the_gateway_and_a_trailing_slash_does_not_double_up() {
+        assert_eq!(
+            join("https://remote.threadknot.ai/", "/v1/push/send"),
+            "https://remote.threadknot.ai/v1/push/send"
+        );
+        assert_eq!(
+            join("http://127.0.0.1:9999", "/v1/push/receipts"),
+            "http://127.0.0.1:9999/v1/push/receipts"
+        );
+        assert!(
+            !PUSH_GATEWAY.contains("exp.host"),
+            "sending straight to Expo is what the gateway exists to stop"
+        );
+    }
+
+    /// The body is logged in full on a rejection — that is the fix for the
+    /// outage this parser exists for — so the capabilities inside it have to come
+    /// out first.
+    #[test]
+    fn a_logged_rejection_carries_no_usable_token() {
+        let body: Value = serde_json::from_str(CONFLICT).unwrap();
+        let logged = redact_tokens(&body).to_string();
+        assert!(
+            !logged.contains("EXAMPLEtokenOldOne0001"),
+            "a token in a log is a token in a bug report"
+        );
+        assert!(logged.contains("ExponentPushToken[…"));
+        assert!(
+            logged.contains("PUSH_TOO_MANY_EXPERIENCE_IDS"),
+            "redaction must not cost the diagnosis"
+        );
+        assert!(logged.contains("@servicestorm/armada-mobile"));
+    }
+
+    #[test]
+    fn redaction_keeps_enough_to_tell_two_devices_apart_and_no_more() {
+        let a = redact_token("ExponentPushToken[EXAMPLEtokenOldOne0001]");
+        let b = redact_token("ExponentPushToken[EXAMPLEtokenOldTwo0002]");
+        assert_ne!(a, b);
+        assert_eq!(a, "ExponentPushToken[…0001]");
+        // Nothing panics on shapes a hostile or truncated value could take.
+        assert_eq!(redact_token(""), "ExponentPushToken[…]");
+        assert_eq!(redact_token("ab"), "ExponentPushToken[…ab]");
+        // Sliced by character, not by byte, so a multi-byte value cannot panic.
+        assert_eq!(
+            redact_token("ExponentPushToken[aaé☃]"),
+            "ExponentPushToken[…aaé☃]"
+        );
     }
 
     #[test]
