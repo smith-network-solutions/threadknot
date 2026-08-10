@@ -367,7 +367,11 @@ function ToolRow({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
   const [loadingFull, setLoadingFull] = useState(false);
   const threadId = state.feedThreadId;
   if (item.subagent) return <SubagentCard item={item} />;
-  const hasBody = item.output.length > 0;
+  const hasDetail = item.detail.trim().length > 0;
+  const hasOutput = item.output.length > 0;
+  // A live tool is useful before it has printed anything: opening it reveals
+  // the full invocation instead of leaving the truncated row disabled.
+  const expandable = hasDetail || hasOutput || !item.done;
   const body = full ?? item.output;
   const expand = () => {
     const next = !open;
@@ -385,20 +389,35 @@ function ToolRow({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
     <div className={`row-card tool-row${item.isError ? " is-error" : ""}${item.done ? "" : " is-live"}`}>
       <button
         className="row-head"
-        onClick={() => hasBody && expand()}
-        disabled={!hasBody}
+        onClick={() => expandable && expand()}
+        disabled={!expandable}
+        aria-expanded={expandable ? open : undefined}
       >
         <span className="row-glyph"><ToolGlyph name={item.name} /></span>
         <span className="row-name">{item.name}</span>
         {item.detail && <span className="row-detail">{item.detail}</span>}
         {!item.done && <span className="tool-spin" aria-label="running" />}
         {item.isError && <span className="tool-flag">err</span>}
-        {hasBody && <ChevronIcon size={13} open={open} className="row-chevron" />}
+        {expandable && <ChevronIcon size={13} open={open} className="row-chevron" />}
       </button>
-      {open && hasBody && (
-        <div className="tool-output-wrap">
-          <CopyButton value={body} label="Copy output" className="copy-btn floating" />
-          <pre className="tool-output">{body}</pre>
+      {open && expandable && (
+        <div className="tool-body">
+          {hasDetail && (
+            <div className="tool-input-wrap">
+              <div className="tool-section-label">call</div>
+              <pre className="tool-input">{item.detail}</pre>
+            </div>
+          )}
+          {body.length > 0 && (
+            <div className="tool-output-wrap">
+              <CopyButton value={body} label="Copy output" className="copy-btn floating" />
+              <div className="tool-section-label">{item.done ? "output" : "live output"}</div>
+              <pre className="tool-output">{body}</pre>
+            </div>
+          )}
+          {!item.done && body.length === 0 && (
+            <div className="tool-output-note">running · waiting for output…</div>
+          )}
           {loadingFull && <div className="tool-output-note">loading full output…</div>}
         </div>
       )}

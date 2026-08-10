@@ -170,6 +170,9 @@ export function ThreadView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const scrollTopRef = useRef(0);
+  const scrollHeightRef = useRef(0);
+  const clientHeightRef = useRef(0);
+  const touchYRef = useRef<number | null>(null);
   // The zoom scrollTopRef's number was measured under. Compared (not just used)
   // so one zoom value is only ever rescaled once (see the APPEARANCE_EVENT
   // handler below).
@@ -208,6 +211,8 @@ export function ThreadView() {
       // Keep the reader's last explicit position unless they were following the end.
       el.scrollTop = scrollTopRef.current;
     }
+    scrollHeightRef.current = el.scrollHeight;
+    clientHeightRef.current = el.clientHeight;
     setAtPresent((prev) => (prev === stickRef.current ? prev : stickRef.current));
   });
 
@@ -218,6 +223,14 @@ export function ThreadView() {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
     scrollTopRef.current = el.scrollTop;
+  }, []);
+
+  // Growing content and a resizing composer both dispatch scroll events even
+  // though the reader did not move the feed. Only an explicit gesture away
+  // from the end may turn live-follow off; onScroll itself is still allowed to
+  // turn it back on once a reader genuinely reaches the bottom.
+  const leavePresent = useCallback(() => {
+    stickRef.current = false;
   }, []);
 
   // The effect above only fires on a React render. Feed content also settles
@@ -237,6 +250,10 @@ export function ThreadView() {
       scrollTopRef.current = el.scrollTop;
     });
     ro.observe(node);
+    // The scrollport also changes height when a long prompt collapses out of
+    // the composer or the mobile keyboard moves. Keep following through those
+    // viewport changes just as we do when the feed content itself grows.
+    if (scrollRef.current) ro.observe(scrollRef.current);
     observerRef.current = ro;
   }, []);
 
@@ -414,18 +431,56 @@ export function ThreadView() {
       <div
         className="feed-scroll"
         ref={scrollRef}
+        onWheel={(e) => {
+          if (e.deltaY < 0) leavePresent();
+        }}
+        onTouchStart={(e) => {
+          touchYRef.current = e.touches[0]?.clientY ?? null;
+        }}
+        onTouchMove={(e) => {
+          const previousY = touchYRef.current;
+          const nextY = e.touches[0]?.clientY;
+          if (previousY != null && nextY != null && nextY > previousY) {
+            leavePresent();
+          }
+          touchYRef.current = nextY ?? null;
+        }}
+        onTouchEnd={() => {
+          touchYRef.current = null;
+        }}
+        onTouchCancel={() => {
+          touchYRef.current = null;
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") {
+            leavePresent();
+          }
+        }}
         onScroll={(e) => {
           if (!loadedFeedId) return;
           const el = e.currentTarget;
+          const previousTop = scrollTopRef.current;
+          const geometryChanged =
+            scrollHeightRef.current !== el.scrollHeight ||
+            clientHeightRef.current !== el.clientHeight;
           scrollTopRef.current = el.scrollTop;
+          scrollHeightRef.current = el.scrollHeight;
+          clientHeightRef.current = el.clientHeight;
           const distanceFromEnd = Math.max(
             0,
             el.scrollHeight - el.scrollTop - el.clientHeight,
           );
-          // Being near the end is useful for button visibility, but it must
-          // not seize a manual gesture. Live-follow resumes only once the
-          // scroller genuinely reaches the bottom.
-          stickRef.current = distanceFromEnd <= BOTTOM_STICK_EPSILON;
+          // Browser-generated scroll events also fire when streaming content,
+          // the composer, or the mobile viewport changes size. Those must not
+          // cancel live-follow. Explicit wheel/touch/key gestures above turn it
+          // off; reaching the real end here is the only implicit state change.
+          if (distanceFromEnd <= BOTTOM_STICK_EPSILON) {
+            stickRef.current = true;
+          } else if (!geometryChanged && el.scrollTop < previousTop - BOTTOM_STICK_EPSILON) {
+            // Covers dragging the desktop scrollbar, which does not reliably
+            // emit wheel or pointer events into the page.
+            leavePresent();
+          }
           const present = distanceFromEnd < BOTTOM_SLACK;
           setAtPresent((prev) => (prev === present ? prev : present));
         }}
