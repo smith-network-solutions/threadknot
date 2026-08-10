@@ -39,7 +39,7 @@ import {
   isQuickHomeProjectId,
   quickHomeProjectId,
 } from "./lib/protocol";
-import { isAgentVisible } from "./lib/agentVisibility";
+import { HERMES_ENABLED_EVENT, isAgentVisible } from "./lib/agentVisibility";
 import { ThreadknotClient } from "./lib/ws";
 import {
   defaultDraft,
@@ -1863,6 +1863,18 @@ export default function App() {
     const p = state.projects.find((x) => x.id === state.solo);
     if (p) document.title = `${p.name} — Threadknot`;
   }, [state.solo, state.isTauri, state.projects]);
+
+  // The Hermes enable toggle lives in module state (agentVisibility.ts) so
+  // every render path can ask isAgentVisible() cheaply; flipping it re-lands
+  // the current hello so each consumer (sidebar tile, agent pickers, schedule
+  // rows) re-renders against the new answer without a reload.
+  useEffect(() => {
+    function onHermesToggle() {
+      if (state.hello) dispatch({ type: "hello", data: state.hello });
+    }
+    window.addEventListener(HERMES_ENABLED_EVENT, onHermesToggle);
+    return () => window.removeEventListener(HERMES_ENABLED_EVENT, onHermesToggle);
+  }, [state.hello]);
 
   const store = useMemo(() => ({ state, dispatch, actions }), [state, actions]);
 

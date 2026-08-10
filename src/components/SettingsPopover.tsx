@@ -25,7 +25,12 @@ import { pickAvatarImage } from "../lib/sidebarImage";
 import { MachineAvatar, machineLook } from "./MachineAvatar";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { hermesPresence } from "./HermesPresence";
-import { isAgentVisible, showHermesAgents } from "../lib/agentVisibility";
+import {
+  getHermesEnabled,
+  hermesRegistered,
+  isAgentVisible,
+  setHermesEnabled,
+} from "../lib/agentVisibility";
 import { CustomizeProfileModal } from "./CustomizeProfileModal";
 import { ConfirmRemoveMachineModal } from "./ConfirmRemoveMachineModal";
 import { PairPhoneModal } from "./PairPhoneModal";
@@ -1857,6 +1862,8 @@ function HermesAgents() {
   const { actions } = useStore();
   const [agents, setAgents] = useState<HermesAgentInfo[] | null>(null);
   const [adding, setAdding] = useState(false);
+  const [, setEnabledTick] = useState(0);
+  const enabled = getHermesEnabled();
   const [url, setUrl] = useState("");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1898,6 +1905,21 @@ function HermesAgents() {
     <div className="settings-block">
       <div className="settings-row">
         <span className="settings-label">hermes agents</span>
+        {/* The master switch: registered gateways stay dark everywhere (agent
+            pickers, sidebar, scheduled runs) until this is deliberately on.
+            Off by default on every machine. */}
+        <span className="settings-seg">
+          <button
+            type="button"
+            className={`settings-toggle${enabled ? " on" : ""}`}
+            onClick={() => {
+              setHermesEnabled(!enabled);
+              setEnabledTick((n) => n + 1);
+            }}
+          >
+            {enabled ? "enabled" : "off"}
+          </button>
+        </span>
         <button
           type="button"
           className="settings-toggle"
@@ -1909,6 +1931,12 @@ function HermesAgents() {
           {adding ? "cancel" : "add"}
         </button>
       </div>
+      {!enabled && (
+        <div className="settings-hint">
+          Off: Hermes agents stay out of the agent pickers, the sidebar, and
+          scheduled runs on this machine until you enable them.
+        </div>
+      )}
       {(agents ?? []).map((a) => (
         <HermesAgentRow
           key={a.id}
@@ -2209,7 +2237,7 @@ function AgentsSettings() {
           ))}
         </div>
       )}
-      {showHermesAgents() && <HermesAgents />}
+      {hermesRegistered() && <HermesAgents />}
       <ClaudexProfiles />
     </>
   );

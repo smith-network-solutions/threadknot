@@ -215,7 +215,9 @@ function ScheduleForm({
   const [error, setError] = useState<string | null>(null);
   const targets = useTargets();
 
-  const agents = state.hello?.agents ?? [];
+  // Same visibility rule as the composer: Hermes only offers itself here when
+  // the machine has gateways registered AND the Settings toggle is on.
+  const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
   const agentInfo = agents.find((a) => a.id === form.agent);
   const models = agentInfo?.models ?? [];
   const currentModel = models.find((m) => m.id === form.model);
