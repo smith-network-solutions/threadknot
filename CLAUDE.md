@@ -42,9 +42,27 @@ with a script. Real agent turns work headless.
 
 ## Building and running
 
-- **Rebuild the desktop app**: `npx tauri build --no-bundle` (NOT plain
-  `cargo build --release` — that ships a binary that loads the dev server and
-  shows "Could not connect to localhost").
+- **Cargo's own build environment must never reach a build.** `tauri dev` starts
+  the app with `cargo run`, so the app — and everything it spawns, agent CLIs and
+  PTY shells included — inherits `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `OUT_DIR`,
+  `DEBUG`. `ring`'s build script fingerprints exactly those, and cargo records
+  them from its own environment, so a build started inside the app and one
+  started from a terminal each invalidate the other: ring, rustls, tokio-rustls,
+  hyper-rustls, reqwest, rcgen, tungstenite and this crate all recompile, ~40s,
+  with nothing changed. Two defences, keep both:
+  - `scrub_cargo_env()` in `lib.rs`, called first thing in both `main`s, drops
+    them before anything spawns. This is what protects *other* Rust projects an
+    agent builds from inside Threadknot.
+  - `scripts/cargo-env.sh` wraps a command with the same set cleared, for builds
+    started from a shell that predates the fix or from another checkout:
+    `scripts/cargo-env.sh cargo build`. `rebuild.sh` and both dev launchers
+    already go through it.
+
+  Either way the check is the same: two builds in a row with no edit should
+  finish in ~0.2s. If the second one recompiles, an environment is drifting.
+- **Rebuild the desktop app**: `scripts/cargo-env.sh npx tauri build --no-bundle`
+  (NOT plain `cargo build --release` — that ships a binary that loads the dev
+  server and shows "Could not connect to localhost").
 - **Restart the running app onto a new build**: use `scripts/restart.sh`,
   launched **detached** so it survives the old instance dying — if you are
   driving an agent *through* Threadknot, a direct kill cuts your own tool call

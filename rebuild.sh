@@ -11,13 +11,20 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Every cargo invocation goes through scripts/cargo-env.sh — see that file. In
+# short: a build started from a shell inside the running app inherits cargo's
+# own build variables from the `cargo run` that launched it, ring's build script
+# fingerprints several of them, and a build that records different values than
+# the last one rebuilds the rustls/reqwest half of the tree plus this crate for
+# nothing. The wrapper normalises them so the release cache stays warm no matter
+# where the build was started from.
 if [ "${1:-}" = "--bundle" ]; then
   shift
   echo "==> Building Threadknot with OS bundles (embeds UI via tauri build)…"
-  npm run tauri build -- "$@"
+  scripts/cargo-env.sh npm run tauri build -- "$@"
 else
   echo "==> Building Threadknot (embeds UI via tauri build, no bundle)…"
-  npm run tauri build -- --no-bundle "$@"
+  scripts/cargo-env.sh npm run tauri build -- --no-bundle "$@"
 fi
 
 BIN="src-tauri/target/release/threadknot"

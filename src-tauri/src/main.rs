@@ -2,6 +2,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // FIRST, while this process is still single-threaded and before anything
+    // can spawn a child: drop the build environment `cargo run` gave us under
+    // `tauri dev`. Every agent CLI and PTY shell Threadknot starts inherits
+    // this process's environment, and cargo's own variables in there wreck the
+    // build cache of any Rust project built from inside the app. See
+    // `scrub_cargo_env`.
+    threadknot_lib::scrub_cargo_env();
+
     // Behavioral probe: exercise the exact production notification backend
     // without opening a window or starting Threadknot's server. This is useful on
     // fresh Linux desktops and after installing a Windows build.

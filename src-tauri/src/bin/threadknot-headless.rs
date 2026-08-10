@@ -3,8 +3,16 @@
 
 use std::sync::Arc;
 
+/// Deliberately a plain `main` with the async body split out below, rather than
+/// `#[tokio::main]` on the body itself: `scrub_cargo_env` mutates the process
+/// environment and has to run before the runtime spawns its worker threads.
+fn main() -> anyhow::Result<()> {
+    threadknot_lib::scrub_cargo_env();
+    serve()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn serve() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

@@ -512,6 +512,79 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
     Ok((state, info))
 }
 
+/// Drop the build variables cargo injected into this process, before anything
+/// spawns a child.
+///
+/// `tauri dev` starts the app with `cargo run`, and cargo hands the program it
+/// launches its own build environment: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`,
+/// `OUT_DIR`, `DEBUG`. Everything Threadknot spawns inherits it — agent CLIs,
+/// PTY shells, `exec` jobs — so a shell opened inside the app looks, to cargo,
+/// like the inside of a build script.
+///
+/// That silently destroys the build cache of any Rust project an agent touches
+/// from in here, this one included. `ring`'s build script reads
+/// `CARGO_MANIFEST_DIR`, `CARGO_PKG_NAME`, `CARGO_PKG_VERSION_*`, `DEBUG` and
+/// `OUT_DIR` through a helper that emits `cargo:rerun-if-env-changed` for each,
+/// and cargo records those values from *its own* environment. A build started
+/// in here records `Some(…)`; the same build started from a terminal or the
+/// desktop launcher records `None`. Each invalidates the other, so ring,
+/// rustls, rustls-webpki, tokio-rustls, hyper-rustls, reqwest, rcgen,
+/// tungstenite and the crate on top all recompile — every time, with not one
+/// source file changed. Measured on this tree: 0.2s when the environment
+/// matches, 40s+ on every flip. It reads as "cargo just always rebuilds",
+/// which is why it went unexplained for so long.
+///
+/// Gated on `CARGO_MANIFEST_DIR` being present, i.e. on cargo having actually
+/// launched us. That makes it a no-op for an installed build, and it means the
+/// generic names below — `DEBUG`, `PROFILE`, `TARGET` — are only ever cleared
+/// when cargo set them, never when the user did.
+///
+/// `LD_LIBRARY_PATH` is deliberately left alone: cargo points it at
+/// `target/debug/deps` and the toolchain's lib dir, nothing fingerprints it,
+/// and the webview `dlopen`s plugins through it.
+///
+/// Call this FIRST, while the process is still single-threaded — `remove_var`
+/// is only sound before other threads exist.
+pub fn scrub_cargo_env() {
+    if std::env::var_os("CARGO_MANIFEST_DIR").is_none() {
+        return; // not launched by cargo: an installed build has nothing to clean
+    }
+
+    // Everything cargo prefixes — CARGO_PKG_*, CARGO_MANIFEST_*, CARGO_CFG_*,
+    // CARGO_FEATURE_*, CARGO_BIN_NAME, the CARGO pointer itself. Matched by
+    // prefix rather than listed, because the set grows between cargo releases.
+    // CARGO_HOME is kept: nothing fingerprints it, and clearing a non-default
+    // one would point a child's cargo at the wrong registry.
+    let injected: Vec<String> = std::env::vars_os()
+        .filter_map(|(key, _)| key.into_string().ok())
+        .filter(|key| key.starts_with("CARGO") && key != "CARGO_HOME")
+        .collect();
+    for key in injected {
+        std::env::remove_var(key);
+    }
+
+    // The unprefixed ones. RUSTUP_TOOLCHAIN is included because rustup resolves
+    // the same toolchain from its default once it is gone, so dropping it costs
+    // nothing and keeps an agent's shell identical to a plain terminal's.
+    for key in [
+        "OUT_DIR",
+        "DEBUG",
+        "PROFILE",
+        "OPT_LEVEL",
+        "NUM_JOBS",
+        "HOST",
+        "TARGET",
+        "RUSTC",
+        "RUSTDOC",
+        "RUSTC_WRAPPER",
+        "RUSTC_LINKER",
+        "RUST_RECURSION_COUNT",
+        "RUSTUP_TOOLCHAIN",
+    ] {
+        std::env::remove_var(key);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
