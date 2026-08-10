@@ -1,0 +1,523 @@
+/* The About screen and the cabinet behind it.
+ *
+ * The cabinet deliberately does NOT read the app's theme variables. It is a
+ * different machine that happens to be inside this one, and it should look the
+ * same whether you found it from the light palette or the dark one. The About
+ * screen above it is the opposite: ordinary settings furniture, themed like
+ * every other block on the screen.
+ */
+
+/* ---- crest ------------------------------------------------------------- */
+
+.legacy-crest {
+  display: block;
+  flex: none;
+}
+.legacy-crest .crest-edge {
+  fill: var(--crest-edge, #ffcf4d);
+}
+.legacy-crest .crest-weave {
+  fill: var(--crest-weave, #ff3d8a);
+}
+/* A life already spent: still in its slot, so the row never reflows. */
+.legacy-crest.spent {
+  opacity: 0.2;
+}
+.legacy-crest.spent .crest-edge,
+.legacy-crest.spent .crest-weave {
+  fill: #6d7286;
+}
+.legacy-crest-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+/* ---- About ------------------------------------------------------------- */
+
+.about-lede {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  max-width: 62ch;
+}
+.about-copy {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+  max-width: 62ch;
+}
+.about-dedication {
+  margin-top: 12px;
+  padding-left: 10px;
+  border-left: 2px solid var(--brass-dim, var(--line));
+  color: var(--faint);
+  font-style: italic;
+}
+
+.about-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 18px;
+  margin: 8px 0 0;
+}
+.about-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.about-fact dt {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.about-fact dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.about-mono {
+  font-family: var(--font-mono);
+  user-select: all;
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+.about-links a {
+  font-size: 12px;
+  color: var(--brass-hi);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.about-links a:hover {
+  border-bottom-color: currentColor;
+}
+
+/* Only rendered once the crest has been earned on this device. */
+.about-earned {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.about-earned-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.about-earned-text strong {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--brass-hi);
+}
+
+/* The contact strip: a dotted rule to anyone not typing at it. */
+.about-contacts {
+  display: flex;
+  gap: 5px;
+  margin-top: 18px;
+  opacity: 0.34;
+  transition: opacity 140ms ease;
+}
+.about-contacts.live {
+  opacity: 1;
+}
+.about-contact {
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-2, var(--line));
+  border-radius: 2px;
+  font-size: 8px;
+  line-height: 1;
+  color: transparent;
+}
+.about-contacts.live .about-contact.lit {
+  border-color: #ffcf4d;
+  color: #ffcf4d;
+  background: rgba(255, 207, 77, 0.12);
+  box-shadow: 0 0 6px rgba(255, 207, 77, 0.4);
+}
+.about-contacts.miss .about-contact {
+  border-color: #ff3d8a;
+  animation: about-miss 300ms steps(2, end);
+}
+@keyframes about-miss {
+  0%,
+  100% {
+    background: transparent;
+  }
+  50% {
+    background: rgba(255, 61, 138, 0.22);
+  }
+}
+
+/* The 1px marker the "scrolled to the foot" test watches. */
+.about-foot-marker {
+  height: 1px;
+  margin-top: 14px;
+}
+
+/* ---- the cabinet ------------------------------------------------------- */
+
+.lc-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: radial-gradient(120% 100% at 50% 0%, #0c0a24 0%, #05040f 68%, #01000a 100%);
+  color: #bdf3ff;
+  outline: none;
+  --lc-gold: #ffcf4d;
+  --lc-wire: #2de1c2;
+  --lc-hot: #ff3d8a;
+  --crest-edge: #ffcf4d;
+  --crest-weave: #ff3d8a;
+}
+
+.lc-inner {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transform-origin: center center;
+}
+
+/* Tube power-on: the picture arrives as a hot horizontal line, opens out, and
+   settles. The whole effect is one transform plus one filter, so it composites
+   rather than repainting a canvas mid-boot. */
+.lc-frame.booting .lc-inner {
+  animation: lc-power 1.05s cubic-bezier(0.16, 0.9, 0.3, 1) both;
+}
+@keyframes lc-power {
+  0% {
+    transform: scaleY(0.006) scaleX(1.25);
+    filter: brightness(7) saturate(0);
+    opacity: 0.9;
+  }
+  18% {
+    transform: scaleY(0.006) scaleX(1);
+    filter: brightness(7) saturate(0);
+    opacity: 1;
+  }
+  46% {
+    transform: scaleY(1.04) scaleX(1);
+    filter: brightness(2.6) saturate(0.6);
+  }
+  62% {
+    transform: scaleY(0.99) scaleX(1);
+    filter: brightness(0.6) saturate(1);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+    filter: brightness(1) saturate(1);
+  }
+}
+.lc-frame.calm .lc-inner {
+  animation: none;
+}
+
+/* Glass: scanlines, a vignette, and one band drifting down the tube. */
+.lc-glass {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(to bottom, rgba(186, 240, 255, 0.06) 0 1px, transparent 1px 3px),
+    radial-gradient(130% 110% at 50% 50%, transparent 52%, rgba(0, 0, 0, 0.62) 100%);
+}
+.lc-glass::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22%;
+  background: linear-gradient(to bottom, transparent, rgba(186, 240, 255, 0.05), transparent);
+  animation: lc-roll 7.5s linear infinite;
+}
+@keyframes lc-roll {
+  from {
+    transform: translateY(-30%);
+  }
+  to {
+    transform: translateY(460%);
+  }
+}
+.lc-frame.calm .lc-glass::after {
+  animation: none;
+  opacity: 0;
+}
+
+.lc-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 2px solid #241c60;
+}
+.lc-marquee {
+  font-family: "Bungee", var(--font-ui);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--lc-hot);
+  text-shadow: 0 0 14px rgba(255, 61, 138, 0.55);
+}
+.lc-head-stage {
+  flex: 1;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: #6f6ab8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lc-chip {
+  flex: none;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  padding: 4px 8px;
+  border: 2px solid #342c78;
+  border-radius: 0;
+  background: transparent;
+  color: #9a94e8;
+  cursor: pointer;
+}
+.lc-chip:hover {
+  border-color: var(--lc-gold);
+  color: var(--lc-gold);
+}
+.lc-chip:focus-visible {
+  outline: 2px solid var(--lc-gold);
+  outline-offset: 2px;
+}
+
+.lc-hud {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 8px 14px;
+  border-bottom: 2px solid #1a1546;
+  background: rgba(8, 6, 26, 0.6);
+}
+.lc-hud-cell {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.lc-hud-cell.wide {
+  flex: 1;
+  justify-content: flex-end;
+}
+.lc-hud-key {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: #5c56a4;
+}
+.lc-hud-val {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--lc-gold);
+  /* Digits change every frame; a fixed advance keeps the row from twitching. */
+  font-variant-numeric: tabular-nums;
+}
+.lc-lives {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.lc-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+.lc-canvas {
+  image-rendering: pixelated;
+  border: 2px solid #241c60;
+  box-shadow:
+    0 0 0 4px #05040f,
+    0 0 34px rgba(45, 225, 194, 0.16);
+  background: #05040f;
+}
+.lc-canvas.hidden {
+  visibility: hidden;
+}
+
+/* Attract cards sit over the field rather than replacing it, so the stage you
+   are about to play (or just lost) stays visible behind the words. */
+.lc-card {
+  position: absolute;
+  inset: 12px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 20px 26px;
+  text-align: center;
+  background: rgba(4, 3, 14, 0.9);
+  border: 2px solid #342c78;
+}
+.lc-card-kicker {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--lc-wire);
+}
+.lc-card-heading {
+  font-family: "Bungee", var(--font-ui);
+  font-size: clamp(18px, 3.4vw, 30px);
+  letter-spacing: 0.06em;
+  color: var(--lc-gold);
+  text-shadow: 0 0 18px rgba(255, 207, 77, 0.4);
+}
+.lc-card-body {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 12px;
+  line-height: 1.65;
+  color: #9ea8d8;
+}
+.lc-card-foot {
+  margin-top: 4px;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: #bdf3ff;
+  animation: lc-blink 1.1s steps(1, end) infinite;
+}
+@keyframes lc-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0.18;
+  }
+}
+.lc-frame.calm .lc-card-foot {
+  animation: none;
+}
+.lc-card-crest {
+  filter: drop-shadow(0 0 12px rgba(255, 207, 77, 0.5));
+}
+.lc-card-win .lc-card-heading {
+  color: #fff;
+}
+.lc-card-over .lc-card-heading {
+  color: var(--lc-hot);
+  text-shadow: 0 0 18px rgba(255, 61, 138, 0.45);
+}
+.lc-card-paused {
+  inset: 30% 20%;
+  gap: 6px;
+}
+
+.lc-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 2px solid #1a1546;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: #5c56a4;
+}
+.lc-foot-note {
+  text-align: right;
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #3f3a76;
+}
+
+@media (max-width: 720px) {
+  .lc-hud {
+    gap: 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .lc-hud::-webkit-scrollbar {
+    display: none;
+  }
+  .lc-foot-note {
+    display: none;
+  }
+}
+
+/* The crest in the app chrome belongs to the skin it was earned under, so the
+   sidebar copy is gated on the palette rather than on a second piece of React
+   state. data-theme resolves to a crafted theme's base, so a theme built on the
+   cabinet palette counts as the cabinet, exactly as the skins card decides it. */
+.sidebar-foot .legacy-crest-badge {
+  display: none;
+}
+:root[data-theme="arcade"] .sidebar-foot .legacy-crest-badge {
+  display: inline-flex;
+  margin-left: 2px;
+  opacity: 0.85;
+}
+:root[data-theme="arcade"] .sidebar-foot .legacy-crest-badge:hover {
+  opacity: 1;
+}
+
+.skin-card-crest {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* ---- Retro-Tech: the About screen picks up the cabinet furniture --------- */
+
+:root[data-theme="arcade"] .about-earned {
+  border: 2px solid var(--brass);
+  border-radius: 0;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="arcade"] .about-earned-text strong {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9.5px;
+}
+:root[data-theme="arcade"] .about-fact dt {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 8.5px;
+}
+:root[data-theme="arcade"] .about-contact {
+  border-radius: 0;
+  border-width: 2px;
+}

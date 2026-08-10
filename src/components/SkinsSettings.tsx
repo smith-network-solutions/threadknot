@@ -47,6 +47,8 @@ import {
   type PortraitPrefs,
 } from "../lib/portraits";
 import { isAgentVisible } from "../lib/agentVisibility";
+import { Crest, useLegacyAward } from "./legacy/Crest";
+import { CREST_NAME } from "../lib/legacyCircuit";
 import { downscaleImage } from "../lib/themeCraft";
 import type { CustomTheme } from "../lib/protocol";
 import { useStore } from "../state/store";
@@ -576,6 +578,10 @@ function SkinsBlock() {
   const { state } = useStore();
   const activeCustom = findActiveCustom(a, state.customThemes);
   const [preview, setPreview] = useState<CuratedSkin | null>(null);
+  // A crest earned on this machine rides on the skin it belongs to, whether or
+  // not that skin is currently applied: it is a record of something you did,
+  // not a state of the app.
+  const award = useLegacyAward();
 
   function applySkin(skin: CuratedSkin) {
     // A skin rides on its own preset palette, so clearing customThemeId is part
@@ -608,6 +614,14 @@ function SkinsBlock() {
               <div className="skin-card-head">
                 <span className="skin-card-name">{skin.name}</span>
                 {active && <span className="skin-card-active-tag">active</span>}
+                {award.earned && skin.id === "arcade" && (
+                  <span
+                    className="skin-card-crest"
+                    title={`${CREST_NAME} · awarded on this machine`}
+                  >
+                    <Crest size={15} title={CREST_NAME} />
+                  </span>
+                )}
               </div>
               <div className="skin-card-hint">{skinTagline(skin)}</div>
               <div className="skin-card-desc">{skin.description}</div>

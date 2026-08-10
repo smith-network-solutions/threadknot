@@ -8,6 +8,10 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+## v0.1.32 · 2026-08-10
+
+- **New About section, at the foot of Settings.** What Threadknot is, the exact build you are running (version, build date, commit and machine), the Apache-2.0 licence with links to the source, the third-party notices and the security policy, and the credits. It ends with a dedication to the developers and gamers who came before us, and it rewards reading all the way to the bottom.
+
 ## v0.1.31 · 2026-08-09
 
 - Claude chats now start correctly on Windows when Threadknot's browser tools are enabled. The generated MCP configuration uses a short-lived file there instead of inline command-line JSON, avoiding Windows quote mangling and removing the file when Claude exits.

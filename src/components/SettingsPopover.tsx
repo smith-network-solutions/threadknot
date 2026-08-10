@@ -36,6 +36,8 @@ import { ConfirmRemoveMachineModal } from "./ConfirmRemoveMachineModal";
 import { PairPhoneModal } from "./PairPhoneModal";
 import { DirPicker } from "./DirPicker";
 import { LibrarySettings } from "./LibrarySettings";
+import { AboutSettings } from "./AboutSettings";
+import { LegacyCircuit } from "./legacy/LegacyCircuit";
 import {
   chime,
   getNotifyPrefs,
@@ -3547,6 +3549,7 @@ const SETTINGS_SECTIONS = [
   { id: "terminal", label: "Terminal", blurb: "font & cursor" },
   { id: "archives", label: "Archives", blurb: "finished threads" },
   { id: "updates", label: "Updates", blurb: "version & master" },
+  { id: "about", label: "About", blurb: "licence, credits, build" },
 ] as const;
 
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
@@ -3570,18 +3573,27 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
       : "appearance",
   );
 
+  // What the About section can raise. While it is up it owns the whole dialog
+  // and the keyboard, including Escape (which leaves it, rather than closing
+  // Settings), so everything else here is unmounted for the duration.
+  const [circuit, setCircuit] = useState(false);
+
   useEffect(() => {
+    if (circuit) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, circuit]);
 
   // Portaled to <body>: the opener lives inside the sidebar, whose mobile
   // off-canvas transform would otherwise drag this fixed overlay with it.
   return createPortal(
-    <div className="settings-screen-backdrop" onClick={onClose}>
+    <div
+      className="settings-screen-backdrop"
+      onClick={circuit ? undefined : onClose}
+    >
       <div
         className="settings-screen"
         role="dialog"
@@ -3592,6 +3604,9 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
             Settings is open (live edits, cross-window deletes). App.tsx should
             mount its own <ThemeSync/> at the root for boot + settings-closed. */}
         <ThemeSync />
+        {circuit && <LegacyCircuit onExit={() => setCircuit(false)} />}
+        {!circuit && (
+          <>
         <header className="ss-head">
           <span className="ss-title">SETTINGS</span>
           <span className="ss-head-sub">
@@ -3635,8 +3650,11 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
             {section === "browser" && <BrowserProfileSettings />}
             {section === "archives" && <ArchivesSettings onClose={onClose} />}
             {section === "updates" && <UpdatesSettings />}
+            {section === "about" && <AboutSettings onUnlock={() => setCircuit(true)} />}
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>,
     document.body,
