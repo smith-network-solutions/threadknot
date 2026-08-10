@@ -196,12 +196,59 @@ export function AboutSettings({ onUnlock }: { onUnlock: () => void }) {
 
       <div className="settings-block about-block">
         <div className="settings-label">credits</div>
-        <p className="about-copy">
-          Built by Spencer Smith at Smith Network Solutions, with everyone who
-          has opened an issue, filed a patch or told us what was broken. It
-          stands on a long stack of other people's work: Rust, Tauri, React,
-          axum, xterm.js and the rest, all named in the third-party notices.
-        </p>
+        <div className="about-credits">
+          <section className="about-credit">
+            <h4>built by</h4>
+            <p>
+              <strong>Spencer Smith</strong> and <strong>Oscar Edge IV</strong>,
+              at Smith Network Solutions.
+            </p>
+          </section>
+
+          <section className="about-credit">
+            <h4>with</h4>
+            <p>
+              Everyone who has opened an issue, sent a patch, or simply said
+              plainly what was broken. A careful bug report from someone under
+              no obligation to write one is the most valuable thing this project
+              receives, and it has had a lot of them.
+            </p>
+          </section>
+
+          <section className="about-credit">
+            <h4>standing on</h4>
+            <p>
+              Rust, Tokio and axum hold the back end together, rustls keeps the
+              machines talking in private, and Tauri puts a native window around
+              the whole thing. React and Vite draw the front. xterm.js is the
+              terminal, pdf.js reads documents, highlight.js colours code, and
+              react-markdown renders the prose. The typefaces come from Google
+              Fonts. Every one of those licences is reproduced in full in the
+              third-party notices, because a dependency is a loan, not a gift.
+            </p>
+          </section>
+
+          <section className="about-credit">
+            <h4>driving</h4>
+            <p>
+              Claude Code, Codex, Kimi Code and remote gateways, each spoken to
+              over its own wire protocol rather than wrapped in a terminal, and
+              each signed in with the subscription you already pay for rather
+              than a key anyone here has to hold.
+            </p>
+          </section>
+
+          <section className="about-credit">
+            <h4>and the long tail</h4>
+            <p>
+              The compiler authors, the protocol editors, the maintainers
+              answering the same question for the hundredth time, and whoever
+              wrote the documentation properly at two in the morning so nobody
+              after them had to work it out twice. None of this is one person's
+              work, and very little of it is ours.
+            </p>
+          </section>
+        </div>
 
         {award.earned && (
           <div className="about-earned">

@@ -92,6 +92,39 @@
   border-bottom-color: currentColor;
 }
 
+/* Credits. Broken into labelled sections rather than one block of prose: a
+   credit roll is a list of debts, and each one should be findable. */
+.about-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 10px;
+}
+.about-credit h4 {
+  margin: 0 0 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brass-hi);
+}
+.about-credit p {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+.about-credit strong {
+  font-weight: 600;
+  color: var(--text);
+}
+:root[data-theme="arcade"] .about-credit h4 {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+}
+
 /* Only rendered once the crest has been earned on this device. */
 .about-earned {
   display: flex;
