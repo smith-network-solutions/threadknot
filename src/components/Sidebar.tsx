@@ -2772,8 +2772,18 @@ export function Sidebar({
   // (connect race, or an old server) synthesize one section per uncovered
   // project so the sidebar never blanks.
   const sections = useMemo(() => {
+    // Quick Threads homes render as the dedicated destination (the rail's
+    // plus tile), never as a workspace. Servers from before that rule may
+    // still replicate a same-name workspace wrapping the home; strip those
+    // memberships here so the fleet can never show the home twice.
+    const workspaces = state.workspaces
+      .map((w) => ({
+        ...w,
+        members: w.members.filter((m) => !isQuickHomeProjectId(m.projectId)),
+      }))
+      .filter((w) => w.members.length > 0);
     const covered = new Set(
-      state.workspaces.flatMap((w) => w.members.map((m) => m.projectId)),
+      workspaces.flatMap((w) => w.members.map((m) => m.projectId)),
     );
     const synthetic: Workspace[] = state.projects
       // The Hermes home project renders as the dedicated section, never as a
@@ -2791,7 +2801,7 @@ export function Sidebar({
         updatedAt: p.createdAt,
         members: [{ machineId: "", projectId: p.id }],
       }));
-    return [...state.workspaces, ...synthetic];
+    return [...workspaces, ...synthetic];
   }, [state.workspaces, state.projects]);
 
   /** Members resolved for display + their threads (local AND remote roots,

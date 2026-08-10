@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 /// threads in the sidebar's dedicated Hermes section.
 pub const HERMES_HOME_PROJECT_ID: &str = "hermes-home";
 /// Prefix for the hidden, machine-local project that owns folderless Quick
-/// Chats. Unlike Hermes, local coding agents still need a real cwd, so each
+/// Threads. Unlike Hermes, local coding agents still need a real cwd, so each
 /// thread gets an isolated directory beneath the project's private root.
 pub const QUICK_HOME_PROJECT_PREFIX: &str = "quick-home:";
 
@@ -178,6 +178,34 @@ impl Store {
                 t.machine_id = machine_id.to_string();
                 changed = true;
             }
+        }
+        // Quick Threads homes are hidden destinations, never workspace
+        // members — but builds from before that rule had already wrapped the
+        // home in a same-name workspace. Strip those memberships once here:
+        // a workspace that empties out is deleted and tombstoned (so a peer's
+        // stale copy cannot resurrect it at resync); one with real roots left
+        // just loses the home, with `updated_at` bumped so the edit
+        // propagates mesh-wide like any other workspace change.
+        let mut pruned: Vec<(String, bool)> = Vec::new();
+        for w in data.workspaces.iter_mut() {
+            let before = w.members.len();
+            w.members
+                .retain(|m| !is_quick_home_project_id(&m.project_id));
+            if w.members.len() != before {
+                pruned.push((w.id.clone(), w.members.is_empty()));
+            }
+        }
+        if !pruned.is_empty() {
+            let now = now_iso();
+            for (id, emptied) in pruned {
+                if emptied {
+                    note_tombstone(&mut data.workspace_tombstones, &id, &now);
+                } else if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == id) {
+                    w.updated_at = now.clone();
+                }
+            }
+            data.workspaces.retain(|w| !w.members.is_empty());
+            changed = true;
         }
         let wrapped: Vec<Workspace> = data
             .projects
@@ -795,7 +823,8 @@ impl Store {
         Ok(true)
     }
 
-    /// Lazily create this machine's hidden Quick Chats home. The project gives
+    /// Lazily create this machine's hidden Quick Threads home. The project
+    /// gives
     /// the existing thread protocol a stable owner while remaining absent from
     /// workspaces; its path is private application data, never a user-chosen
     /// project folder.
@@ -812,7 +841,7 @@ impl Store {
         }
         data.projects.push(Project {
             id,
-            name: "Quick chats".into(),
+            name: "Quick threads".into(),
             path: root.to_string_lossy().into_owned(),
             created_at: now_iso(),
         });
@@ -821,8 +850,8 @@ impl Store {
     }
 
     /// Effective cwd for a thread. Folder threads use their project's real
-    /// root; Quick Chats get one private scratch directory apiece so files and
-    /// attachments from unrelated questions cannot bleed into each other.
+    /// root; Quick Threads get one private scratch directory apiece so files
+    /// and attachments from unrelated questions cannot bleed into each other.
     pub fn thread_working_dir(&self, thread: &Thread) -> Result<PathBuf> {
         if is_quick_home_project_id(&thread.project_id) {
             let dir = self.dir.join("quick").join(&thread.id);
@@ -1950,6 +1979,52 @@ mod quick_home_tests {
         store.delete_thread(&first.id).unwrap();
         assert!(!first_dir.exists());
         assert!(second_dir.exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrate_mesh_evicts_legacy_quick_home_workspaces() {
+        let dir = std::env::temp_dir().join(format!(
+            "threadknot-quick-home-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open_at(dir.clone()).unwrap();
+        store.migrate_mesh("machine-quick").unwrap();
+        store.ensure_quick_home().unwrap();
+        let project_id = quick_home_project_id("machine-quick");
+        // Simulate the pre-exclusion wrap: a same-name workspace holding only
+        // the hidden home.
+        {
+            let mut data = store.data.lock().unwrap();
+            data.workspaces.push(Workspace {
+                id: project_id.clone(),
+                name: "Quick threads".into(),
+                image: None,
+                created_at: now_iso(),
+                updated_at: now_iso(),
+                favorite: None,
+                hidden: None,
+                members: vec![WorkspaceMember {
+                    machine_id: "machine-quick".into(),
+                    project_id: project_id.clone(),
+                    name: Some("Quick threads".into()),
+                    path: None,
+                }],
+            });
+        }
+        store.migrate_mesh("machine-quick").unwrap();
+        assert!(store.workspace_for_project(&project_id).is_none());
+        {
+            let data = store.data.lock().unwrap();
+            assert!(data.workspaces.iter().all(|w| w.id != project_id));
+            // Tombstoned, so a peer's stale replica cannot resurrect it.
+            assert!(
+                data.workspace_tombstones
+                    .iter()
+                    .any(|t| t.id == project_id)
+            );
+        }
 
         std::fs::remove_dir_all(dir).unwrap();
     }
