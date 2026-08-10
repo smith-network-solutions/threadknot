@@ -1553,6 +1553,74 @@ body.reordering { cursor: grabbing; user-select: none; }
   font-size: 9.5px;
 }
 
+/* ---- dispatched workers, nested under the thread that sent them ---------- */
+
+/* Sits directly beneath its parent row, so it reads as that row's tail rather
+   than as another entry in the list: no top margin, and the same left inset
+   the workers themselves get. */
+.dispatch-shelf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0 0 1px;
+  padding: 3px 8px 3px 24px;
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.dispatch-shelf:hover { background: rgba(155, 170, 210, 0.05); color: var(--dim); }
+.dispatch-shelf-label { flex: 1; text-align: left; }
+.dispatch-shelf-live {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--teal-dim);
+  color: var(--teal);
+  font-size: 9.5px;
+}
+
+/* The worker rows. Indent alone is ambiguous once the list scrolls and the
+   parent is off-screen, so a rail runs down the group — the same trick a file
+   tree uses, and the reason you can tell a child from a sibling at a glance. */
+.thread-row.is-worker {
+  position: relative;
+  margin-left: 18px;
+  padding-left: 12px;
+}
+.thread-row.is-worker::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line-2);
+}
+/* The rail belongs to the group, not to any one row: it starts at the shelf
+   line above and stops at the last worker. */
+.thread-row.is-worker:last-child::before { bottom: 50%; }
+.thread-row.is-worker::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 7px;
+  height: 1px;
+  background: var(--line-2);
+}
+.thread-row.is-worker.active::before,
+.thread-row.is-worker.active::after { background: var(--brass); }
+/* Cards are already boxed and self-contained; a rail through them reads as
+   damage. The indent carries the hierarchy on its own. */
+.thread-row.is-worker.thread-card::before,
+.thread-row.is-worker.thread-card::after { display: none; }
+
 .status-dot {
   flex: none;
   width: 6px; height: 6px;

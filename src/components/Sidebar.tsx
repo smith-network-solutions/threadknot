@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -169,6 +170,46 @@ function countLabel(
   return `${activeCount} · ${activeCount + settledCount}`;
 }
 
+/** Pull dispatched workers out of a flat thread list and file them under the
+ *  thread that sent them.
+ *
+ *  A fan-out to three machines creates three threads, and left flat they sort
+ *  to the top by recency — so asking for a cross-platform build buries the
+ *  conversation you asked from underneath its own workers. They belong *under*
+ *  it: that is the actual relationship, and it is the one thing Threadknot has
+ *  that a subagent API does not — the work is inspectable, but only if you can
+ *  find it.
+ *
+ *  A worker whose parent is NOT in this list stays top-level. That happens when
+ *  the parent is filtered out by a search, paged away, or lives in a section
+ *  the worker does not — and a thread that renders nowhere is worse than one
+ *  rendered at the wrong depth. Depth is one by construction
+ *  (`MAX_DISPATCH_DEPTH`), so this never needs to recurse. */
+function groupDispatchChildren(threads: Thread[]): {
+  parents: Thread[];
+  workersOf: Map<string, Thread[]>;
+} {
+  const present = new Set(threads.map((t) => t.id));
+  const workersOf = new Map<string, Thread[]>();
+  const parents: Thread[] = [];
+  for (const t of threads) {
+    const parentId = t.dispatch?.parentThreadId;
+    if (parentId && parentId !== t.id && present.has(parentId)) {
+      const list = workersOf.get(parentId);
+      if (list) list.push(t);
+      else workersOf.set(parentId, [t]);
+    } else {
+      parents.push(t);
+    }
+  }
+  // Oldest first, so one fan-out reads in the order it was sent rather than
+  // reshuffling itself every time a worker says something.
+  for (const list of workersOf.values()) {
+    list.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  }
+  return { parents, workersOf };
+}
+
 function useSettledSplit(
   threads: Thread[],
   autoSettleDays: number | null,
@@ -193,6 +234,64 @@ function useSettledSplit(
     );
     return { active, settled };
   }, [threads, attention, activeThreadId, autoSettleDays, now]);
+}
+
+/** The workers a thread has dispatched, as a collapsible tail under its row.
+ *
+ *  Collapsed by default: the point of nesting them is that asking for a build
+ *  on three machines should cost one line of sidebar, not four. It opens
+ *  itself when it has to — while searching, when one of the workers is the
+ *  thread you are looking at, or when one wants attention — because a group
+ *  that hides the row you selected is worse than no grouping at all.
+ *
+ *  A flat sibling list rather than a wrapping container, like `SettledShelf`:
+ *  `ThreadRow` returns a fragment whose menu portal is a deliberate sibling of
+ *  the row, and wrapping that changes where its clicks land. */
+function DispatchWorkers({
+  workers,
+  forceOpen,
+  view,
+}: {
+  workers: Thread[];
+  forceOpen: boolean;
+  view: SidebarLayout["view"];
+}) {
+  const { state } = useStore();
+  const [open, setOpen] = useState(false);
+  if (workers.length === 0) return null;
+  const wanted = workers.some(
+    (w) => state.activeThreadId === w.id || threadNeedsAttention(state, w),
+  );
+  const showing = forceOpen || open || wanted;
+  // "3 running" is the number worth reading at a glance; the total is only
+  // interesting once they have all stopped.
+  const live = workers.filter((w) => w.status !== "idle").length;
+  return (
+    <>
+      <button
+        type="button"
+        className={`dispatch-shelf${showing ? " open" : ""}`}
+        aria-expanded={showing}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ChevronIcon size={11} open={showing} className="row-chevron" />
+        <span className="dispatch-shelf-label">
+          {workers.length === 1 ? "1 worker" : `${workers.length} workers`}
+        </span>
+        {live > 0 && <span className="dispatch-shelf-live">{live} running</span>}
+      </button>
+      {showing &&
+        workers.map((w) => (
+          <ThreadRow
+            key={w.id}
+            thread={w}
+            active={state.activeThreadId === w.id}
+            view={view}
+            nested
+          />
+        ))}
+    </>
+  );
 }
 
 /** The parked tail of a section: one collapsed line by default, so history
@@ -272,7 +371,14 @@ function QuickChatsSection({
 }) {
   const { state, actions } = useStore();
   const [visibleThreadCount, setVisibleThreadCount] = useState(SOLO_PROJECT_PAGE_SIZE);
-  const { active, settled } = useSettledSplit(threads, autoSettleDays, now);
+  // Workers are filed under the thread that sent them, so the paging, the
+  // settled split and the header count below all see one row per CHAT rather
+  // than one per agent a chat happens to have out.
+  const { parents, workersOf } = useMemo(
+    () => groupDispatchChildren(threads),
+    [threads],
+  );
+  const { active, settled } = useSettledSplit(parents, autoSettleDays, now);
   const shown = forceOpen
     ? active
     : pageActiveThreads(
@@ -322,12 +428,18 @@ function QuickChatsSection({
       ) : (
         <div className="project-threads quick-chat-threads">
           {shown.map((thread) => (
-            <ThreadRow
-              key={thread.id}
-              thread={thread}
-              active={state.activeThreadId === thread.id}
-              view={view}
-            />
+            <Fragment key={thread.id}>
+              <ThreadRow
+                thread={thread}
+                active={state.activeThreadId === thread.id}
+                view={view}
+              />
+              <DispatchWorkers
+                workers={workersOf.get(thread.id) ?? []}
+                forceOpen={forceOpen}
+                view={view}
+              />
+            </Fragment>
           ))}
           {remaining > 0 && (
             <button
@@ -747,6 +859,7 @@ function ThreadRow({
   active,
   settled = false,
   lit = false,
+  nested = false,
   view,
 }: {
   thread: Thread;
@@ -757,11 +870,18 @@ function ThreadRow({
   /** Keep a shelf row at full strength. Set while searching: a match that
    *  renders at resting-shelf opacity reads as a disabled non-result. */
   lit?: boolean;
+  /** A dispatched worker, rendered indented under the thread that sent it.
+   *  Presentation only — it is a real thread and opens like any other. */
+  nested?: boolean;
   /** Which sidebar presentation to render. Threaded down from the layout hook
    *  (a fresh useSidebarLayout() here would be a second, out-of-sync copy). */
   view: SidebarLayout["view"];
 }) {
   const { state, dispatch, actions } = useStore();
+  // One modifier appended to every variant's className, the same way `.slim`
+  // and `.recede` are done — the row has four return paths and a wrapper div
+  // would change where its menu portal's clicks land.
+  const nest = nested ? " is-worker" : "";
   const needsAttention = !active && threadNeedsAttention(state, thread);
   // Inverted prominence: a chat that is merely BUSY is not your problem yet,
   // so it recedes. Brightness is reserved for rows that want a human —
@@ -1028,7 +1148,7 @@ function ThreadRow({
       <div
         className={`thread-row editing${card ? " thread-card" : ""}${
           active ? " active" : ""
-        }${needsAttention ? " has-attention" : ""}`}
+        }${needsAttention ? " has-attention" : ""}${nest}`}
       >
         <span
           className={`status-dot st-${thread.status}${needsAttention ? " unread" : ""}`}
@@ -1325,7 +1445,7 @@ function ThreadRow({
             active ? " active" : ""
           }${needsAttention ? " has-attention" : ""}${recede ? " recede" : ""}${
             settled ? " slim" : ""
-          }${settled && lit ? " lit" : ""}`}
+          }${settled && lit ? " lit" : ""}${nest}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1374,7 +1494,7 @@ function ThreadRow({
         <div
           className={`thread-row two-line long-press-menu${active ? " active" : ""}${
             needsAttention ? " has-attention" : ""
-          }${recede ? " recede" : ""}`}
+          }${recede ? " recede" : ""}${nest}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1405,7 +1525,7 @@ function ThreadRow({
           needsAttention ? " has-attention" : ""
         }${recede ? " recede" : ""}${settled ? " slim" : ""}${
           settled && lit ? " lit" : ""
-        }`}
+        }${nest}`}
         {...rowGestures}
         {...hover.hoverProps}
       >
@@ -1533,7 +1653,11 @@ function WorkspaceSection({
   // (newest-created first) so a row never moves under the cursor while an
   // agent works; settled chats order by when they were parked, because that
   // is what you scan the shelf by.
-  const { active, settled } = useSettledSplit(threads, autoSettleDays, now);
+  const { parents, workersOf } = useMemo(
+    () => groupDispatchChildren(threads),
+    [threads],
+  );
+  const { active, settled } = useSettledSplit(parents, autoSettleDays, now);
 
   const shown = forceOpen
     ? active
@@ -1732,12 +1856,18 @@ function WorkspaceSection({
             </div>
           )}
           {shown.map((t) => (
-            <ThreadRow
-              key={t.id}
-              thread={t}
-              active={state.activeThreadId === t.id}
-              view={view}
-            />
+            <Fragment key={t.id}>
+              <ThreadRow
+                thread={t}
+                active={state.activeThreadId === t.id}
+                view={view}
+              />
+              <DispatchWorkers
+                workers={workersOf.get(t.id) ?? []}
+                forceOpen={forceOpen}
+                view={view}
+              />
+            </Fragment>
           ))}
           {remaining > 0 && (
             <button

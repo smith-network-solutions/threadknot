@@ -279,6 +279,15 @@ def dispatch_checks(token_a, token_b, machine_a, machine_b,
         check((t.get("dispatch") or {}).get("parentThreadId") == thread_id,
               "the child knows which thread sent it")
 
+    # The sidebar nests workers under the thread that sent them, and it builds
+    # that tree from `thread.list` — not from `thread.get`. A parent link that
+    # only rides on the detail fetch would nest nothing.
+    listed_b = ok(PORT_B, token_b, "thread.list", {"projectId": project_b})
+    rows = listed_b.get("threads", listed_b) if isinstance(listed_b, dict) else listed_b
+    kid = next((t for t in rows if t["id"] == child), None)
+    check(kid is not None and (kid.get("dispatch") or {}).get("parentThreadId") == thread_id,
+          "thread.list carries the parent link the sidebar nests by")
+
     print("\n== dispatch: the worker's report reaches the parent ==")
     ok(PORT_B, token_b, "dispatch.report", {
         "dispatchId": record["id"],

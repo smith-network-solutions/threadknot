@@ -336,8 +336,25 @@ export interface Thread {
   activeSpeaker?: string;
   /** The multi-agent debate currently running on this thread, if any. */
   parley?: ParleyState;
+  /** Set when this thread IS a dispatched worker — it was created by another
+   *  thread handing it a brief, and it belongs under that thread rather than
+   *  beside it. */
+  dispatch?: DispatchOrigin;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Where a dispatched worker came from, carried on the worker's own thread.
+ *  The parent may live on another machine, which is why the machine id travels
+ *  with the thread id — two threads on two machines can share an id space only
+ *  by accident. */
+export interface DispatchOrigin {
+  /** The DispatchRecord id, shared by both machines' ledgers. */
+  id: string;
+  parentThreadId: string;
+  parentMachineId: string;
+  /** Short human label ("build: macOS"), shown on the child's row. */
+  label: string;
 }
 
 export type ParleyFlight = "reviewer" | "answer" | "execute" | "verdict" | "user";
