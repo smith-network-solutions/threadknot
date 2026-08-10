@@ -1,0 +1,9 @@
+Spencer published the new ThreadKnot repo (the open source rename of Armada). Please build it on this machine:
+
+1. Clone https://github.com/smith-network-solutions/threadknot.git into ~/Documents/threadknot (if the folder already exists, git pull instead).
+2. Run: npm install
+3. Build with: npx tauri build --no-bundle
+   (Never use plain "cargo build --release" for the GUI binary; the Tauri CLI is required so the webview embeds the built dist/ assets. See docs/DEVELOPMENT.md gotcha #1.)
+4. If Linux system dependencies for Tauri are missing (webkit2gtk, libappindicator, librsvg, patchelf, etc.), try to install them; if that needs a sudo password you do not have, stop and report the exact package list needed instead of guessing.
+5. Do NOT stop, restart, or replace the currently running Armada/ThreadKnot app on this machine. Just produce the binary at src-tauri/target/release/threadknot and verify it exists.
+6. When done, reply with: the commit hash you built, the full path to the binary, and any warnings or missing-dependency notes.

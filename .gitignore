@@ -41,3 +41,6 @@ CLAUDE.local.md
 
 # Bytecode from the python smoke scripts in scripts/.
 __pycache__/
+
+# Local tauri build transcript (scripts pipe builds through it)
+build-log.txt
