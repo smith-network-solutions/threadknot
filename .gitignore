@@ -31,3 +31,10 @@ CLAUDE.local.md
 # remove these two lines to "tidy up".
 /relay/
 /console/
+
+# Dispatch's design record — the argument for why it is built the way it is,
+# kept locally as a maintainer note rather than published. `docs/USING-DISPATCH.md`
+# is the published half and is the one to keep current; if the two ever
+# disagree, the code wins. Same reasoning as CLAUDE.local.md: not every useful
+# document is one the repository should ship.
+/docs/DISPATCH.md

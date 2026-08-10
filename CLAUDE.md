@@ -28,8 +28,7 @@ on the LAN, so the app is usable from a phone.
   **`docs/MOBILE.md`** first.
 - **Dispatch** (`dispatch.rs`, `exec.rs`, `mcp_fleet.rs`): one thread hands a
   brief to another agent — a different harness, a different machine — and gets
-  a report back. How to drive it: **`docs/USING-DISPATCH.md`**. Why it is built
-  this way, and what is still missing: `docs/DISPATCH.md`.
+  a report back. Read **`docs/USING-DISPATCH.md`** before changing any of it.
 - **Auth**: uses the installed `claude` / `codex` / `kimi` CLIs' own
   subscription logins.
 

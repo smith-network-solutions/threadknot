@@ -1,10 +1,9 @@
 # Using Dispatch — handing work to another agent, on another machine
 
-> This is the **operator's guide**: what Dispatch does and how to drive it.
-> `DISPATCH.md` is the design record — why it is a child thread rather than a
-> Parley lane, why the result contract looks like it does, what is still
-> unbuilt. When the two disagree, the code wins and this file is stale; keep
-> usage here and rationale there rather than growing a second copy of either.
+> What Dispatch does and how to drive it. Read alongside `MULTI-MACHINE.md`
+> (the mesh this rides on) and `PARLEY.md` (the multi-agent primitive this is
+> deliberately *not*). Where this and the code disagree, the code wins and this
+> file is stale.
 
 A **dispatch** hands one self-contained job to another agent — a different
 harness, a different model, a different machine — and gets a written report
