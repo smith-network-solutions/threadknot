@@ -133,11 +133,11 @@ Server → client:
 | `claudex.profile.setAvatar` | `{ profileId, image }` | `ClaudexProfileInfo` — sets or clears (`null`) the profile's picker/sidebar image; master principal only |
 | `claudex.profile.test` | `{ profileId }` | `{ sidecar: "external" \| "managed", baseUrl }` — reachability check that **starts** a configured sidecar; errors if nothing answers and none is configured; master principal only |
 | `claudex.profile.status` | `{ profileId }` | `{ sidecar: "external" \| "managed" \| "stopped" }` — read-only; starts nothing |
-| `schedule.create` | `{ projectId, agent, settings, name?, prompt, cadence }` | `Schedule` — name defaults to a prompt prefix; created enabled with `nextRunAt` planned |
+| `schedule.create` | `{ projectId, agent, settings, name?, prompt, cadence, dispatch? }` | `Schedule` — name defaults to a prompt prefix; created enabled with `nextRunAt` planned; a `dispatch` block also requires `Capability::Terminal` |
 | `schedule.list` | `{}` | `{ schedules: Schedule[] }` |
-| `schedule.update` | `{ scheduleId, name?, prompt?, cadence?, enabled?, agent?, settings?, projectId? }` | `Schedule` — any edit re-plans `nextRunAt` |
+| `schedule.update` | `{ scheduleId, name?, prompt?, cadence?, enabled?, agent?, settings?, projectId?, dispatch? }` | `Schedule` — any edit re-plans `nextRunAt`; `dispatch` is tri-state (absent leaves the mode alone, `null` clears it, an object sets it) |
 | `schedule.delete` | `{ scheduleId }` | `{}` |
-| `schedule.run` | `{ scheduleId }` | `{ threadId }` — fire immediately (does not move the plan) |
+| `schedule.run` | `{ scheduleId }` | `{ threadId }` — fire immediately (does not move the plan); needs `Capability::Terminal` if the schedule dispatches |
 | `usage.get` | `{}` | `{ usage: ProviderUsage[] }` — cached snapshots (kicks a fetch if the cache is cold; results arrive via the `usage` broadcast) |
 | `usage.refresh` | `{}` | `{}` — force a re-fetch, bypassing the freshness floor; snapshot arrives via the `usage` broadcast |
 | `dictation.start` | `{}` | `{ recordingId }` — records the mic of the machine serving this socket; never peer routed, master token only |
@@ -597,6 +597,19 @@ interface Schedule {
   lastRunAt?: string; lastThreadId?: string;
   lastError?: string;      // fire failure, or a "missed while not running" note
   nextRunAt?: string;      // planned next firing (absent for degenerate cadences)
+  dispatch?: ScheduleDispatch;  // set = delegate each firing instead
+}
+
+// Present means the firing hands `prompt` to WORKERS. The schedule's own
+// agent/settings still describe the coordinator thread, and its `access`
+// remains the ceiling every worker is narrowed against.
+interface ScheduleDispatch {
+  machines: string[];      // ids or friendly names; empty means this machine
+  agent?: Agent;           // absent inherits the coordinator's
+  model?: string; effort?: string;
+  root?: string;           // root on each target; absent resolves per machine
+  label?: string;          // crew-panel row label; the schedule's name if absent
+  syncRef: boolean;        // push HEAD to each worker first, or refuse
 }
 ```
 
@@ -606,6 +619,22 @@ persistence, and client notifications behave exactly like a hand-started turn.
 A due time missed by ≤ 60 min (suspend, brief restart) still fires; older
 misses are skipped with an explanatory `lastError` and the schedule rolls
 forward. Any schedule mutation broadcasts `state.changed { scope: "schedules" }`.
+
+With `dispatch` set, the firing's thread is a **coordinator**: it runs no turn
+of its own, it holds the crew. The brief lands in it as an `injected`
+`user_message`, one `dispatch.create` goes out per named machine (with every
+check an agent-issued dispatch gets — target consent, agent-installed, access
+narrowing, depth and concurrency caps), and each worker's `subagent_started` /
+`subagent_completed` lands there. Partial failure is reported, never swallowed:
+if some workers started, a `status` event names the targets that refused; if
+none did, the run fails with an `error` event and the reason in `lastError`.
+The coordinator is marked idle once no dispatch for it is live — nothing else
+would ever settle it. Schedules are **not routable**: the machine holding the
+record ticks it, and the machines it dispatches to are named in the record.
+Because a dispatching schedule runs code unattended on other machines, all three
+of `schedule.create`, `schedule.update` and `schedule.run` require
+`Capability::Terminal` **in addition to** `Threads` when a dispatch block is
+involved.
 
 ### Access × mode mapping
 

@@ -315,7 +315,7 @@ pub async fn run(state: ServerState) {
     // fails to bind never leaves a detached task probing gateways forever.
 
     // Background scheduled-runs loop (fires recurring agent turns).
-    crate::schedules::spawn_scheduler(Arc::clone(&state.hub));
+    crate::schedules::spawn_scheduler(state.clone());
 
     // Background "is a newer master out?" poller (pulses the settings gear).
     crate::update::spawn_poller(Arc::clone(&state.hub));
@@ -2135,6 +2135,22 @@ fn appearance_patch(payload: &Value, key: &str) -> anyhow::Result<Option<Option<
     })
 }
 
+/// A dispatching schedule is a standing instruction to run code — here and,
+/// worse, on other machines — on a timer that nobody is watching. The
+/// capability table maps every `schedule.*` kind to `Threads`, which is right
+/// for a schedule that starts a turn and far too weak for one that dispatches;
+/// this is the second grant, named at the only place that can see the payload.
+/// Exactly the argument `dispatch.create` makes for requiring both.
+fn require_dispatch_authority(
+    principal: &Principal,
+    dispatch: Option<&crate::protocol::ScheduleDispatch>,
+) -> anyhow::Result<()> {
+    if dispatch.is_some() {
+        principal.require(crate::mobile::Capability::Terminal)?;
+    }
+    Ok(())
+}
+
 /// Sidebar art is deliberately stored as a compact data URL: it survives
 /// desktop/LAN clients and workspace mesh replication without another asset
 /// transport. The UI resizes to 256px; this bound protects hand-written RPCs.
@@ -3834,9 +3850,12 @@ pub async fn handle_request(
                 name: Option<String>,
                 prompt: String,
                 cadence: Cadence,
+                #[serde(default)]
+                dispatch: Option<crate::protocol::ScheduleDispatch>,
             }
             let c: Create = serde_json::from_value(p)?;
             anyhow::ensure!(!c.prompt.trim().is_empty(), "prompt is empty");
+            require_dispatch_authority(principal, c.dispatch.as_ref())?;
             let name = c
                 .name
                 .filter(|n| !n.trim().is_empty())
@@ -3855,6 +3874,7 @@ pub async fn handle_request(
                 last_run_at: None,
                 last_thread_id: None,
                 last_error: None,
+                dispatch: c.dispatch,
             })?;
             hub.broadcast_state("schedules", None);
             hub.sched.kick.notify_one();
@@ -3881,10 +3901,20 @@ pub async fn handle_request(
                 #[serde(default)]
                 project_id: Option<String>,
             }
+            // Tri-state, like `appearance_patch`: absent leaves the schedule's
+            // mode alone (an older client cannot silently un-dispatch one),
+            // `null` switches it back to running here, an object sets it.
+            let dispatch: Option<Option<crate::protocol::ScheduleDispatch>> = match p.get("dispatch")
+            {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(v) => Some(Some(serde_json::from_value(v.clone())?)),
+            };
             let u: Update = serde_json::from_value(p)?;
             if let Some(pid) = &u.project_id {
                 anyhow::ensure!(store.project(pid).is_some(), "unknown project");
             }
+            require_dispatch_authority(principal, dispatch.as_ref().and_then(|d| d.as_ref()))?;
             let schedule = store.update_schedule(&u.schedule_id, |s| {
                 if let Some(v) = u.name {
                     if !v.trim().is_empty() {
@@ -3911,6 +3941,9 @@ pub async fn handle_request(
                 if let Some(v) = u.project_id {
                     s.project_id = v;
                 }
+                if let Some(v) = dispatch {
+                    s.dispatch = v;
+                }
                 // Re-plan so a stale next-run can't fire (or read) wrong.
                 s.next_run_at = crate::schedules::next_run_iso(&s.cadence);
             })?;
@@ -3924,7 +3957,12 @@ pub async fn handle_request(
             Ok(json!({}))
         }
         "schedule.run" => {
-            let thread_id = crate::schedules::run_now(hub, field(&p, "scheduleId")?)?;
+            let schedule_id = field(&p, "scheduleId")?;
+            // Running a dispatching schedule runs code on other machines, so
+            // the same grant that creating one needs is needed to fire one.
+            let saved = store.schedule(schedule_id);
+            require_dispatch_authority(principal, saved.as_ref().and_then(|s| s.dispatch.as_ref()))?;
+            let thread_id = crate::schedules::run_now(state, schedule_id).await?;
             Ok(json!({ "threadId": thread_id }))
         }
         "usage.get" => {

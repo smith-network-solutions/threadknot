@@ -788,7 +788,31 @@ export type Cadence =
   | { type: "weekdays"; time: string }
   | { type: "weekly"; days: number[]; time: string };
 
-/** A recurring agent run: each firing creates a fresh thread in the project. */
+/** Turns a schedule from "run this prompt here" into "hand this brief to
+ *  workers". Present means dispatch mode. The schedule's own agent/settings
+ *  still describe the coordinator thread each firing opens, and its `access`
+ *  is still the ceiling every worker is narrowed against; these fields
+ *  describe the workers. */
+export interface ScheduleDispatch {
+  /** Target machines, by id or friendly name. Empty means this machine. */
+  machines: string[];
+  /** Worker agent; absent inherits the coordinator's. */
+  agent?: Agent;
+  model?: string;
+  effort?: string;
+  /** Root to work in on each target, by name or path fragment. Absent
+   *  resolves per machine the way the `dispatch` tool resolves it. */
+  root?: string;
+  /** Row label in the parent's crew panel; the schedule's name if absent. */
+  label?: string;
+  /** Push this machine's HEAD to each worker first, and refuse rather than
+   *  build a different commit. */
+  syncRef: boolean;
+}
+
+/** A recurring agent run: each firing creates a fresh thread in the project.
+ *  With `dispatch` set, that thread is a coordinator and the work goes to
+ *  delegated workers instead of running in it. */
 export interface Schedule {
   id: string;
   projectId: string;
@@ -803,6 +827,7 @@ export interface Schedule {
   lastThreadId?: string;
   lastError?: string;
   nextRunAt?: string;
+  dispatch?: ScheduleDispatch;
 }
 
 /** One entry in the recursive project tree (fs.tree). Paths are
@@ -1643,6 +1668,7 @@ export interface RequestMap {
       name?: string;
       prompt: string;
       cadence: Cadence;
+      dispatch?: ScheduleDispatch;
     };
     data: Schedule;
   };
@@ -1657,6 +1683,10 @@ export interface RequestMap {
       agent?: Agent;
       settings?: ThreadSettings;
       projectId?: string;
+      /** Tri-state on the wire, so `undefined` and `null` are NOT the same:
+       *  omitting the key leaves the schedule's mode alone, `null` switches it
+       *  back to running here, an object sets it. */
+      dispatch?: ScheduleDispatch | null;
     };
     data: Schedule;
   };

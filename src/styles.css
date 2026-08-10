@@ -7068,6 +7068,60 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 .sched-hint { font-size: 11.5px; color: var(--faint); line-height: 1.5; margin-top: 6px; }
 
+/* ---- dispatch mode (targets, sync, the list-row marker) ------------------ */
+
+/* Pills, not the day circles: a machine name is a word, not a letter. Shares
+   `.sched-days` as the wrapper so the two chip rows line up. */
+.sched-machine {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 15px;
+  border: 1px solid var(--line-2);
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.sched-machine:hover:not(:disabled) { color: var(--text); border-color: var(--brass); }
+.sched-machine.on { background: var(--brass); border-color: var(--brass); color: #14100a; }
+.sched-machine:disabled { opacity: 0.45; cursor: not-allowed; }
+/* An offline target is selectable on purpose — the machine may well be awake by
+   the time the schedule fires — but it must not look like a healthy one. */
+.sched-machine.stale:not(.on) { border-style: dashed; }
+.sched-machine-note {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.sched-days { flex-wrap: wrap; }
+
+.sched-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--dim);
+  line-height: 1.5;
+  cursor: pointer;
+}
+.sched-check input { margin-top: 2px; accent-color: var(--brass); }
+
+.sched-dispatch-chip {
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(67, 201, 165, 0.35);
+  background: var(--teal-dim);
+  color: var(--teal);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 /* ---- project pop-out (drag a project into its own window) ---------------- */
 
 .project-head[draggable="true"] { cursor: grab; }

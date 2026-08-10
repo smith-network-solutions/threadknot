@@ -1,6 +1,6 @@
 # Dispatch — handing work to another agent, on another machine
 
-> Status: **PHASES 0–3 BUILT (2026-08-09)**, Phase 4 not started. Read alongside
+> Status: **PHASES 0–3 BUILT, PHASE 4 PARTLY (2026-08-09)**. Read alongside
 > `MULTI-MACHINE.md` (the mesh this rides on), `PARLEY.md` (the multi-agent
 > primitive this is deliberately *not*), and `PROTOCOL.md`.
 >
@@ -11,20 +11,34 @@
 > `scripts/dispatch-live.py` runs the real thing — a Claude-configured parent
 > dispatches to **Codex** and to **Kimi**, each does the work on disk, files a
 > structured `report_result`, and the parent's feed shows the worker row and its
-> completion. Both pass.
+> completion. `scripts/schedule-dispatch-smoke.py` covers the Phase 4 half: a
+> schedule carrying a dispatch block, fired unattended, fanning out to both
+> machines, reporting the target it could not reach instead of skipping it, and
+> settling its coordinator when the last worker reports. Cross-OS runs against
+> the real **Windows 11** box and the **Mac** passed with real Codex workers.
+> All pass.
+>
+> Phase 4, what landed: **dispatch from a `Schedule`** (`ScheduleDispatch`, the
+> coordinator-thread shape, fan-out, honest partial-failure reporting) and a
+> **push notification when a worker reports** (`PushKind::DispatchFinished`).
 >
 > Not yet done, and not pretended otherwise:
-> - **Phase 4 entirely** (dispatch from a `Schedule`, push notification when a
->   worker reports, reusable templates).
+> - **Reusable dispatch templates as their own registry.** A *disabled*
+>   dispatching schedule plus "Run now" is already a saved, one-click,
+>   fully-specified dispatch, which is most of what a template is for; a
+>   `personas.rs`-shaped registry would only add a second place to define one.
+>   Revisit if that turns out to be too oblique to find.
+> - **Dispatch from a Hermes gateway agent, and dispatch as a Parley step.**
 > - **Worktree isolation** (`isolate: "worktree"`). Concurrent dispatches into
 >   one checkout are **serialized** instead — correct, but slower than the plan's
 >   intent. The queue-and-release path is implemented and is what runs.
 > - **Sidebar nesting of child threads** and a dedicated **crew card**. The
 >   pinned agent panel is the crew view today: one row per worker with a machine
 >   chip, an agent chip, live activity and a click through to its thread.
-> - **A cross-OS test against the real Windows machine.** The mesh path is
->   proven between two instances; the Windows box still runs an older build, so
->   the PowerShell half of `exec` is untested on real Windows.
+> - **No way to start a one-off dispatch from the UI.** Agent-issued (the MCP
+>   tool) and schedule-issued are the two doors; there is no button.
+> - **`syncRef` has never been exercised against a live remote.** It is
+>   implemented and reachable from the schedule form; nothing has run it.
 >
 > *Dispatch*: to send off to a destination with a purpose. Name is cheap to
 > change — `crew`, `detail`, `delegate` were the alternatives.
@@ -391,6 +405,31 @@ produces three verified builds or a precise account of which one failed and why.
 Dispatch from `Schedule` (nightly cross-platform build), reusable dispatch
 templates, push notification when a dispatch finishes while you're away,
 dispatch from a Hermes gateway agent, dispatch as a Parley execution step.
+
+The first two shipped. The schedule keeps an optional `ScheduleDispatch` block
+(`protocol.rs`) and `schedules::fire_dispatch` opens a **coordinator thread**
+that runs no turn of its own — it exists to hold the crew, own the ledger
+entries, and give the workers something to report into. Each target goes through
+`dispatch.create` rather than the ledger directly, so a scheduled dispatch gets
+exactly the checks an agent-issued one does: target consent, agent-installed,
+access narrowing, depth and concurrency caps.
+
+Three decisions worth keeping:
+
+- **`Capability::Threads` is not enough.** Every `schedule.*` kind maps to
+  `Threads`, which is right for a schedule that starts a turn and far too weak
+  for one that runs code on three machines on a timer. `require_dispatch_authority`
+  adds `Terminal` at create, update *and* `schedule.run` — checking it only at
+  write time would leave "Run now" as the bypass.
+- **Partial failure is a first-class outcome.** Some workers started → a
+  `Status` line naming who refused (an `Error` there would settle the thread out
+  from under the workers still running). None started → an `Error`, and the
+  schedule's `lastError` says why. A nightly build that quietly ran on two
+  machines out of three is worse than one that ran on none.
+- **Somebody has to settle the coordinator.** It never runs a turn, so no
+  `TurnCompleted` is coming; `settle_if_idle` runs as each report lands and
+  marks it idle once no dispatch is live and no session is attached. A no-op for
+  an agent-issued dispatch, whose parent settled when its own turn ended.
 
 ## Testing strategy
 

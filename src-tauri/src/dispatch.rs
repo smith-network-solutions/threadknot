@@ -257,7 +257,7 @@ impl DispatchLedger {
         out
     }
 
-    fn live_for_parent(&self, thread_id: &str) -> usize {
+    pub fn live_for_parent(&self, thread_id: &str) -> usize {
         self.records
             .lock()
             .unwrap()
@@ -760,7 +760,57 @@ pub fn accept_report(
             summary: Some(summary),
         },
     );
+    // A scheduled dispatch's parent runs no turn of its own, so no
+    // `TurnCompleted` will ever settle it — this is what does. A no-op for an
+    // agent-issued dispatch, whose parent settled when its own turn ended.
+    crate::schedules::settle_if_idle(hub, &updated.parent_thread_id);
+    push_finished(hub, &updated);
     hub.broadcast_state("dispatches", None);
+}
+
+/// Tell the phone a worker is done. The value is entirely in the away case: a
+/// nightly cross-platform build finishes at 03:00 and the only thing that can
+/// say so is a push. Deliberately NOT folded into `push_for_event`'s
+/// `SubagentCompleted` arm — that would also fire for a provider's own
+/// in-process subagents, which are steps inside a turn the user is watching,
+/// and would bury the one notification that matters under a dozen that don't.
+fn push_finished(hub: &Arc<Hub>, record: &DispatchRecord) {
+    let Some(push) = hub.push() else { return };
+    let Some(parent) = hub.store.thread(&record.parent_thread_id) else {
+        return;
+    };
+    let Some(workspace_id) = hub.store.workspace_for_project(&parent.project_id) else {
+        return;
+    };
+    let project_name = hub
+        .store
+        .project(&parent.project_id)
+        .map(|p| p.name)
+        .unwrap_or_default();
+    let outcome = match record.status {
+        DispatchStatus::Succeeded => "finished",
+        DispatchStatus::Cancelled => "was cancelled",
+        _ => "failed",
+    };
+    let detail = record
+        .result
+        .as_ref()
+        .map(|r| truncate(&r.summary, 160))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("{} {outcome}", record.agent.display_name()));
+    push.enqueue(crate::push::PushJob {
+        kind: crate::push::PushKind::DispatchFinished,
+        project_id: parent.project_id.clone(),
+        workspace_id,
+        project_name,
+        thread_id: parent.id.clone(),
+        thread_title: parent.title.clone(),
+        notice: Some(crate::protocol::EventNotice {
+            title: format!("{} {outcome} · {}", record.label, parent.title),
+            body: detail,
+        }),
+        only_device: None,
+    });
 }
 
 /// A dispatch finished: let the next one queued for the same checkout start.

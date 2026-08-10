@@ -1008,8 +1008,46 @@ pub enum Cadence {
     },
 }
 
+/// Turns a schedule from "run this prompt here" into "hand this brief to
+/// workers". Present means dispatch mode; absent keeps the original behaviour,
+/// which is why it is an optional block rather than a variant of a new tagged
+/// `action` enum — every existing `Schedule` on disk stays readable.
+///
+/// The schedule's own `agent`/`settings` still describe the coordinator thread
+/// each firing creates, and its `access` remains the ceiling every worker is
+/// narrowed against. These fields describe the workers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleDispatch {
+    /// Target machines, by id or friendly name. Empty means this machine —
+    /// the same default `dispatch` gives a model that names no machine.
+    #[serde(default)]
+    pub machines: Vec<String>,
+    /// Worker agent; absent inherits the coordinator's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Agent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// Which root to work in on each target, by name or path fragment. Absent
+    /// resolves per machine the way the `dispatch` tool resolves it: the one
+    /// root that machine contributes to the workspace, or this machine's own
+    /// project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// Row label in the parent's crew panel; the schedule's name if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Push this machine's HEAD to each worker before it starts, and refuse the
+    /// dispatch rather than build a different commit.
+    #[serde(default)]
+    pub sync_ref: bool,
+}
+
 /// A recurring agent run: each firing creates a fresh thread in the project
 /// and starts a turn with `prompt`, so results live in the normal thread list.
+/// With `dispatch` set, the firing hands `prompt` to workers instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Schedule {
@@ -1032,6 +1070,9 @@ pub struct Schedule {
     /// each firing, and lazily by the scheduler when missing or stale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_run_at: Option<String>,
+    /// Set to delegate each firing instead of running it here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<ScheduleDispatch>,
 }
 
 /// A project-bound terminal tab. The record persists (so tabs survive an app

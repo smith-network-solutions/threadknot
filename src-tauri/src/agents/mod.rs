@@ -1801,6 +1801,18 @@ impl Hub {
         Ok(thread)
     }
 
+    /// Is a live driver session attached to this thread? A cheaper, coarser
+    /// question than "is a turn in flight" — a retired or dead session does not
+    /// count, which is what callers deciding whether a thread has settled want.
+    pub fn is_running(&self, thread_id: &str) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(thread_id)
+            .map(|h| !h.cmd_tx.is_closed())
+            .unwrap_or(false)
+    }
+
     /// Run a turn on the thread's primary lane — what the composer does.
     ///
     /// A message typed by the user always addresses the Builder, never a

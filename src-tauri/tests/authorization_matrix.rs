@@ -518,6 +518,78 @@ async fn sec003_settings_fields_need_the_signed_browser_grant() {
     }
 }
 
+/// A schedule that DISPATCHES runs code on this machine and on others, on a
+/// timer, unattended. `Capability::Threads` — what the table maps every
+/// `schedule.*` kind to — is the right grant for a schedule that starts a turn
+/// and nowhere near enough for one that delegates, so a dispatching schedule
+/// needs `Terminal` as well. Without this a `Threads`-only phone could mint
+/// terminal authority for itself by saving a schedule.
+#[tokio::test]
+async fn a_dispatching_schedule_also_needs_the_terminal_grant() {
+    let h = harness();
+    let no_terminal = device_with_all_but(Capability::Terminal);
+    let all = device(&Capability::ALL);
+
+    let settings =
+        serde_json::json!({ "model": "sonnet", "access": "read", "mode": "build" });
+    let dispatch = serde_json::json!({ "machines": [], "syncRef": false });
+
+    let create = serde_json::json!({
+        "projectId": h.project.id,
+        "agent": "claude",
+        "settings": settings,
+        "prompt": "build it",
+        "cadence": { "type": "daily", "time": "09:00" },
+        "dispatch": dispatch,
+    });
+    let update = serde_json::json!({
+        "scheduleId": "no-such-schedule",
+        "dispatch": dispatch,
+    });
+
+    for (kind, payload) in [("schedule.create", &create), ("schedule.update", &update)] {
+        assert_denied(&no_terminal, kind, payload.clone(), Capability::Terminal).await;
+        assert_passes_gate(&all, kind, payload.clone(), Capability::Terminal).await;
+        assert_passes_gate(&Principal::Master, kind, payload.clone(), Capability::Terminal).await;
+    }
+
+    // The same kinds WITHOUT a dispatch block stay on the Threads grant alone —
+    // the second gate must not become a tax on ordinary scheduled runs.
+    let mut plain = create.clone();
+    plain.as_object_mut().unwrap().remove("dispatch");
+    assert_passes_gate(&no_terminal, "schedule.create", plain, Capability::Terminal).await;
+}
+
+/// Firing a saved dispatching schedule is the same authority as saving one:
+/// otherwise the grant is checked at write time and bypassed at "Run now".
+#[tokio::test]
+async fn running_a_dispatching_schedule_needs_the_terminal_grant() {
+    let h = harness();
+    let created = call(
+        &Principal::Master,
+        "schedule.create",
+        serde_json::json!({
+            "projectId": h.project.id,
+            "agent": "claude",
+            "settings": { "model": "sonnet", "access": "read", "mode": "build" },
+            "prompt": "build it",
+            "cadence": { "type": "daily", "time": "09:00" },
+            "dispatch": { "machines": [], "syncRef": false },
+        }),
+    )
+    .await
+    .expect("master may create a dispatching schedule");
+    let id = created["id"].as_str().expect("schedule id");
+
+    assert_denied(
+        &device_with_all_but(Capability::Terminal),
+        "schedule.run",
+        serde_json::json!({ "scheduleId": id }),
+        Capability::Terminal,
+    )
+    .await;
+}
+
 /// Settings with no signed-browser claim must still work for an ordinary
 /// device: the check is on the authority, not on the shape of the payload.
 #[tokio::test]

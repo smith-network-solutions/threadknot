@@ -1,5 +1,12 @@
 import { useMemo, useState } from "react";
-import type { Access, Agent, Cadence, Schedule, ThreadSettings } from "../lib/protocol";
+import type {
+  Access,
+  Agent,
+  Cadence,
+  Schedule,
+  ScheduleDispatch,
+  ThreadSettings,
+} from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
 import { cadenceLabel, DAY_CHIP, nextOccurrence, untilLabel } from "../lib/schedule";
@@ -32,6 +39,43 @@ interface FormState {
   model: string;
   effort?: string;
   access: Access;
+  /** Dispatch mode: each firing hands the brief to workers instead of running
+   *  it in the schedule's own thread. */
+  delegate: boolean;
+  /** Target machine ids. Empty means this machine. */
+  machines: string[];
+  /** Root to work in on each target, by name or path fragment. */
+  root: string;
+  syncRef: boolean;
+}
+
+/** Every machine a dispatch can be sent to: this one, then the paired peers.
+ *  A peer paired before the encrypted mesh is listed but not selectable —
+ *  saying only "offline" would send someone hunting a network fault instead of
+ *  updating Threadknot there and re-pairing. */
+function useTargets() {
+  const { state } = useStore();
+  return useMemo(() => {
+    const self = {
+      id: state.hello?.machineId ?? "",
+      name: state.hello?.friendlyName ?? "This machine",
+      online: true,
+      blocked: false as boolean,
+      why: "",
+    };
+    const peers = state.peers.map((p) => ({
+      id: p.machineId,
+      name: p.name,
+      online: !!p.online,
+      blocked: !!p.needsUpgrade,
+      why: p.needsUpgrade
+        ? "paired before encrypted mesh — update Threadknot there and pair again"
+        : p.online
+          ? ""
+          : "offline right now; a firing will be refused and reported",
+    }));
+    return [self, ...peers].filter((t) => t.id);
+  }, [state.hello?.machineId, state.hello?.friendlyName, state.peers]);
 }
 
 function buildCadence(f: FormState): Cadence {
@@ -62,6 +106,12 @@ function ScheduleRow({
   const project = state.projects.find((p) => p.id === schedule.projectId);
   const next = schedule.nextRunAt ? new Date(schedule.nextRunAt) : null;
   const lastThread = schedule.lastThreadId ? findThread(state, schedule.lastThreadId) : null;
+  const targets = useTargets();
+  // Ids, because that is what the schedule stores; fall back to the raw value
+  // so a machine that has since been unpaired still shows as something.
+  const targetNames = (schedule.dispatch?.machines ?? []).map(
+    (id) => targets.find((t) => t.id === id)?.name ?? id,
+  );
 
   async function runNow() {
     setRunning(true);
@@ -90,6 +140,14 @@ function ScheduleRow({
           )}
           {!schedule.enabled && <span className="sched-next dim">· paused</span>}
         </div>
+        {schedule.dispatch && (
+          <div className="sched-row-when">
+            <span className="sched-dispatch-chip">dispatch</span>
+            <span className="sched-next">
+              {targetNames.length > 0 ? targetNames.join(", ") : "this machine"}
+            </span>
+          </div>
+        )}
         {schedule.lastError && <div className="sched-error">{schedule.lastError}</div>}
         {!schedule.lastError && schedule.lastRunAt && (
           <div className="sched-last">
@@ -155,6 +213,7 @@ function ScheduleForm({
   const [form, setForm] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const targets = useTargets();
 
   const agents = state.hello?.agents ?? [];
   const agentInfo = agents.find((a) => a.id === form.agent);
@@ -170,7 +229,23 @@ function ScheduleForm({
   const valid =
     form.prompt.trim().length > 0 &&
     form.projectId.length > 0 &&
-    (form.cadType !== "weekly" || form.days.length > 0);
+    (form.cadType !== "weekly" || form.days.length > 0) &&
+    (!form.delegate || form.machines.length > 0);
+
+  /** The dispatch block, or `null` to switch the schedule back to running
+   *  here. Never `undefined`: on update that would mean "leave the mode alone",
+   *  and turning delegation OFF has to reach the server. */
+  function dispatchBlock(): ScheduleDispatch | null {
+    if (!form.delegate) return null;
+    return {
+      machines: form.machines,
+      root: form.root.trim() || undefined,
+      syncRef: form.syncRef,
+      // agent/model/effort deliberately omitted: the worker inherits the
+      // coordinator's, which is exactly what the "Each worker runs with"
+      // controls above set. Naming them again here could only disagree.
+    };
+  }
 
   async function save() {
     if (!valid) return;
@@ -182,6 +257,7 @@ function ScheduleForm({
       access: form.access,
       mode: "build",
     };
+    const dispatch = dispatchBlock();
     try {
       if (form.editingId) {
         await actions.updateSchedule({
@@ -192,6 +268,7 @@ function ScheduleForm({
           agent: form.agent,
           settings,
           projectId: form.projectId,
+          dispatch,
         });
       } else {
         await actions.createSchedule({
@@ -201,6 +278,7 @@ function ScheduleForm({
           name: form.name.trim() || undefined,
           prompt: form.prompt,
           cadence,
+          dispatch: dispatch ?? undefined,
         });
       }
       onDone();
@@ -224,18 +302,129 @@ function ScheduleForm({
     });
   }
 
+  const remoteTargets = targets.filter(
+    (t) => form.machines.includes(t.id) && t.id !== state.hello?.machineId,
+  );
+
   return (
     <div className="sched-form">
+      <div className="sched-field">
+        <span className="sched-label">Each run…</span>
+        <div className="seg" role="group" aria-label="What a firing does">
+          {(
+            [
+              [false, "Runs here"],
+              [true, "Dispatches to machines"],
+            ] as [boolean, string][]
+          ).map(([id, label]) => (
+            <button
+              key={String(id)}
+              type="button"
+              className={form.delegate === id ? "seg-btn on" : "seg-btn"}
+              onClick={() => patch({ delegate: id })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {form.delegate && (
+          <div className="sched-hint">
+            The schedule's own thread becomes the crew panel: it runs nothing
+            itself, and every worker reports back into it.
+          </div>
+        )}
+      </div>
+
       <label className="sched-field">
-        <span className="sched-label">What should the agent do?</span>
+        <span className="sched-label">
+          {form.delegate
+            ? "What should each worker do?"
+            : "What should the agent do?"}
+        </span>
         <textarea
           autoFocus
           rows={3}
           value={form.prompt}
-          placeholder="e.g. Review yesterday's commits and write a short status summary. Flag anything that looks risky."
+          placeholder={
+            form.delegate
+              ? "e.g. Pull the latest master and produce a release build. Report the version and where the binary landed."
+              : "e.g. Review yesterday's commits and write a short status summary. Flag anything that looks risky."
+          }
           onChange={(e) => patch({ prompt: e.target.value })}
         />
       </label>
+
+      {form.delegate && (
+        <div className="sched-field">
+          <span className="sched-label">On machines</span>
+          <div className="sched-days" role="group" aria-label="Target machines">
+            {targets.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                disabled={t.blocked}
+                title={t.why || undefined}
+                className={`sched-machine${form.machines.includes(t.id) ? " on" : ""}${
+                  t.online ? "" : " stale"
+                }`}
+                onClick={() =>
+                  patch({
+                    machines: form.machines.includes(t.id)
+                      ? form.machines.filter((m) => m !== t.id)
+                      : [...form.machines, t.id],
+                  })
+                }
+              >
+                {t.name}
+                {!t.online && <span className="sched-machine-note">offline</span>}
+              </button>
+            ))}
+          </div>
+          {form.machines.length === 0 && (
+            <div className="sched-hint">Pick at least one machine.</div>
+          )}
+          {remoteTargets.some((t) => !t.online) && (
+            <div className="sched-hint">
+              An offline machine isn't skipped quietly — the run reports which
+              targets refused, so a missing platform can't pass for a success.
+            </div>
+          )}
+        </div>
+      )}
+
+      {form.delegate && (
+        <label className="sched-field">
+          <span className="sched-label">
+            Root on each machine{" "}
+            <em className="sched-optional">
+              optional — by name or path, blank picks that machine's one root in
+              this workspace
+            </em>
+          </span>
+          <input
+            type="text"
+            value={form.root}
+            placeholder="e.g. threadknot"
+            onChange={(e) => patch({ root: e.target.value })}
+          />
+        </label>
+      )}
+
+      {form.delegate && remoteTargets.length > 0 && (
+        <label className="sched-check">
+          <input
+            type="checkbox"
+            checked={form.syncRef}
+            onChange={(e) => patch({ syncRef: e.target.checked })}
+          />
+          <span>
+            Push this machine's commit to each worker first
+            <em className="sched-optional">
+              — and refuse the run rather than build a different one
+            </em>
+          </span>
+        </label>
+      )}
 
       <label className="sched-field">
         <span className="sched-label">
@@ -269,7 +458,9 @@ function ScheduleForm({
       </label>
 
       <div className="sched-field">
-        <span className="sched-label">Run with</span>
+        <span className="sched-label">
+          {form.delegate ? "Each worker runs with" : "Run with"}
+        </span>
         <div className="sched-controls">
           <div className="ctl">
             <span className="ctl-label">Agent</span>
@@ -345,8 +536,15 @@ function ScheduleForm({
         </div>
         {form.access !== "full" && (
           <div className="sched-hint">
-            Runs may pause to ask for approval at this access level — you'll get a
-            notification when one is waiting.
+            {form.delegate
+              ? "A worker that hits this access level stops and asks — in its own thread, on its own machine. Full access is what an unattended dispatch usually wants."
+              : "Runs may pause to ask for approval at this access level — you'll get a notification when one is waiting."}
+          </div>
+        )}
+        {form.delegate && (
+          <div className="sched-hint">
+            Each machine can cap what it will accept (Settings → machines), and
+            the lower of the two wins.
           </div>
         )}
       </div>
@@ -430,6 +628,9 @@ function ScheduleForm({
           {cadenceLabel(cadence)}
           {next && ` · first run ${untilLabel(next)}`}
           {!next && form.cadType === "weekly" && " · pick at least one day"}
+          {form.delegate &&
+            form.machines.length > 0 &&
+            ` · ${form.machines.length} worker${form.machines.length === 1 ? "" : "s"}`}
         </span>
       </div>
 
@@ -490,6 +691,12 @@ export function SchedulesPanel({ onClose }: { onClose: () => void }) {
         preferred?.id === "claude",
       ),
       access: "edits",
+      delegate: false,
+      // Pre-seeded with this machine so switching to dispatch mode is one
+      // click rather than a mode with nothing in it.
+      machines: state.hello?.machineId ? [state.hello.machineId] : [],
+      root: "",
+      syncRef: false,
     };
   }
 
@@ -507,6 +714,16 @@ export function SchedulesPanel({ onClose }: { onClose: () => void }) {
       model: s.settings.model,
       effort: s.settings.effort,
       access: s.settings.access,
+      delegate: !!s.dispatch,
+      // A stored empty list means "this machine" on the server; show that.
+      machines:
+        s.dispatch?.machines?.length
+          ? s.dispatch.machines
+          : state.hello?.machineId
+            ? [state.hello.machineId]
+            : [],
+      root: s.dispatch?.root ?? "",
+      syncRef: !!s.dispatch?.syncRef,
     };
   }
 
@@ -533,7 +750,9 @@ export function SchedulesPanel({ onClose }: { onClose: () => void }) {
                   <p>
                     Run an agent on a schedule — every morning, hourly, whenever.
                     Each run lands as a fresh thread in its project, and you'll be
-                    notified when it finishes.
+                    notified when it finishes. A run can also dispatch the work to
+                    your other machines, which is how one schedule produces a
+                    build for all three.
                   </p>
                 </div>
               )}

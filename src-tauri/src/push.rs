@@ -32,6 +32,12 @@ pub enum PushKind {
     TurnCompleted,
     ApprovalRequest,
     QuestionRequest,
+    /// A dispatched worker reported back. Its own kind rather than a
+    /// `TurnCompleted`: the thread it names is the PARENT, not the thread whose
+    /// turn ended, and a phone routing on `eventKind` should open the one you
+    /// can act on. An older mobile build that doesn't know the string falls
+    /// through to just showing the notification, which is the right default.
+    DispatchFinished,
     Error,
     Test,
 }
@@ -42,6 +48,7 @@ impl PushKind {
             PushKind::TurnCompleted => "Turn complete",
             PushKind::ApprovalRequest => "Approval needed",
             PushKind::QuestionRequest => "Question waiting",
+            PushKind::DispatchFinished => "Dispatch finished",
             PushKind::Error => "Agent error",
             PushKind::Test => "Test notification",
         }
@@ -53,6 +60,7 @@ impl PushKind {
             PushKind::TurnCompleted => "turn_completed",
             PushKind::ApprovalRequest => "approval_request",
             PushKind::QuestionRequest => "question_request",
+            PushKind::DispatchFinished => "dispatch_finished",
             PushKind::Error => "error",
             PushKind::Test => "test",
         }
