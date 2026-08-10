@@ -1218,28 +1218,60 @@ pub async fn handle(
             if record.machine_id == local {
                 let _ = hub.interrupt(&record.child_thread_id);
             } else {
-                let _ = state
+                // Tell the worker machine it is CANCELLED, not merely
+                // interrupted. Interrupting alone ends the turn, and the turn
+                // boundary there infers a report from the last assistant
+                // message and files it as `failed` — which then lands on the
+                // parent and overwrites the cancel. Marking the worker's own
+                // copy first makes `conclude_worker` see a finished record and
+                // say nothing.
+                let cancelled = state
                     .peernet
                     .request(
                         &record.machine_id,
-                        "turn.interrupt",
-                        json!({ "threadId": record.child_thread_id }),
+                        "mesh.dispatchCancel",
+                        json!({ "dispatchId": id }),
                         None,
                     )
                     .await;
+                if cancelled.is_err() {
+                    // A worker on an older build does not know that request.
+                    // Fall back to the interrupt; the parent-side guard below
+                    // is what keeps the outcome correct either way.
+                    let _ = state
+                        .peernet
+                        .request(
+                            &record.machine_id,
+                            "turn.interrupt",
+                            json!({ "threadId": record.child_thread_id }),
+                            None,
+                        )
+                        .await;
+                }
             }
-            let updated = hub.dispatch.update(&id, |r| {
-                r.status = DispatchStatus::Cancelled;
-                r.finished_at = Some(now_iso());
-                r.result = Some(DispatchResult {
-                    summary: "Cancelled before it reported.".into(),
-                    ..Default::default()
+            let result = DispatchResult {
+                summary: "Cancelled before it reported.".into(),
+                ..Default::default()
+            };
+            if matches!(record.role_here(&local), Role::Worker) {
+                let updated = hub.dispatch.update(&id, |r| {
+                    r.status = DispatchStatus::Cancelled;
+                    r.finished_at = Some(now_iso());
+                    r.result = Some(result.clone());
                 });
-            });
-            if let Some(record) = updated {
-                if matches!(record.role_here(&local), Role::Worker) {
+                if let Some(record) = updated {
                     deliver_report(hub, &record);
                 }
+            } else {
+                // The parent's single landing for ANY terminal status. Going
+                // through it rather than writing the record by hand is what
+                // makes a cancel terminal: it stamps `announced_at`, so a
+                // report the worker filed a moment before it died is ignored
+                // instead of resurrecting the dispatch as `failed`. It also
+                // announces the completion in the parent's feed and settles a
+                // coordinator thread — neither of which a hand-written record
+                // did.
+                accept_report(hub, &id, DispatchStatus::Cancelled, Some(result));
             }
             hub.broadcast_state("dispatches", None);
             Ok(json!({ "ok": true }))
@@ -1251,6 +1283,19 @@ pub async fn handle(
         "dispatch.report" => {
             let id = field("dispatchId")?;
             let record = hub.dispatch.get(&id).context("unknown dispatch")?;
+            // A dispatch that has already reached a terminal status keeps it.
+            // The case that matters is a cancel: the worker's turn is
+            // interrupted, its turn boundary infers a report from whatever it
+            // last said, and that report arrives here a moment later. Letting
+            // it through leaves the two machines telling different stories
+            // about the same dispatch — the parent says cancelled, the worker
+            // says failed — and a fan-out reading the wrong one misreports its
+            // own outcome.
+            anyhow::ensure!(
+                !record.status.is_done(),
+                "that dispatch already finished as {:?} — a later report cannot change it",
+                record.status
+            );
             let status: DispatchStatus = serde_json::from_value(
                 p.get("status").cloned().unwrap_or(json!("succeeded")),
             )
@@ -1355,6 +1400,38 @@ pub async fn handle(
                 .filter(|v| !v.is_null())
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
             accept_report(hub, &id, status, result);
+            Ok(json!({ "ok": true }))
+        }
+
+        // The parent cancelling a worker that runs here. Distinct from a bare
+        // `turn.interrupt` because the ledger has to know: an interrupted turn
+        // still hits the turn boundary, and the boundary infers a report from
+        // whatever the worker last said and files it as `failed`. Marking the
+        // record first makes `conclude_worker` see a finished dispatch and
+        // stay quiet, so the parent's `cancelled` is the only account of it.
+        "mesh.dispatchCancel" => {
+            anyhow::ensure!(principal.is_peer(), "mesh calls are peer-only");
+            let id = field("dispatchId")?;
+            let record = hub.dispatch.get(&id).context("unknown dispatch")?;
+            let caller = principal.peer_machine_id().unwrap_or_default();
+            anyhow::ensure!(
+                record.parent_machine_id == caller,
+                "only the machine that sent a dispatch may cancel it"
+            );
+            hub.dispatch.update(&id, |r| {
+                r.status = DispatchStatus::Cancelled;
+                r.finished_at = Some(now_iso());
+                r.result = Some(DispatchResult {
+                    summary: "Cancelled by the thread that sent it.".into(),
+                    ..Default::default()
+                });
+                // The parent already knows — it is the one asking. Stamping
+                // this stops the worker filing a report back at it.
+                r.announced_at = Some(now_iso());
+            });
+            let _ = hub.interrupt(&record.child_thread_id);
+            hub.forget_dispatch_tracking(&id);
+            hub.broadcast_state("dispatches", None);
             Ok(json!({ "ok": true }))
         }
 

@@ -299,6 +299,43 @@ def dispatch_checks(token_a, token_b, machine_a, machine_b,
     check(seen and (seen.get("result") or {}).get("summary", "").startswith("linux"),
           "the summary travelled with it")
 
+    print("\n== dispatch: a cancel is TERMINAL ==")
+    # The regression: cancelling a worker that is mid-turn used to end up
+    # `failed`, not `cancelled`. Interrupting the turn still runs the worker's
+    # turn boundary, which infers a report from whatever it last said and files
+    # it — and that report landed on the parent and overwrote the cancel. Here
+    # the late report is filed explicitly, which is the same race without
+    # having to win it by timing.
+    victim = rpc(PORT_A, token_a, "dispatch.create", {
+        "parentThreadId": thread_id, "brief": "work to abandon", "label": "cancel-test",
+        "machineId": machine_b, "projectId": project_b,
+        "agent": "claude", "access": "full", "autostart": False,
+    })
+    if victim.get("ok"):
+        vid = victim["data"]["id"]
+        cancelled = rpc(PORT_A, token_a, "dispatch.cancel", {"dispatchId": vid})
+        check(cancelled.get("ok"), "the cancel is accepted")
+        # B files its report anyway, exactly as a dying worker would.
+        rpc(PORT_B, token_b, "dispatch.report", {
+            "dispatchId": vid, "status": "failed",
+            "summary": "whatever the worker last said",
+        })
+        time.sleep(3)
+        listed = ok(PORT_A, token_a, "dispatch.list", {"threadId": thread_id})
+        after = next((d for d in listed["dispatches"] if d["id"] == vid), None)
+        check(after is not None and after["status"] == "cancelled",
+              f"a late report cannot resurrect a cancelled dispatch "
+              f"(is {after and after['status']})")
+        check(after is not None
+              and "cancel" in (after.get("result") or {}).get("summary", "").lower(),
+              "and the cancel's own summary is what survives")
+        # The worker machine must agree; two ledgers telling different stories
+        # about the same dispatch is how a fan-out lies about its outcome.
+        bside = ok(PORT_B, token_b, "dispatch.get", {"dispatchId": vid})
+        bstatus = (bside.get("dispatch") or bside).get("status")
+        check(bstatus == "cancelled",
+              f"the worker machine records it as cancelled too (is {bstatus})")
+
     print("\n== dispatch: a report raised while the parent is offline is not lost ==")
     offline = rpc(PORT_A, token_a, "dispatch.create", {
         "parentThreadId": thread_id, "brief": "second job", "label": "offline-test",

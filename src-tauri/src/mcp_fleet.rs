@@ -30,9 +30,24 @@ use std::time::{Duration, Instant};
 /// went wrong, and the first 12 KB of a cargo build is a list of crate names.
 const TOOL_OUTPUT_TAIL: usize = 12_000;
 
+/// The ceiling on how long ANY tool here will sit before answering.
+///
+/// This was 90s, on the theory that it was "comfortably inside every harness's
+/// tool timeout". It is not: a real Claude Code session driving this fleet had
+/// `run_on_machine`, `exec_status` and `dispatch_wait` calls killed by the
+/// harness before the tool answered. The job survived every time — which is the
+/// property that matters and the one Dispatch was designed for — but the model
+/// lost the handle and had to go looking for it in `exec.list`.
+///
+/// So: the WORK may take three hours, and the ANSWER must arrive in seconds.
+/// Those are different clocks, and only the second one is negotiable. 25s is
+/// short enough for a harness that gives a tool 30s and still long enough that
+/// a quick build or a fast worker is usually reported inline rather than as a
+/// handle to poll.
+const TOOL_ANSWER_BUDGET: u64 = 25;
+
 /// How long `run_on_machine` will sit on a job before handing back a handle.
-/// Comfortably inside every harness's tool timeout; past it, the model polls.
-const RUN_WAIT_BUDGET: Duration = Duration::from_secs(90);
+const RUN_WAIT_BUDGET: Duration = Duration::from_secs(TOOL_ANSWER_BUDGET);
 
 /// One poll of a running job. Bounded by the peer request timeout because this
 /// same call is what crosses the mesh.
@@ -356,7 +371,7 @@ pub fn tool_specs() -> Vec<Value> {
                 json!({
                     "jobId": { "type": "string" },
                     "machine": { "type": "string", "description": "The machine it is running on (same value you passed to run_on_machine)" },
-                    "waitSeconds": { "type": "number", "description": "Wait up to this long for it to finish before answering (default 20, max 90)" }
+                    "waitSeconds": { "type": "number", "description": "Wait up to this long for it to finish before answering (default 25, max 25)" }
                 }),
                 json!(["jobId"]),
             ),
@@ -400,7 +415,7 @@ pub fn tool_specs() -> Vec<Value> {
                     "machine": { "type": "string", "description": "Machine name from `machines`. Omit for this machine." },
                     "machines": { "type": "array", "items": { "type": "string" }, "description": "Fan the same brief out to several machines, one worker each" },
                     "root": { "type": "string", "description": "Which workspace root to work in. Omit when the machine has only one." },
-                    "access": { "type": "string", "enum": ["read", "edits", "full"], "description": "Worker's permissions. Never exceeds this chat's own." },
+                    "access": { "type": "string", "enum": ["read", "edits", "full"], "description": "Worker's permissions. Never exceeds this chat's own. Note that a worker has NOBODY to approve anything: at 'read' every command it runs is refused, and at 'edits' every write is, so it will report back a list of things it could not do. Use 'full' for work you actually want done unattended, and keep the brief itself read-only if that is what you meant." },
                     "syncRef": { "type": "boolean", "description": "Before starting, bring the remote machine's checkout to the SAME commit as this one, and refuse the dispatch if it cannot (usually: the commit is not pushed yet). Use this for any build or test you intend to compare across machines — without it you can get a build of stale code that looks entirely successful." }
                 }),
                 json!(["brief", "label"]),
@@ -417,7 +432,7 @@ pub fn tool_specs() -> Vec<Value> {
             "inputSchema": obj(
                 json!({
                     "dispatchIds": { "type": "array", "items": { "type": "string" } },
-                    "timeoutSeconds": { "type": "number", "description": "How long to wait before answering (default 90, max 120)" }
+                    "timeoutSeconds": { "type": "number", "description": "How long to wait before answering (default 25, max 25)" }
                 }),
                 json!([]),
             ),
@@ -432,10 +447,20 @@ pub fn tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "dispatch_cancel",
-            "description": "Stop a dispatched worker that is no longer needed or has gone wrong.",
+            "description": "Stop dispatched workers that are no longer needed or have gone wrong. \
+                Pass `dispatchIds` to stop several at once — unwinding a fan-out is the common \
+                case. Cancelling is final: the worker's turn is interrupted and the dispatch is \
+                recorded as cancelled, so a late report cannot resurrect it.",
             "inputSchema": obj(
-                json!({ "dispatchId": { "type": "string" } }),
-                json!(["dispatchId"]),
+                json!({
+                    "dispatchId": { "type": "string", "description": "A single worker to stop" },
+                    "dispatchIds": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Several workers to stop, e.g. every target of one fan-out"
+                    }
+                }),
+                json!([]),
             ),
         }),
         json!({
@@ -674,8 +699,8 @@ async fn dispatch_wait(state: &ServerState, thread_id: &str, args: &Value) -> Re
     let budget = Duration::from_secs(
         args.get("timeoutSeconds")
             .and_then(Value::as_u64)
-            .unwrap_or(90)
-            .clamp(1, 120),
+            .unwrap_or(TOOL_ANSWER_BUDGET)
+            .clamp(1, TOOL_ANSWER_BUDGET),
     );
     let ids: Vec<String> = selected(state, thread_id, args)
         .into_iter()
@@ -712,28 +737,65 @@ fn dispatch_snapshot(state: &ServerState, thread_id: &str, args: &Value) -> Resu
     Ok(json!({ "dispatches": render_dispatches(&records) }).to_string())
 }
 
+/// Cancel one worker or several. Takes the same `dispatchIds` array as
+/// `dispatch_wait` and `dispatch_status`, because a fan-out that went wrong
+/// went wrong on more than one machine — and a model that just called
+/// `dispatch` with three machines should not have to unwind it one call at a
+/// time. `dispatchId` stays accepted: it is what the tool asked for until now.
 async fn dispatch_cancel(state: &ServerState, thread_id: &str, args: &Value) -> Result<String> {
-    let id = args
-        .get("dispatchId")
-        .and_then(Value::as_str)
-        .context("missing required argument: dispatchId")?;
-    let record = state
-        .hub
-        .dispatch
-        .get(id)
-        .context("unknown dispatch")?;
+    let mut ids: Vec<String> = args
+        .get("dispatchIds")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(one) = args.get("dispatchId").and_then(Value::as_str) {
+        ids.push(one.to_string());
+    }
     anyhow::ensure!(
-        record.parent_thread_id == thread_id,
-        "that worker belongs to a different chat"
+        !ids.is_empty(),
+        "name the worker(s) to stop: dispatchId, or dispatchIds for several"
     );
-    crate::dispatch::handle(
-        state,
-        &crate::mobile::Principal::Master,
-        "dispatch.cancel",
-        &json!({ "dispatchId": id }),
-    )
-    .await?;
-    Ok(json!({ "ok": true, "dispatchId": id }).to_string())
+    ids.sort();
+    ids.dedup();
+
+    let mut cancelled = Vec::new();
+    let mut refused = Vec::new();
+    for id in ids {
+        // Every id is checked against THIS chat before anything is stopped:
+        // one stray id must not cancel a worker another thread is waiting on.
+        let owned = state
+            .hub
+            .dispatch
+            .get(&id)
+            .is_some_and(|r| r.parent_thread_id == thread_id);
+        if !owned {
+            refused.push(json!({ "dispatchId": id, "why": "not a worker of this chat" }));
+            continue;
+        }
+        match crate::dispatch::handle(
+            state,
+            &crate::mobile::Principal::Master,
+            "dispatch.cancel",
+            &json!({ "dispatchId": id }),
+        )
+        .await
+        {
+            Ok(_) => cancelled.push(id),
+            // One that will not stop must be named, not folded into a
+            // cheerful aggregate — the same rule the fan-out itself follows.
+            Err(e) => refused.push(json!({ "dispatchId": id, "why": format!("{e:#}") })),
+        }
+    }
+    let mut out = json!({ "ok": refused.is_empty(), "cancelled": cancelled });
+    if !refused.is_empty() {
+        out["refused"] = json!(refused);
+    }
+    Ok(out.to_string())
 }
 
 /// The worker's side of the contract. Stashed rather than applied immediately:
@@ -919,8 +981,8 @@ async fn exec_status(state: &ServerState, thread_id: &str, args: &Value) -> Resu
     let budget = args
         .get("waitSeconds")
         .and_then(Value::as_u64)
-        .unwrap_or(20)
-        .clamp(0, 90);
+        .unwrap_or(TOOL_ANSWER_BUDGET)
+        .clamp(0, TOOL_ANSWER_BUDGET);
     let first = rpc(
         state,
         &target,

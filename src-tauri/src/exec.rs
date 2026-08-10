@@ -371,7 +371,13 @@ fn build_command(spec: &ExecSpec) -> tokio::process::Command {
     // Tools that colour their output make the captured log unreadable, and an
     // agent reading escape sequences wastes context on them.
     cmd.env("NO_COLOR", "1");
-    cmd.env("CI", "1");
+    // `true`, NOT `1`. The convention is "any non-empty value means CI", and
+    // most tools read it that way — but some bind the variable to a real
+    // boolean flag, and those reject anything that is not `true`/`false`.
+    // Tauri is one: with `CI=1` its own CLI refuses to start with
+    // `invalid value '1' for '--ci'`, so `npx tauri build` fails on every
+    // machine in the fleet, and the error names a flag nobody passed.
+    cmd.env("CI", "true");
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());

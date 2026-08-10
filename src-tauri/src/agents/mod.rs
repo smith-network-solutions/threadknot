@@ -1335,6 +1335,13 @@ impl Hub {
 
         let notice = self.notice_for_event(thread_id, &event);
         self.push_for_event(thread_id, &event, notice.as_ref());
+        // A dispatched worker has nobody who can answer a card: the sender is
+        // an agent that has already moved on, and the thread is usually on
+        // another machine. Left alone the worker sits in WaitingApproval until
+        // something cancels it — the dispatch never reports, and at `read`
+        // access (where every command asks) that is the *normal* outcome
+        // rather than an edge case. Answer for it instead.
+        self.auto_answer_for_worker(thread_id, &event);
 
         let _ = self.broadcast.send(ServerMessage::Event {
             thread_id: thread_id.to_string(),
@@ -2543,6 +2550,74 @@ impl Hub {
             .get(thread_id)
             .filter(|h| !h.cmd_tx.is_closed())
             .map(|h| h.cmd_tx.clone())
+    }
+
+    /// Resolve a card raised in a dispatched worker's thread, because nothing
+    /// else will.
+    ///
+    /// Deny rather than allow, always. The alternative — treating an
+    /// unattended thread as blanket consent — would mean a worker dispatched at
+    /// `read` silently obtained `full`, which is the exact escalation the
+    /// access ladder exists to prevent. A denial is also *useful* to the model:
+    /// it comes back as a refused tool call, so the worker adapts or explains
+    /// what it could not do, and either way it finishes and reports. Hanging
+    /// teaches it nothing and reports nothing.
+    ///
+    /// Answers straight down the session's command channel rather than through
+    /// [`Hub::respond_approval`]: the card was raised a microsecond ago by a
+    /// live driver, so the stale-card recovery that method falls back to (which
+    /// resolves the event log and relays the answer as a whole new turn) is
+    /// both unreachable and the wrong shape here. The channel is unbounded, so
+    /// this cannot block the driver task it runs on.
+    fn auto_answer_for_worker(&self, thread_id: &str, event: &AgentEvent) {
+        let pending = match event {
+            AgentEvent::ApprovalRequest {
+                approval_id,
+                options,
+                ..
+            } => {
+                // The driver labels its own options; pick the one it calls a
+                // denial rather than assuming a position in the list.
+                let deny = options
+                    .iter()
+                    .find(|o| o.tone == "deny")
+                    .or_else(|| options.last());
+                deny.map(|o| (approval_id.clone(), Some(o.id.clone())))
+            }
+            AgentEvent::QuestionRequest { request_id, .. } => {
+                Some((request_id.clone(), None))
+            }
+            _ => return,
+        };
+        let Some((id, option)) = pending else { return };
+        // Only for a dispatched worker. Any other thread has a human in front
+        // of it, and answering their card for them would be indefensible.
+        if self
+            .store
+            .thread(thread_id)
+            .and_then(|t| t.dispatch)
+            .is_none()
+        {
+            return;
+        }
+        let Some(tx) = self.live_handle(thread_id) else {
+            return;
+        };
+        let command = match option {
+            Some(option_id) => AgentCommand::Approval {
+                approval_id: id,
+                option_id,
+            },
+            // No answers: an unattended worker inventing values for a question
+            // it was asked is worse than it learning nobody answered.
+            None => AgentCommand::Question {
+                request_id: id,
+                answers: HashMap::new(),
+            },
+        };
+        if tx.send(command).is_err() {
+            tracing::warn!("dispatched worker's session died before its card could be answered");
+        }
     }
 
     pub fn respond_approval(
