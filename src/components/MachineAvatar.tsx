@@ -43,10 +43,10 @@ export function machineLook(state: AppState, machineId: string | undefined): Mac
  *  accent color when one is chosen. Hovering pops the shared 4x preview badge
  *  (skipped automatically for plain initials-only looks).
  *
- *  `preview={false}` opts out where the badge is the primary UI rather than a
- *  decoration — on the project rail the avatar IS the button, and a 176px
- *  blow-up of it flung across the chat list every time you reach for a project
- *  is noise, not information. */
+ *  `preview={false}` opts out where the badge is decoration beside a label that
+ *  already names the thing: a 176px blow-up flung out of a 16px menu-row icon is
+ *  noise, not information. The project rail keeps it, because there the tile is
+ *  ALL there is and the enlarged image plus its name pill is how you read it. */
 export function MachineAvatar({
   image,
   color,

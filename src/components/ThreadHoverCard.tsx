@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import type { Thread, ThreadPreview } from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { timeAgo } from "../lib/format";
+import { resolvePortrait } from "../lib/portraits";
 import { machineLook } from "./MachineAvatar";
 import { useStore } from "../state/store";
 import { AgentMark } from "./icons";
@@ -341,6 +342,16 @@ export function ThreadHoverCardBody({ thread }: { thread: Thread }) {
   return (
     <>
       <div className="hover-card-head">
+        {/* Fighter portrait slot for the Retro-Tech cards module; ships hidden
+            at base so every other theme renders this card unchanged. */}
+        {(() => {
+          const portrait = resolvePortrait(thread.settings.model, thread.agent);
+          return portrait ? (
+            <span className="hover-card-portrait" aria-hidden="true">
+              <img src={portrait} alt="" />
+            </span>
+          ) : null;
+        })()}
         {hermesAvatar ? (
           <span className="hover-card-avatar">
             <img src={hermesAvatar} alt="" />

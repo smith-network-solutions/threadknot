@@ -148,3 +148,73 @@
 :root[data-family="light"] .ws-stub {
   color: var(--dim);
 }
+
+/* ===== Retro-Tech skin: cabinet chrome for the workspace shell =====
+   Gated on the "workspace" skin module, so a user can run the arcade palette
+   everywhere else and leave the panes stock. House rules for this block: 2px
+   frames in var(--rt-frame) with a 1px var(--rt-bezel) ring, hard 2px offset
+   shadows, and machine labels in the pixel face (Silkscreen 400). Square
+   corners come free from the arcade radius reset in styles.css. Padding only
+   ever goes UP so no tap target shrinks. */
+
+/* Desktop only: below 1024px the panel is a full-screen overlay with no left
+   edge to frame (see the mobile block above), so the frame joins at 1024. */
+@media (min-width: 1024px) {
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .workspace-panel {
+    border-left: 2px solid var(--rt-frame, #06070d);
+    box-shadow: inset 1px 0 0 var(--rt-bezel, #454c78);
+  }
+  /* Stacked orientation frames the top edge instead. */
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"])
+    .main-split.stacked.ws-open
+    .workspace-panel {
+    border-left: none;
+    border-top: 2px solid var(--rt-frame, #06070d);
+    box-shadow: inset 0 1px 0 var(--rt-bezel, #454c78);
+  }
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .workspace-head {
+  padding: 9px 10px;
+  border-bottom: 2px solid var(--rt-frame, #06070d);
+  box-shadow: inset 0 -1px 0 var(--rt-bezel, #454c78);
+  background: linear-gradient(180deg, rgba(155, 170, 210, 0.06), transparent 70%);
+}
+
+/* Tabs read as the cabinet's function keys: pixel face, uppercase, and the
+   selected one lights brass on a framed plate. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .ws-tab {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 8px 10px 7px;
+  border: 2px solid transparent;
+  color: var(--dim, #9aa4b2);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .ws-tab:hover {
+  color: var(--brass-hi, #f2c98a);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .ws-tab.on {
+  color: var(--brass-hi, #f2c98a);
+  border-color: var(--rt-frame, #06070d);
+  background: var(--panel-2, #141926);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78), 2px 2px 0 rgba(0, 0, 0, 0.45);
+  text-shadow: 0 0 8px rgba(217, 163, 92, 0.55);
+}
+
+/* Phone widths: the strip scrolls, so trim the gutters back toward the mobile
+   base without going under it (base is 6px 7px, this stays larger). */
+@media (max-width: 1023px) {
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .ws-tab {
+    padding: 8px 8px 7px;
+  }
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .ws-toggles .icon-btn.on {
+  color: var(--brass-hi, #f2c98a);
+  filter: drop-shadow(0 0 5px rgba(217, 163, 92, 0.55));
+}

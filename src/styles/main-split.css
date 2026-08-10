@@ -104,3 +104,29 @@
     display: none;
   }
 }
+
+/* ===== Retro-Tech skin: the divider as a lit seam =====
+   Gated on the "workspace" skin module. The hairline goes dark like the rest
+   of the cabinet frame and lights to a 2px brass bar under the cursor or a
+   live drag. The 7px drag target is untouched: only the painted ::after
+   changes, so the grab area stays exactly as wide as it was. */
+@media (min-width: 1024px) {
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .ws-divider::after {
+    background: var(--rt-frame, #06070d);
+  }
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .main-split.side .ws-divider::after {
+    width: 2px;
+  }
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"])
+    .main-split.stacked
+    .ws-divider::after {
+    height: 2px;
+  }
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .ws-divider:hover::after,
+  :root[data-theme="arcade"]:not([data-skin-off~="workspace"])
+    .main-split.dragging
+    .ws-divider::after {
+    background: var(--brass, #d9a35c);
+    box-shadow: 0 0 7px rgba(217, 163, 92, 0.65);
+  }
+}

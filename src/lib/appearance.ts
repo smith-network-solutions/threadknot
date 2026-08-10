@@ -148,7 +148,7 @@ export const THEMES: readonly ThemeInfo[] = [
   { id: "carbon", label: "Carbon", dark: true, preview: { bg: "#050506", panel: "#101013", accentDefault: "#d9a35c" } },
   { id: "light", label: "Light", dark: false, preview: { bg: "#f3f5f9", panel: "#ffffff", accentDefault: "#b07322" } },
   { id: "solar", label: "Solar", dark: false, preview: { bg: "#f4efe4", panel: "#fffdf7", accentDefault: "#b07322" } },
-  { id: "arcade", label: "Arcade", dark: true, preview: { bg: "#04030c", panel: "#0b0820", accentDefault: "#ff3d8a" } },
+  { id: "arcade", label: "Retro-Tech", dark: true, preview: { bg: "#04030c", panel: "#0b0820", accentDefault: "#ff3d8a" } },
 ];
 
 /** The bg color each palette lands on, for the browser/PWA theme-color meta. */
@@ -279,7 +279,7 @@ export function monoFontStack(id: string): string {
  *  - `accordion`: opening one project closes the others — all the headers
  *    stay visible, but only one list is ever on screen.
  *  - `picker`: one project at a time chosen from a dropdown, no headers.
- *  - `rail`: Discord-style — a column of project avatars pinned down the
+ *  - `rail`: a chat-app-style icon rail - a column of project avatars pinned down the
  *    left edge, the selected project's chats filling the rest. Switching is
  *    one tap with no menu, and every project stays visible (and badgeable)
  *    the whole time. */
@@ -299,10 +299,35 @@ export interface SidebarPrefs {
   projectLayout: ProjectLayout;
 }
 
+/** The parts a skin is cut into. Each id gates one block of skin CSS through
+ *  `:root[data-theme="..."]:not([data-skin-off~="<id>"])`, so a user can keep
+ *  the pieces they like (the cabinet chrome) and drop the ones they don't (the
+ *  themed sidebar cards) instead of taking the whole theme or none of it. */
+export type SkinModule = "usage" | "parley" | "cards" | "terminal" | "workspace";
+
+/** Which skin modules are turned OFF. Stored as the off-list rather than the
+ *  on-list so a skin that grows a new module later ships it enabled, and so an
+ *  untouched install persists nothing at all. */
+export interface SkinPrefs {
+  off: SkinModule[];
+}
+
+/** Canonical module order: the stored list and the data attribute are always
+ *  emitted in it, so the same set of disabled modules always serialises the
+ *  same way no matter what order the toggles were flipped in. */
+const SKIN_MODULE_IDS: readonly SkinModule[] = [
+  "usage",
+  "parley",
+  "cards",
+  "terminal",
+  "workspace",
+];
+
 const A_KEY = "threadknot.appearance";
 const T_KEY = "threadknot.termprefs";
 const S_KEY = "threadknot.sidebarprefs";
 const C_KEY = "threadknot.composerprefs";
+const K_KEY = "threadknot.skinprefs";
 
 export const ZOOM_MIN = 0.8;
 /** Only the message feed scales, so the range can be generous: nothing else
@@ -337,6 +362,10 @@ export const APPEARANCE_EVENT = "threadknot:appearance";
 export const TERMPREFS_EVENT = "threadknot:termprefs";
 export const SIDEBARPREFS_EVENT = "threadknot:sidebarprefs";
 export const COMPOSERPREFS_EVENT = "threadknot:composerprefs";
+/** Fired when a skin module is toggled. detail: the new SkinPrefs. CSS reacts
+ *  on its own through the data attribute; this is for the consumers that paint
+ *  outside CSS's reach (the xterm buffer palette). */
+export const SKINPREFS_EVENT = "threadknot:skinprefs";
 /** Fired whenever the APPLIED palette family flips (dark <-> light) because a
  *  preset, a custom theme's base, or a live studio preview changed it. detail:
  *  the resolved "dark" | "light". Consumers that must track the real family
@@ -374,6 +403,8 @@ const T_DEFAULT: TermPrefs = {
   scrollback: 10000,
   fontFamily: "jetbrains",
 };
+/** Nothing disabled: pick a skin and you get all of it until you say otherwise. */
+const K_DEFAULT: SkinPrefs = { off: [] };
 // Exactly what styles.css shipped: .composer's 900px cap, the textarea's 14px,
 // and the card's original paddings. Nobody's composer moves on update.
 const C_DEFAULT: ComposerPrefs = {
@@ -631,6 +662,73 @@ export function getTermPrefs(): TermPrefs {
   };
 }
 
+/** True when the terminal preferences are untouched: no stored record at all,
+ *  or one that normalizes straight back to the shipped defaults. A skin that
+ *  repaints the terminal (the arcade phosphor look) checks this first, because
+ *  a hand-picked cursor or font is a deliberate choice a skin must not
+ *  silently overrule. */
+export function termPrefsAreDefault(): boolean {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(T_KEY);
+  } catch {
+    // No storage to disagree with the defaults.
+    return true;
+  }
+  if (!raw) return true;
+  // Compare through getTermPrefs so a stored record that only differs in ways
+  // normalization erases (an unknown font id, an out-of-band size) still counts
+  // as default.
+  const t = getTermPrefs();
+  return (Object.keys(T_DEFAULT) as (keyof TermPrefs)[]).every((k) => t[k] === T_DEFAULT[k]);
+}
+
+/** Drop unknown ids (older/newer build, hand-edited storage), dedupe, and
+ *  return them in the canonical order. */
+function normalizeSkinOff(value: unknown): SkinModule[] {
+  if (!Array.isArray(value)) return [];
+  const off = new Set(value as SkinModule[]);
+  return SKIN_MODULE_IDS.filter((id) => off.has(id));
+}
+
+export function getSkinPrefs(): SkinPrefs {
+  return { off: normalizeSkinOff(read(K_KEY, K_DEFAULT).off) };
+}
+
+/** Mirror the off-list onto :root as a space-separated token list, REMOVING the
+ *  attribute when nothing is off so the CSS gates can be a plain
+ *  `:not([data-skin-off~="x"])` with no empty-string special case. */
+function applySkinPrefs(p: SkinPrefs, root: HTMLElement = document.documentElement): void {
+  if (p.off.length === 0) delete root.dataset.skinOff;
+  else root.dataset.skinOff = p.off.join(" ");
+}
+
+/** Resolve the phosphor terminal's on/off state ONCE and mirror it onto :root as
+ *  data-phosphor. It is three conditions at a time (the arcade palette applied,
+ *  its terminal module left on, and untouched terminal preferences), and two
+ *  halves of the app have to agree on the answer: the scanline/glow CSS and the
+ *  xterm buffer palette. Each computing its own is how a green-scanlined normal
+ *  terminal happens, so both read this attribute instead. Must run after the
+ *  data-theme and data-skin-off writes it depends on. */
+function applyPhosphorFlag(root: HTMLElement = document.documentElement): void {
+  const off = (root.dataset.skinOff ?? "").split(/\s+/);
+  const on =
+    root.dataset.theme === "arcade" && !off.includes("terminal") && termPrefsAreDefault();
+  if (on) root.dataset.phosphor = "on";
+  else delete root.dataset.phosphor;
+}
+
+export function setSkinPrefs(next: SkinPrefs): void {
+  const clean: SkinPrefs = { off: normalizeSkinOff(next.off) };
+  localStorage.setItem(K_KEY, JSON.stringify(clean));
+  // Written straight to the DOM as well: a toggle should land instantly without
+  // dragging a whole applyAppearance pass (fonts, wallpaper, meta color) with it.
+  applySkinPrefs(clean);
+  // Before the event, so a listener that re-reads the DOM sees the new answer.
+  applyPhosphorFlag();
+  window.dispatchEvent(new CustomEvent<SkinPrefs>(SKINPREFS_EVENT, { detail: clean }));
+}
+
 /** Unknown/hand-edited stored values fall back rather than breaking layout. */
 function normalizeComposerWidth(value: unknown): ComposerWidth {
   return COMPOSER_WIDTHS.includes(value as ComposerWidth)
@@ -826,6 +924,11 @@ export function applyAppearance(
   const paletteTheme: Theme = custom ? normalizeTheme(custom.base) : a.theme;
   const lightFamily = LIGHT_FAMILY.has(paletteTheme);
   root.dataset.theme = paletteTheme;
+  // Skin module toggles ride the same element, so a skin's CSS can gate each of
+  // its parts independently of the palette it ships with.
+  applySkinPrefs(getSkinPrefs(), root);
+  // Both inputs it reads (data-theme, data-skin-off) have just landed.
+  applyPhosphorFlag(root);
   // data-family groups the pale palettes so the light surface overrides in
   // styles.css cover both "light" and "solar" without duplicating every rule.
   const family: ThemeFamily = lightFamily ? "light" : "dark";
@@ -909,5 +1012,9 @@ export function setTermPrefs(next: TermPrefs): void {
     fontFamily: normalizeFontId(next.fontFamily, MONO_FONTS),
   };
   localStorage.setItem(T_KEY, JSON.stringify(clamped));
+  // Touching the terminal preferences is one of the three things that can flip
+  // the phosphor tube; re-resolve it from the stored record just written, and
+  // do it before the event so listeners read the settled answer.
+  applyPhosphorFlag();
   window.dispatchEvent(new CustomEvent<TermPrefs>(TERMPREFS_EVENT, { detail: clamped }));
 }

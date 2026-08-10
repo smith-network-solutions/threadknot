@@ -22,7 +22,8 @@ import {
 import { createPortal } from "react-dom";
 import type { Project, Thread, Workspace } from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
-import { SHOW_HERMES_AGENTS } from "../lib/agentVisibility";
+import { showHermesAgents } from "../lib/agentVisibility";
+import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
   findThread,
@@ -348,7 +349,7 @@ function QuickChatsSection({
   );
 }
 
-/** Discord's server rail: every project as an avatar down the left edge, the
+/** The project rail: every project as an avatar down the left edge, the
  *  selected one filling the rest of the sidebar. Switching costs one tap with
  *  no menu, and — unlike the dropdown picker — the projects you are NOT in
  *  stay on screen, so an unread badge on a project you had forgotten about is
@@ -552,17 +553,22 @@ function ProjectRail({
               onMenu({ x: e.clientX, y: e.clientY }, w);
             }}
           >
-            {/* Discord's edge pill: grows on hover, full height when open. */}
+            {/* The edge pill: grows on hover, full height when open. */}
             <span className="rail-pip" aria-hidden />
             {/* The PROJECT's identity, not the machine's: `.project-head`
                 can lean on the machine badge because the name sits beside
-                it, but here the badge is all there is. */}
+                it, but here the badge is all there is.
+
+                Which is exactly why the rail opts back INTO the shared hover
+                preview instead of suppressing it: at 38px with no label, seeing
+                the image big and reading the name is the whole point of
+                hovering a tile. The portaled badge does both, and it escapes
+                the rail's scroll clip on its own. */}
             <MachineAvatar
               image={w.image}
               color={projectAccent(w.id)}
               name={w.name}
               size={38}
-              preview={false}
             />
             {/* The ring rides OUTSIDE the avatar so an image-backed project
                 shows it as clearly as an initials one.
@@ -832,6 +838,16 @@ function ThreadRow({
   // Reactive read of the hover-populated preview cache so the card variant's
   // "N turns" hint appears the moment a hover fetch resolves.
   const cachedPreview = usePeekThreadPreview(thread);
+  // Portraits live in localStorage, outside React's world, so a fresh upload
+  // has to be pulled in by hand: bump a counter on the event and let the render
+  // below re-resolve. Same shape as the APPEARANCE_EVENT re-reads in the
+  // appearance blocks, minus the mirrored state (the answer is read inline).
+  const [, bumpPortraits] = useState(0);
+  useEffect(() => {
+    const onEvt = () => bumpPortraits((n) => n + 1);
+    window.addEventListener(PORTRAITS_EVENT, onEvt);
+    return () => window.removeEventListener(PORTRAITS_EVENT, onEvt);
+  }, []);
 
   function closeMenu() {
     setMenuAnchor(null);
@@ -1003,6 +1019,9 @@ function ThreadRow({
   }
 
   const card = view === "cards";
+  // Only the card variant has room for a portrait, so the lookup is skipped
+  // entirely for the list and shelf rows.
+  const portrait = card ? resolvePortrait(thread.settings.model, thread.agent) : null;
 
   if (editing) {
     return (
@@ -1311,6 +1330,14 @@ function ThreadRow({
           {...hover.hoverProps}
         >
           <div className="thread-card-top">
+            {/* Decorative: the model already reads out through the chips and
+                the mark, so the picture is hidden from assistive tech. Skins
+                decide whether it is actually shown. */}
+            {portrait && (
+              <span className="fighter-portrait" aria-hidden="true">
+                <img src={portrait} alt="" />
+              </span>
+            )}
             {statusEl}
             {markEl}
             {hermesPreview.portal}
@@ -2415,7 +2442,7 @@ export function Sidebar({
     try {
       const stored = localStorage.getItem(LS_SIDEBAR_VIEW);
       if (stored === "quick") return "quick";
-      if (SHOW_HERMES_AGENTS && stored === "agents") return "agents";
+      if (showHermesAgents() && stored === "agents") return "agents";
       return "fleet";
     } catch {
       return "fleet";
@@ -2555,7 +2582,7 @@ export function Sidebar({
   const localId = state.hello?.machineId ?? "";
   // Solo windows are project-dedicated — the agents view only exists in the
   // fleet window.
-  const agentsView = SHOW_HERMES_AGENTS && view === "agents" && !soloId;
+  const agentsView = showHermesAgents() && view === "agents" && !soloId;
   const quickView = view === "quick" && !soloId;
   const quickThreads = useMemo(
     () =>
@@ -2589,7 +2616,7 @@ export function Sidebar({
   // Hermes chats asking to be looked at — badges the fleet-view button so a
   // finished turn / pending approval is visible without leaving the workspaces.
   const hermesAttention = useMemo(
-    () => (SHOW_HERMES_AGENTS ? hermesAttentionThreads(state).length : 0),
+    () => (showHermesAgents() ? hermesAttentionThreads(state).length : 0),
     [state],
   );
   // A newer master exists than the build that is running. Pulses regardless of
@@ -3322,7 +3349,7 @@ export function Sidebar({
             <span>quick threads</span>
           </button>
         )}
-        {SHOW_HERMES_AGENTS && !soloId && !agentsView && !quickView && (
+        {showHermesAgents() && !soloId && !agentsView && !quickView && (
           <button
             className={`add-project hermes-entry${hermesAttention > 0 ? " has-attention" : ""}`}
             onClick={() => switchView("agents")}
