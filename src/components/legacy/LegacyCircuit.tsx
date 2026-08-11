@@ -16,12 +16,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  attemptCooldownRemaining,
+  attemptsRemaining,
   awardLegacyCrest,
   awardPerfectClear,
   CIRCUIT_TRIBUTE,
   clampZoom,
   CREST_NAME,
+  formatCooldown,
   getLegacyAward,
+  markLegacyAttempt,
+  MAX_ATTEMPTS,
   PERFECT_NAME,
   recordLegacyScore,
   setLegacyHandle,
@@ -29,6 +34,7 @@ import {
   setLegacyZoom,
   ZOOM_STEP,
 } from "../../lib/legacyCircuit";
+import { COOLDOWN, GAME_OVER, LIFE_LOST, pickTaunt } from "./taunts";
 import { ensureFontLoaded } from "../../lib/fonts";
 import { Cabinet } from "./sfx";
 import { Crest } from "./Crest";
@@ -52,6 +58,8 @@ type Phase =
   | "title"
   /** Who is playing. Asked once per visit to the cabinet. */
   | "handle"
+  /** One run an hour, and this one is inside the hour. */
+  | "cooldown"
   /** Attract card for the stage about to start. */
   | "intro"
   | "play"
@@ -163,6 +171,13 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
    *  every run so a perfect campaign is judged only on its own keystrokes. */
   const witnessRef = useRef<Witness>(new Witness());
   const [perfectReport, setPerfectReport] = useState<WitnessReport | null>(null);
+  /** The line the cabinet is currently teasing you with, held in state so it
+   *  does not reshuffle on every unrelated re-render mid-read. */
+  const [taunt, setTaunt] = useState("");
+  const [cooldownMs, setCooldownMs] = useState(0);
+  const [credits, setCredits] = useState(() => attemptsRemaining());
+  /** Drives the shake-and-tumble the moment a life goes. */
+  const [dying, setDying] = useState(false);
 
   zoomRef.current = zoom;
   phaseRef.current = phase;
@@ -320,8 +335,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         settledRef.current = true;
         // One life is all it takes: Perfect Clear is meant to be rare.
         flawlessRef.current = false;
+        const out = lives <= 1;
         setLives((n) => Math.max(0, n - 1));
-        setPhase(lives <= 1 ? "over" : "lost");
+        setTaunt((prev) => pickTaunt(out ? GAME_OVER : LIFE_LOST, prev));
+        setDying(true);
+        cabinetRef.current?.death();
+        setPhase(out ? "over" : "lost");
       }
     };
 
@@ -367,7 +386,35 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     };
   }, []);
 
+  // The death throes last about a second, then the card settles.
+  useEffect(() => {
+    if (!dying) return;
+    const t = window.setTimeout(() => setDying(false), calm ? 1 : 1000);
+    return () => window.clearTimeout(t);
+  }, [dying, calm]);
+
+  // Live countdown while the cabinet is cooling off, and an automatic release
+  // back to the title the moment the hour is up.
+  useEffect(() => {
+    if (phase !== "cooldown") return;
+    const update = () => {
+      const left = attemptCooldownRemaining();
+      setCooldownMs(left);
+      if (left <= 0) {
+        setCredits(attemptsRemaining());
+        setPhase("title");
+      }
+    };
+    update();
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, [phase]);
+
   const beginRun = useCallback(() => {
+    // A credit is spent on commitment, not on curiosity. Charged here so
+    // leaving mid-run cannot buy a free retry.
+    markLegacyAttempt();
+    setCredits(attemptsRemaining());
     setBanked(0);
     bankedRef.current = 0;
     setLives(LIVES);
@@ -388,7 +435,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       case "title":
         // Who is playing, before anything else happens. Once per visit: a
         // replay after a game over keeps the handle you already gave.
-        setPhase("handle");
+        if (attemptCooldownRemaining() > 0) {
+          setTaunt((prev) => pickTaunt(COOLDOWN, prev));
+          setPhase("cooldown");
+        } else {
+          setPhase("handle");
+        }
         break;
       case "intro":
         setPaused(false);
@@ -423,7 +475,14 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       }
       case "over":
       case "win":
-        beginRun();
+        // The run is spent. Another one has to wait for the hour, which is the
+        // whole point of a machine that only takes one coin at a time.
+        if (attemptCooldownRemaining() > 0) {
+          setTaunt((prev) => pickTaunt(COOLDOWN, prev));
+          setPhase("cooldown");
+        } else {
+          beginRun();
+        }
         break;
       default:
         break;
@@ -546,6 +605,15 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     return () => window.clearTimeout(t);
   }, [phase]);
 
+  // Walking in during the cooling hour: say so at the door rather than letting
+  // someone type a handle and only then find out.
+  useEffect(() => {
+    if (phase !== "title") return;
+    if (attemptCooldownRemaining() <= 0) return;
+    setTaunt((prev) => pickTaunt(COOLDOWN, prev));
+    setPhase("cooldown");
+  }, [phase]);
+
   // The handle field wants the caret the moment it appears, and the boot
   // animation's transform is over by any phase that shows it.
   useEffect(() => {
@@ -557,7 +625,8 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
 
   /* ---- render ---------------------------------------------------------- */
 
-  const showCanvas = phase === "play" || phase === "intro" || phase === "lost";
+  const showCanvas =
+    phase === "play" || phase === "intro" || phase === "lost" || phase === "over";
   const total = banked;
 
   const card = (() => {
@@ -566,7 +635,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         return {
           kicker: "LEGACY CIRCUIT",
           heading: "A HIDDEN CABINET",
-          body: "Three stages. Three lives. One run.",
+          body: `Three games. Three levels each. Three lives a game. ${credits} of ${MAX_ATTEMPTS} credits left.`,
           // The reason the whole thing exists, on the first screen anyone who
           // finds their way in will see.
           dedication: CIRCUIT_TRIBUTE,
@@ -590,10 +659,22 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         return {
           kicker: "CIRCUIT BROKEN",
           heading: lives === 1 ? "LAST LIFE" : `${lives} LIVES LEFT`,
+          taunt,
           body:
-            "The level restarts from the top. Everything you have banked is safe, " +
-            "and the next game hands you a fresh three. A Perfect Clear is not, however, still on the table.",
+            "The level restarts from the top. Everything banked is safe, and the next game hands you " +
+            "a fresh three. A Perfect Clear, however, is off the table for this run.",
           foot: "PRESS ENTER",
+        };
+      case "cooldown":
+        return {
+          kicker: `CABINET COOLING · ${MAX_ATTEMPTS} CREDITS SPENT`,
+          heading: formatCooldown(cooldownMs),
+          taunt,
+          body:
+            `${MAX_ATTEMPTS} runs, then the machine wants an hour to itself. That is not a bug, it is ` +
+            "the era: you spent your change, and then you stood and watched somebody better than you " +
+            `take a turn. All ${MAX_ATTEMPTS} credits come back when the clock runs out.`,
+          foot: "ESC to leave",
         };
       case "tribute": {
         const t = TRIBUTES[Math.min(stageIndex, TRIBUTES.length - 1)];
@@ -610,8 +691,13 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         return {
           kicker: "GAME OVER",
           heading: "THE THREAD SNAPS",
-          body: `${handle || "PLAYER"}, ${String(peakRef.current).padStart(6, "0")} points. Three stages, three lives, one run: that is the deal.`,
-          foot: "ENTER to try again · ESC to leave",
+          taunt,
+          body:
+            `${handle || "PLAYER"}, ${String(peakRef.current).padStart(6, "0")} points. ` +
+            (credits > 0
+              ? `${credits} credit${credits === 1 ? "" : "s"} left. Go again.`
+              : `That was the last of ${MAX_ATTEMPTS}. The machine wants an hour now.`),
+          foot: credits > 0 ? "ENTER to spend another credit · ESC to leave" : "ENTER for the clock · ESC to leave",
         };
       case "win":
         return {
@@ -632,7 +718,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   return createPortal(
     <div className="lc-backdrop">
     <div
-      className={`lc-frame${calm ? " calm" : ""}${phase === "boot" ? " booting" : ""}`}
+      className={`lc-frame${calm ? " calm" : ""}${phase === "boot" ? " booting" : ""}${
+        dying ? " dying" : ""
+      }`}
       ref={frameRef}
       tabIndex={-1}
       role="dialog"
@@ -710,6 +798,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           </span>
         )}
         <span className="lc-hud-cell">
+          <span className="lc-hud-key">CREDITS</span>
+          <span className={`lc-hud-val lc-hud-credits${credits === 0 ? " spent" : ""}`}>
+            {credits}/{MAX_ATTEMPTS}
+          </span>
+        </span>
+        <span className="lc-hud-cell">
           <span className="lc-hud-key">SCORE</span>
           <span className="lc-hud-val" ref={scoreRef}>
             {String(total).padStart(6, "0")}
@@ -737,7 +831,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
 
       <div className="lc-stage" ref={stageWrapRef}>
         <canvas
-          className={`lc-canvas${showCanvas ? "" : " hidden"}`}
+          className={`lc-canvas${showCanvas ? "" : " hidden"}${dying ? " dying" : ""}`}
           ref={canvasRef}
           width={VIEW_W}
           height={VIEW_H}
@@ -754,7 +848,15 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
             <div className="lc-card-inner">
               <div className="lc-card-kicker">{card.kicker}</div>
               {phase === "win" && <Crest size={72} className="lc-card-crest" title={CREST_NAME} />}
+              {(phase === "lost" || phase === "over") && (
+                <Crest size={64} variant="dead" className="lc-card-dead" />
+              )}
               <div className="lc-card-heading">{card.heading}</div>
+              {/* The tease sits above the explanation: it is the first thing
+                  you want to read and the last thing you want to hunt for. */}
+              {"taunt" in card && card.taunt && (
+                <p className="lc-card-taunt">{card.taunt}</p>
+              )}
               <p className="lc-card-body">{card.body}</p>
               {"dedication" in card && card.dedication && (
                 <p className="lc-card-dedication">{card.dedication}</p>

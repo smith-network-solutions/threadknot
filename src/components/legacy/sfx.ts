@@ -136,6 +136,69 @@ export class Cabinet {
     });
   }
 
+  /**
+   * The death jingle. Not one sad beep: a stumble, a slide down, and a flat
+   * little raspberry at the bottom, which is the shape every cabinet of that
+   * era used to tell you the run was over and it was your fault.
+   */
+  death(): void {
+    if (this.muted) return;
+    const ctx = this.ensure();
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime;
+    // Three descending stabs, then a wobbling slide into the floor.
+    const stabs = [
+      { hz: 392, at: 0, dur: 0.11 },
+      { hz: 311, at: 0.13, dur: 0.11 },
+      { hz: 233, at: 0.26, dur: 0.13 },
+    ];
+    for (const s of stabs) {
+      try {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "square";
+        osc.frequency.setValueAtTime(s.hz, t0 + s.at);
+        gain.gain.setValueAtTime(0.0001, t0 + s.at);
+        gain.gain.exponentialRampToValueAtTime(0.12, t0 + s.at + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + s.at + s.dur);
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start(t0 + s.at);
+        osc.stop(t0 + s.at + s.dur + 0.02);
+      } catch {
+        /* one dropped note is not worth interrupting a death over */
+      }
+    }
+    try {
+      const at = t0 + 0.4;
+      const osc = ctx.createOscillator();
+      const wobble = ctx.createOscillator();
+      const wobbleAmt = ctx.createGain();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(220, at);
+      osc.frequency.exponentialRampToValueAtTime(48, at + 0.75);
+      // A slow detune under the slide: the sound of something winding down.
+      wobble.type = "sine";
+      wobble.frequency.setValueAtTime(11, at);
+      wobbleAmt.gain.setValueAtTime(18, at);
+      wobble.connect(wobbleAmt);
+      wobbleAmt.connect(osc.frequency);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.15, at + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.8);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(at);
+      wobble.start(at);
+      osc.stop(at + 0.85);
+      wobble.stop(at + 0.85);
+    } catch {
+      /* as above */
+    }
+  }
+
   /** The tube powering up: a descending whistle under the boot animation. */
   power(): void {
     if (this.muted) return;

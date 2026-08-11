@@ -30,6 +30,20 @@ const CREST: readonly string[] = [
 
 const SPAN = 9;
 
+/** The face the cabinet pulls when you lose: crossed eyes and a flat frown,
+ *  which is the entire emotional range a nine by nine grid affords. */
+const DEAD: readonly string[] = [
+  ".#######.",
+  "#.......#",
+  "#*.*.*.*#",
+  "#.*...*.#",
+  "#*.*.*.*#",
+  "#.......#",
+  "#.*...*.#",
+  "#..***..#",
+  ".#######.",
+];
+
 /** The Perfect Clear crest: a star burst rather than a shield, so the two are
  *  told apart at a glance and at a size where detail is gone. */
 const PERFECT: readonly string[] = [
@@ -72,9 +86,9 @@ export function Crest({
   className?: string;
   /** Omit for a purely decorative crest sitting next to its own label. */
   title?: string;
-  variant?: "weaver" | "perfect";
+  variant?: "weaver" | "perfect" | "dead";
 }) {
-  const map = variant === "perfect" ? PERFECT : CREST;
+  const map = variant === "perfect" ? PERFECT : variant === "dead" ? DEAD : CREST;
   return (
     <svg
       className={`legacy-crest legacy-crest-${variant} ${className}`}

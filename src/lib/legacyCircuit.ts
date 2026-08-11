@@ -140,7 +140,18 @@ export interface LegacyAward {
   perfectHuman: boolean;
   /** The handle attached to the perfect run, which may not be the current one. */
   perfectHandle: string;
+  /** Epoch ms when the last run started. */
+  lastRunAt: number;
+  /** Credits spent out of the pool. Scarcity is what the original machines
+   *  had, and it is what makes a Perfect Clear mean anything, but a single run
+   *  an hour punishes a bad first minute far harder than any of them did. */
+  attemptsUsed: number;
 }
+
+/** Runs in the pool before the machine wants an hour to itself. */
+export const MAX_ATTEMPTS = 5;
+/** How long the pool takes to refill once it is spent. */
+export const ATTEMPT_COOLDOWN_MS = 60 * 60 * 1000;
 
 export const ZOOM_MIN = 0.6;
 export const ZOOM_MAX = 2.5;
@@ -165,6 +176,8 @@ const AWARD_DEFAULT: LegacyAward = {
   perfectAt: "",
   perfectHuman: false,
   perfectHandle: "",
+  lastRunAt: 0,
+  attemptsUsed: 0,
 };
 
 /** Stored handles are hand-editable strings that end up rendered, so the same
@@ -199,6 +212,10 @@ function normalize(raw: unknown): LegacyAward {
     // record claiming a human verdict without the run is not one.
     perfectHuman: r.perfect === true && r.perfectHuman === true,
     perfectHandle: normalizeHandle(r.perfectHandle),
+    lastRunAt: Number.isFinite(Number(r.lastRunAt)) ? Math.max(0, Number(r.lastRunAt)) : 0,
+    attemptsUsed: Number.isFinite(Number(r.attemptsUsed))
+      ? Math.min(MAX_ATTEMPTS, Math.max(0, Math.floor(Number(r.attemptsUsed))))
+      : 0,
   };
 }
 
@@ -274,6 +291,57 @@ export function awardPerfectClear(human: boolean, handle: string): LegacyAward {
 }
 
 export const PERFECT_NAME = "PERFECT CLEAR";
+
+/**
+ * How long since the last run, expressed as time still owed.
+ *
+ * A stored time in the future means the clock moved (or the record was edited),
+ * and is treated as a full wait rather than trusted: the alternative is a
+ * lockout lasting until whatever year the bad timestamp claims.
+ */
+function sinceLastRun(award: LegacyAward, now: number): number {
+  if (award.lastRunAt <= 0) return 0;
+  if (award.lastRunAt > now) return ATTEMPT_COOLDOWN_MS;
+  return Math.max(0, ATTEMPT_COOLDOWN_MS - (now - award.lastRunAt));
+}
+
+/** Credits left in the pool. A spent pool reads as full again once its hour is
+ *  up, so the refill needs no timer and no write to happen. */
+export function attemptsRemaining(now: number = Date.now()): number {
+  const a = getLegacyAward();
+  if (a.attemptsUsed < MAX_ATTEMPTS) return MAX_ATTEMPTS - a.attemptsUsed;
+  return sinceLastRun(a, now) > 0 ? 0 : MAX_ATTEMPTS;
+}
+
+/** Milliseconds until the pool refills, or 0 while there are credits left. */
+export function attemptCooldownRemaining(now: number = Date.now()): number {
+  const a = getLegacyAward();
+  if (a.attemptsUsed < MAX_ATTEMPTS) return 0;
+  return sinceLastRun(a, now);
+}
+
+/** Spend a credit. Called when the player commits, not when they open the
+ *  cabinet: looking is free, playing is what costs. */
+export function markLegacyAttempt(): LegacyAward {
+  const cur = getLegacyAward();
+  const now = Date.now();
+  // A spent pool that has served its hour refills before this run is counted,
+  // so the first run after a wait does not immediately re-lock the machine.
+  const used = cur.attemptsUsed >= MAX_ATTEMPTS && sinceLastRun(cur, now) <= 0 ? 0 : cur.attemptsUsed;
+  return writeAward({
+    ...cur,
+    attemptsUsed: Math.min(MAX_ATTEMPTS, used + 1),
+    lastRunAt: now,
+  });
+}
+
+/** "48:12" from a millisecond span, for the countdown on the cooldown card. */
+export function formatCooldown(ms: number): string {
+  const total = Math.ceil(Math.max(0, ms) / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 /** The crest's name, in one place: the HUD, the tooltip and the completion
  *  screen all have to agree on it. */
