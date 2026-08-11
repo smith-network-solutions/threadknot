@@ -430,6 +430,7 @@ export function ThreadView() {
 
       <div
         className="feed-scroll"
+        data-zoom-pane="feed"
         ref={scrollRef}
         onWheel={(e) => {
           if (e.deltaY < 0) leavePresent();

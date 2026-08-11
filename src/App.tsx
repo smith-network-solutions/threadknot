@@ -1831,10 +1831,9 @@ export default function App() {
     };
   }, [client]);
 
-  // Ctrl/cmd + wheel and ctrl/cmd + = / - / 0 drive the conversation zoom
-  // (terminals handle ctrl+wheel themselves for their font size). No pane
-  // measurement here: the zoom scales the message feed only, so it has no
-  // ceiling beyond ZOOM_MAX and nothing to observe.
+  // Ctrl/cmd + wheel zooms the pane under the cursor; ctrl/cmd + = / - / 0
+  // step the last-clicked pane (terminals handle ctrl+wheel themselves for
+  // their font size). Each pane keeps its own zoom; see hotwheel.ts.
   useEffect(() => initZoomHotkeys(), []);
 
   useEffect(() => installExternalLinkHandler(), []);

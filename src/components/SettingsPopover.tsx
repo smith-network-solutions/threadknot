@@ -3598,6 +3598,7 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
         // The cabinet portals itself to <body> and covers the window, so the
         // dialog's own frame would only be an empty box glowing behind it.
         className={`settings-screen${circuit ? " ss-eclipsed" : ""}`}
+        data-zoom-pane="settings"
         role="dialog"
         aria-label="Settings"
         onClick={(e) => e.stopPropagation()}

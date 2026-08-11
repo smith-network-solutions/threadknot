@@ -3143,6 +3143,7 @@ export function Sidebar({
       }${layout.bigNames ? " big-names" : ""}${
         layout.showTimes ? "" : " no-times"
       }`}
+      data-zoom-pane="sidebar"
     >
       <SidebarResizeHandle
         width={layout.width}
