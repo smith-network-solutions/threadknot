@@ -30,7 +30,30 @@
 .legacy-crest-badge {
   display: inline-flex;
   align-items: center;
+  gap: 3px;
   flex: none;
+}
+
+/* Perfect Clear is a different metal on purpose: the weaver crest is brass and
+   pink, this one is white and cyan, so the two never read as the same award at
+   a glance. Unverified runs keep the shape and lose the shine. */
+.legacy-crest-perfect .crest-edge {
+  fill: #ffffff;
+}
+.legacy-crest-perfect .crest-weave {
+  fill: #6ff2ff;
+}
+.perfect-verified .legacy-crest-perfect {
+  filter: drop-shadow(0 0 4px rgba(111, 242, 255, 0.85));
+}
+.perfect-unverified .legacy-crest-perfect {
+  opacity: 0.55;
+}
+.perfect-unverified .legacy-crest-perfect .crest-edge {
+  fill: #9aa3bd;
+}
+.perfect-unverified .legacy-crest-perfect .crest-weave {
+  fill: #6b7591;
 }
 
 /* ---- About ------------------------------------------------------------- */
@@ -232,6 +255,9 @@
   background: radial-gradient(120% 100% at 50% 0%, #0c0a24 0%, #05040f 68%, #01000a 100%);
   color: #bdf3ff;
   outline: none;
+  /* Multiplied into every type size below, so Ctrl+scroll scales the whole
+     machine from one number. Overridden inline by the component. */
+  --lc-zoom: 1;
   --lc-gold: #ffcf4d;
   --lc-wire: #2de1c2;
   --lc-hot: #ff3d8a;
@@ -323,7 +349,7 @@
 }
 .lc-marquee {
   font-family: "Bungee", var(--font-ui);
-  font-size: 13px;
+  font-size: calc(clamp(14px, 1.1vw, 20px) * var(--lc-zoom));
   letter-spacing: 0.1em;
   color: var(--lc-hot);
   text-shadow: 0 0 14px rgba(255, 61, 138, 0.55);
@@ -331,9 +357,9 @@
 .lc-head-stage {
   flex: 1;
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 9px;
+  font-size: calc(clamp(9.5px, 0.72vw, 13px) * var(--lc-zoom));
   letter-spacing: 0.14em;
-  color: #6f6ab8;
+  color: #9a94e0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -341,14 +367,33 @@
 .lc-chip {
   flex: none;
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 8.5px;
+  font-size: calc(clamp(9px, 0.7vw, 12px) * var(--lc-zoom));
   letter-spacing: 0.1em;
-  padding: 4px 8px;
-  border: 2px solid #342c78;
+  padding: 5px 9px;
+  border: 2px solid #4a41a0;
   border-radius: 0;
   background: transparent;
-  color: #9a94e8;
+  color: #c2bcff;
   cursor: pointer;
+}
+
+/* Zoom control: minus, the level (click to reset), plus. */
+.lc-zoom {
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 3px;
+}
+.lc-zoom-btn {
+  min-width: 24px;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: calc(clamp(11px, 0.85vw, 15px) * var(--lc-zoom));
+  line-height: 1;
+}
+.lc-zoom-level {
+  min-width: 52px;
+  text-align: center;
 }
 .lc-chip:hover {
   border-color: var(--lc-gold);
@@ -379,13 +424,13 @@
 }
 .lc-hud-key {
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 8px;
+  font-size: calc(clamp(8.5px, 0.62vw, 11px) * var(--lc-zoom));
   letter-spacing: 0.14em;
-  color: #5c56a4;
+  color: #8079c8;
 }
 .lc-hud-val {
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 11px;
+  font-size: calc(clamp(12px, 0.95vw, 16px) * var(--lc-zoom));
   letter-spacing: 0.06em;
   color: var(--lc-gold);
   /* Digits change every frame; a fixed advance keeps the row from twitching. */
@@ -404,6 +449,9 @@
   align-items: center;
   justify-content: center;
   padding: 12px;
+  /* Zooming past the natural fit is allowed, so the playfield has to be
+     reachable rather than clipped. */
+  overflow: auto;
 }
 .lc-canvas {
   image-rendering: pixelated;
@@ -424,34 +472,43 @@
   inset: 12px;
   z-index: 4;
   display: flex;
+  background: rgba(4, 3, 14, 0.93);
+  border: 2px solid #342c78;
+}
+/* margin:auto rather than justify-content:center on the card: a centred flex
+   child that grows past its container puts its own top above the scroll origin,
+   where no scrollbar can reach it. This centres when it fits and scrolls when
+   it does not. */
+.lc-card-inner {
+  margin: auto;
+  width: 100%;
+  max-width: 1500px;
+  display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 9px;
-  padding: 20px 26px;
+  gap: calc(11px * var(--lc-zoom));
+  padding: clamp(18px, 3vh, 44px) clamp(18px, 3vw, 56px);
   text-align: center;
-  background: rgba(4, 3, 14, 0.9);
-  border: 2px solid #342c78;
 }
 .lc-card-kicker {
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 9px;
+  font-size: calc(clamp(10px, 0.85vw, 14px) * var(--lc-zoom));
   letter-spacing: 0.22em;
-  color: var(--lc-wire);
+  color: #4de8c8;
 }
 .lc-card-heading {
   font-family: "Bungee", var(--font-ui);
-  font-size: clamp(18px, 3.4vw, 30px);
+  font-size: calc(clamp(24px, 3.2vw, 48px) * var(--lc-zoom));
   letter-spacing: 0.06em;
   color: var(--lc-gold);
   text-shadow: 0 0 18px rgba(255, 207, 77, 0.4);
 }
 .lc-card-body {
   margin: 0;
-  max-width: 52ch;
-  font-size: clamp(12px, 1.2vw, 15px);
-  line-height: 1.65;
-  color: #9ea8d8;
+  max-width: 62ch;
+  font-size: calc(clamp(14px, 1.15vw, 20px) * var(--lc-zoom));
+  line-height: 1.6;
+  color: #c3cbec;
 }
 
 /* The dedication. It is the point of the whole thing, so on the landing screen
@@ -459,12 +516,12 @@
    body copy. */
 .lc-card-dedication {
   margin: 6px 0 0;
-  max-width: 58ch;
-  padding: 12px 18px;
+  max-width: 62ch;
+  padding: calc(14px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
   border-top: 2px solid #342c78;
   border-bottom: 2px solid #342c78;
-  font-size: clamp(12.5px, 1.25vw, 16px);
-  line-height: 1.7;
+  font-size: calc(clamp(15px, 1.25vw, 22px) * var(--lc-zoom));
+  line-height: 1.65;
   font-style: italic;
   color: var(--lc-gold);
   text-shadow: 0 0 14px rgba(255, 207, 77, 0.22);
@@ -472,9 +529,9 @@
 .lc-card-foot {
   margin-top: 4px;
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 9px;
+  font-size: calc(clamp(10.5px, 0.9vw, 14px) * var(--lc-zoom));
   letter-spacing: 0.16em;
-  color: #bdf3ff;
+  color: #d6f7ff;
   animation: lc-blink 1.1s steps(1, end) infinite;
 }
 @keyframes lc-blink {
@@ -494,54 +551,106 @@
   filter: drop-shadow(0 0 12px rgba(255, 207, 77, 0.5));
 }
 
+/* The Perfect Clear panel on the winning screen. */
+.lc-perfect {
+  display: flex;
+  align-items: center;
+  gap: calc(16px * var(--lc-zoom));
+  margin-top: calc(8px * var(--lc-zoom));
+  padding: calc(14px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
+  border: 2px solid #4a5570;
+  background: rgba(120, 140, 180, 0.07);
+  text-align: left;
+  max-width: 62ch;
+}
+.lc-perfect.verified {
+  border-color: #6ff2ff;
+  background: rgba(111, 242, 255, 0.09);
+  box-shadow: 0 0 26px rgba(111, 242, 255, 0.18);
+}
+.lc-perfect .legacy-crest {
+  flex: none;
+  filter: drop-shadow(0 0 8px rgba(111, 242, 255, 0.5));
+}
+.lc-perfect:not(.verified) .legacy-crest {
+  filter: none;
+  opacity: 0.6;
+}
+.lc-perfect-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lc-perfect-name {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(14px, 1.2vw, 20px) * var(--lc-zoom));
+  letter-spacing: 0.08em;
+  color: #ffffff;
+}
+.lc-perfect:not(.verified) .lc-perfect-name {
+  color: #aab3c8;
+}
+.lc-perfect-sub {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(9.5px, 0.8vw, 13px) * var(--lc-zoom));
+  letter-spacing: 0.12em;
+  color: #6ff2ff;
+}
+.lc-perfect:not(.verified) .lc-perfect-sub {
+  color: #8892aa;
+}
+/* The honest small print. Never hidden, never softened out of legibility. */
+.lc-perfect-verdict {
+  font-size: calc(clamp(11.5px, 0.92vw, 15px) * var(--lc-zoom));
+  line-height: 1.5;
+  color: #b6c0dd;
+}
+
 /* Tribute pages carry a dozen names, so they read top-down and scroll rather
    than centring and spilling off the tube. */
 .lc-card {
   overflow-y: auto;
 }
-.lc-card-tribute {
-  justify-content: flex-start;
-  padding-top: clamp(16px, 3vh, 40px);
-}
 .lc-hud-handle {
-  color: var(--lc-wire);
+  color: #5ff5db;
   letter-spacing: 0.1em;
 }
 
 .lc-roll {
   list-style: none;
-  margin: 14px 0 0;
+  margin: calc(10px * var(--lc-zoom)) 0 0;
   padding: 0;
   width: 100%;
-  max-width: 1120px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-  gap: 0 30px;
+  /* Columns are sized so a note wraps to two lines at most at the default
+     zoom, and collapse to fewer columns rather than shrinking as it grows. */
+  grid-template-columns: repeat(auto-fit, minmax(calc(320px * var(--lc-zoom)), 1fr));
+  gap: 0 calc(clamp(24px, 2.2vw, 44px) * var(--lc-zoom));
   text-align: left;
 }
 .lc-roll-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 7px 0;
-  border-top: 1px solid #241c60;
+  gap: 3px;
+  padding: calc(9px * var(--lc-zoom)) 0;
+  border-top: 1px solid #32287a;
 }
 .lc-roll-name {
   font-family: "Silkscreen", var(--font-mono);
   font-weight: 400;
-  font-size: 10px;
+  font-size: calc(clamp(11.5px, 0.92vw, 15px) * var(--lc-zoom));
   letter-spacing: 0.07em;
-  color: var(--lc-wire);
+  color: #5ff5db;
 }
 .lc-roll-note {
-  font-size: 11.5px;
+  font-size: calc(clamp(13px, 1.02vw, 17px) * var(--lc-zoom));
   line-height: 1.5;
-  color: #8b94c4;
+  color: #cbd3f2;
 }
 .lc-card-close {
-  margin: 16px 0 0;
+  margin: calc(14px * var(--lc-zoom)) 0 0;
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 9.5px;
+  font-size: calc(clamp(11px, 0.95vw, 15px) * var(--lc-zoom));
   letter-spacing: 0.14em;
   color: var(--lc-gold);
 }
@@ -554,14 +663,14 @@
   margin-top: 6px;
 }
 .lc-handle-input {
-  width: min(340px, 60vw);
-  padding: 10px 14px;
+  width: calc(min(380px, 60vw) * var(--lc-zoom));
+  padding: calc(11px * var(--lc-zoom)) calc(15px * var(--lc-zoom));
   border: 2px solid var(--lc-gold);
   border-radius: 0;
   background: rgba(255, 207, 77, 0.06);
   color: #fff;
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 15px;
+  font-size: calc(clamp(15px, 1.2vw, 20px) * var(--lc-zoom));
   letter-spacing: 0.12em;
   text-transform: uppercase;
   outline: none;
@@ -574,13 +683,13 @@
   box-shadow: 0 0 0 2px rgba(255, 207, 77, 0.3), 0 0 18px rgba(255, 207, 77, 0.25);
 }
 .lc-handle-go {
-  padding: 0 18px;
+  padding: 0 calc(20px * var(--lc-zoom));
   border: 2px solid var(--lc-wire);
   border-radius: 0;
   background: transparent;
   color: var(--lc-wire);
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 11px;
+  font-size: calc(clamp(12px, 0.95vw, 16px) * var(--lc-zoom));
   letter-spacing: 0.14em;
   cursor: pointer;
 }
@@ -612,17 +721,17 @@
   padding: 8px 14px;
   border-top: 2px solid #1a1546;
   font-family: "Silkscreen", var(--font-mono);
-  font-size: 8px;
+  font-size: calc(clamp(8.5px, 0.65vw, 11px) * var(--lc-zoom));
   letter-spacing: 0.12em;
-  color: #5c56a4;
+  color: #8079c8;
 }
 .lc-foot-note {
   text-align: right;
   font-family: var(--font-ui);
-  font-size: 9.5px;
+  font-size: calc(clamp(10px, 0.72vw, 13px) * var(--lc-zoom));
   letter-spacing: 0;
   text-transform: none;
-  color: #3f3a76;
+  color: #625ba8;
 }
 
 @media (max-width: 720px) {

@@ -70,6 +70,9 @@ export interface StageRun {
   drain(): Cue[];
 }
 
+/** Every game is three levels. Nine in a campaign. */
+export const LEVELS_PER_STAGE = 3;
+
 export interface Stage {
   id: string;
   /** Marquee name. */
@@ -78,7 +81,16 @@ export interface Stage {
   brief: string;
   /** One line on the attract card: how to do it. */
   controls: string;
-  create(seed: number): StageRun;
+  /** What changes at this level, for the attract card. */
+  levelNote(level: number): string;
+  /** `level` is 0, 1 or 2. */
+  create(seed: number, level: number): StageRun;
+}
+
+/** Clamp a level index coming from the campaign into the range a stage's own
+ *  difficulty tables are sized for. */
+function lvl(level: number): number {
+  return Math.max(0, Math.min(LEVELS_PER_STAGE - 1, Math.floor(level)));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -150,7 +162,13 @@ interface Cell {
   y: number;
 }
 
-const KNOT_TARGET = 8;
+/** Per level: nodes to collect, starting step time, how much each node speeds
+ *  the thread up, and how many severed cells eventually open. */
+const KNOT_LEVELS = [
+  { target: 6, step: 0.15, quicken: 0.006, severed: 2, floor: 0.085 },
+  { target: 8, step: 0.132, quicken: 0.0068, severed: 3, floor: 0.075 },
+  { target: 10, step: 0.118, quicken: 0.0072, severed: 5, floor: 0.066 },
+] as const;
 
 /**
  * A thread you are paying out across a board. It grows every time it reaches a
@@ -158,7 +176,9 @@ const KNOT_TARGET = 8;
  * of the frame, the severed circuits that open up once you are half way, and
  * the length of thread already behind you.
  */
-function createKnotline(seed: number): StageRun {
+function createKnotline(seed: number, level: number): StageRun {
+  const L = KNOT_LEVELS[lvl(level)];
+  const KNOT_TARGET = L.target;
   const rand = makeRandom(seed);
   let body: Cell[] = [
     { x: 6, y: 7 },
@@ -170,7 +190,9 @@ function createKnotline(seed: number): StageRun {
   let grow = 0;
   let taken = 0;
   let acc = 0;
-  let stepMs = 0.135;
+  // Annotated: the level table is `as const`, so an inferred type here would be
+  // the literal 0.15 and every speed-up below would be a type error.
+  let stepMs: number = L.step;
   let node: Cell = { x: 13, y: 7 };
   const severed: Cell[] = [];
   const cues: Cue[] = [];
@@ -230,7 +252,7 @@ function createKnotline(seed: number): StageRun {
       grow += 3;
       score += 25;
       flash = 0.18;
-      stepMs = Math.max(0.072, stepMs - 0.0065);
+      stepMs = Math.max(L.floor, stepMs - L.quicken);
       cues.push("pickup");
       if (taken >= KNOT_TARGET) {
         status = "cleared";
@@ -238,9 +260,9 @@ function createKnotline(seed: number): StageRun {
         cues.push("clear");
         return;
       }
-      // The board closes in from the halfway mark: the same board for eight
-      // nodes would be over as a challenge by the fourth.
-      if (taken >= 3 && severed.length < 3) severed.push(freeCell());
+      // The board closes in from the halfway mark: the same board for the whole
+      // level would be over as a challenge by the fourth node.
+      if (taken >= 2 && severed.length < L.severed) severed.push(freeCell());
       node = freeCell();
     } else {
       cues.push("step");
@@ -358,8 +380,16 @@ const CANNON = ["...##...", "..####..", ".######.", "########"] as const;
 
 const MITE_W = 8;
 const MITE_H = 5;
-const WAVE_COLS = [6, 7, 8];
-const WAVE_ROWS = 3;
+/** Per level: the two waves it puts up, and how many rows deep they are.
+ *  A level is a short fight rather than a marathon, so a lost life costs you a
+ *  couple of waves and not the whole game. */
+const BLAST_LEVELS = [
+  { waves: [6, 7], rows: 3, startTier: 0, fireBase: 1.6 },
+  { waves: [7, 8], rows: 3, startTier: 1, fireBase: 1.3 },
+  // Four rows deep is already a lot of wall; pairing it with the fastest
+  // return fire made the last level a coin toss rather than a hard fight.
+  { waves: [8, 8], rows: 4, startTier: 2, fireBase: 1.3 },
+] as const;
 const PLAYER_Y = VIEW_H - 22;
 
 interface Mite {
@@ -410,7 +440,10 @@ const POD_OFFSET = 18;
  * well-armed player has two units firing piercing missiles and a bomb in
  * reserve, which is roughly what the wall has earned by then.
  */
-function createBugBlaster(seed: number): StageRun {
+function createBugBlaster(seed: number, level: number): StageRun {
+  const L = BLAST_LEVELS[lvl(level)];
+  const WAVE_COLS = L.waves;
+  const WAVE_ROWS = L.rows;
   const rand = makeRandom(seed);
   let wave = 0;
   let mites: Mite[] = [];
@@ -421,7 +454,9 @@ function createBugBlaster(seed: number): StageRun {
   let animFrame = 0;
   let fireTimer = 0;
   let playerX = VIEW_W / 2 - 4;
-  let tier = 0;
+  // Later levels hand you the gun you would have earned by then, so a level
+  // three restart is not a level one restart with a level three wall.
+  let tier: number = L.startTier;
   let bombs = 1;
   let cooldown = 0;
   let bombFlash = 0;
@@ -612,7 +647,7 @@ function createBugBlaster(seed: number): StageRun {
       // never appears out of the middle of the wall.
       fireTimer -= dt;
       if (fireTimer <= 0) {
-        fireTimer = Math.max(0.4, 1.5 - wave * 0.3) * (0.6 + rand() * 0.9);
+        fireTimer = Math.max(0.4, L.fireBase - wave * 0.25) * (0.6 + rand() * 0.9);
         const pick = alive[Math.floor(rand() * alive.length)];
         const column = alive.filter((m) => m.cx === pick.cx);
         const shooter = column.reduce((a, b) => (b.cy > a.cy ? b : a), column[0]);
@@ -773,8 +808,13 @@ const MAZE: readonly string[] = [
   "####################",
 ];
 
-const MAZE_TIME = 72;
-const KEYS_NEEDED = 3;
+/** Per level: keys to find, seconds on the clock, how many hunters walk the
+ *  corridors, how fast they walk, and how often they lean toward you. */
+const MAZE_LEVELS = [
+  { keys: 2, time: 68, hunters: 2, speed: 44, hunt: 0.22 },
+  { keys: 3, time: 74, hunters: 2, speed: 48, hunt: 0.28 },
+  { keys: 4, time: 82, hunters: 3, speed: 53, hunt: 0.36 },
+] as const;
 const WALK = 11; // player/hunter box, a little under a tile so corners forgive
 
 interface Walker {
@@ -797,7 +837,10 @@ interface Walker {
  * corridors. The keys are the whole job: the gate does not open for anything
  * else, and the clock does not care how close you were.
  */
-function createCodeMaze(seed: number): StageRun {
+function createCodeMaze(seed: number, level: number): StageRun {
+  const L = MAZE_LEVELS[lvl(level)];
+  const KEYS_NEEDED = L.keys;
+  const MAZE_TIME = L.time;
   const rand = makeRandom(seed);
   const solid = (tx: number, ty: number): boolean =>
     tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS || MAZE[ty][tx] === "#";
@@ -866,9 +909,9 @@ function createCodeMaze(seed: number): StageRun {
   // Hunters start well away from the spawn so the first two seconds are yours.
   const hunters: Walker[] = [];
   const hunterPool = reach.filter((c) => (dist.get(idx(c.x, c.y)) ?? 0) > 8);
-  // Two, not three. A third makes the corridors a coin toss rather than a
-  // route you can plan, and this is the last stage of a three-life campaign.
-  for (let i = 0; i < 2 && hunterPool.length; i++) {
+  // Two for the first two levels. A third only arrives at the last one, where
+  // the corridors becoming a genuine gamble is the point.
+  for (let i = 0; i < L.hunters && hunterPool.length; i++) {
     const pick = hunterPool[Math.floor(rand() * hunterPool.length)];
     hunterPool.splice(hunterPool.indexOf(pick), 1);
     hunters.push({
@@ -1003,7 +1046,7 @@ function createCodeMaze(seed: number): StageRun {
         // Mostly wander, sometimes lean toward the player: a pure chase is
         // unfair on a board this size, and pure noise is furniture.
         const pick =
-          rand() < 0.28
+          rand() < L.hunt
             ? choices.reduce((a, b) => {
                 const cost = ([ox, oy]: [number, number]) =>
                   Math.abs((h.tx + ox) * CELL - px) + Math.abs((h.ty + oy) * CELL - py);
@@ -1018,7 +1061,7 @@ function createCodeMaze(seed: number): StageRun {
       };
 
       for (const h of hunters) {
-        let budget = 48 * dt;
+        let budget = L.speed * dt;
         // A loop rather than one step: at a high frame rate a hunter can cross
         // a tile boundary and start into the next one within a single tick, and
         // stopping dead at the boundary is a visible stutter.
@@ -1127,23 +1170,35 @@ export const STAGES: readonly Stage[] = [
   {
     id: "knotline",
     title: "KNOTLINE",
-    brief: "Weave the thread through eight code nodes. Do not cross your own line.",
+    brief: "Weave the thread through the code nodes. Do not cross your own line.",
     controls: "ARROWS or WASD to steer",
+    levelNote: (n) => {
+      const L = KNOT_LEVELS[lvl(n)];
+      return `${L.target} nodes, ${L.severed} severed circuits, and a thread that quickens with every one you take.`;
+    },
     create: createKnotline,
   },
   {
     id: "bug-blaster",
     title: "BUG BLASTER",
     brief:
-      "Three waves of mites are walking down the stack. Clear every one. Your gun improves with every wave, and the mites drop the rest.",
+      "Mites are walking down the stack. Clear every wave. Your gun improves as you go, and the mites drop the rest.",
     controls: "LEFT / RIGHT to move · SPACE to fire (hold it) · X for a bomb",
+    levelNote: (n) => {
+      const L = BLAST_LEVELS[lvl(n)];
+      return `${L.waves.length} waves, up to ${Math.max(...L.waves)} columns and ${L.rows} rows deep. You start on ${TIERS[L.startTier].name}.`;
+    },
     create: createBugBlaster,
   },
   {
     id: "code-maze",
     title: "CODE MAZE",
-    brief: "Three compiler keys open the gate. Mind the hunters, mind the clock.",
+    brief: "Collect every compiler key, then reach the gate. Mind the hunters, mind the clock.",
     controls: "ARROWS or WASD to move",
+    levelNote: (n) => {
+      const L = MAZE_LEVELS[lvl(n)];
+      return `${L.keys} keys, ${L.time} seconds, ${L.hunters} hunters in the corridors.`;
+    },
     create: createCodeMaze,
   },
 ];

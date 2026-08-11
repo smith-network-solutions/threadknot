@@ -125,6 +125,33 @@ export interface LegacyAward {
   /** The name the player gave the cabinet, remembered so it can be prefilled
    *  rather than retyped every visit. Local only, like everything else here. */
   handle: string;
+  /** Cabinet zoom, remembered per device. The app's own UI zoom does not reach
+   *  inside the cabinet (it renders unzoomed like the rest of the chrome), so
+   *  this screen carries its own. */
+  zoom: number;
+  /** All nine levels finished without losing a single life. Rarer than the
+   *  crest by a wide margin, and kept separately so it can never be implied by
+   *  simply finishing. */
+  perfect: boolean;
+  perfectAt: string;
+  /** Whether the input during the perfect run looked like a person at a
+   *  keyboard. See attest.ts: a heuristic, and labelled as one everywhere it
+   *  is shown. */
+  perfectHuman: boolean;
+  /** The handle attached to the perfect run, which may not be the current one. */
+  perfectHandle: string;
+}
+
+export const ZOOM_MIN = 0.6;
+export const ZOOM_MAX = 2.5;
+export const ZOOM_STEP = 0.1;
+
+export function clampZoom(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  // Rounded to the step so repeated wheel notches cannot accumulate float dust
+  // into a stored value like 1.3000000000000003.
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(n / ZOOM_STEP) * ZOOM_STEP));
 }
 
 const AWARD_DEFAULT: LegacyAward = {
@@ -133,6 +160,11 @@ const AWARD_DEFAULT: LegacyAward = {
   bestScore: 0,
   sound: true,
   handle: "",
+  zoom: 1,
+  perfect: false,
+  perfectAt: "",
+  perfectHuman: false,
+  perfectHandle: "",
 };
 
 /** Stored handles are hand-editable strings that end up rendered, so the same
@@ -160,6 +192,13 @@ function normalize(raw: unknown): LegacyAward {
     bestScore: Number.isFinite(best) && best > 0 ? Math.floor(best) : 0,
     sound: r.sound !== false,
     handle: normalizeHandle(r.handle),
+    zoom: clampZoom(r.zoom),
+    perfect: r.perfect === true,
+    perfectAt: typeof r.perfectAt === "string" ? r.perfectAt : "",
+    // Only meaningful alongside a perfect run, and never inferred: a stored
+    // record claiming a human verdict without the run is not one.
+    perfectHuman: r.perfect === true && r.perfectHuman === true,
+    perfectHandle: normalizeHandle(r.perfectHandle),
   };
 }
 
@@ -211,6 +250,30 @@ export function setLegacySound(sound: boolean): LegacyAward {
 export function setLegacyHandle(handle: string): LegacyAward {
   return writeAward({ ...getLegacyAward(), handle: normalizeHandle(handle) });
 }
+
+export function setLegacyZoom(zoom: number): LegacyAward {
+  return writeAward({ ...getLegacyAward(), zoom: clampZoom(zoom) });
+}
+
+/**
+ * Record a flawless campaign: all nine levels, no life lost.
+ *
+ * A later perfect run can upgrade an unverified one to human-verified, but
+ * never the other way round, so a genuine run is not demoted by a scripted one
+ * afterwards, and a scripted one cannot borrow the earlier verdict.
+ */
+export function awardPerfectClear(human: boolean, handle: string): LegacyAward {
+  const cur = getLegacyAward();
+  return writeAward({
+    ...cur,
+    perfect: true,
+    perfectAt: cur.perfectAt || new Date().toISOString(),
+    perfectHuman: cur.perfectHuman || human,
+    perfectHandle: cur.perfectHuman ? cur.perfectHandle : normalizeHandle(handle),
+  });
+}
+
+export const PERFECT_NAME = "PERFECT CLEAR";
 
 /** The crest's name, in one place: the HUD, the tooltip and the completion
  *  screen all have to agree on it. */

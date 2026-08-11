@@ -11,6 +11,7 @@ import {
   CREST_NAME,
   getLegacyAward,
   LEGACY_AWARD_EVENT,
+  PERFECT_NAME,
   type LegacyAward,
 } from "../../lib/legacyCircuit";
 
@@ -28,6 +29,20 @@ const CREST: readonly string[] = [
 ];
 
 const SPAN = 9;
+
+/** The Perfect Clear crest: a star burst rather than a shield, so the two are
+ *  told apart at a glance and at a size where detail is gone. */
+const PERFECT: readonly string[] = [
+  "....#....",
+  "...###...",
+  "#..#*#..#",
+  "###***###",
+  ".#*****#.",
+  "###***###",
+  "#..#*#..#",
+  "...###...",
+  "....#....",
+];
 
 /** Mirror of the stored award, refreshed on every write, so a crest earned in
  *  the settings screen lights up the sidebar behind it without a reload. */
@@ -51,15 +66,18 @@ export function Crest({
   size = 14,
   className = "",
   title,
+  variant = "weaver",
 }: {
   size?: number;
   className?: string;
   /** Omit for a purely decorative crest sitting next to its own label. */
   title?: string;
+  variant?: "weaver" | "perfect";
 }) {
+  const map = variant === "perfect" ? PERFECT : CREST;
   return (
     <svg
-      className={`legacy-crest ${className}`}
+      className={`legacy-crest legacy-crest-${variant} ${className}`}
       width={size}
       height={size}
       viewBox={`0 0 ${SPAN} ${SPAN}`}
@@ -69,7 +87,7 @@ export function Crest({
       shapeRendering="crispEdges"
     >
       {title && <title>{title}</title>}
-      {CREST.map((row, y) =>
+      {map.map((row, y) =>
         row.split("").map((ch, x) =>
           ch === "." ? null : (
             <rect
@@ -97,8 +115,27 @@ export function CrestBadge({ size = 14 }: { size?: number }) {
   const award = useLegacyAward();
   if (!award.earned) return null;
   return (
-    <span className="legacy-crest-badge" title={`${CREST_NAME} · awarded on this machine`}>
-      <Crest size={size} title={CREST_NAME} />
+    <span className="legacy-crest-badge">
+      <span title={`${CREST_NAME} · awarded on this machine`}>
+        <Crest size={size} title={CREST_NAME} />
+      </span>
+      {award.perfect && (
+        <span
+          title={perfectTooltip(award)}
+          className={award.perfectHuman ? "perfect-verified" : "perfect-unverified"}
+        >
+          <Crest size={size} variant="perfect" title={PERFECT_NAME} />
+        </span>
+      )}
     </span>
   );
+}
+
+/** One line that says what the badge means without overclaiming what the
+ *  verification actually establishes. */
+export function perfectTooltip(award: LegacyAward): string {
+  const who = award.perfectHandle ? ` by ${award.perfectHandle}` : "";
+  return award.perfectHuman
+    ? `${PERFECT_NAME}${who} · nine levels, no life lost · input looked human (a heuristic, not proof)`
+    : `${PERFECT_NAME}${who} · nine levels, no life lost · input was not verified as human`;
 }

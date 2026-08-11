@@ -17,17 +17,31 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   awardLegacyCrest,
+  awardPerfectClear,
   CIRCUIT_TRIBUTE,
+  clampZoom,
   CREST_NAME,
   getLegacyAward,
+  PERFECT_NAME,
   recordLegacyScore,
   setLegacyHandle,
   setLegacySound,
+  setLegacyZoom,
+  ZOOM_STEP,
 } from "../../lib/legacyCircuit";
 import { ensureFontLoaded } from "../../lib/fonts";
 import { Cabinet } from "./sfx";
 import { Crest } from "./Crest";
-import { STAGES, VIEW_H, VIEW_W, type Btn, type Input, type StageRun } from "./stages";
+import { Witness, type WitnessReport } from "./attest";
+import {
+  LEVELS_PER_STAGE,
+  STAGES,
+  VIEW_H,
+  VIEW_W,
+  type Btn,
+  type Input,
+  type StageRun,
+} from "./stages";
 import { TRIBUTES } from "./tributes";
 import "../../styles/legacy.css";
 
@@ -41,9 +55,11 @@ type Phase =
   /** Attract card for the stage about to start. */
   | "intro"
   | "play"
-  /** A life gone; the stage restarts from the top. */
+  /** A life gone; the level restarts from the top. */
   | "lost"
-  /** A stage beaten, and the page of names it buys you. */
+  /** A level beaten, with more of this game still to come. */
+  | "level-clear"
+  /** A whole game beaten, and the page of names it buys you. */
   | "tribute"
   /** Out of lives. */
   | "over"
@@ -99,6 +115,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   const calm = useMemo(prefersReducedMotion, []);
   const [phase, setPhase] = useState<Phase>(calm ? "title" : "boot");
   const [stageIndex, setStageIndex] = useState(0);
+  const [levelIndex, setLevelIndex] = useState(0);
   const [lives, setLives] = useState(LIVES);
   const [banked, setBanked] = useState(0);
   const [muted, setMuted] = useState(() => !getLegacyAward().sound);
@@ -107,6 +124,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   const [scale, setScale] = useState(2);
   // Prefilled from the last visit: asking again is fine, retyping is not.
   const [handle, setHandle] = useState(() => getLegacyAward().handle);
+  const [zoom, setZoom] = useState(() => getLegacyAward().zoom);
 
   const stage = STAGES[Math.min(stageIndex, STAGES.length - 1)];
 
@@ -134,7 +152,19 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
    *  round-trip through React before the effect tears the loop down), and
    *  without this a single death spends two lives. */
   const settledRef = useRef(false);
+  /** The stage measurer, so a zoom change can re-fit without the layout having
+   *  moved (a ResizeObserver only ever fires on layout). */
+  const measureRef = useRef<(() => void) | null>(null);
+  const zoomRef = useRef(zoom);
+  /** Set false the moment a life is lost. The Perfect Clear badge is the only
+   *  thing that reads it, and nothing in the run can set it back to true. */
+  const flawlessRef = useRef(true);
+  /** Watches the shape of the input for this campaign; replaced at the start of
+   *  every run so a perfect campaign is judged only on its own keystrokes. */
+  const witnessRef = useRef<Witness>(new Witness());
+  const [perfectReport, setPerfectReport] = useState<WitnessReport | null>(null);
 
+  zoomRef.current = zoom;
   phaseRef.current = phase;
   pausedRef.current = paused;
   bankedRef.current = banked;
@@ -172,15 +202,51 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       if (w < 4 || h < 4) return;
-      // Up to 6x now that the cabinet owns the window, with every pixel still
-      // landing on a whole number of real ones.
-      setScale(Math.max(1, Math.min(6, Math.floor(Math.min(w / VIEW_W, h / VIEW_H)))));
+      // Fill the stage by default, then apply the player's zoom on top. Still
+      // whole numbers only: a 2.5x canvas is a blurry canvas, and the whole
+      // point of a 320x240 buffer is that a pixel stays a pixel.
+      const fit = Math.min(w / VIEW_W, h / VIEW_H);
+      setScale(Math.max(1, Math.min(8, Math.round(fit * zoomRef.current))));
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(wrap);
-    return () => ro.disconnect();
+    measureRef.current = measure;
+    return () => {
+      ro.disconnect();
+      measureRef.current = null;
+    };
   }, []);
+
+  // Re-fit whenever the zoom changes; the observer only fires on layout.
+  useEffect(() => {
+    measureRef.current?.();
+  }, [zoom]);
+
+  /* ---- zoom ------------------------------------------------------------ */
+
+  const nudgeZoom = useCallback((delta: number) => {
+    setZoom((z) => {
+      const next = clampZoom(z + delta);
+      if (next !== z) setLegacyZoom(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    function onWheel(e: WheelEvent) {
+      // Ctrl (or Command) plus wheel is the zoom gesture everywhere else; take
+      // it before the webview turns it into a page zoom.
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      nudgeZoom(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+    }
+    // Not passive: the whole point is to preventDefault.
+    frame.addEventListener("wheel", onWheel, { passive: false });
+    return () => frame.removeEventListener("wheel", onWheel);
+  }, [nudgeZoom]);
 
   /* ---- the loop -------------------------------------------------------- */
 
@@ -195,9 +261,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   }, []);
 
   const startStage = useCallback(
-    (index: number) => {
+    (index: number, level: number) => {
       seedRef.current = (seedRef.current * 1664525 + 1013904223) >>> 0;
-      runRef.current = STAGES[index].create(seedRef.current);
+      runRef.current = STAGES[index].create(seedRef.current, level);
       heldRef.current.clear();
       tappedRef.current.clear();
       settledRef.current = false;
@@ -247,11 +313,13 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       if (!settledRef.current && run.status === "cleared") {
         settledRef.current = true;
         setBanked((s) => s + run.score);
-        // Every cleared stage goes to its tribute page, including the last.
-        // The crest screen comes after the third one.
-        setPhase("tribute");
+        // The last level of a game earns that game's tribute page; the others
+        // just roll on to the next level.
+        setPhase(levelIndex >= LEVELS_PER_STAGE - 1 ? "tribute" : "level-clear");
       } else if (!settledRef.current && run.status === "failed") {
         settledRef.current = true;
+        // One life is all it takes: Perfect Clear is meant to be rare.
+        flawlessRef.current = false;
         setLives((n) => Math.max(0, n - 1));
         setPhase(lives <= 1 ? "over" : "lost");
       }
@@ -262,10 +330,10 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-    // `lives` is read to decide game-over; `stageIndex` to decide the last
-    // stage. Both are stable for the length of a stage, so re-arming the loop
-    // when they change is correct and costs one frame.
-  }, [phase, lives, stageIndex]);
+    // `lives` decides game-over and `levelIndex` decides whether a clear ends
+    // the game. Both hold still for the length of a level, so re-arming the
+    // loop when they change is correct and costs one frame.
+  }, [phase, lives, levelIndex]);
 
   /* ---- outcomes -------------------------------------------------------- */
 
@@ -276,6 +344,16 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       const award = awardLegacyCrest(total);
       setBest(award.bestScore);
       cabinetRef.current?.fanfare();
+      // Nine levels, no life lost. Judge the input that produced it and record
+      // both facts together: the badge without the verdict would be a claim
+      // nobody could check.
+      if (flawlessRef.current) {
+        const report = witnessRef.current.report();
+        setPerfectReport(report);
+        awardPerfectClear(report.verdict === "human", handle);
+      } else {
+        setPerfectReport(null);
+      }
     } else if (phase === "over") {
       const award = recordLegacyScore(peakRef.current);
       setBest(award.bestScore);
@@ -294,8 +372,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     bankedRef.current = 0;
     setLives(LIVES);
     setStageIndex(0);
+    setLevelIndex(0);
     peakRef.current = 0;
-    startStage(0);
+    flawlessRef.current = true;
+    witnessRef.current = new Witness();
+    setPerfectReport(null);
+    startStage(0, 0);
     setPhase("intro");
   }, [startStage]);
 
@@ -313,9 +395,17 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         setPhase("play");
         break;
       case "lost":
-        startStage(stageIndex);
+        // A lost life costs you the level, not the game.
+        startStage(stageIndex, levelIndex);
         setPhase("intro");
         break;
+      case "level-clear": {
+        const next = levelIndex + 1;
+        setLevelIndex(next);
+        startStage(stageIndex, next);
+        setPhase("intro");
+        break;
+      }
       case "tribute": {
         const next = stageIndex + 1;
         if (next >= STAGES.length) {
@@ -323,7 +413,11 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           break;
         }
         setStageIndex(next);
-        startStage(next);
+        setLevelIndex(0);
+        // A fresh game, a fresh set of lives. Carrying a single life into a
+        // game you have not seen yet is a punishment for progress.
+        setLives(LIVES);
+        startStage(next, 0);
         setPhase("intro");
         break;
       }
@@ -334,7 +428,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       default:
         break;
     }
-  }, [beginRun, stageIndex, startStage]);
+  }, [beginRun, stageIndex, levelIndex, startStage]);
 
   /** Leaving the handle screen: store it and start stage one. */
   const submitHandle = useCallback(() => {
@@ -356,6 +450,26 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         onExit();
         return;
       }
+      // Zoom by keyboard as well as by wheel, using the shortcuts every other
+      // program uses. Checked before the handle guard so it works there too.
+      if (e.ctrlKey || e.metaKey) {
+        if (e.code === "Equal" || e.code === "NumpadAdd") {
+          e.preventDefault();
+          nudgeZoom(ZOOM_STEP);
+          return;
+        }
+        if (e.code === "Minus" || e.code === "NumpadSubtract") {
+          e.preventDefault();
+          nudgeZoom(-ZOOM_STEP);
+          return;
+        }
+        if (e.code === "Digit0" || e.code === "Numpad0") {
+          e.preventDefault();
+          setZoom(1);
+          setLegacyZoom(1);
+          return;
+        }
+      }
       // While the handle is being typed the keyboard belongs to the field, not
       // to the cabinet. Without this, every letter that happens to be a game
       // button would be swallowed before it could be typed.
@@ -365,7 +479,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       const btn = BUTTONS[e.code];
       if (btn) {
         e.preventDefault();
-        if (!e.repeat) tappedRef.current.add(btn);
+        // Auto-repeat is the keyboard talking, not the player, so it is not
+        // evidence either way and must not be counted as rhythm.
+        if (!e.repeat) {
+          witnessRef.current.keyDown(e.code, e.isTrusted, e.timeStamp);
+          tappedRef.current.add(btn);
+        }
         heldRef.current.add(btn);
         return;
       }
@@ -392,7 +511,10 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
 
     function onUp(e: KeyboardEvent) {
       const btn = BUTTONS[e.code];
-      if (btn) heldRef.current.delete(btn);
+      if (btn) {
+        witnessRef.current.keyUp(e.code, e.isTrusted, e.timeStamp);
+        heldRef.current.delete(btn);
+      }
     }
 
     // Held buttons must not survive the window losing focus, or you come back
@@ -413,7 +535,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       document.removeEventListener("keyup", onUp, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [advance, onExit]);
+  }, [advance, onExit, nudgeZoom]);
 
   /* ---- boot ------------------------------------------------------------ */
 
@@ -452,16 +574,25 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         };
       case "intro":
         return {
-          kicker: `STAGE ${stageIndex + 1} OF ${STAGES.length}`,
+          kicker: `GAME ${stageIndex + 1} OF ${STAGES.length} · LEVEL ${levelIndex + 1} OF ${LEVELS_PER_STAGE}`,
           heading: stage.title,
-          body: `${stage.brief}  ${stage.controls}.`,
+          body: `${stage.brief}  ${stage.levelNote(levelIndex)}  ${stage.controls}.`,
+          foot: "PRESS ENTER",
+        };
+      case "level-clear":
+        return {
+          kicker: `LEVEL ${levelIndex + 1} CLEAR · ${String(total).padStart(6, "0")} BANKED`,
+          heading: `LEVEL ${levelIndex + 2}`,
+          body: stage.levelNote(levelIndex + 1),
           foot: "PRESS ENTER",
         };
       case "lost":
         return {
           kicker: "CIRCUIT BROKEN",
           heading: lives === 1 ? "LAST LIFE" : `${lives} LIVES LEFT`,
-          body: "The stage restarts from the top. Your banked stages are safe.",
+          body:
+            "The level restarts from the top. Everything you have banked is safe, " +
+            "and the next game hands you a fresh three. A Perfect Clear is not, however, still on the table.",
           foot: "PRESS ENTER",
         };
       case "tribute": {
@@ -484,7 +615,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         };
       case "win":
         return {
-          kicker: `ALL STAGES CLEAR · ${String(total).padStart(6, "0")}`,
+          kicker: `ALL NINE LEVELS CLEAR · ${String(total).padStart(6, "0")}`,
           heading: CREST_NAME,
           body: `${handle || "PLAYER"}, you found the circuit. You finished the run. Carry the thread forward.`,
           dedication: CIRCUIT_TRIBUTE,
@@ -506,6 +637,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       tabIndex={-1}
       role="dialog"
       aria-label="Legacy Circuit"
+      // Every type size in the cabinet is multiplied by this, so one number
+      // scales the whole machine rather than each rule needing its own knob.
+      style={{ "--lc-zoom": String(zoom) } as React.CSSProperties}
     >
       <div className="lc-glass" aria-hidden="true" />
 
@@ -519,6 +653,36 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           {phase === "boot" || phase === "title"
             ? "ATTRACT MODE"
             : `${stage.title} · ${stageIndex + 1}/${STAGES.length}`}
+        </span>
+        <span className="lc-zoom">
+          <button
+            type="button"
+            className="lc-chip lc-zoom-btn"
+            aria-label="Zoom out"
+            onClick={() => nudgeZoom(-ZOOM_STEP)}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="lc-chip lc-zoom-level"
+            title="Ctrl + scroll, or Ctrl + 0 to reset"
+            aria-label={`Zoom ${Math.round(zoom * 100)} percent, click to reset`}
+            onClick={() => {
+              setZoom(1);
+              setLegacyZoom(1);
+            }}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            type="button"
+            className="lc-chip lc-zoom-btn"
+            aria-label="Zoom in"
+            onClick={() => nudgeZoom(ZOOM_STEP)}
+          >
+            +
+          </button>
         </span>
         <button
           type="button"
@@ -581,72 +745,105 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           aria-hidden="true"
         />
 
+        {/* Every card centres its content when it fits and scrolls when it does
+            not. The inner wrapper carries `margin: auto` rather than the card
+            using justify-content:center, because a centred flex child that
+            overflows puts its own top out of reach of the scrollbar. */}
         {card && (
           <div className={`lc-card lc-card-${phase}`} role="status" aria-live="polite">
-            <div className="lc-card-kicker">{card.kicker}</div>
-            {phase === "win" && <Crest size={54} className="lc-card-crest" title={CREST_NAME} />}
-            <div className="lc-card-heading">{card.heading}</div>
-            <p className="lc-card-body">{card.body}</p>
-            {"dedication" in card && card.dedication && (
-              <p className="lc-card-dedication">{card.dedication}</p>
-            )}
-            {"roll" in card && card.roll && (
-              <ul className="lc-roll">
-                {card.roll.map((entry) => (
-                  <li className="lc-roll-item" key={entry.name}>
-                    <span className="lc-roll-name">{entry.name}</span>
-                    <span className="lc-roll-note">{entry.note}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {"close" in card && card.close && (
-              <p className="lc-card-close">{card.close}</p>
-            )}
-            <div className="lc-card-foot">{card.foot}</div>
+            <div className="lc-card-inner">
+              <div className="lc-card-kicker">{card.kicker}</div>
+              {phase === "win" && <Crest size={72} className="lc-card-crest" title={CREST_NAME} />}
+              <div className="lc-card-heading">{card.heading}</div>
+              <p className="lc-card-body">{card.body}</p>
+              {"dedication" in card && card.dedication && (
+                <p className="lc-card-dedication">{card.dedication}</p>
+              )}
+              {"roll" in card && card.roll && (
+                <ul className="lc-roll">
+                  {card.roll.map((entry) => (
+                    <li className="lc-roll-item" key={entry.name}>
+                      <span className="lc-roll-name">{entry.name}</span>
+                      <span className="lc-roll-note">{entry.note}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {"close" in card && card.close && (
+                <p className="lc-card-close">{card.close}</p>
+              )}
+
+              {/* The rare one. Only on the winning screen, only when nothing
+                  was lost, and always shown with what the verification does
+                  and does not establish. */}
+              {phase === "win" && perfectReport && (
+                <div
+                  className={`lc-perfect${perfectReport.verdict === "human" ? " verified" : ""}`}
+                >
+                  <Crest size={40} variant="perfect" title={PERFECT_NAME} />
+                  <div className="lc-perfect-text">
+                    <span className="lc-perfect-name">{PERFECT_NAME}</span>
+                    <span className="lc-perfect-sub">
+                      Nine levels. Not one life lost.
+                    </span>
+                    <span className="lc-perfect-verdict">
+                      {perfectReport.verdict === "human"
+                        ? `Input looked human: ${perfectReport.events} keystrokes, timing spread ${perfectReport.intervalCv}. That is a heuristic, not proof.`
+                        : `Not verified as human input: ${perfectReport.reasons.join("; ")}.`}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="lc-card-foot">{card.foot}</div>
+            </div>
           </div>
         )}
 
         {phase === "handle" && (
           <div className="lc-card lc-card-handle" role="dialog" aria-label="Enter your handle">
-            <div className="lc-card-kicker">IDENTIFY YOURSELF</div>
-            <div className="lc-card-heading">ENTER YOUR HANDLE</div>
-            <p className="lc-card-body">
-              It goes on the cabinet, and nowhere else. This machine remembers
-              it for next time and never sends it anywhere.
-            </p>
-            <form
-              className="lc-handle-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitHandle();
-              }}
-            >
-              <input
-                ref={handleInputRef}
-                className="lc-handle-input"
-                type="text"
-                inputMode="text"
-                autoComplete="off"
-                spellCheck={false}
-                maxLength={HANDLE_MAX}
-                aria-label="Your handle"
-                placeholder="WHO GOES THERE"
-                value={handle}
-                onChange={(e) => setHandle(cleanHandle(e.target.value))}
-              />
-              <button type="submit" className="lc-handle-go">
-                START
-              </button>
-            </form>
-            <div className="lc-card-foot">ENTER to begin · ESC to leave</div>
+            <div className="lc-card-inner">
+              <div className="lc-card-kicker">IDENTIFY YOURSELF</div>
+              <div className="lc-card-heading">ENTER YOUR HANDLE</div>
+              <p className="lc-card-body">
+                It goes on the cabinet, and nowhere else. This machine remembers
+                it for next time and never sends it anywhere.
+              </p>
+              <form
+                className="lc-handle-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitHandle();
+                }}
+              >
+                <input
+                  ref={handleInputRef}
+                  className="lc-handle-input"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={HANDLE_MAX}
+                  aria-label="Your handle"
+                  placeholder="WHO GOES THERE"
+                  value={handle}
+                  onChange={(e) => setHandle(cleanHandle(e.target.value))}
+                />
+                <button type="submit" className="lc-handle-go">
+                  START
+                </button>
+              </form>
+              <div className="lc-card-foot">ENTER to begin · ESC to leave</div>
+            </div>
           </div>
         )}
 
         {phase === "play" && paused && (
           <div className="lc-card lc-card-paused" role="status" aria-live="polite">
-            <div className="lc-card-heading">PAUSED</div>
-            <div className="lc-card-foot">P to resume</div>
+            <div className="lc-card-inner">
+              <div className="lc-card-heading">PAUSED</div>
+              <div className="lc-card-foot">P to resume</div>
+            </div>
           </div>
         )}
       </div>
