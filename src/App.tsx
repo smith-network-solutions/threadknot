@@ -1681,6 +1681,13 @@ export default function App() {
           .then((hello) => dispatch({ type: "hello", data: hello }))
           .catch(() => undefined);
       }
+      else if (frame.scope === "connector") {
+        // Remote-access relay status pulse: fires on every relay heartbeat
+        // (~10s) just to move byte counters. Nothing outside the settings
+        // panel renders it, and that panel polls connector.status itself
+        // while open. Falling through to the projects fallback here made the
+        // whole app refetch and visibly blink on every heartbeat.
+      }
       else if (frame.scope === "updates")
         void actionsRef.current.refreshUpdate().catch(() => undefined);
       else if (frame.scope === "archives")

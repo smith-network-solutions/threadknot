@@ -1838,7 +1838,8 @@ export interface StateChangedFrame {
     | "archives"
     | "identity"
     | "themes"
-    | "updates";
+    | "updates"
+    | "connector";
   projectId?: string;
   /** Set on frames relayed from a peer: the origin machine's id (added by the
    *  peer-socket relay). Absent on locally produced frames. Lets a machine-
