@@ -34,7 +34,7 @@ export const IN = {
   dusk: "#5b4fb0",
 } as const;
 
-export type Btn = "up" | "down" | "left" | "right" | "fire";
+export type Btn = "up" | "down" | "left" | "right" | "fire" | "bomb";
 
 export interface Input {
   /** Buttons currently down. */
@@ -43,7 +43,16 @@ export interface Input {
   tapped: ReadonlySet<Btn>;
 }
 
-export type Cue = "step" | "pickup" | "shoot" | "hit" | "clear" | "die" | "gate";
+export type Cue =
+  | "step"
+  | "pickup"
+  | "shoot"
+  | "hit"
+  | "clear"
+  | "die"
+  | "gate"
+  | "power"
+  | "boom";
 
 export type RunStatus = "playing" | "cleared" | "failed";
 
@@ -365,10 +374,41 @@ interface Shot {
   live: boolean;
 }
 
+/** A bolt the player fired. `pierce` is how many more mites it may still go
+ *  through before it is spent, which is the whole difference a missile makes. */
+interface Bolt extends Shot {
+  pierce: number;
+}
+
+/** Something a dying mite left behind, falling toward the cannon. */
+interface Drop {
+  x: number;
+  y: number;
+  live: boolean;
+  kind: "power" | "bomb";
+}
+
+/** The gun ladder. Each rung is a real change in how the stage plays, not a
+ *  number going up: more bolts in the air at once, a shorter gap between
+ *  volleys, a second firing unit, and finally a shot that does not stop at the
+ *  first thing it hits. */
+const TIERS = [
+  { name: "BOLT", maxShots: 2, cooldown: 0.2, speed: 340, pierce: 1, units: 1, width: 2 },
+  { name: "RAPID", maxShots: 4, cooldown: 0.12, speed: 380, pierce: 1, units: 1, width: 2 },
+  { name: "TWIN", maxShots: 6, cooldown: 0.12, speed: 380, pierce: 1, units: 2, width: 2 },
+  { name: "MISSILE", maxShots: 8, cooldown: 0.09, speed: 460, pierce: 3, units: 2, width: 3 },
+] as const;
+
+const MAX_BOMBS = 3;
+/** How far to the left of the cannon the support unit flies. */
+const POD_OFFSET = 18;
+
 /**
  * A wall of mites walking a descending grid while you hold the bottom of the
- * screen with one shot in the air at a time. Three waves, each wider and
- * quicker off the trigger than the last.
+ * screen. You start with a peashooter and two shots in the air; clearing a wave
+ * promotes the gun, and the mites themselves drop the rest. By the last wave a
+ * well-armed player has two units firing piercing missiles and a bomb in
+ * reserve, which is roughly what the wall has earned by then.
  */
 function createBugBlaster(seed: number): StageRun {
   const rand = makeRandom(seed);
@@ -381,12 +421,30 @@ function createBugBlaster(seed: number): StageRun {
   let animFrame = 0;
   let fireTimer = 0;
   let playerX = VIEW_W / 2 - 4;
-  const bullet: Shot = { x: 0, y: 0, live: false };
+  let tier = 0;
+  let bombs = 1;
+  let cooldown = 0;
+  let bombFlash = 0;
+  const bolts: Bolt[] = [];
+  const drops: Drop[] = [];
   const glitches: Shot[] = [];
   let status: RunStatus = "playing";
   let score = 0;
   const cues: Cue[] = [];
   let interlude = 0;
+
+  const gun = () => TIERS[Math.min(tier, TIERS.length - 1)];
+  /** Left clamp has to leave room for the support unit, or the pod would fly
+   *  off the side of the screen the moment you hug the left wall. */
+  const leftLimit = () => (gun().units > 1 ? 6 + POD_OFFSET : 6);
+  const podX = () => playerX - POD_OFFSET;
+
+  function promote(): void {
+    if (tier < TIERS.length - 1) {
+      tier++;
+      cues.push("power");
+    }
+  }
 
   function buildWave(n: number): void {
     const cols = WAVE_COLS[n];
@@ -400,7 +458,9 @@ function createBugBlaster(seed: number): StageRun {
       }
     }
     glitches.length = 0;
-    bullet.live = false;
+    bolts.length = 0;
+    drops.length = 0;
+    cooldown = 0;
     fireTimer = 0.9;
   }
 
@@ -428,9 +488,12 @@ function createBugBlaster(seed: number): StageRun {
     get score() {
       return score;
     },
-    readout: () => `WAVE ${Math.min(wave + 1, WAVE_COLS.length)}/${WAVE_COLS.length}`,
+    readout: () =>
+      `WAVE ${Math.min(wave + 1, WAVE_COLS.length)}/${WAVE_COLS.length} · ${gun().name} · BOMBS ${bombs}`,
     update(dt, input) {
       if (status !== "playing") return;
+
+      if (bombFlash > 0) bombFlash = Math.max(0, bombFlash - dt);
 
       if (interlude > 0) {
         interlude = Math.max(0, interlude - dt);
@@ -442,19 +505,69 @@ function createBugBlaster(seed: number): StageRun {
       const speed = 128;
       if (input.held.has("left")) playerX -= speed * dt;
       if (input.held.has("right")) playerX += speed * dt;
-      playerX = Math.max(6, Math.min(VIEW_W - 6 - MITE_W, playerX));
+      playerX = Math.max(leftLimit(), Math.min(VIEW_W - 6 - MITE_W, playerX));
 
-      // One shot in the air: the whole rhythm of the stage is deciding when to
-      // spend it.
-      if (input.tapped.has("fire") && !bullet.live) {
-        bullet.live = true;
-        bullet.x = playerX + 3;
-        bullet.y = PLAYER_Y - 4;
+      // Firing. Held OR tapped: at RAPID and above the trigger is something you
+      // lean on, and forcing a tap per bolt would waste the cadence the upgrade
+      // just bought. The cooldown, not the keyboard, sets the rate.
+      cooldown = Math.max(0, cooldown - dt);
+      const wantsFire = input.held.has("fire") || input.tapped.has("fire");
+      const g = gun();
+      if (wantsFire && cooldown === 0 && bolts.filter((b) => b.live).length < g.maxShots) {
+        const muzzles = g.units > 1 ? [playerX + 3, podX() + 3] : [playerX + 3];
+        for (const mx of muzzles) {
+          bolts.push({ x: mx, y: PLAYER_Y - 4, live: true, pierce: g.pierce });
+        }
+        cooldown = g.cooldown;
         cues.push("shoot");
       }
-      if (bullet.live) {
-        bullet.y -= 340 * dt;
-        if (bullet.y < -6) bullet.live = false;
+
+      // The bomb: everything in the air dies, and so does the front of the wall.
+      // One button, a scarce resource, and the answer to being boxed in.
+      if (input.tapped.has("bomb") && bombs > 0) {
+        bombs--;
+        bombFlash = 0.45;
+        cues.push("boom");
+        for (const gl of glitches) gl.live = false;
+        const live = mites.filter((m) => m.alive);
+        if (live.length) {
+          const front = Math.max(...live.map((m) => m.cy));
+          for (const m of live) {
+            if (m.cy >= front - 20) {
+              m.alive = false;
+              score += 20;
+            }
+          }
+        }
+      }
+
+      for (const b of bolts) {
+        if (!b.live) continue;
+        b.y -= g.speed * dt;
+        if (b.y < -8) b.live = false;
+      }
+      // Spent bolts are swept rather than left to grow the array for the whole
+      // stage; the cap above counts live ones, so this is housekeeping only.
+      if (bolts.length > 32) {
+        for (let i = bolts.length - 1; i >= 0; i--) if (!bolts[i].live) bolts.splice(i, 1);
+      }
+
+      // Capsules fall toward the cannon; the catch box is a little wider than
+      // the cannon, because missing a power-up by a pixel is not a lesson.
+      for (const d of drops) {
+        if (!d.live) continue;
+        d.y += 58 * dt;
+        if (d.y > VIEW_H) {
+          d.live = false;
+        } else if (aabb(d.x, d.y, 6, 6, playerX - 4, PLAYER_Y - 2, MITE_W + 8, 10)) {
+          d.live = false;
+          score += 30;
+          if (d.kind === "power") promote();
+          else {
+            bombs = Math.min(MAX_BOMBS, bombs + 1);
+            cues.push("power");
+          }
+        }
       }
 
       // Formation march. Edges are tested against the live extent, so a cleared
@@ -468,6 +581,11 @@ function createBugBlaster(seed: number): StageRun {
           status = "cleared";
           return;
         }
+        // Clearing a wave always promotes the gun, so a player who caught no
+        // capsules at all still walks into the next wave better armed. Drops
+        // are the fast route, not the only one.
+        promote();
+        bombs = Math.min(MAX_BOMBS, bombs + 1);
         interlude = 1.1;
         return;
       }
@@ -517,17 +635,29 @@ function createBugBlaster(seed: number): StageRun {
         }
       }
 
-      // Bullet against the wall.
-      if (bullet.live) {
+      // Bolts against the wall. A bolt with pierce left keeps going, which is
+      // what makes a missile worth catching: one shot down a full column.
+      for (const b of bolts) {
+        if (!b.live) continue;
         for (const m of mites) {
           if (!m.alive) continue;
           const mx = originX + m.cx;
           const my = originY + m.cy;
-          if (aabb(bullet.x, bullet.y, 2, 6, mx, my, MITE_W, MITE_H)) {
-            m.alive = false;
-            bullet.live = false;
-            score += 15;
-            cues.push("hit");
+          if (!aabb(b.x, b.y, g.width, 6, mx, my, MITE_W, MITE_H)) continue;
+          m.alive = false;
+          score += 15;
+          cues.push("hit");
+          if (rand() < 0.16) {
+            drops.push({
+              x: mx + 1,
+              y: my,
+              live: true,
+              kind: rand() < 0.65 ? "power" : "bomb",
+            });
+          }
+          b.pierce--;
+          if (b.pierce <= 0) {
+            b.live = false;
             break;
           }
         }
@@ -565,14 +695,52 @@ function createBugBlaster(seed: number): StageRun {
         g.fillRect(Math.round(gl.x), Math.round(gl.y) + 4, 2, 2);
       }
 
-      if (bullet.live) {
-        g.fillStyle = IN.pale;
-        g.fillRect(Math.round(bullet.x), Math.round(bullet.y), 2, 6);
+      // Capsules: a framed box, gold for a gun, pink for a bomb, with a mark
+      // inside so the two are told apart at a glance rather than by colour
+      // alone.
+      for (const d of drops) {
+        if (!d.live) continue;
+        const dx = Math.round(d.x);
+        const dy = Math.round(d.y);
+        g.fillStyle = d.kind === "power" ? IN.gold : IN.hot;
+        g.fillRect(dx, dy, 6, 6);
+        g.fillStyle = IN.ink;
+        if (d.kind === "power") {
+          g.fillRect(dx + 2, dy + 1, 2, 4);
+          g.fillRect(dx + 1, dy + 2, 4, 2);
+        } else {
+          g.fillRect(dx + 1, dy + 2, 4, 3);
+        }
+      }
+
+      const wep = gun();
+      for (const b of bolts) {
+        if (!b.live) continue;
+        // A missile reads as a missile: wider, longer, and gold rather than white.
+        g.fillStyle = wep.pierce > 1 ? IN.gold : IN.pale;
+        g.fillRect(Math.round(b.x), Math.round(b.y), wep.width, wep.pierce > 1 ? 8 : 6);
       }
 
       blit(g, CANNON, Math.round(playerX), PLAYER_Y, IN.pale);
       g.fillStyle = IN.wire;
       g.fillRect(Math.round(playerX), PLAYER_Y + 4, MITE_W, 2);
+
+      // The support unit, drawn a little smaller so the cannon you actually
+      // steer (and the only one that can be hit) stays the obvious one.
+      if (wep.units > 1) {
+        const px = Math.round(podX());
+        g.fillStyle = IN.wire;
+        g.fillRect(px + 2, PLAYER_Y, 4, 2);
+        g.fillRect(px + 1, PLAYER_Y + 2, 6, 4);
+        g.fillStyle = IN.ink;
+        g.fillRect(px + 3, PLAYER_Y + 3, 2, 2);
+      }
+
+      // Bomb flash: the whole tube whites out for a moment.
+      if (bombFlash > 0) {
+        g.fillStyle = `rgba(189, 243, 255, ${(bombFlash / 0.45) * 0.55})`;
+        g.fillRect(0, 0, VIEW_W, VIEW_H);
+      }
     },
     drain() {
       return cues.splice(0, cues.length);
@@ -966,8 +1134,9 @@ export const STAGES: readonly Stage[] = [
   {
     id: "bug-blaster",
     title: "BUG BLASTER",
-    brief: "Three waves of mites are walking down the stack. Clear every one.",
-    controls: "LEFT / RIGHT to move · SPACE to fire",
+    brief:
+      "Three waves of mites are walking down the stack. Clear every one. Your gun improves with every wave, and the mites drop the rest.",
+    controls: "LEFT / RIGHT to move · SPACE to fire (hold it) · X for a bomb",
     create: createBugBlaster,
   },
   {

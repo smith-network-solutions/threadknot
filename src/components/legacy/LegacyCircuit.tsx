@@ -21,12 +21,14 @@ import {
   CREST_NAME,
   getLegacyAward,
   recordLegacyScore,
+  setLegacyHandle,
   setLegacySound,
 } from "../../lib/legacyCircuit";
 import { ensureFontLoaded } from "../../lib/fonts";
 import { Cabinet } from "./sfx";
 import { Crest } from "./Crest";
 import { STAGES, VIEW_H, VIEW_W, type Btn, type Input, type StageRun } from "./stages";
+import { TRIBUTES } from "./tributes";
 import "../../styles/legacy.css";
 
 type Phase =
@@ -34,16 +36,31 @@ type Phase =
   | "boot"
   /** Marquee, dedication, insert coin. */
   | "title"
+  /** Who is playing. Asked once per visit to the cabinet. */
+  | "handle"
   /** Attract card for the stage about to start. */
   | "intro"
   | "play"
   /** A life gone; the stage restarts from the top. */
   | "lost"
-  | "stage-clear"
+  /** A stage beaten, and the page of names it buys you. */
+  | "tribute"
   /** Out of lives. */
   | "over"
   /** All three cleared. */
   | "win";
+
+const HANDLE_MAX = 14;
+
+/** Keep a handle to something that will fit the marquee and cannot smuggle
+ *  markup or control characters into a stored record. */
+function cleanHandle(raw: string): string {
+  return raw
+    .replace(/[^A-Za-z0-9 _.\-]/g, "")
+    .replace(/\s+/g, " ")
+    .trimStart()
+    .slice(0, HANDLE_MAX);
+}
 
 /** Physical keys to game buttons. Codes, not characters, so the layout under
  *  the keyboard does not decide whether the game is playable. */
@@ -59,6 +76,9 @@ const BUTTONS: Record<string, Btn> = {
   Space: "fire",
   KeyZ: "fire",
   KeyJ: "fire",
+  KeyX: "bomb",
+  KeyB: "bomb",
+  KeyK: "bomb",
 };
 
 const LIVES = 3;
@@ -85,6 +105,8 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   const [paused, setPaused] = useState(false);
   const [best, setBest] = useState(() => getLegacyAward().bestScore);
   const [scale, setScale] = useState(2);
+  // Prefilled from the last visit: asking again is fine, retyping is not.
+  const [handle, setHandle] = useState(() => getLegacyAward().handle);
 
   const stage = STAGES[Math.min(stageIndex, STAGES.length - 1)];
 
@@ -93,6 +115,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const readoutRef = useRef<HTMLSpanElement | null>(null);
   const scoreRef = useRef<HTMLSpanElement | null>(null);
+  const handleInputRef = useRef<HTMLInputElement | null>(null);
 
   const runRef = useRef<StageRun | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -141,12 +164,17 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     const wrap = stageWrapRef.current;
     if (!wrap) return;
     const measure = () => {
-      const r = wrap.getBoundingClientRect();
-      if (r.width < 4 || r.height < 4) return;
-      const fit = Math.min(r.width / VIEW_W, r.height / VIEW_H);
-      // Up to 5x now that the cabinet owns the window: a 1600x1200 picture on a
-      // tall screen, still every pixel landing on a whole number of real ones.
-      setScale(Math.max(1, Math.min(5, Math.floor(fit))));
+      // clientWidth/Height, NOT getBoundingClientRect: the rect is the
+      // TRANSFORMED box, and the tube power-on animates an ancestor down to
+      // 0.6% height. Measuring during the boot therefore reported a stage six
+      // pixels tall, pinned the scale at 1, and left it there forever, because
+      // the layout size never changed and the observer never fired again.
+      const w = wrap.clientWidth;
+      const h = wrap.clientHeight;
+      if (w < 4 || h < 4) return;
+      // Up to 6x now that the cabinet owns the window, with every pixel still
+      // landing on a whole number of real ones.
+      setScale(Math.max(1, Math.min(6, Math.floor(Math.min(w / VIEW_W, h / VIEW_H)))));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -219,7 +247,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       if (!settledRef.current && run.status === "cleared") {
         settledRef.current = true;
         setBanked((s) => s + run.score);
-        setPhase(stageIndex >= STAGES.length - 1 ? "win" : "stage-clear");
+        // Every cleared stage goes to its tribute page, including the last.
+        // The crest screen comes after the third one.
+        setPhase("tribute");
       } else if (!settledRef.current && run.status === "failed") {
         settledRef.current = true;
         setLives((n) => Math.max(0, n - 1));
@@ -274,7 +304,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     cabinetRef.current?.arm();
     switch (phaseRef.current) {
       case "title":
-        beginRun();
+        // Who is playing, before anything else happens. Once per visit: a
+        // replay after a game over keeps the handle you already gave.
+        setPhase("handle");
         break;
       case "intro":
         setPaused(false);
@@ -284,8 +316,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         startStage(stageIndex);
         setPhase("intro");
         break;
-      case "stage-clear": {
+      case "tribute": {
         const next = stageIndex + 1;
+        if (next >= STAGES.length) {
+          setPhase("win");
+          break;
+        }
         setStageIndex(next);
         startStage(next);
         setPhase("intro");
@@ -300,6 +336,16 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     }
   }, [beginRun, stageIndex, startStage]);
 
+  /** Leaving the handle screen: store it and start stage one. */
+  const submitHandle = useCallback(() => {
+    const clean = cleanHandle(handle).trim();
+    const final = clean || "ANON";
+    setHandle(final);
+    setLegacyHandle(final);
+    cabinetRef.current?.arm();
+    beginRun();
+  }, [handle, beginRun]);
+
   /* ---- input ----------------------------------------------------------- */
 
   useEffect(() => {
@@ -310,6 +356,10 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         onExit();
         return;
       }
+      // While the handle is being typed the keyboard belongs to the field, not
+      // to the cabinet. Without this, every letter that happens to be a game
+      // button would be swallowed before it could be typed.
+      if (phaseRef.current === "handle") return;
       // The cabinet owns the keyboard while it is up: nothing here should also
       // scroll the page behind it or type into anything.
       const btn = BUTTONS[e.code];
@@ -374,6 +424,15 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     return () => window.clearTimeout(t);
   }, [phase]);
 
+  // The handle field wants the caret the moment it appears, and the boot
+  // animation's transform is over by any phase that shows it.
+  useEffect(() => {
+    if (phase !== "handle") return;
+    const input = handleInputRef.current;
+    input?.focus();
+    input?.select();
+  }, [phase]);
+
   /* ---- render ---------------------------------------------------------- */
 
   const showCanvas = phase === "play" || phase === "intro" || phase === "lost";
@@ -405,25 +464,29 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           body: "The stage restarts from the top. Your banked stages are safe.",
           foot: "PRESS ENTER",
         };
-      case "stage-clear":
+      case "tribute": {
+        const t = TRIBUTES[Math.min(stageIndex, TRIBUTES.length - 1)];
         return {
-          kicker: `STAGE ${stageIndex + 1} CLEAR`,
-          heading: stage.title,
-          body: `${String(total).padStart(6, "0")} points banked. One more piece of the weave.`,
+          kicker: `${t.kicker} · ${String(total).padStart(6, "0")} BANKED`,
+          heading: t.heading,
+          body: t.lede,
+          roll: t.roll,
+          close: t.close,
           foot: "PRESS ENTER",
         };
+      }
       case "over":
         return {
           kicker: "GAME OVER",
           heading: "THE THREAD SNAPS",
-          body: `${String(peakRef.current).padStart(6, "0")} points. Three stages, three lives, one run: that is the deal.`,
+          body: `${handle || "PLAYER"}, ${String(peakRef.current).padStart(6, "0")} points. Three stages, three lives, one run: that is the deal.`,
           foot: "ENTER to try again · ESC to leave",
         };
       case "win":
         return {
-          kicker: "ALL STAGES CLEAR",
+          kicker: `ALL STAGES CLEAR · ${String(total).padStart(6, "0")}`,
           heading: CREST_NAME,
-          body: "You found the circuit. You finished the run. Carry the thread forward.",
+          body: `${handle || "PLAYER"}, you found the circuit. You finished the run. Carry the thread forward.`,
           dedication: CIRCUIT_TRIBUTE,
           foot: "ENTER to run it again · ESC to leave",
         };
@@ -476,6 +539,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       </header>
 
       <div className="lc-hud">
+        {handle && (
+          <span className="lc-hud-cell">
+            <span className="lc-hud-key">PLAYER</span>
+            <span className="lc-hud-val lc-hud-handle">{handle.toUpperCase()}</span>
+          </span>
+        )}
         <span className="lc-hud-cell">
           <span className="lc-hud-key">SCORE</span>
           <span className="lc-hud-val" ref={scoreRef}>
@@ -521,7 +590,56 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
             {"dedication" in card && card.dedication && (
               <p className="lc-card-dedication">{card.dedication}</p>
             )}
+            {"roll" in card && card.roll && (
+              <ul className="lc-roll">
+                {card.roll.map((entry) => (
+                  <li className="lc-roll-item" key={entry.name}>
+                    <span className="lc-roll-name">{entry.name}</span>
+                    <span className="lc-roll-note">{entry.note}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {"close" in card && card.close && (
+              <p className="lc-card-close">{card.close}</p>
+            )}
             <div className="lc-card-foot">{card.foot}</div>
+          </div>
+        )}
+
+        {phase === "handle" && (
+          <div className="lc-card lc-card-handle" role="dialog" aria-label="Enter your handle">
+            <div className="lc-card-kicker">IDENTIFY YOURSELF</div>
+            <div className="lc-card-heading">ENTER YOUR HANDLE</div>
+            <p className="lc-card-body">
+              It goes on the cabinet, and nowhere else. This machine remembers
+              it for next time and never sends it anywhere.
+            </p>
+            <form
+              className="lc-handle-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitHandle();
+              }}
+            >
+              <input
+                ref={handleInputRef}
+                className="lc-handle-input"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={HANDLE_MAX}
+                aria-label="Your handle"
+                placeholder="WHO GOES THERE"
+                value={handle}
+                onChange={(e) => setHandle(cleanHandle(e.target.value))}
+              />
+              <button type="submit" className="lc-handle-go">
+                START
+              </button>
+            </form>
+            <div className="lc-card-foot">ENTER to begin · ESC to leave</div>
           </div>
         )}
 
@@ -534,7 +652,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       </div>
 
       <footer className="lc-foot">
-        <span>ESC leave · P pause · M sound</span>
+        <span>ESC leave · P pause · M sound · X bomb</span>
         <span className="lc-foot-note">
           Original games. No part of this reproduces another title's art, audio or characters.
         </span>

@@ -122,6 +122,9 @@ export interface LegacyAward {
   /** Sound preference for the cabinet. Kept with the award because it is the
    *  only screen that makes noise, and it should be remembered between runs. */
   sound: boolean;
+  /** The name the player gave the cabinet, remembered so it can be prefilled
+   *  rather than retyped every visit. Local only, like everything else here. */
+  handle: string;
 }
 
 const AWARD_DEFAULT: LegacyAward = {
@@ -129,7 +132,21 @@ const AWARD_DEFAULT: LegacyAward = {
   earnedAt: "",
   bestScore: 0,
   sound: true,
+  handle: "",
 };
+
+/** Stored handles are hand-editable strings that end up rendered, so the same
+ *  narrow character set is enforced on the way in and on the way out. */
+export const HANDLE_MAX_LENGTH = 14;
+
+export function normalizeHandle(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw
+    .replace(/[^A-Za-z0-9 _.\-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, HANDLE_MAX_LENGTH);
+}
 
 /** Storage is a string a user can hand-edit and an older build can have written
  *  a different shape into, so every field is re-derived rather than trusted. */
@@ -142,6 +159,7 @@ function normalize(raw: unknown): LegacyAward {
     earnedAt: typeof r.earnedAt === "string" ? r.earnedAt : "",
     bestScore: Number.isFinite(best) && best > 0 ? Math.floor(best) : 0,
     sound: r.sound !== false,
+    handle: normalizeHandle(r.handle),
   };
 }
 
@@ -188,6 +206,10 @@ export function recordLegacyScore(score: number): LegacyAward {
 
 export function setLegacySound(sound: boolean): LegacyAward {
   return writeAward({ ...getLegacyAward(), sound });
+}
+
+export function setLegacyHandle(handle: string): LegacyAward {
+  return writeAward({ ...getLegacyAward(), handle: normalizeHandle(handle) });
 }
 
 /** The crest's name, in one place: the HUD, the tooltip and the completion

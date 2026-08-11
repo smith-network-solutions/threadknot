@@ -29,6 +29,10 @@ const VOICES: Record<Cue, Note> = {
   gate: { hz: 440, to: 880, dur: 0.22, type: "triangle", gain: 0.12 },
   clear: { hz: 520, to: 1560, dur: 0.34, type: "square", gain: 0.12 },
   die: { hz: 300, to: 55, dur: 0.5, type: "sawtooth", gain: 0.14 },
+  // A gun going up should sound like it: a short confident climb, distinct
+  // from the pickup blip so you know which of the two you just caught.
+  power: { hz: 380, to: 1500, dur: 0.2, type: "square", gain: 0.13 },
+  boom: { hz: 220, to: 32, dur: 0.6, type: "sawtooth", gain: 0.17 },
 };
 
 export class Cabinet {
