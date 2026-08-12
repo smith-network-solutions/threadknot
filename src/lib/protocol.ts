@@ -946,10 +946,11 @@ export interface UpdateCommit {
 }
 
 /** One pull / rebuild / restart, from claim to completion. `ok` is null while
- *  it is still running, which is also how the UI knows to show a live stage. */
+ *  it is still running, which is also how the UI knows to show a live stage.
+ *  `update` is all three chained off a single click. */
 export interface UpdateOperation {
   id: string;
-  kind: "pull" | "rebuild" | "restart";
+  kind: "pull" | "rebuild" | "restart" | "update";
   stage: string;
   startedAt: string;
   finishedAt?: string | null;
@@ -1777,7 +1778,14 @@ export interface RequestMap {
     data: UpdateStatus;
   };
   "git.selfUpdateCheck": { payload: { machineId?: string }; data: Record<string, never> };
-  "git.selfUpdatePull": { payload: { machineId?: string }; data: { ok: boolean } };
+  /** `chain` asks the target machine to rebuild and restart itself once the
+   *  pull lands, so one click does the whole update. It then returns as soon as
+   *  the run is claimed, like the rebuild below; a machine that cannot rebuild
+   *  itself ignores the flag and just pulls. */
+  "git.selfUpdatePull": {
+    payload: { machineId?: string; chain?: boolean; force?: boolean };
+    data: { ok: boolean; operationId?: string };
+  };
   /** Returns as soon as the build is claimed; progress arrives on the
    *  `updates` broadcast, because a release compile outlives any request. */
   "git.selfUpdateRebuild": {

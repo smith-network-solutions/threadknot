@@ -1438,8 +1438,17 @@ function makeActions(
       );
     },
 
-    async pullUpdate(machineId?: string) {
-      await client.request("git.selfUpdatePull", machineId ? { machineId } : {});
+    /** `chain` hands the machine the whole job: pull, rebuild, restart. It then
+     *  resolves when the run is claimed rather than when it ends, exactly like
+     *  rebuildUpdate below, since the build inside it takes minutes. `force`
+     *  carries the same consent the restart button asks for, since the restart
+     *  at the end of the chain is the one that interrupts live threads. */
+    async pullUpdate(machineId?: string, chain?: boolean, force?: boolean) {
+      await client.request("git.selfUpdatePull", {
+        ...(machineId ? { machineId } : {}),
+        ...(chain ? { chain } : {}),
+        ...(chain && force ? { force } : {}),
+      });
       if (!machineId) void refreshUpdate().catch(() => undefined);
     },
 

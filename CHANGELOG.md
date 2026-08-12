@@ -8,6 +8,11 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+## v0.1.64 · 2026-08-11
+
+- **Updating is one click again, and Windows can finally do it.** Under Settings → updates, the button on a machine that can finish the job now reads **pull, build & restart**: it fast-forwards the checkout, rebuilds, and relaunches itself into the new build, showing each stage as it goes. The build keeps running if you close the window or the tab that started it. Windows machines could previously only pull, and had to be rebuilt and reopened by hand.
+- **Nothing restarts out from under working threads.** If any thread starts a turn or asks for approval while the build is running, the update stops after building and leaves the ordinary **restart now** button for when they finish. Rebuilds and restarts that end without changing anything now say so on the card instead of finishing silently.
+
 ## v0.1.32 · 2026-08-10
 
 - **New About section, at the foot of Settings.** What Threadknot is, the exact build you are running (version, build date, commit and machine), the Apache-2.0 licence with links to the source, the third-party notices and the security policy, and the credits. It rewards reading all the way to the bottom.

@@ -2629,6 +2629,17 @@ const CLAIMING: Record<"pull" | "rebuild" | "restart", string> = {
   restart: "restarting. this window reconnects on its own",
 };
 
+/** Which button owns a running server operation. The chained pull-build-restart
+ *  reports under its own kind, but the button that started it is still the pull
+ *  one, and it has to keep showing progress for the whole run rather than going
+ *  idle the moment the pull stage ends. */
+const OP_ACTION: Record<string, "pull" | "rebuild" | "restart"> = {
+  pull: "pull",
+  update: "pull",
+  rebuild: "rebuild",
+  restart: "restart",
+};
+
 /** Version + pending-commit view for one machine, with the actions that machine
  *  can safely take. Local when `machineId` is undefined. */
 function UpdateCard({
@@ -2661,11 +2672,12 @@ function UpdateCard({
   // another one did. Server state wins once it lands; `busy` only covers the
   // gap before the first broadcast. Without this the button sat disabled while
   // still reading "rebuild", which looks broken rather than busy.
-  const activeAction: Action | null =
-    busy ??
-    (running && (["pull", "rebuild", "restart"] as string[]).includes(op!.kind)
-      ? (op!.kind as Action)
-      : null);
+  const activeAction: Action | null = busy ?? (running ? (OP_ACTION[op!.kind] ?? null) : null);
+  // Where the machine can finish the job on its own, the pull button does the
+  // lot. A peer that cannot rebuild or restart itself keeps the old single-step
+  // button, because offering it a chain it cannot complete would just strand it
+  // halfway.
+  const canChain = !!status.rebuildSupported && !!status.restartSupported;
   // An older peer reports no thread count at all. Treating "unknown" as "none"
   // is the safe read: we only ever use it to add a warning, never to unlock an
   // action, and the target machine re-checks for real before it restarts.
@@ -2701,7 +2713,7 @@ function UpdateCard({
     setBusy(which);
     setError(null);
     try {
-      if (which === "pull") await actions.pullUpdate(machineId);
+      if (which === "pull") await actions.pullUpdate(machineId, canChain, force);
       else if (which === "rebuild") await actions.rebuildUpdate(machineId);
       else await actions.restartUpdate(machineId, force);
       setArmed(null);
@@ -2793,6 +2805,15 @@ function UpdateCard({
           {op.logPath && <div className="update-log-path">full log: {op.logPath}</div>}
         </div>
       )}
+      {/* A run can succeed and still stop short — a build that produced nothing
+          new, or a chain that declined to restart through live threads. That
+          reason only ever rode in `error`, which the warn box above shows only
+          on failure, so it used to end silently and look like nothing happened. */}
+      {!running && op?.ok === true && op.error && (
+        <div className="update-note">
+          <strong>{op.stage}.</strong> {op.error}
+        </div>
+      )}
 
       {status.repoAvailable && (
         <>
@@ -2838,19 +2859,43 @@ function UpdateCard({
           )}
 
           <div className="update-actions">
-            {status.canFastForward && (
-              <button
-                type="button"
-                className="settings-toggle primary"
-                disabled={busy !== null || running}
-                onClick={() => void run("pull")}
-              >
-                {activeAction === "pull" && (
-                  <span className="update-spinner" aria-hidden="true" />
-                )}
-                {activeAction === "pull" ? "pulling…" : "pull to master"}
-              </button>
-            )}
+            {/* A chain that ends in a restart needs the same consent the restart
+                button asks for, so with threads live the click arms instead of
+                firing. Without this the run would build for minutes and then
+                decline to restart every single time, which is the state an
+                agent-driven machine is usually in. */}
+            {status.canFastForward &&
+              (canChain && busyThreads > 0 ? (
+                confirmable(
+                  "pull",
+                  "pull, build & restart",
+                  `yes, interrupt ${busyThreads} and update`,
+                  "updating…",
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="settings-toggle primary"
+                  disabled={busy !== null || running}
+                  onClick={() => void run("pull")}
+                  title={
+                    canChain
+                      ? "Pulls master, rebuilds, and restarts into the new build. The build takes minutes and keeps going if you close this window."
+                      : "Fast-forwards this checkout to master. Rebuilding is a separate step."
+                  }
+                >
+                  {activeAction === "pull" && (
+                    <span className="update-spinner" aria-hidden="true" />
+                  )}
+                  {activeAction === "pull"
+                    ? canChain
+                      ? "updating…"
+                      : "pulling…"
+                    : canChain
+                      ? "pull, build & restart"
+                      : "pull to master"}
+                </button>
+              ))}
             {status.updateAvailable &&
               !status.canFastForward &&
               !status.rebuildPending &&
