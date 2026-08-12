@@ -24,6 +24,7 @@ import {
 import { isWindowFocused, startFocusTracking } from "./lib/focus";
 import { initZoomHotkeys } from "./lib/hotwheel";
 import { installExternalLinkHandler } from "./lib/links";
+import { LinkOpenModal } from "./components/LinkOpenModal";
 import { getSidebarPrefs } from "./lib/appearance";
 import type {
   Access,
@@ -1940,6 +1941,8 @@ export default function App() {
         <div className="work-pane">
           <MainSplit />
         </div>
+        {/* "Where should this link open?" chooser for clicked http(s) links. */}
+        <LinkOpenModal />
         {state.conn !== "online" && (
           <div className={`conn-banner conn-${state.conn}`}>
             {state.conn === "connecting" ? "connecting to server…" : "offline — retrying…"}

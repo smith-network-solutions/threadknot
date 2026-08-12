@@ -4,6 +4,7 @@ import { findThread, useStore } from "../state/store";
 import { browserWsUrl } from "../lib/discovery";
 import { isNativeShell, readNativeClipboardText } from "../lib/native";
 import { APPEARANCE_EVENT, getPaneZoom } from "../lib/appearance";
+import { BROWSER_INTENT_EVENT, takeBrowserUrl } from "../lib/browserIntent";
 import "../styles/browser.css";
 
 /** Device-width presets. `null` = fill the pane (native viewport). */
@@ -106,7 +107,7 @@ function tabLabel(tab: BrowserTab): string {
  * it never destroys the browser.
  */
 export function BrowserPane({
-  project: _project,
+  project,
   active,
   sessionId,
   machineId,
@@ -200,6 +201,25 @@ export function BrowserPane({
     },
     [send],
   );
+
+  // "Open in Threadknot Browser" from the link chooser (LinkOpenModal). The
+  // URL sits in a mailbox because the choice may open this pane before it has
+  // mounted or its socket is live; claim it at every step that could be the
+  // last one (mount, intent event, connection turning live).
+  const intentRef = useRef<string | null>(null);
+  useEffect(() => {
+    const claim = () => {
+      const staged = takeBrowserUrl(project.id);
+      if (staged) intentRef.current = staged;
+      if (intentRef.current && connection === "live") {
+        navigate(intentRef.current);
+        intentRef.current = null;
+      }
+    };
+    claim();
+    window.addEventListener(BROWSER_INTENT_EVENT, claim);
+    return () => window.removeEventListener(BROWSER_INTENT_EVENT, claim);
+  }, [project.id, navigate, connection]);
 
   const paint = useCallback((buffer: ArrayBuffer) => {
     const blob = new Blob([buffer], { type: "image/jpeg" });

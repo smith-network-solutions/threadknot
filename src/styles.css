@@ -5784,6 +5784,39 @@ body.reordering { cursor: grabbing; user-select: none; }
   margin-bottom: 10px;
 }
 
+/* "Where should this link open?" chooser (LinkOpenModal). */
+.link-open-modal {
+  width: 680px;
+  padding: 22px 26px;
+}
+.link-open-modal .modal-head { font-size: 13px; margin-bottom: 14px; }
+.link-open-url {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 11px 13px;
+  margin-bottom: 19px;
+  font-size: 12px;
+  color: var(--brass-hi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.link-open-actions {
+  display: flex;
+  gap: 11px;
+}
+.link-open-actions .settings-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  font-size: 14px;
+  padding: 11px 16px;
+}
+
 .dir-path {
   background: var(--bg);
   border: 1px solid var(--line);
