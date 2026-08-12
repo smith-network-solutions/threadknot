@@ -209,6 +209,17 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     return () => cabinet?.dispose();
   }, []);
 
+  // Tell the app-wide per-pane zoom to keep its hands off while the cabinet is
+  // up (see hotwheel.ts). Its wheel handler is on window in the bubble phase,
+  // so it runs after this component's and would zoom the conversation behind
+  // the cabinet at the same time as the cabinet itself.
+  useEffect(() => {
+    document.documentElement.dataset.legacyCircuit = "on";
+    return () => {
+      delete document.documentElement.dataset.legacyCircuit;
+    };
+  }, []);
+
   /* ---- layout ---------------------------------------------------------- */
 
   // Whole-number scaling only: a 1.5x canvas is a blurry canvas, and the entire

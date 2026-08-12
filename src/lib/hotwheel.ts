@@ -43,6 +43,16 @@ function inTerminal(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest(".terminal-pane, .xterm");
 }
 
+/** The About screen's full-window takeover carries its own zoom, the same way
+ *  a terminal carries its own font size. It is portaled to <body>, so it is
+ *  inside no pane at all and would otherwise fall through to "feed" and zoom
+ *  the conversation behind it. Flagged on the root element rather than sniffed
+ *  from the event target, because the target is whatever happens to hold focus
+ *  in there and may well be <body>. */
+function cabinetUp(): boolean {
+  return document.documentElement.dataset.legacyCircuit === "on";
+}
+
 /** Resolve which zoomable pane an event landed in. */
 function paneAt(target: EventTarget | null): PaneKind {
   if (!(target instanceof Element)) return "feed";
@@ -75,7 +85,7 @@ export function initZoomHotkeys(): () => void {
     // instance already handled (and stopped) the event for its font size;
     // reaching here over the pane chrome (tab strip / key row) is a no-op.
     e.preventDefault();
-    if (inTerminal(e.target)) return;
+    if (inTerminal(e.target) || cabinetUp()) return;
     const pane = resolve(e.target);
     // Leftover delta from one pane must not zoom the next one the cursor
     // crosses into; restart the accumulator at pane boundaries.
@@ -95,7 +105,7 @@ export function initZoomHotkeys(): () => void {
     if ((!e.ctrlKey && !e.metaKey) || e.altKey) return;
     // Inside a terminal the keystroke belongs to the pty; use ctrl+wheel over
     // the terminal (font) or these keys anywhere else (zoom).
-    if (inTerminal(e.target)) return;
+    if (inTerminal(e.target) || cabinetUp()) return;
     const pane = touchOnly ? "feed" : activePane;
     if (e.key === "=" || e.key === "+") {
       e.preventDefault();
