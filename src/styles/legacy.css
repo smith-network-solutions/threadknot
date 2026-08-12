@@ -1,0 +1,980 @@
+/* The About screen and the cabinet behind it.
+ *
+ * The cabinet deliberately does NOT read the app's theme variables. It is a
+ * different machine that happens to be inside this one, and it should look the
+ * same whether you found it from the light palette or the dark one. The About
+ * screen above it is the opposite: ordinary settings furniture, themed like
+ * every other block on the screen.
+ */
+
+/* ---- crest ------------------------------------------------------------- */
+
+.legacy-crest {
+  display: block;
+  flex: none;
+}
+.legacy-crest .crest-edge {
+  fill: var(--crest-edge, #ffcf4d);
+}
+.legacy-crest .crest-weave {
+  fill: var(--crest-weave, #ff3d8a);
+}
+/* A life already spent: still in its slot, so the row never reflows. */
+.legacy-crest.spent {
+  opacity: 0.2;
+}
+.legacy-crest.spent .crest-edge,
+.legacy-crest.spent .crest-weave {
+  fill: #6d7286;
+}
+.legacy-crest-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+/* Perfect Clear is a different metal on purpose: the weaver crest is brass and
+   pink, this one is white and cyan, so the two never read as the same award at
+   a glance. Unverified runs keep the shape and lose the shine. */
+.legacy-crest-perfect .crest-edge {
+  fill: #ffffff;
+}
+.legacy-crest-perfect .crest-weave {
+  fill: #6ff2ff;
+}
+.perfect-verified .legacy-crest-perfect {
+  filter: drop-shadow(0 0 4px rgba(111, 242, 255, 0.85));
+}
+.perfect-unverified .legacy-crest-perfect {
+  opacity: 0.55;
+}
+.perfect-unverified .legacy-crest-perfect .crest-edge {
+  fill: #9aa3bd;
+}
+.perfect-unverified .legacy-crest-perfect .crest-weave {
+  fill: #6b7591;
+}
+
+/* The finishing medals: one shape, three metals. */
+.legacy-crest-bronze .crest-edge { fill: #c87c3c; }
+.legacy-crest-bronze .crest-weave { fill: #ffb066; }
+.legacy-crest-silver .crest-edge { fill: #b9c6da; }
+.legacy-crest-silver .crest-weave { fill: #ffffff; }
+.legacy-crest-gold .crest-edge { fill: #ffcf4d; }
+.legacy-crest-gold .crest-weave { fill: #fff3b0; }
+.legacy-crest-gold { filter: drop-shadow(0 0 5px rgba(255, 207, 77, 0.75)); }
+.legacy-crest-silver { filter: drop-shadow(0 0 4px rgba(201, 212, 228, 0.5)); }
+
+/* The AI ABUSER AWARD, in colours chosen to be a small punishment. */
+.legacy-crest-abuser .crest-edge { fill: #9cff3d; }
+.legacy-crest-abuser .crest-weave { fill: #ff00a0; }
+.legacy-crest-abuser {
+  filter: drop-shadow(0 0 6px rgba(156, 255, 61, 0.6));
+}
+
+/* ---- About ------------------------------------------------------------- */
+
+.about-lede {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  max-width: 62ch;
+}
+.about-copy {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+  max-width: 62ch;
+}
+.about-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 18px;
+  margin: 8px 0 0;
+}
+.about-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.about-fact dt {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.about-fact dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.about-mono {
+  font-family: var(--font-mono);
+  user-select: all;
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+.about-links a {
+  font-size: 12px;
+  color: var(--brass-hi);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.about-links a:hover {
+  border-bottom-color: currentColor;
+}
+
+/* Credits. Broken into labelled sections rather than one block of prose: a
+   credit roll is a list of debts, and each one should be findable. */
+.about-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 10px;
+}
+.about-credit h4 {
+  margin: 0 0 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brass-hi);
+}
+.about-credit p {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+.about-credit strong {
+  font-weight: 600;
+  color: var(--text);
+}
+:root[data-theme="arcade"] .about-credit h4 {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9px;
+}
+
+/* Only rendered once the crest has been earned on this device. */
+.about-earned {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.about-earned-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.about-earned-text strong {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--brass-hi);
+}
+
+/* The contact strip: a dotted rule to anyone not typing at it. */
+.about-contacts {
+  display: flex;
+  gap: 5px;
+  margin-top: 18px;
+  opacity: 0.34;
+  transition: opacity 140ms ease;
+}
+.about-contacts.live {
+  opacity: 1;
+}
+.about-contact {
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-2, var(--line));
+  border-radius: 2px;
+  font-size: 8px;
+  line-height: 1;
+  color: transparent;
+}
+.about-contacts.live .about-contact.lit {
+  border-color: #ffcf4d;
+  color: #ffcf4d;
+  background: rgba(255, 207, 77, 0.12);
+  box-shadow: 0 0 6px rgba(255, 207, 77, 0.4);
+}
+.about-contacts.miss .about-contact {
+  border-color: #ff3d8a;
+  animation: about-miss 300ms steps(2, end);
+}
+@keyframes about-miss {
+  0%,
+  100% {
+    background: transparent;
+  }
+  50% {
+    background: rgba(255, 61, 138, 0.22);
+  }
+}
+
+/* The 1px marker the "scrolled to the foot" test watches. */
+.about-foot-marker {
+  height: 1px;
+  margin-top: 14px;
+}
+
+/* ---- the cabinet ------------------------------------------------------- */
+
+/* The settings dialog while the cabinet is up. Hidden rather than unmounted so
+   leaving the cabinet returns to the same screen, on the same section. */
+.settings-screen.ss-eclipsed {
+  visibility: hidden;
+}
+
+/* Above .modal-backdrop (100) as well as the settings backdrop (95): while the
+   cabinet is up it is the only thing on screen, and the dialog it was opened
+   from should not be readable behind it. */
+.lc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Opaque, and deliberately NOT backdrop-filter. A full-viewport blur behind
+     an animating canvas costs a re-blur of the whole screen every frame, and
+     it was the single largest source of dropped frames in here. The cabinet
+     covers what is behind it anyway, so the blur bought nothing. */
+  background: #02020a;
+}
+
+.lc-frame {
+  position: relative;
+  width: min(1680px, 97vw);
+  height: min(1180px, 96vh);
+  border: 2px solid #241c60;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: radial-gradient(120% 100% at 50% 0%, #0c0a24 0%, #05040f 68%, #01000a 100%);
+  color: #bdf3ff;
+  outline: none;
+  /* Multiplied into every type size below, so Ctrl+scroll scales the whole
+     machine from one number. Overridden inline by the component. */
+  --lc-zoom: 1;
+  --lc-gold: #ffcf4d;
+  --lc-wire: #2de1c2;
+  --lc-hot: #ff3d8a;
+  --crest-edge: #ffcf4d;
+  --crest-weave: #ff3d8a;
+}
+
+.lc-inner {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transform-origin: center center;
+}
+
+/* Tube power-on: the picture arrives as a hot horizontal line, opens out, and
+   settles. The whole effect is one transform plus one filter, so it composites
+   rather than repainting a canvas mid-boot. */
+.lc-frame.booting .lc-inner {
+  animation: lc-power 1.05s cubic-bezier(0.16, 0.9, 0.3, 1) both;
+}
+@keyframes lc-power {
+  0% {
+    transform: scaleY(0.006) scaleX(1.25);
+    filter: brightness(7) saturate(0);
+    opacity: 0.9;
+  }
+  18% {
+    transform: scaleY(0.006) scaleX(1);
+    filter: brightness(7) saturate(0);
+    opacity: 1;
+  }
+  46% {
+    transform: scaleY(1.04) scaleX(1);
+    filter: brightness(2.6) saturate(0.6);
+  }
+  62% {
+    transform: scaleY(0.99) scaleX(1);
+    filter: brightness(0.6) saturate(1);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+    filter: brightness(1) saturate(1);
+  }
+}
+.lc-frame.calm .lc-inner {
+  animation: none;
+}
+
+/* Glass: a static vignette over the whole cabinet, and nothing else.
+ *
+ * This used to carry full-frame scanlines AND a band animating down it forever.
+ * Over a window-sized element sitting above a scaling canvas, that is a
+ * continuous composite of about two million pixels for decoration nobody was
+ * looking at. The scanlines now live on the screen bezel only (a few hundred
+ * thousand pixels, and static), and the rolling band is gone. */
+.lc-glass {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background: radial-gradient(130% 110% at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.6) 100%);
+}
+
+.lc-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 2px solid #241c60;
+}
+.lc-marquee {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(14px, 1.1vw, 20px) * var(--lc-zoom));
+  letter-spacing: 0.1em;
+  color: var(--lc-hot);
+  text-shadow: 0 0 14px rgba(255, 61, 138, 0.55);
+}
+.lc-head-stage {
+  flex: 1;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(9.5px, 0.72vw, 13px) * var(--lc-zoom));
+  letter-spacing: 0.14em;
+  color: #9a94e0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lc-chip {
+  flex: none;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(9px, 0.7vw, 12px) * var(--lc-zoom));
+  letter-spacing: 0.1em;
+  padding: 5px 9px;
+  border: 2px solid #4a41a0;
+  border-radius: 0;
+  background: transparent;
+  color: #c2bcff;
+  cursor: pointer;
+}
+
+/* Zoom control: minus, the level (click to reset), plus. */
+.lc-zoom {
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 3px;
+}
+.lc-zoom-btn {
+  min-width: 24px;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: calc(clamp(11px, 0.85vw, 15px) * var(--lc-zoom));
+  line-height: 1;
+}
+.lc-zoom-level {
+  min-width: 52px;
+  text-align: center;
+}
+.lc-chip:hover {
+  border-color: var(--lc-gold);
+  color: var(--lc-gold);
+}
+.lc-chip:focus-visible {
+  outline: 2px solid var(--lc-gold);
+  outline-offset: 2px;
+}
+
+.lc-hud {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 8px 14px;
+  border-bottom: 2px solid #1a1546;
+  background: rgba(8, 6, 26, 0.6);
+}
+.lc-hud-cell {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.lc-hud-cell.wide {
+  flex: 1;
+  justify-content: flex-end;
+}
+.lc-hud-key {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(8.5px, 0.62vw, 11px) * var(--lc-zoom));
+  letter-spacing: 0.14em;
+  color: #8079c8;
+}
+.lc-hud-val {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(12px, 0.95vw, 16px) * var(--lc-zoom));
+  letter-spacing: 0.06em;
+  color: var(--lc-gold);
+  /* Digits change every frame; a fixed advance keeps the row from twitching. */
+  font-variant-numeric: tabular-nums;
+}
+/* The card: three marks for the three levels of the game in progress. */
+.lc-card-marks {
+  display: inline-flex;
+  gap: 4px;
+}
+.lc-mark {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(11px, 0.9vw, 15px) * var(--lc-zoom));
+  line-height: 1;
+  min-width: 1ch;
+  text-align: center;
+  color: #5c56a4;
+}
+.lc-mark.win { color: #5ff5db; }
+.lc-mark.loss { color: var(--lc-hot); }
+.lc-mark.now { color: var(--lc-gold); }
+
+.lc-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  /* Zooming past the natural fit is allowed, so the playfield has to be
+     reachable rather than clipped. */
+  overflow: auto;
+}
+/* The screen: the canvas plus its bezel, and the only thing that carries
+   scanlines. Scoping them here rather than to the whole frame is the
+   difference between compositing the playfield and compositing the window. */
+.lc-screen {
+  position: relative;
+  display: flex;
+  flex: none;
+  border: 2px solid #241c60;
+  box-shadow: 0 0 0 4px #05040f, 0 0 24px rgba(45, 225, 194, 0.14);
+  background: #05040f;
+  /* Confines paint and layout work to this box. */
+  contain: paint;
+}
+.lc-screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(186, 240, 255, 0.07) 0 1px,
+    transparent 1px 3px
+  );
+}
+.lc-canvas {
+  image-rendering: pixelated;
+  display: block;
+  background: #05040f;
+}
+.lc-screen.hidden {
+  visibility: hidden;
+}
+
+/* Attract cards sit over the field rather than replacing it, so the stage you
+   are about to play (or just lost) stays visible behind the words. */
+.lc-card {
+  position: absolute;
+  inset: 12px;
+  z-index: 4;
+  display: flex;
+  background: rgba(4, 3, 14, 0.93);
+  border: 2px solid #342c78;
+}
+/* margin:auto rather than justify-content:center on the card: a centred flex
+   child that grows past its container puts its own top above the scroll origin,
+   where no scrollbar can reach it. This centres when it fits and scrolls when
+   it does not. */
+.lc-card-inner {
+  margin: auto;
+  width: 100%;
+  max-width: 1500px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(11px * var(--lc-zoom));
+  padding: clamp(18px, 3vh, 44px) clamp(18px, 3vw, 56px);
+  text-align: center;
+}
+.lc-card-kicker {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(10px, 0.85vw, 14px) * var(--lc-zoom));
+  letter-spacing: 0.22em;
+  color: #4de8c8;
+}
+.lc-card-heading {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(24px, 3.2vw, 48px) * var(--lc-zoom));
+  letter-spacing: 0.06em;
+  color: var(--lc-gold);
+  text-shadow: 0 0 18px rgba(255, 207, 77, 0.4);
+}
+.lc-card-body {
+  margin: 0;
+  max-width: 62ch;
+  font-size: calc(clamp(14px, 1.15vw, 20px) * var(--lc-zoom));
+  line-height: 1.6;
+  color: #c3cbec;
+}
+
+/* The dedication. It is the point of the whole thing, so on the landing screen
+   it gets the room a dedication deserves rather than being another line of
+   body copy. */
+.lc-card-dedication {
+  margin: 6px 0 0;
+  max-width: 62ch;
+  padding: calc(14px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
+  border-top: 2px solid #342c78;
+  border-bottom: 2px solid #342c78;
+  font-size: calc(clamp(15px, 1.25vw, 22px) * var(--lc-zoom));
+  line-height: 1.65;
+  font-style: italic;
+  color: var(--lc-gold);
+  text-shadow: 0 0 14px rgba(255, 207, 77, 0.22);
+}
+.lc-card-foot {
+  margin-top: 4px;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(10.5px, 0.9vw, 14px) * var(--lc-zoom));
+  letter-spacing: 0.16em;
+  color: #d6f7ff;
+  animation: lc-blink 1.1s steps(1, end) infinite;
+}
+@keyframes lc-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0.18;
+  }
+}
+.lc-frame.calm .lc-card-foot {
+  animation: none;
+}
+.lc-card-crest {
+  filter: drop-shadow(0 0 12px rgba(255, 207, 77, 0.5));
+}
+
+/* ---- losing, loudly -------------------------------------------------- */
+
+/* The whole cabinet takes the hit: a hard shake, the colours inverting for a
+   couple of frames, and the picture going briefly wrong. Steps() rather than a
+   smooth curve, because nothing on a machine like this eased anywhere. */
+.lc-frame.dying .lc-inner {
+  animation: lc-death-shake 0.62s steps(2, end) 1;
+}
+@keyframes lc-death-shake {
+  0% { transform: translate(0, 0); filter: invert(1) hue-rotate(90deg); }
+  10% { transform: translate(-9px, 4px) skewX(3deg); filter: none; }
+  20% { transform: translate(8px, -5px) skewX(-4deg); filter: invert(1); }
+  30% { transform: translate(-7px, -3px); filter: none; }
+  40% { transform: translate(6px, 5px) skewX(2deg); filter: saturate(4); }
+  55% { transform: translate(-4px, 2px); filter: none; }
+  70% { transform: translate(3px, -2px); }
+  85% { transform: translate(-1px, 1px); }
+  100% { transform: translate(0, 0); filter: none; }
+}
+
+/* The playfield itself keels over and drops off the bottom of the tube. */
+.lc-screen.dying {
+  animation: lc-death-fall 1s cubic-bezier(0.5, 0, 0.9, 0.4) forwards;
+}
+@keyframes lc-death-fall {
+  0% { transform: rotate(0deg) translateY(0); opacity: 1; }
+  18% { transform: rotate(-7deg) translateY(-16px); opacity: 1; }
+  100% { transform: rotate(24deg) translateY(70vh); opacity: 0; }
+}
+
+.lc-frame.calm .lc-inner,
+.lc-frame.calm .lc-screen.dying {
+  animation: none;
+}
+
+/* The crossed-eyed face. It drops in, overshoots, and wobbles to a stop. */
+.lc-card-dead .crest-edge {
+  fill: #ff3d8a;
+}
+.lc-card-dead .crest-weave {
+  fill: #ffffff;
+}
+.lc-card-dead {
+  animation: lc-dead-drop 0.5s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+  filter: drop-shadow(0 0 14px rgba(255, 61, 138, 0.5));
+}
+@keyframes lc-dead-drop {
+  0% { transform: translateY(-40px) scale(0.3) rotate(-25deg); opacity: 0; }
+  100% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; }
+}
+.lc-frame.calm .lc-card-dead {
+  animation: none;
+}
+
+/* The tease. Bigger than the explanation under it, because it is the bit
+   anyone actually reads. */
+.lc-card-taunt {
+  margin: 0;
+  max-width: 46ch;
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(15px, 1.5vw, 26px) * var(--lc-zoom));
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+  text-shadow: 0 0 20px rgba(255, 61, 138, 0.45);
+}
+.lc-card-cooldown .lc-card-taunt {
+  color: #6ff2ff;
+  text-shadow: 0 0 20px rgba(111, 242, 255, 0.35);
+}
+/* The countdown is the heading on the cooling card, so it gets the tabular
+   figures the HUD uses; a proportional colon jitters every second. */
+.lc-card-cooldown .lc-card-heading {
+  font-variant-numeric: tabular-nums;
+  color: #6ff2ff;
+  text-shadow: 0 0 24px rgba(111, 242, 255, 0.4);
+}
+
+/* The medal on the winning screen. */
+.lc-medal {
+  display: flex;
+  align-items: center;
+  gap: calc(16px * var(--lc-zoom));
+  margin-top: calc(8px * var(--lc-zoom));
+  padding: calc(14px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
+  border: 2px solid #4a5570;
+  text-align: left;
+  max-width: 62ch;
+}
+.lc-medal.bronze { border-color: #c87c3c; background: rgba(200, 124, 60, 0.09); }
+.lc-medal.silver { border-color: #b9c6da; background: rgba(185, 198, 218, 0.09); }
+.lc-medal.gold {
+  border-color: #ffcf4d;
+  background: rgba(255, 207, 77, 0.1);
+  box-shadow: 0 0 28px rgba(255, 207, 77, 0.2);
+}
+.lc-medal-text { display: flex; flex-direction: column; gap: 4px; }
+.lc-medal-name {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(15px, 1.3vw, 22px) * var(--lc-zoom));
+  letter-spacing: 0.08em;
+}
+.lc-medal.bronze .lc-medal-name { color: #ffb066; }
+.lc-medal.silver .lc-medal-name { color: #ffffff; }
+.lc-medal.gold .lc-medal-name { color: #ffcf4d; }
+.lc-medal-sub {
+  font-size: calc(clamp(11.5px, 0.92vw, 15px) * var(--lc-zoom));
+  line-height: 1.5;
+  color: #c3cbec;
+}
+
+/* The AI ABUSER AWARD. Loud on purpose. */
+.lc-abuser {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(16px * var(--lc-zoom));
+  margin-top: calc(10px * var(--lc-zoom));
+  padding: calc(15px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
+  border: 3px dashed #9cff3d;
+  background: rgba(156, 255, 61, 0.08);
+  text-align: left;
+  max-width: 64ch;
+}
+.lc-abuser-text { display: flex; flex-direction: column; gap: 8px; }
+.lc-abuser-name {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(15px, 1.35vw, 23px) * var(--lc-zoom));
+  letter-spacing: 0.06em;
+  color: #9cff3d;
+  text-shadow: 0 0 16px rgba(156, 255, 61, 0.5);
+}
+.lc-abuser-body {
+  font-size: calc(clamp(11.5px, 0.95vw, 15px) * var(--lc-zoom));
+  line-height: 1.55;
+  color: #e6ffd6;
+}
+
+/* The Perfect Clear panel on the winning screen. */
+.lc-perfect {
+  display: flex;
+  align-items: center;
+  gap: calc(16px * var(--lc-zoom));
+  margin-top: calc(8px * var(--lc-zoom));
+  padding: calc(14px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
+  border: 2px solid #4a5570;
+  background: rgba(120, 140, 180, 0.07);
+  text-align: left;
+  max-width: 62ch;
+}
+.lc-perfect.verified {
+  border-color: #6ff2ff;
+  background: rgba(111, 242, 255, 0.09);
+  box-shadow: 0 0 26px rgba(111, 242, 255, 0.18);
+}
+.lc-perfect .legacy-crest {
+  flex: none;
+  filter: drop-shadow(0 0 8px rgba(111, 242, 255, 0.5));
+}
+.lc-perfect:not(.verified) .legacy-crest {
+  filter: none;
+  opacity: 0.6;
+}
+.lc-perfect-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lc-perfect-name {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(14px, 1.2vw, 20px) * var(--lc-zoom));
+  letter-spacing: 0.08em;
+  color: #ffffff;
+}
+.lc-perfect:not(.verified) .lc-perfect-name {
+  color: #aab3c8;
+}
+.lc-perfect-sub {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(9.5px, 0.8vw, 13px) * var(--lc-zoom));
+  letter-spacing: 0.12em;
+  color: #6ff2ff;
+}
+.lc-perfect:not(.verified) .lc-perfect-sub {
+  color: #8892aa;
+}
+/* The honest small print. Never hidden, never softened out of legibility. */
+.lc-perfect-verdict {
+  font-size: calc(clamp(11.5px, 0.92vw, 15px) * var(--lc-zoom));
+  line-height: 1.5;
+  color: #b6c0dd;
+}
+
+/* Tribute pages carry a dozen names, so they read top-down and scroll rather
+   than centring and spilling off the tube. */
+.lc-card {
+  overflow-y: auto;
+}
+.lc-hud-handle {
+  color: #5ff5db;
+  letter-spacing: 0.1em;
+}
+/* The last credit should be visible from across the room. */
+.lc-hud-credits.spent {
+  color: var(--lc-hot);
+  animation: lc-blink 1.1s steps(1, end) infinite;
+}
+.lc-frame.calm .lc-hud-credits.spent {
+  animation: none;
+}
+
+.lc-roll {
+  list-style: none;
+  margin: calc(10px * var(--lc-zoom)) 0 0;
+  padding: 0;
+  width: 100%;
+  display: grid;
+  /* Columns are sized so a note wraps to two lines at most at the default
+     zoom, and collapse to fewer columns rather than shrinking as it grows. */
+  grid-template-columns: repeat(auto-fit, minmax(calc(320px * var(--lc-zoom)), 1fr));
+  gap: 0 calc(clamp(24px, 2.2vw, 44px) * var(--lc-zoom));
+  text-align: left;
+}
+.lc-roll-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: calc(9px * var(--lc-zoom)) 0;
+  border-top: 1px solid #32287a;
+}
+.lc-roll-name {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: calc(clamp(11.5px, 0.92vw, 15px) * var(--lc-zoom));
+  letter-spacing: 0.07em;
+  color: #5ff5db;
+}
+.lc-roll-note {
+  font-size: calc(clamp(13px, 1.02vw, 17px) * var(--lc-zoom));
+  line-height: 1.5;
+  color: #cbd3f2;
+}
+.lc-card-close {
+  margin: calc(14px * var(--lc-zoom)) 0 0;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(11px, 0.95vw, 15px) * var(--lc-zoom));
+  letter-spacing: 0.14em;
+  color: var(--lc-gold);
+}
+
+/* Handle entry. A cabinet asks who is playing before it lets you play. */
+.lc-handle-form {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 6px;
+}
+.lc-handle-input {
+  width: calc(min(380px, 60vw) * var(--lc-zoom));
+  padding: calc(11px * var(--lc-zoom)) calc(15px * var(--lc-zoom));
+  border: 2px solid var(--lc-gold);
+  border-radius: 0;
+  background: rgba(255, 207, 77, 0.06);
+  color: #fff;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(15px, 1.2vw, 20px) * var(--lc-zoom));
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  outline: none;
+}
+.lc-handle-input::placeholder {
+  color: #5c56a4;
+  letter-spacing: 0.08em;
+}
+.lc-handle-input:focus {
+  box-shadow: 0 0 0 2px rgba(255, 207, 77, 0.3), 0 0 18px rgba(255, 207, 77, 0.25);
+}
+.lc-handle-go {
+  padding: 0 calc(20px * var(--lc-zoom));
+  border: 2px solid var(--lc-wire);
+  border-radius: 0;
+  background: transparent;
+  color: var(--lc-wire);
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(12px, 0.95vw, 16px) * var(--lc-zoom));
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+.lc-handle-go:hover {
+  background: rgba(45, 225, 194, 0.12);
+}
+.lc-handle-go:focus-visible {
+  outline: 2px solid var(--lc-gold);
+  outline-offset: 2px;
+}
+.lc-card-win .lc-card-heading {
+  color: #fff;
+}
+.lc-card-over .lc-card-heading {
+  color: var(--lc-hot);
+  text-shadow: 0 0 18px rgba(255, 61, 138, 0.45);
+}
+.lc-card-paused {
+  inset: 30% 20%;
+  gap: 6px;
+}
+
+.lc-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 2px solid #1a1546;
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(8.5px, 0.65vw, 11px) * var(--lc-zoom));
+  letter-spacing: 0.12em;
+  color: #8079c8;
+}
+.lc-foot-note {
+  text-align: right;
+  font-family: var(--font-ui);
+  font-size: calc(clamp(10px, 0.72vw, 13px) * var(--lc-zoom));
+  letter-spacing: 0;
+  text-transform: none;
+  color: #625ba8;
+}
+
+@media (max-width: 720px) {
+  /* Full bleed: there is no room to spare for a frame around a frame. */
+  .lc-frame {
+    width: 100vw;
+    height: 100dvh;
+    border: none;
+  }
+  .lc-hud {
+    gap: 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .lc-hud::-webkit-scrollbar {
+    display: none;
+  }
+  .lc-foot-note {
+    display: none;
+  }
+}
+
+/* The crest in the app chrome belongs to the skin it was earned under, so the
+   sidebar copy is gated on the palette rather than on a second piece of React
+   state. data-theme resolves to a crafted theme's base, so a theme built on the
+   cabinet palette counts as the cabinet, exactly as the skins card decides it. */
+.sidebar-foot .legacy-crest-badge {
+  display: none;
+}
+:root[data-theme="arcade"] .sidebar-foot .legacy-crest-badge {
+  display: inline-flex;
+  margin-left: 2px;
+  opacity: 0.85;
+}
+:root[data-theme="arcade"] .sidebar-foot .legacy-crest-badge:hover {
+  opacity: 1;
+}
+
+.skin-card-crest {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* ---- Retro-Tech: the About screen picks up the cabinet furniture --------- */
+
+:root[data-theme="arcade"] .about-earned {
+  border: 2px solid var(--brass);
+  border-radius: 0;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="arcade"] .about-earned-text strong {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 9.5px;
+}
+:root[data-theme="arcade"] .about-fact dt {
+  font-family: "Silkscreen", var(--font-mono);
+  font-weight: 400;
+  font-size: 8.5px;
+}
+:root[data-theme="arcade"] .about-contact {
+  border-radius: 0;
+  border-width: 2px;
+}

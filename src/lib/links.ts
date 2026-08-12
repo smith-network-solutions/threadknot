@@ -1,20 +1,46 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 
 /**
  * Every link the app renders — markdown links from an agent, PR links, image
  * previews — is a plain `<a target="_blank">`. That works in a browser, but the
  * Tauri webview has no new-window handler, so WebKit silently drops the click
- * and the link looks dead. Route those clicks to the system browser instead.
+ * and the link looks dead.
+ *
+ * http(s) links raise LINK_CHOICE_EVENT so LinkOpenModal can ask where to open
+ * (Threadknot browser pane vs the system default browser). Other openable
+ * schemes (mailto, tel, file) go straight to the OS: the pane can't render
+ * them anyway.
  *
  * One capture-phase listener covers every anchor in the app, including ones
  * react-markdown creates at runtime.
  */
 
-/** Schemes we hand to the OS. Anything else (data:, blob:, javascript:) is left alone. */
-const OPENABLE = /^(https?|mailto|file):/i;
+/** Fired with detail `{ href: string }` when an http(s) link is clicked. */
+export const LINK_CHOICE_EVENT = "threadknot:link-choice";
+
+/** Schemes we can open. Anything else (data:, blob:, javascript:) is left alone. */
+const OPENABLE = /^(https?|mailto|tel|file):/i;
 
 function isTauriEnv(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/** Open in the OS: default browser / mail client / file handler.
+ *  Failures are logged, not swallowed — a dead link with no console trace is
+ *  how the missing opener scope went unnoticed for weeks. */
+export function openExternally(href: string): void {
+  if (/^file:/i.test(href)) {
+    // openUrl's scope only covers web-ish schemes; files go through openPath.
+    let path = href;
+    try {
+      path = decodeURIComponent(new URL(href).pathname);
+    } catch {
+      /* keep the raw href; openPath will report it */
+    }
+    void openPath(path).catch((e: unknown) => console.warn("openPath failed:", path, e));
+  } else {
+    void openUrl(href).catch((e: unknown) => console.warn("openUrl failed:", href, e));
+  }
 }
 
 export function installExternalLinkHandler(): () => void {
@@ -39,9 +65,11 @@ export function installExternalLinkHandler(): () => void {
     if (!OPENABLE.test(href)) return;
 
     event.preventDefault();
-    void openUrl(href).catch(() => {
-      /* no system handler for this scheme — nothing better to do than ignore */
-    });
+    if (/^https?:/i.test(href)) {
+      window.dispatchEvent(new CustomEvent(LINK_CHOICE_EVENT, { detail: { href } }));
+    } else {
+      openExternally(href);
+    }
   };
 
   document.addEventListener("click", onClick, true);

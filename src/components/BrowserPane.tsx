@@ -3,6 +3,8 @@ import type { BrowserProfileInfo, PortInfo, Project } from "../lib/protocol";
 import { findThread, useStore } from "../state/store";
 import { browserWsUrl } from "../lib/discovery";
 import { isNativeShell, readNativeClipboardText } from "../lib/native";
+import { APPEARANCE_EVENT, getPaneZoom } from "../lib/appearance";
+import { BROWSER_INTENT_EVENT, takeBrowserUrl } from "../lib/browserIntent";
 import "../styles/browser.css";
 
 /** Device-width presets. `null` = fill the pane (native viewport). */
@@ -105,7 +107,7 @@ function tabLabel(tab: BrowserTab): string {
  * it never destroys the browser.
  */
 export function BrowserPane({
-  project: _project,
+  project,
   active,
   sessionId,
   machineId,
@@ -199,6 +201,25 @@ export function BrowserPane({
     },
     [send],
   );
+
+  // "Open in Threadknot Browser" from the link chooser (LinkOpenModal). The
+  // URL sits in a mailbox because the choice may open this pane before it has
+  // mounted or its socket is live; claim it at every step that could be the
+  // last one (mount, intent event, connection turning live).
+  const intentRef = useRef<string | null>(null);
+  useEffect(() => {
+    const claim = () => {
+      const staged = takeBrowserUrl(project.id);
+      if (staged) intentRef.current = staged;
+      if (intentRef.current && connection === "live") {
+        navigate(intentRef.current);
+        intentRef.current = null;
+      }
+    };
+    claim();
+    window.addEventListener(BROWSER_INTENT_EVENT, claim);
+    return () => window.removeEventListener(BROWSER_INTENT_EVENT, claim);
+  }, [project.id, navigate, connection]);
 
   const paint = useCallback((buffer: ArrayBuffer) => {
     const blob = new Blob([buffer], { type: "image/jpeg" });
@@ -408,6 +429,18 @@ export function BrowserPane({
     [],
   );
 
+  // Pane zoom (ctrl+wheel, see hotwheel.ts). The container's CSS zoom scales
+  // the chrome and the canvas bitmap; in fill mode we also shrink the remote
+  // CSS viewport by the same factor so the page genuinely reflows larger
+  // instead of just magnifying, and the zoomed canvas stays width-bound with
+  // vertical-only scrolling. Device presets keep their exact emulated sizes.
+  const [browserZoom, setBrowserZoom] = useState(() => getPaneZoom("browser"));
+  useEffect(() => {
+    const onAppearance = () => setBrowserZoom(getPaneZoom("browser"));
+    window.addEventListener(APPEARANCE_EVENT, onAppearance);
+    return () => window.removeEventListener(APPEARANCE_EVENT, onAppearance);
+  }, []);
+
   // Push device-size changes to the backend viewport.
   useEffect(() => {
     if (connection !== "live") return;
@@ -415,9 +448,13 @@ export function BrowserPane({
     if (preset.width && preset.height) {
       send({ type: "resize", width: preset.width, height: preset.height });
     } else {
-      send({ type: "resize", width: 1280, height: 800 });
+      send({
+        type: "resize",
+        width: Math.round(1280 / browserZoom),
+        height: Math.round(800 / browserZoom),
+      });
     }
-  }, [connection, device, send]);
+  }, [connection, device, send, browserZoom]);
 
   function toFrameCoords(event: React.PointerEvent | React.WheelEvent): { x: number; y: number } {
     const canvas = canvasRef.current;
@@ -797,6 +834,10 @@ export function BrowserPane({
             }}
             onContextMenu={(event) => event.preventDefault()}
             onWheel={(event) => {
+              // Ctrl/Cmd+wheel is pane zoom, not page scroll: let it bubble to
+              // the window-level hotwheel handler untouched. (Mac pinch also
+              // arrives here as ctrl+wheel.)
+              if (event.ctrlKey || event.metaKey) return;
               event.preventDefault();
               const point = toFrameCoords(event);
               send({ type: "wheel", ...point, deltaX: event.deltaX, deltaY: event.deltaY });

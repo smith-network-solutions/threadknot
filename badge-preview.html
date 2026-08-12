@@ -1,0 +1,74 @@
+<!doctype html>
+<!-- Throwaway preview of the Legacy Circuit award badges. Not part of the app;
+     open it in a browser to see the pixel maps rendered at size. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Legacy Circuit · award badges</title>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&family=Silkscreen&display=swap" rel="stylesheet">
+<style>
+  body { margin:0; background:#05040f; color:#bdf3ff; font-family:system-ui,sans-serif;
+         display:flex; flex-direction:column; align-items:center; padding:48px 24px 80px; }
+  h1 { font-family:"Bungee",sans-serif; color:#ff3d8a; font-size:24px; letter-spacing:.08em; margin:0 0 6px; }
+  .sub { font-family:"Silkscreen",monospace; font-size:11px; color:#6f6ab8; letter-spacing:.16em; margin-bottom:44px; }
+  .row { display:flex; flex-wrap:wrap; gap:34px; justify-content:center; max-width:1150px; }
+  .card { width:250px; border:2px solid #342c78; background:rgba(4,3,14,.9); padding:22px 18px 20px;
+          display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; }
+  .card.abuser { border-color:#9cff3d; background:rgba(156,255,61,.06); }
+  .card.gold { border-color:#ffcf4d; }
+  svg { display:block; image-rendering:pixelated; }
+  .name { font-family:"Bungee",sans-serif; font-size:15px; letter-spacing:.06em; }
+  .rule { font-size:12px; line-height:1.55; color:#cbd3f2; }
+  .how { font-family:"Silkscreen",monospace; font-size:9px; letter-spacing:.12em; color:#5ff5db; }
+  .abuser .how { color:#ff00a0; }
+  footer { margin-top:52px; font-size:12px; color:#625ba8; max-width:640px; text-align:center; line-height:1.6; }
+</style>
+</head>
+<body>
+<h1>LEGACY CIRCUIT</h1>
+<div class="sub">AWARD BADGES</div>
+<div class="row" id="row"></div>
+<footer>Nine levels: three games of three. Only a win moves you up a level; a loss replays it.
+Two wins of your three attempts carries a game. The medal is set by how many of the nine you took.</footer>
+<script>
+const MEDAL = ["##.......##",".##.....##.","..##...##..","...#####...","..#######..",".###***###.",".##*****##.",".###***###.","..#######..","...#####...","....###...."];
+const ABUSER = ["....#.#....","..#######..",".#########.","#.##...##.#","#.#*#.#*#.#","#.##...##.#","#.#######.#","#.#*****#.#","#.#######.#",".#########.","..##...##.."];
+const CREST  = ["..#####..",".#*****#.","#**###**#","#*#***#*#","#**###**#","#*#***#*#",".#*****#.","..#***#..","...###..."];
+const STAR   = ["....#....","...###...","#..#*#..#","###***###",".#*****#.","###***###","#..#*#..#","...###...","....#...."];
+
+function svg(map, edge, core, size, glow) {
+  const w = map[0].length, h = map.length;
+  let r = "";
+  map.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === ".") return;
+    r += `<rect x="${x}" y="${y}" width="1" height="1" fill="${ch === "#" ? edge : core}"/>`;
+  }));
+  return `<svg width="${size}" height="${size * h / w}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges"
+          style="filter:${glow ? `drop-shadow(0 0 6px ${glow})` : "none"}">${r}</svg>`;
+}
+
+const badges = [
+  { cls:"", map:MEDAL, edge:"#c87c3c", core:"#ffb066", name:"BRONZE", glow:"",
+    how:"6 OR 7 OF 9", rule:"You finished. You dropped a level in two of the three games and still carried all three." },
+  { cls:"", map:MEDAL, edge:"#b9c6da", core:"#ffffff", name:"SILVER", glow:"rgba(201,212,228,.5)",
+    how:"8 OF 9", rule:"Two games taken clean, three levels each, and a single level dropped in the third." },
+  { cls:"gold", map:MEDAL, edge:"#ffcf4d", core:"#fff3b0", name:"GOLD", glow:"rgba(255,207,77,.75)",
+    how:"9 OF 9 · FLAWLESS", rule:"Every level of every game, first time, nothing lost. This is the one that is meant to be rare." },
+  { cls:"abuser", map:ABUSER, edge:"#9cff3d", core:"#ff00a0", name:"AI ABUSER AWARD", glow:"rgba(156,255,61,.6)",
+    how:"CAUGHT", rule:"Awarded when the run was clearly not played by a person. It replaces nothing. It sits next to your medal. Forever." },
+  { cls:"", map:CREST, edge:"#ffcf4d", core:"#ff3d8a", name:"LEGACY WEAVER", glow:"",
+    how:"FINISHED IT", rule:"The original crest, for finishing the campaign at all. Every medal above sits beside it." },
+  { cls:"", map:STAR, edge:"#ffffff", core:"#6ff2ff", name:"PERFECT CLEAR", glow:"rgba(111,242,255,.85)",
+    how:"9 OF 9, HUMAN", rule:"The flawless run, verified as human input. Shown greyed when it could not be verified." },
+];
+
+document.getElementById("row").innerHTML = badges.map(b => `
+  <div class="card ${b.cls}">
+    ${svg(b.map, b.edge, b.core, 96, b.glow)}
+    <div class="name" style="color:${b.edge}">${b.name}</div>
+    <div class="how">${b.how}</div>
+    <div class="rule">${b.rule}</div>
+  </div>`).join("");
+</script>
+</body>
+</html>

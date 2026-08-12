@@ -103,20 +103,20 @@ export function WorkspacePanel({
         </button>
       </header>
       <div className="workspace-body">
-        <div className="ws-pane" hidden={tab !== "files"}>
+        <div className="ws-pane" data-zoom-pane="files" hidden={tab !== "files"}>
           <FilesPane project={project} active={tab === "files"} machineId={machineId} />
         </div>
-        <div className="ws-pane" hidden={tab !== "git"}>
+        <div className="ws-pane" data-zoom-pane="git" hidden={tab !== "git"}>
           <GitPane project={project} active={tab === "git"} />
         </div>
-        <div className="ws-pane" hidden={tab !== "artifacts"}>
+        <div className="ws-pane" data-zoom-pane="artifacts" hidden={tab !== "artifacts"}>
           <ArtifactsPane
             project={project}
             active={tab === "artifacts"}
             machineId={machineId}
           />
         </div>
-        <div className="ws-pane" hidden={tab !== "browser"}>
+        <div className="ws-pane" data-zoom-pane="browser" hidden={tab !== "browser"}>
           {/* Chrome runs on the workspace's owning machine; for a remote
               workspace this server splices the socket through to it, so the
               pane drives that machine's browser and its stored logins. */}

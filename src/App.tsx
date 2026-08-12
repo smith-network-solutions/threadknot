@@ -24,6 +24,7 @@ import {
 import { isWindowFocused, startFocusTracking } from "./lib/focus";
 import { initZoomHotkeys } from "./lib/hotwheel";
 import { installExternalLinkHandler } from "./lib/links";
+import { LinkOpenModal } from "./components/LinkOpenModal";
 import { getSidebarPrefs } from "./lib/appearance";
 import type {
   Access,
@@ -1438,8 +1439,17 @@ function makeActions(
       );
     },
 
-    async pullUpdate(machineId?: string) {
-      await client.request("git.selfUpdatePull", machineId ? { machineId } : {});
+    /** `chain` hands the machine the whole job: pull, rebuild, restart. It then
+     *  resolves when the run is claimed rather than when it ends, exactly like
+     *  rebuildUpdate below, since the build inside it takes minutes. `force`
+     *  carries the same consent the restart button asks for, since the restart
+     *  at the end of the chain is the one that interrupts live threads. */
+    async pullUpdate(machineId?: string, chain?: boolean, force?: boolean) {
+      await client.request("git.selfUpdatePull", {
+        ...(machineId ? { machineId } : {}),
+        ...(chain ? { chain } : {}),
+        ...(chain && force ? { force } : {}),
+      });
       if (!machineId) void refreshUpdate().catch(() => undefined);
     },
 
@@ -1687,6 +1697,13 @@ export default function App() {
           .then((hello) => dispatch({ type: "hello", data: hello }))
           .catch(() => undefined);
       }
+      else if (frame.scope === "connector") {
+        // Remote-access relay status pulse: fires on every relay heartbeat
+        // (~10s) just to move byte counters. Nothing outside the settings
+        // panel renders it, and that panel polls connector.status itself
+        // while open. Falling through to the projects fallback here made the
+        // whole app refetch and visibly blink on every heartbeat.
+      }
       else if (frame.scope === "updates")
         void actionsRef.current.refreshUpdate().catch(() => undefined);
       else if (frame.scope === "archives")
@@ -1837,10 +1854,9 @@ export default function App() {
     };
   }, [client]);
 
-  // Ctrl/cmd + wheel and ctrl/cmd + = / - / 0 drive the conversation zoom
-  // (terminals handle ctrl+wheel themselves for their font size). No pane
-  // measurement here: the zoom scales the message feed only, so it has no
-  // ceiling beyond ZOOM_MAX and nothing to observe.
+  // Ctrl/cmd + wheel zooms the pane under the cursor; ctrl/cmd + = / - / 0
+  // step the last-clicked pane (terminals handle ctrl+wheel themselves for
+  // their font size). Each pane keeps its own zoom; see hotwheel.ts.
   useEffect(() => initZoomHotkeys(), []);
 
   useEffect(() => installExternalLinkHandler(), []);
@@ -1940,6 +1956,8 @@ export default function App() {
         <div className="work-pane">
           <MainSplit />
         </div>
+        {/* "Where should this link open?" chooser for clicked http(s) links. */}
+        <LinkOpenModal />
         {state.conn !== "online" && (
           <div className={`conn-banner conn-${state.conn}`}>
             {state.conn === "connecting" ? "connecting to server…" : "offline — retrying…"}

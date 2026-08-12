@@ -231,6 +231,15 @@ impl Connector {
         }
     }
 
+    /// Update status WITHOUT a `connector` state broadcast. For high-frequency
+    /// bookkeeping (relay heartbeat byte counters, every ~10s): broadcasting
+    /// those made every client refetch on each heartbeat. The settings panel
+    /// polls connector.status while open, so quiet updates still surface.
+    fn set_status_quiet(&self, f: impl FnOnce(&mut ConnectorStatus)) {
+        let mut status = self.status.lock().unwrap();
+        f(&mut status);
+    }
+
     /// Turn remote access on or off. Off drops the session immediately.
     pub fn set_enabled(&self, enabled: bool) -> Result<ConnectorStatus> {
         {
@@ -851,7 +860,7 @@ impl Connector {
                     month_bytes,
                     month_quota_bytes,
                 } => {
-                    self.set_status(|s| {
+                    self.set_status_quiet(|s| {
                         s.bytes_in = bytes_in;
                         s.bytes_out = bytes_out;
                         s.month_bytes = month_bytes;

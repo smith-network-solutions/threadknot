@@ -81,6 +81,26 @@ export interface CustomTheme {
   updatedAt: string | number;
 }
 
+/** Every Ctrl+Scroll zoomable surface. "feed" is backed by Appearance.uiZoom;
+ *  the rest live in Appearance.paneZooms and drive --zoom-<kind> CSS vars. */
+export type PaneKind =
+  | "feed"
+  | "browser"
+  | "git"
+  | "files"
+  | "artifacts"
+  | "sidebar"
+  | "settings";
+export const PANE_KINDS: readonly PaneKind[] = [
+  "feed",
+  "browser",
+  "git",
+  "files",
+  "artifacts",
+  "sidebar",
+  "settings",
+];
+
 export interface Appearance {
   theme: Theme;
   /** Accent: either a preset id from ACCENTS ("brass", "ember", ...) or a
@@ -90,12 +110,17 @@ export interface Appearance {
   fontUi: string;
   /** Monospace font id from MONO_FONTS; drives --font-mono. */
   fontMono: string;
-  /** Conversation zoom multiplier: scales the thread's MESSAGE FEED only (see
-   *  .feed-inner in styles.css). The thread header, composer, terminal,
-   *  workspace panes, sidebar, conn banner and toasts always render at 100%,
-   *  so nothing can be zoomed off-screen and the value needs no dynamic cap:
-   *  ZOOM_MIN..ZOOM_MAX is the whole story. */
+  /** Zoom multiplier for the thread's MESSAGE FEED (see .feed-inner in
+   *  styles.css). Kept as its own field (not in paneZooms) because ThreadView's
+   *  scroll rescale, the ZoomChip and ThemeStudio all read it directly. The
+   *  thread header, composer and terminal always render at 100%, so nothing can
+   *  be zoomed off-screen and the value needs no dynamic cap: ZOOM_MIN..ZOOM_MAX
+   *  is the whole story. */
   uiZoom: number;
+  /** Per-pane zoom multipliers for every other Ctrl+Scroll zoom mount (see
+   *  hotwheel.ts). Sparse: a pane at 100% stores nothing. "feed" is never a
+   *  key here; it aliases uiZoom via getPaneZoom/setPaneZoom. */
+  paneZooms?: Partial<Record<PaneKind, number>>;
   /** The id of the active custom theme, or null when using the THEMES/ACCENTS
    *  presets as before. The RECORD itself lives in server state (appearance.ts
    *  has no store access); the UI passes it to applyAppearance /
@@ -386,6 +411,7 @@ const A_DEFAULT: Appearance = {
   fontUi: "archivo",
   fontMono: "jetbrains",
   uiZoom: 1,
+  paneZooms: {},
   customThemeId: null,
 };
 const S_DEFAULT: SidebarPrefs = {
@@ -597,6 +623,22 @@ function read<T extends object>(key: string, def: T): T {
   return { ...def };
 }
 
+/** Keep only known non-feed panes, clamped into the zoom band; drop entries at
+ *  exactly 1 so untouched panes persist nothing. */
+function normalizePaneZooms(
+  value: Partial<Record<PaneKind, number>> | undefined,
+): Partial<Record<PaneKind, number>> {
+  const out: Partial<Record<PaneKind, number>> = {};
+  for (const kind of PANE_KINDS) {
+    if (kind === "feed") continue;
+    const raw = value?.[kind];
+    if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
+    const z = clamp(raw, ZOOM_MIN, ZOOM_MAX);
+    if (z !== 1) out[kind] = z;
+  }
+  return out;
+}
+
 export function getAppearance(): Appearance {
   const a = read(A_KEY, A_DEFAULT);
   return {
@@ -605,8 +647,24 @@ export function getAppearance(): Appearance {
     fontUi: normalizeFontId(a.fontUi, UI_FONTS),
     fontMono: normalizeFontId(a.fontMono, MONO_FONTS),
     uiZoom: clamp(a.uiZoom, ZOOM_MIN, ZOOM_MAX),
+    paneZooms: normalizePaneZooms(a.paneZooms),
     customThemeId: normalizeCustomThemeId(a.customThemeId),
   };
+}
+
+/** Applied zoom for one pane; "feed" aliases uiZoom. */
+export function getPaneZoom(kind: PaneKind, a: Appearance = getAppearance()): number {
+  if (kind === "feed") return clamp(a.uiZoom, ZOOM_MIN, ZOOM_MAX);
+  return clamp(a.paneZooms?.[kind] ?? 1, ZOOM_MIN, ZOOM_MAX);
+}
+
+export function setPaneZoom(kind: PaneKind, zoom: number): void {
+  const a = getAppearance();
+  if (kind === "feed") {
+    setAppearance({ ...a, uiZoom: zoom });
+  } else {
+    setAppearance({ ...a, paneZooms: { ...a.paneZooms, [kind]: zoom } });
+  }
 }
 
 /** An unknown layout (older build, hand-edited storage) falls back rather
@@ -948,6 +1006,12 @@ export function applyAppearance(
   // --ui-zoom drives the message feed's `zoom` (see .feed-inner). Clamped here
   // too so a live preview passing an out-of-band value cannot escape the band.
   root.style.setProperty("--ui-zoom", String(clamp(a.uiZoom, ZOOM_MIN, ZOOM_MAX)));
+  // Every other pane's zoom mount (see hotwheel.ts + the per-pane `zoom:`
+  // rules in styles). Absent entries render at 1.
+  for (const kind of PANE_KINDS) {
+    if (kind === "feed") continue;
+    root.style.setProperty(`--zoom-${kind}`, String(getPaneZoom(kind, a)));
+  }
   // Accent: derive the --brass trio from the chosen accent for this family.
   // Custom themes carry their own accent; presets use the Appearance's.
   const { brass, hi, dim } = brassTrio(custom ? custom.accent : a.accent, lightFamily);
@@ -996,6 +1060,7 @@ export function setAppearance(next: Appearance): void {
     fontUi: normalizeFontId(next.fontUi, UI_FONTS),
     fontMono: normalizeFontId(next.fontMono, MONO_FONTS),
     uiZoom: clamp(next.uiZoom, ZOOM_MIN, ZOOM_MAX),
+    paneZooms: normalizePaneZooms(next.paneZooms),
     customThemeId: normalizeCustomThemeId(next.customThemeId),
   };
   localStorage.setItem(A_KEY, JSON.stringify(clamped));

@@ -8,8 +8,18 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+## v0.1.64 · 2026-08-11
+
+- **Updating is one click again, and Windows can finally do it.** Under Settings → updates, the button on a machine that can finish the job now reads **pull, build & restart**: it fast-forwards the checkout, rebuilds, and relaunches itself into the new build, showing each stage as it goes. The build keeps running if you close the window or the tab that started it. Windows machines could previously only pull, and had to be rebuilt and reopened by hand.
+- **Nothing restarts out from under working threads.** If any thread starts a turn or asks for approval while the build is running, the update stops after building and leaves the ordinary **restart now** button for when they finish. Rebuilds and restarts that end without changing anything now say so on the card instead of finishing silently.
+
+## v0.1.32 · 2026-08-10
+
+- **New About section, at the foot of Settings.** What Threadknot is, the exact build you are running (version, build date, commit and machine), the Apache-2.0 licence with links to the source, the third-party notices and the security policy, and the credits. It rewards reading all the way to the bottom.
+
 ## v0.1.31 · 2026-08-09
 
+- Claude chats now start correctly on Windows when Threadknot's browser tools are enabled. The generated MCP configuration uses a short-lived file there instead of inline command-line JSON, avoiding Windows quote mangling and removing the file when Claude exits.
 - **Your models become the characters.** Under the Retro-Tech skin, sidebar thread cards and the thread hover preview are full fighter plates: a framed character portrait for the model driving the thread, the title in pixel type, and a vitality strip that turns red and blinks when a thread needs you. An original set of pixel characters ships built in (one per model family), and you can replace any of them under Settings → appearance → model portraits (any image works; it is downscaled automatically), with a per-agent default and one-click reset.
 - **The Arcade theme is now Retro-Tech, and it reaches the whole app.** Files, Git, Artifacts, and the Browser workspace pick up the cabinet look: pixel-face labels and tabs, framed rows, lit active states. The reviewer dialog got more breathing room, sidebar cards read like fighter cards with a bezeled portrait and a framed turn counter, the settled shelf goes attract-mode dim, and hovering a project icon in the rail pops an enlarged badge with its name.
 - **Starting a review debate announces the fight.** ROUND 1 slams across the screen when the reviewers seat, and every following back-and-forth round calls out ROUND 2, ROUND 3, and so on. Retro-Tech only.

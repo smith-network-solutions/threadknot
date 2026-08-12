@@ -37,6 +37,7 @@ import {
   type ProjectActivity,
 } from "../state/store";
 import { SettingsScreen } from "./SettingsPopover";
+import { CrestBadge } from "./legacy/Crest";
 import { UsageMeter } from "./UsageMeter";
 import { VersionBadge } from "./VersionBadge";
 import { openProjectWindow } from "../lib/solo";
@@ -3142,6 +3143,7 @@ export function Sidebar({
       }${layout.bigNames ? " big-names" : ""}${
         layout.showTimes ? "" : " no-times"
       }`}
+      data-zoom-pane="sidebar"
     >
       <SidebarResizeHandle
         width={layout.width}
@@ -3529,6 +3531,9 @@ export function Sidebar({
           <GearIcon size={16} />
         </button>
         <VersionBadge />
+        {/* Renders nothing until the crest is earned on this machine, and CSS
+            keeps it to the skin it belongs to (see legacy.css). */}
+        <CrestBadge size={13} />
         {showSettings && (
           <SettingsScreen onClose={() => setShowSettings(false)} />
         )}

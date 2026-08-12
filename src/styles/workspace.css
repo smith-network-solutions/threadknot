@@ -84,6 +84,15 @@
   display: none;
 }
 
+/* Per-pane zoom mounts (see hotwheel.ts). CSS `zoom` reflows, so content
+   wraps to the pane and never gains a horizontal scrollbar; the vertical
+   scrollers inside keep working in their own (zoomed) coordinate space.
+   The terminal pane is deliberately absent: xterm has its own font sizing. */
+.ws-pane[data-zoom-pane="git"] { zoom: var(--zoom-git, 1); }
+.ws-pane[data-zoom-pane="files"] { zoom: var(--zoom-files, 1); }
+.ws-pane[data-zoom-pane="artifacts"] { zoom: var(--zoom-artifacts, 1); }
+.ws-pane[data-zoom-pane="browser"] { zoom: var(--zoom-browser, 1); }
+
 .ws-stub {
   margin: auto;
   color: var(--fg-dim, #9aa4b2);

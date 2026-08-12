@@ -1188,8 +1188,10 @@ export interface ThreadknotActions {
     machineId?: string,
   ) => Promise<import("../lib/protocol").UpdateStatus>;
   /** Fast-forward a machine's checkout onto origin/master. Rejects when the
-   *  machine carries local commits or uncommitted changes. */
-  pullUpdate: (machineId?: string) => Promise<void>;
+   *  machine carries local commits or uncommitted changes. With `chain`, the
+   *  machine goes on to rebuild and restart itself, and this resolves once that
+   *  run is claimed rather than when it ends. */
+  pullUpdate: (machineId?: string, chain?: boolean, force?: boolean) => Promise<void>;
   /** Start a rebuild. Returns once the build is claimed, not once it is done:
    *  progress arrives on the `updates` broadcast. */
   rebuildUpdate: (machineId?: string) => Promise<void>;

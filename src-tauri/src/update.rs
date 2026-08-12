@@ -54,6 +54,14 @@ const BUILD_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 /// error, small enough not to flood a websocket frame.
 const LOG_TAIL_BYTES: usize = 4_000;
 
+/// Whether this machine can rebuild and restart itself in place.
+///
+/// The two platforms get there differently — Unix signals itself and re-execs
+/// over the same path, Windows has to step out of the linker's way and relaunch
+/// from a copy (see `free_build_target` and `spawn_restart_windows`) — but the
+/// capability the UI offers is the same, so one flag answers for both.
+const SELF_SERVICE: bool = cfg!(any(unix, windows));
+
 /// When this process started. Anything on disk newer than this was written
 /// after we launched, which is exactly what "restart to load it" means.
 static STARTED_AT: OnceLock<SystemTime> = OnceLock::new();
@@ -155,7 +163,7 @@ impl UpdateState {
 #[serde(rename_all = "camelCase")]
 pub struct Operation {
     pub id: String,
-    /// "pull" | "rebuild" | "restart".
+    /// "pull" | "rebuild" | "restart" | "update" (the three chained together).
     pub kind: String,
     pub stage: String,
     pub started_at: String,
@@ -250,8 +258,8 @@ impl UpdateStatus {
             behind_by: 0,
             rebuild_pending: false,
             restart_pending: false,
-            restart_supported: cfg!(unix),
-            rebuild_supported: cfg!(unix),
+            restart_supported: SELF_SERVICE,
+            rebuild_supported: SELF_SERVICE,
             binary_path: restart_target(None).display().to_string(),
             active_work: active_work(hub),
             branch: String::new(),
@@ -603,8 +611,8 @@ async fn compute_in(
         // identical build.
         rebuild_pending: behind_by > 0 && head_behind == 0 && !restart_pending,
         restart_pending,
-        restart_supported: cfg!(unix),
-        rebuild_supported: cfg!(unix),
+        restart_supported: SELF_SERVICE,
+        rebuild_supported: SELF_SERVICE,
         binary_path: target.display().to_string(),
         active_work: active_work(hub),
         branch,
@@ -658,7 +666,18 @@ pub fn spawn_poller(hub: Arc<Hub>) {
 /// Fast-forward the checkout onto `origin/master`. Deliberately refuses
 /// anything that would rewrite or merge local work: a machine carrying
 /// unpushed commits is exactly where an automated pull does damage.
-async fn fast_forward(hub: &Arc<Hub>, repo: &Path, source: &str) -> Result<Value> {
+///
+/// Returns whether commits actually moved. `require_work` decides what "nothing
+/// to pull" means: on its own the pull button was clicked to do something, so
+/// silence would look broken; inside the chained run it is the ordinary case of
+/// a checkout that is already current with only a stale binary left to fix, and
+/// stopping there would skip the rebuild that is the actual point.
+async fn fast_forward(
+    hub: &Arc<Hub>,
+    repo: &Path,
+    source: &str,
+    require_work: bool,
+) -> Result<bool> {
     // No inline fetch: the poller refreshed the refs, and a slow fetch here
     // would blow past the client's 30s request timeout mid-merge.
     let st = compute_in(hub, repo, source, false).await?;
@@ -673,19 +692,39 @@ async fn fast_forward(hub: &Arc<Hub>, repo: &Path, source: &str) -> Result<Value
         st.head_ahead,
         st.branch
     );
-    anyhow::ensure!(
-        st.head_behind > 0,
-        "Already up to date with master; only a rebuild is needed."
-    );
+    if st.head_behind == 0 {
+        anyhow::ensure!(
+            !require_work,
+            "Already up to date with master; only a rebuild is needed."
+        );
+        return Ok(false);
+    }
     // `--ff-only` is the whole safety story: git itself refuses if the history
     // diverged, so there is no window where we could merge or rebase by accident.
     crate::git::run_git(repo, &["merge", "--ff-only", "origin/master"])
         .await
         .context("fast-forward to origin/master failed")?;
-    Ok(json!({ "ok": true }))
+    Ok(true)
 }
 
 // ---- rebuild --------------------------------------------------------------
+
+/// The program a build stage should actually spawn.
+///
+/// Windows ships npm as `npm.cmd`, and `CreateProcess` cannot find that from the
+/// bare name — std only ever appends `.exe` — so the frontend stage died with
+/// "could not start npm, is it installed?" on a machine where npm was installed
+/// and on PATH. Resolving against the same augmented PATH the agent CLIs use
+/// fixes that, and also finds a Node that exists only for this user (nvm, Volta),
+/// which a GUI-launched app does not otherwise inherit. Left alone everywhere
+/// else, where the bare name has always been right.
+fn build_program(program: &str) -> std::ffi::OsString {
+    #[cfg(windows)]
+    if let Some(p) = crate::agents::resolve_bin(program) {
+        return p.into_os_string();
+    }
+    program.into()
+}
 
 /// Run one build stage, streaming both streams into the log. Fixed argv, no
 /// shell: nothing the frontend sends reaches a command line.
@@ -697,7 +736,7 @@ async fn build_stage(repo: &Path, log: &Path, program: &str, args: &[&str]) -> R
         .open(log)
         .with_context(|| format!("cannot write build log {}", log.display()))?;
     let errs = file.try_clone()?;
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = tokio::process::Command::new(build_program(program));
     cmd.args(args)
         .current_dir(repo)
         .env("CI", "1")
@@ -725,6 +764,54 @@ async fn build_stage(repo: &Path, log: &Path, program: &str, args: &[&str]) -> R
     Ok(())
 }
 
+/// The build output path for this executable's name inside `repo`, whether or
+/// not anything has been built there yet. `restart_target` deliberately falls
+/// back to the running binary when the file is missing, which is the wrong
+/// answer for "what is the linker about to write".
+#[cfg(any(windows, test))]
+fn build_output(repo: &Path) -> PathBuf {
+    let name = current_exe_path().file_name().unwrap_or_default().to_owned();
+    repo.join("src-tauri").join("target").join("release").join(name)
+}
+
+/// Windows will not let a running executable be overwritten, so a rebuild whose
+/// output path is the file this process was launched from dies at the link step
+/// with an access error that reads like a broken toolchain. Renaming a running
+/// image *is* allowed (only unlinking is not), so move ourselves aside and hand
+/// the path back. The leftover is swept on the next rebuild, by which time
+/// nothing has it open.
+///
+/// Normally this is a no-op: a Windows restart relaunches from a copy outside
+/// the checkout precisely so the build directory stays free. It matters for the
+/// first self-rebuild on a machine that was started straight out of
+/// `target\release`, which would otherwise be permanently unable to update
+/// itself.
+#[cfg(windows)]
+fn free_build_target(repo: &Path) {
+    let target = build_output(repo);
+    let aside = target.with_extension("exe.old");
+    let _ = std::fs::remove_file(&aside);
+    if !target.is_file() {
+        return;
+    }
+    let current = current_exe_path();
+    let same = match (current.canonicalize(), target.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => current == target,
+    };
+    if same {
+        let _ = std::fs::rename(&target, &aside);
+    }
+}
+
+/// What a finished build left behind.
+enum Built {
+    /// A binary newer than this process is waiting at this path.
+    Fresh(PathBuf),
+    /// The build succeeded but produced nothing newer to restart into.
+    Unchanged(PathBuf),
+}
+
 /// Rebuild the release binary in place, in this process, with the exit code
 /// and log captured. Deliberately NOT a detached fire-and-forget: the previous
 /// shape reported success the instant the shell started, so a failing compile
@@ -733,11 +820,20 @@ async fn build_stage(repo: &Path, log: &Path, program: &str, args: &[&str]) -> R
 /// Overwriting the running executable is safe on Unix because cargo renames the
 /// new file into place and this process keeps the old inode until it exits.
 /// That is precisely why the restart is a separate, explicit step.
-async fn run_rebuild(hub: Arc<Hub>, repo: PathBuf, op_id: String) {
+///
+/// Split out from `run_rebuild` so the chained pull → build → restart run walks
+/// the identical stages and produces the identical error text; two copies of a
+/// build pipeline drift, and the copy that drifts is the one nobody clicks.
+/// Errors come back already formatted (log tail included) because the caller
+/// decides which stage name to file them under.
+async fn rebuild_core(hub: &Arc<Hub>, repo: &Path, op_id: &str) -> Result<Built, String> {
     let log = repo.join("src-tauri").join("target").join("threadknot-rebuild.log");
-    let _ = std::fs::create_dir_all(log.parent().unwrap_or(&repo));
+    let _ = std::fs::create_dir_all(log.parent().unwrap_or(repo));
     let _ = std::fs::write(&log, format!("==== rebuild {} ====\n", now_iso()));
-    hub.updates.set_log(&op_id, &log);
+    hub.updates.set_log(op_id, &log);
+
+    #[cfg(windows)]
+    free_build_target(repo);
 
     let stages: [(&str, &str, Vec<&str>); 2] = [
         // `npm run build` is `tsc --noEmit && vite build`, so a type error fails
@@ -751,52 +847,125 @@ async fn run_rebuild(hub: Arc<Hub>, repo: PathBuf, op_id: String) {
     ];
 
     for (stage, program, args) in stages {
-        hub.updates.stage(&op_id, stage);
-        refresh(&hub).await;
-        if let Err(e) = build_stage(&repo, &log, program, &args).await {
-            let tail = log_tail(&log);
-            hub.updates.finish(
-                &op_id,
-                false,
-                "rebuild failed",
-                Some(format!("{e:#}\n\n{tail}")),
-            );
-            refresh(&hub).await;
-            return;
+        hub.updates.stage(op_id, stage);
+        refresh(hub).await;
+        if let Err(e) = build_stage(repo, &log, program, &args).await {
+            return Err(format!("{e:#}\n\n{}", log_tail(&log)));
         }
     }
 
-    hub.updates.stage(&op_id, "verifying binary");
-    let target = restart_target(Some(&repo));
+    hub.updates.stage(op_id, "verifying binary");
+    refresh(hub).await;
+    let target = restart_target(Some(repo));
     if !target.is_file() {
-        hub.updates.finish(
-            &op_id,
-            false,
-            "rebuild failed",
-            Some(format!("the build finished but {} does not exist", target.display())),
-        );
-        refresh(&hub).await;
-        return;
+        return Err(format!("the build finished but {} does not exist", target.display()));
     }
     // The build can "succeed" without producing anything new (nothing to do,
     // or output written somewhere else). Saying "restart to load it" then would
     // send the user in a circle.
-    if !binary_is_newer(&target) {
-        hub.updates.finish(
+    Ok(match binary_is_newer(&target) {
+        true => Built::Fresh(target),
+        false => Built::Unchanged(target),
+    })
+}
+
+/// Why a build that changed nothing is a dead end, in words the card can show.
+fn unchanged_note(target: &Path) -> String {
+    format!(
+        "The build succeeded but {} is not newer than the running process. \
+         Nothing to restart into.",
+        target.display()
+    )
+}
+
+async fn run_rebuild(hub: Arc<Hub>, repo: PathBuf, op_id: String) {
+    match rebuild_core(&hub, &repo, &op_id).await {
+        Err(e) => hub.updates.finish(&op_id, false, "rebuild failed", Some(e)),
+        Ok(Built::Unchanged(t)) => hub.updates.finish(
             &op_id,
             true,
             "rebuild complete, binary unchanged",
+            Some(unchanged_note(&t)),
+        ),
+        Ok(Built::Fresh(_)) => {
+            hub.updates.finish(&op_id, true, "rebuild complete, restart required", None)
+        }
+    }
+    refresh(&hub).await;
+}
+
+// ---- the whole update, in one click ---------------------------------------
+
+/// Pull, rebuild, and swap the running app for the result, as a single
+/// operation.
+///
+/// Chained on the server rather than in the UI for the same reason the rebuild
+/// is: a release compile outlives the tab that started it, and every safety
+/// rule has to run on the machine that owns the checkout rather than on the one
+/// that clicked. A failure at any stage stops the chain and leaves the ordinary
+/// per-step buttons to finish the job by hand.
+async fn run_update(hub: Arc<Hub>, repo: PathBuf, source: &'static str, op_id: String, force: bool) {
+    hub.updates.stage(&op_id, "pulling");
+    refresh(&hub).await;
+    if let Err(e) = fast_forward(&hub, &repo, source, false).await {
+        hub.updates.finish(&op_id, false, "pull failed", Some(format!("{e:#}")));
+        refresh(&hub).await;
+        hub.updates.kick(true);
+        return;
+    }
+
+    let target = match rebuild_core(&hub, &repo, &op_id).await {
+        Ok(Built::Fresh(t)) => t,
+        Ok(Built::Unchanged(t)) => {
+            hub.updates
+                .finish(&op_id, true, "pulled, binary unchanged", Some(unchanged_note(&t)));
+            refresh(&hub).await;
+            hub.updates.kick(true);
+            return;
+        }
+        Err(e) => {
+            hub.updates.finish(&op_id, false, "rebuild failed", Some(e));
+            refresh(&hub).await;
+            hub.updates.kick(true);
+            return;
+        }
+    };
+
+    // The active-work guard is not spent just because a build preceded it. A
+    // release compile runs for minutes, and threads that were idle at click time
+    // are routinely mid-turn by the end of it — so the check has to happen here,
+    // against the fleet as it is now, not as it was when the button was pressed.
+    // Stopping leaves the plain restart button armed, so nothing is lost except
+    // the automation.
+    let busy = active_work(&hub);
+    if busy > 0 && !force {
+        hub.updates.finish(
+            &op_id,
+            true,
+            "built, waiting to restart",
             Some(format!(
-                "The build succeeded but {} is not newer than the running process. \
-                 Nothing to restart into.",
-                target.display()
+                "{busy} thread(s) started working while this built, so Threadknot left \
+                 itself running. Use restart now once they finish."
             )),
         );
         refresh(&hub).await;
+        hub.updates.kick(true);
         return;
     }
-    hub.updates.finish(&op_id, true, "rebuild complete, restart required", None);
+
+    hub.updates.stage(&op_id, "restarting");
     refresh(&hub).await;
+    match spawn_restart(&target, Some(&repo)) {
+        Ok(()) => {
+            // Nothing after this is guaranteed to run.
+            hub.updates.finish(&op_id, true, "restarting", None);
+            stand_down();
+        }
+        Err(e) => {
+            hub.updates.finish(&op_id, false, "restart failed", Some(format!("{e:#}")));
+            refresh(&hub).await;
+        }
+    }
 }
 
 // ---- restart --------------------------------------------------------------
@@ -808,17 +977,51 @@ async fn run_rebuild(hub: Arc<Hub>, repo: PathBuf, op_id: String) {
 /// it. The child is session-detached so killing us cannot take it down, and it
 /// inherits our environment, which is what keeps the relaunched window attached
 /// to the same desktop session.
-fn spawn_restart(target: &Path) -> Result<()> {
-    anyhow::ensure!(
-        cfg!(unix),
-        "Automatic restart is not wired up on this platform yet. Close Threadknot and \
-         open it again to load the new build."
-    );
+///
+/// `repo` is only used by the Windows path, which has to ship the web bundle
+/// next to the copy it launches.
+fn spawn_restart(target: &Path, repo: Option<&Path>) -> Result<()> {
     anyhow::ensure!(
         target.is_file(),
         "nothing to restart into: {} does not exist",
         target.display()
     );
+    #[cfg(unix)]
+    {
+        let _ = repo;
+        spawn_restart_unix(target)
+    }
+    #[cfg(windows)]
+    {
+        spawn_restart_windows(target, repo)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = repo;
+        anyhow::bail!(
+            "Automatic restart is not wired up on this platform yet. Close Threadknot and \
+             open it again to load the new build."
+        )
+    }
+}
+
+/// Once the helper is armed, get out of its way.
+///
+/// Unix does not need this: the helper's first act is a TERM, which is the
+/// app's normal shutdown path. Windows has no such signal to send, and the
+/// helper's only other lever is a hard kill once its grace period expires — so
+/// standing down deliberately is both faster and gentler. The delay is there to
+/// let the response frame reach whoever asked before the socket dies with us.
+fn stand_down() {
+    #[cfg(windows)]
+    tokio::spawn(async {
+        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        std::process::exit(0);
+    });
+}
+
+#[cfg(unix)]
+fn spawn_restart_unix(target: &Path) -> Result<()> {
     let script = format!(
         // TERM first and only escalate if it is ignored, so the app gets its
         // normal shutdown path and its pending writes land.
@@ -846,6 +1049,7 @@ fn spawn_restart(target: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn which(bin: &str) -> bool {
     std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).any(|d| d.join(bin).is_file()))
@@ -853,8 +1057,117 @@ fn which(bin: &str) -> bool {
 }
 
 /// Single-quote for `sh -c`, escaping embedded quotes.
+#[cfg(unix)]
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Single-quote for PowerShell, where the escape for a literal quote is to
+/// double it. Every path below goes through this, because the ones that matter
+/// on this platform live under `C:\Users\...\OneDrive\Desktop\...` and are full
+/// of spaces.
+#[cfg(windows)]
+fn ps_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// Where Windows runs Threadknot from once it has restarted itself.
+///
+/// Windows locks a running executable, so the app cannot live at the path the
+/// linker needs to write. Every restart therefore copies the fresh build to a
+/// stable spot outside the checkout and launches that, which is what keeps the
+/// *next* rebuild — and any `npx tauri build` run by hand in a terminal — from
+/// failing on a locked file. `scripts/restart-windows.ps1` has always done this;
+/// `THREADKNOT_LIVE_EXE` overrides it in both, so a machine that already runs
+/// from somewhere else keeps running from there.
+#[cfg(windows)]
+fn live_exe(target: &Path) -> PathBuf {
+    if let Some(p) = std::env::var_os("THREADKNOT_LIVE_EXE").filter(|v| !v.is_empty()) {
+        return PathBuf::from(p);
+    }
+    let name = target
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("threadknot.exe"))
+        .to_owned();
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Threadknot")
+        .join(name)
+}
+
+/// Windows restart: a detached PowerShell helper that outlives us, waits for
+/// this pid to go, refreshes the live copy from the fresh build, and launches
+/// it.
+///
+/// The script is written to a temp file rather than passed with `-Command`
+/// because Windows hands a process one flat command-line string, and the paths
+/// involved here are neither short nor free of spaces. It appends to the same
+/// `%TEMP%\threadknot-restart.log` the shell script uses, so both routes leave
+/// one trail to read when a swap does not come back.
+#[cfg(windows)]
+fn spawn_restart_windows(target: &Path, repo: Option<&Path>) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: no console window, and no
+    // dependency on the process that spawned it — which is about to be killed
+    // by the very script being spawned.
+    const DETACHED: u32 = 0x0000_0008 | 0x0000_0200;
+
+    let live = live_exe(target);
+    // The server resolves the LAN/phone UI from a dist folder near the exe; the
+    // live copy runs far from the checkout, so without this every launch serves
+    // the "Web UI not built yet" fallback.
+    let dist = repo.map(|r| r.join("dist")).unwrap_or_default();
+
+    let script = format!(
+        "$ErrorActionPreference = 'SilentlyContinue'\n\
+         $log = Join-Path $env:TEMP 'threadknot-restart.log'\n\
+         function Say($m) {{ \"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m\" | Add-Content $log }}\n\
+         Say '==================== self-restart begin ===================='\n\
+         $target = {target}\n\
+         $live = {live}\n\
+         $dist = {dist}\n\
+         try {{ Wait-Process -Id {pid} -Timeout 30 }} catch {{}}\n\
+         if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Say 'still running, forcing'; Stop-Process -Id {pid} -Force; Start-Sleep -Seconds 2 }}\n\
+         Say \"old pid gone: {pid}\"\n\
+         if ($target -ne $live) {{\n\
+         \x20 New-Item -ItemType Directory -Force -Path (Split-Path $live) | Out-Null\n\
+         \x20 $copied = $false\n\
+         \x20 for ($i = 0; $i -lt 20; $i++) {{ try {{ Copy-Item $target $live -Force -ErrorAction Stop; $copied = $true; break }} catch {{ Start-Sleep -Milliseconds 500 }} }}\n\
+         \x20 Say \"binary copy: $copied\"\n\
+         \x20 if (-not $copied) {{ Say 'FAIL: could not replace the live binary'; Remove-Item $PSCommandPath -Force; exit 1 }}\n\
+         \x20 if ($dist -and (Test-Path (Join-Path $dist 'index.html'))) {{\n\
+         \x20   $dst = Join-Path (Split-Path $live) 'dist'\n\
+         \x20   try {{ if (Test-Path $dst) {{ Remove-Item $dst -Recurse -Force -ErrorAction Stop }}; Copy-Item $dist $dst -Recurse -Force -ErrorAction Stop; Say 'web dist copy: ok' }} catch {{ Say 'web dist copy: FAILED' }}\n\
+         \x20 }}\n\
+         }}\n\
+         Start-Process -FilePath $live -WorkingDirectory (Split-Path $live)\n\
+         Say \"launched $live\"\n\
+         Remove-Item $PSCommandPath -Force\n",
+        target = ps_quote(&target.display().to_string()),
+        live = ps_quote(&live.display().to_string()),
+        dist = ps_quote(&dist.display().to_string()),
+        pid = std::process::id(),
+    );
+
+    // Keep it ASCII: PowerShell 5.1 reads a BOM-less file as ANSI, and smart
+    // punctuation sneaking into this script breaks the parse rather than the
+    // wording.
+    debug_assert!(script.is_ascii(), "the restart helper must stay ASCII-only");
+    let path = std::env::temp_dir().join(format!("threadknot-restart-{}.ps1", uuid::Uuid::new_v4()));
+    std::fs::write(&path, &script)
+        .with_context(|| format!("could not write the restart helper to {}", path.display()))?;
+
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(DETACHED)
+        .spawn()
+        .context("could not start the restart helper")?;
+    Ok(())
 }
 
 // ---- dispatch -------------------------------------------------------------
@@ -916,23 +1229,37 @@ pub async fn handle(hub: &Arc<Hub>, kind: &str, payload: &Value) -> Result<Value
             hub.updates.kick(true);
             Ok(json!({}))
         }
+        // `chain: true` asks for the whole job — pull, rebuild, restart — off
+        // one click. It is opt-in per request rather than the default because
+        // this call is routable: a peer that predates the chain, or one that
+        // cannot rebuild itself, must keep doing exactly what it always did.
+        // The answer then arrives the way the rebuild's does, on the `updates`
+        // broadcast, since a release compile outlives any request.
         "git.selfUpdatePull" => {
             let (repo, source) = require_repo(hub)?;
+            let chain =
+                SELF_SERVICE && payload.get("chain").and_then(Value::as_bool).unwrap_or(false);
+            if chain {
+                let force = payload.get("force").and_then(Value::as_bool).unwrap_or(false);
+                let op = hub.updates.begin("update")?;
+                tokio::spawn(run_update(hub.clone(), repo, source, op.id.clone(), force));
+                return Ok(json!({ "ok": true, "operationId": op.id }));
+            }
             let op = hub.updates.begin("pull")?;
             hub.updates.stage(&op.id, "pulling");
-            let out = fast_forward(hub, &repo, source).await;
+            let out = fast_forward(hub, &repo, source, true).await;
             match &out {
                 Ok(_) => hub.updates.finish(&op.id, true, "repository current", None),
                 Err(e) => hub.updates.finish(&op.id, false, "pull failed", Some(format!("{e:#}"))),
             }
             hub.updates.kick(true);
-            out
+            out.map(|_| json!({ "ok": true }))
         }
         "git.selfUpdateRebuild" => {
             let (repo, _) = require_repo(hub)?;
             anyhow::ensure!(
-                cfg!(unix),
-                "Automatic rebuild is only wired up for Linux and macOS so far. \
+                SELF_SERVICE,
+                "Automatic rebuild is not wired up on this platform yet. \
                  Run `npx tauri build --no-bundle` in {} and reopen Threadknot.",
                 repo.display()
             );
@@ -955,11 +1282,12 @@ pub async fn handle(hub: &Arc<Hub>, kind: &str, payload: &Value) -> Result<Value
             );
             let op = hub.updates.begin("restart")?;
             hub.updates.stage(&op.id, "restarting");
-            match spawn_restart(&target) {
+            match spawn_restart(&target, repo.as_deref()) {
                 Ok(()) => {
                     // Nothing after this is guaranteed to run: the helper is
                     // already counting down to kill us.
                     hub.updates.finish(&op.id, true, "restarting", None);
+                    stand_down();
                     Ok(json!({ "ok": true, "restarting": true }))
                 }
                 Err(e) => {
@@ -1005,10 +1333,49 @@ mod tests {
         assert_eq!(got[1].date, "2026-07-24");
     }
 
+    #[cfg(unix)]
     #[test]
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("/plain/path"), "'/plain/path'");
         assert_eq!(shell_quote("it's"), r"'it'\''s'");
+    }
+
+    /// The bare name is not launchable on Windows for anything npm installs,
+    /// and a build stage that cannot start its own compiler reports the machine
+    /// has no toolchain. Skipped rather than failed where npm is absent: this
+    /// asserts the shape of the resolution, not what is on the box.
+    #[cfg(windows)]
+    #[test]
+    fn build_program_resolves_the_windows_shim_rather_than_the_bare_name() {
+        if let Some(p) = crate::agents::resolve_bin("npm") {
+            assert_eq!(build_program("npm"), p.into_os_string());
+            assert_ne!(build_program("npm"), std::ffi::OsString::from("npm"));
+        }
+    }
+
+    /// Every path the Windows helper touches is interpolated into the script as
+    /// a literal, and they are all full of spaces on a real machine.
+    #[cfg(windows)]
+    #[test]
+    fn ps_quote_doubles_single_quotes() {
+        assert_eq!(ps_quote(r"C:\Program Files\tk"), r"'C:\Program Files\tk'");
+        assert_eq!(ps_quote("it's"), "'it''s'");
+    }
+
+    /// `build_output` has to name the file the linker is about to write even
+    /// when nothing has been built yet — that is exactly when Windows needs to
+    /// know whether it is standing on it. `restart_target` cannot answer this:
+    /// it falls back to the running binary when the output is missing, which
+    /// would point the rename at whatever is running instead.
+    #[test]
+    fn build_output_names_the_release_artifact_before_it_exists() {
+        let dir = Scratch::new("output");
+        let name = std::env::current_exe().unwrap().file_name().unwrap().to_owned();
+        assert_eq!(
+            build_output(&dir.0),
+            dir.0.join("src-tauri").join("target").join("release").join(&name)
+        );
+        assert_ne!(build_output(&dir.0), restart_target(Some(&dir.0)));
     }
 
     /// Scratch directory that cleans up after itself, so these tests need no
