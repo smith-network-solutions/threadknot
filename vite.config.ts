@@ -15,6 +15,12 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  // Minification renames every component to two letters, which makes both a
+  // production stack trace and the render tracer's report (docs/RENDER-FORENSICS.md)
+  // unreadable — "rc remounted" says nothing. Costs ~1% of bundle size.
+  esbuild: {
+    keepNames: true,
+  },
   build: {
     target: "es2021",
     outDir: "dist",

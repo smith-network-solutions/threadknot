@@ -4,6 +4,7 @@
 // (notify prefs, MainSplit layout).
 
 import { ensureFontLoaded } from "./fonts";
+import { traceMark } from "./renderTrace";
 
 /** The theme palettes. "dark" (original) and "light" are unchanged; the four
  *  extra ids are curated data-theme blocks in styles.css. "light" and "solar"
@@ -915,6 +916,9 @@ export function applyAppearance(
   customTheme?: CustomTheme | null,
 ): void {
   const root = document.documentElement;
+  // Rewrites every root-level custom property: a full repaint, with no React
+  // commit for the tracer to attribute it to unless it is marked here.
+  traceMark("applyAppearance", a.theme);
   // Only touch the tracked theme when the caller actually passed the arg;
   // `undefined` means "leave as-is", `null` means "clear".
   if (arguments.length >= 2) activeCustomTheme = customTheme ?? null;

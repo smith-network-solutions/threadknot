@@ -22,7 +22,10 @@ on the LAN, so the app is usable from a phone.
   `store.rs` (the data dir), `protocol.rs` (normalized event schema).
   Contract: `docs/PROTOCOL.md`.
 - **Frontend**: React/TS in `src/`, plain CSS, no state libs. Works in the Tauri
-  webview and any phone browser (LAN URL + token in Settings popover).
+  webview and any phone browser (LAN URL + token in Settings popover). For the
+  whole-screen flash — what re-rendered, what remounted, and which action caused
+  it, readable from a headless browser — arm `?tktrace=1` and read
+  **`docs/RENDER-FORENSICS.md`**.
 - **Mobile app** (`mobile/`): Expo SDK 57 companion — biometric-locked WebView
   shell with multi-server switching + push notifications. Read
   **`docs/MOBILE.md`** first.

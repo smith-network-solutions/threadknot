@@ -41,6 +41,7 @@ import {
 } from "./lib/protocol";
 import { HERMES_ENABLED_EVENT, isAgentVisible } from "./lib/agentVisibility";
 import { ThreadknotClient } from "./lib/ws";
+import { bindTraceStore, traceDispatch } from "./lib/renderTrace";
 import {
   defaultDraft,
   effortForModel,
@@ -1570,7 +1571,11 @@ function maybeNotify(
 }
 
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, baseDispatch] = useReducer(reducer, initialState);
+  // Every commit in this app is caused by an action landing here, so the render
+  // tracer names the cause by watching dispatch. Identity-stable, and the exact
+  // same function when tracing is off.
+  const dispatch = useMemo(() => traceDispatch(baseDispatch), [baseDispatch]);
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
   /** Non-null → the folder browser is open for a new workspace, on this
    *  machine (machineId undefined) or on a peer. */
@@ -1582,6 +1587,7 @@ export default function App() {
 
   const stateRef = useRef(state);
   stateRef.current = state;
+  bindTraceStore({ dispatch, getState: () => stateRef.current });
 
   const client = useMemo(() => new ThreadknotClient(), []);
   const actions = useMemo(
