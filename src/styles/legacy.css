@@ -239,8 +239,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(2, 2, 8, 0.94);
-  backdrop-filter: blur(6px);
+  /* Opaque, and deliberately NOT backdrop-filter. A full-viewport blur behind
+     an animating canvas costs a re-blur of the whole screen every frame, and
+     it was the single largest source of dropped frames in here. The cabinet
+     covers what is behind it anyway, so the blur bought nothing. */
+  background: #02020a;
 }
 
 .lc-frame {
@@ -307,36 +310,19 @@
   animation: none;
 }
 
-/* Glass: scanlines, a vignette, and one band drifting down the tube. */
+/* Glass: a static vignette over the whole cabinet, and nothing else.
+ *
+ * This used to carry full-frame scanlines AND a band animating down it forever.
+ * Over a window-sized element sitting above a scaling canvas, that is a
+ * continuous composite of about two million pixels for decoration nobody was
+ * looking at. The scanlines now live on the screen bezel only (a few hundred
+ * thousand pixels, and static), and the rolling band is gone. */
 .lc-glass {
   position: absolute;
   inset: 0;
   z-index: 6;
   pointer-events: none;
-  background:
-    repeating-linear-gradient(to bottom, rgba(186, 240, 255, 0.06) 0 1px, transparent 1px 3px),
-    radial-gradient(130% 110% at 50% 50%, transparent 52%, rgba(0, 0, 0, 0.62) 100%);
-}
-.lc-glass::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 22%;
-  background: linear-gradient(to bottom, transparent, rgba(186, 240, 255, 0.05), transparent);
-  animation: lc-roll 7.5s linear infinite;
-}
-@keyframes lc-roll {
-  from {
-    transform: translateY(-30%);
-  }
-  to {
-    transform: translateY(460%);
-  }
-}
-.lc-frame.calm .lc-glass::after {
-  animation: none;
-  opacity: 0;
+  background: radial-gradient(130% 110% at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.6) 100%);
 }
 
 .lc-head {
@@ -436,10 +422,22 @@
   /* Digits change every frame; a fixed advance keeps the row from twitching. */
   font-variant-numeric: tabular-nums;
 }
-.lc-lives {
+/* The card: three marks for the three levels of the game in progress. */
+.lc-card-marks {
   display: inline-flex;
-  gap: 3px;
+  gap: 4px;
 }
+.lc-mark {
+  font-family: "Silkscreen", var(--font-mono);
+  font-size: calc(clamp(11px, 0.9vw, 15px) * var(--lc-zoom));
+  line-height: 1;
+  min-width: 1ch;
+  text-align: center;
+  color: #5c56a4;
+}
+.lc-mark.win { color: #5ff5db; }
+.lc-mark.loss { color: var(--lc-hot); }
+.lc-mark.now { color: var(--lc-gold); }
 
 .lc-stage {
   flex: 1;
@@ -453,15 +451,36 @@
      reachable rather than clipped. */
   overflow: auto;
 }
+/* The screen: the canvas plus its bezel, and the only thing that carries
+   scanlines. Scoping them here rather than to the whole frame is the
+   difference between compositing the playfield and compositing the window. */
+.lc-screen {
+  position: relative;
+  display: flex;
+  flex: none;
+  border: 2px solid #241c60;
+  box-shadow: 0 0 0 4px #05040f, 0 0 24px rgba(45, 225, 194, 0.14);
+  background: #05040f;
+  /* Confines paint and layout work to this box. */
+  contain: paint;
+}
+.lc-screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(186, 240, 255, 0.07) 0 1px,
+    transparent 1px 3px
+  );
+}
 .lc-canvas {
   image-rendering: pixelated;
-  border: 2px solid #241c60;
-  box-shadow:
-    0 0 0 4px #05040f,
-    0 0 34px rgba(45, 225, 194, 0.16);
+  display: block;
   background: #05040f;
 }
-.lc-canvas.hidden {
+.lc-screen.hidden {
   visibility: hidden;
 }
 
@@ -572,7 +591,7 @@
 }
 
 /* The playfield itself keels over and drops off the bottom of the tube. */
-.lc-canvas.dying {
+.lc-screen.dying {
   animation: lc-death-fall 1s cubic-bezier(0.5, 0, 0.9, 0.4) forwards;
 }
 @keyframes lc-death-fall {
@@ -582,7 +601,7 @@
 }
 
 .lc-frame.calm .lc-inner,
-.lc-frame.calm .lc-canvas.dying {
+.lc-frame.calm .lc-screen.dying {
   animation: none;
 }
 

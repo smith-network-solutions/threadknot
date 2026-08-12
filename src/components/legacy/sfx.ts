@@ -33,6 +33,9 @@ const VOICES: Record<Cue, Note> = {
   // from the pickup blip so you know which of the two you just caught.
   power: { hz: 380, to: 1500, dur: 0.2, type: "square", gain: 0.13 },
   boom: { hz: 220, to: 32, dur: 0.6, type: "sawtooth", gain: 0.17 },
+  // A hit that bounced off armour. Deliberately duller than `hit`, so you can
+  // hear that a shell survived without having to watch its colour.
+  clank: { hz: 170, to: 130, dur: 0.06, type: "square", gain: 0.07 },
 };
 
 export class Cabinet {

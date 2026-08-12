@@ -63,7 +63,7 @@ type Phase =
   /** Attract card for the stage about to start. */
   | "intro"
   | "play"
-  /** A life gone; the level restarts from the top. */
+  /** A level dropped. There is no retry: you carry the loss to the next one. */
   | "lost"
   /** A level beaten, with more of this game still to come. */
   | "level-clear"
@@ -105,7 +105,13 @@ const BUTTONS: Record<string, Btn> = {
   KeyK: "bomb",
 };
 
-const LIVES = 3;
+/** Levels you must win, out of the three in a game, to move on to the next.
+ *  You may drop exactly one per game, and no level is ever replayed. */
+const WINS_NEEDED = 2;
+
+/** The result of each level in the game currently being played. */
+type Card = ("win" | "loss" | null)[];
+const freshCard = (): Card => [null, null, null];
 /** Never advance a stage by more than this in one tick. A backgrounded webview
  *  hands back a multi-second delta, and replaying it in one step is a death
  *  the player never saw coming. */
@@ -124,7 +130,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   const [phase, setPhase] = useState<Phase>(calm ? "title" : "boot");
   const [stageIndex, setStageIndex] = useState(0);
   const [levelIndex, setLevelIndex] = useState(0);
-  const [lives, setLives] = useState(LIVES);
+  const [scoreCard, setScoreCard] = useState<Card>(freshCard);
   const [banked, setBanked] = useState(0);
   const [muted, setMuted] = useState(() => !getLegacyAward().sound);
   const [paused, setPaused] = useState(false);
@@ -167,6 +173,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   /** Set false the moment a life is lost. The Perfect Clear badge is the only
    *  thing that reads it, and nothing in the run can set it back to true. */
   const flawlessRef = useRef(true);
+  /** The current game's card, mirrored for the loop: it has to read and write
+   *  it inside a frame, before React has committed anything. */
+  const cardRef = useRef<Card>(freshCard());
   /** Watches the shape of the input for this campaign; replaced at the start of
    *  every run so a perfect campaign is judged only on its own keystrokes. */
   const witnessRef = useRef<Witness>(new Witness());
@@ -325,22 +334,39 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       if (readoutRef.current) readoutRef.current.textContent = run.readout();
       if (scoreRef.current) scoreRef.current.textContent = String(total).padStart(6, "0");
 
-      if (!settledRef.current && run.status === "cleared") {
-        settledRef.current = true;
+      if (settledRef.current) return;
+      const won = run.status === "cleared";
+      const lost = run.status === "failed";
+      if (!won && !lost) return;
+
+      settledRef.current = true;
+      const mark: Card = [...cardRef.current];
+      mark[levelIndex] = won ? "win" : "loss";
+      cardRef.current = mark;
+      setScoreCard(mark);
+
+      if (won) {
         setBanked((s) => s + run.score);
-        // The last level of a game earns that game's tribute page; the others
-        // just roll on to the next level.
-        setPhase(levelIndex >= LEVELS_PER_STAGE - 1 ? "tribute" : "level-clear");
-      } else if (!settledRef.current && run.status === "failed") {
-        settledRef.current = true;
-        // One life is all it takes: Perfect Clear is meant to be rare.
+      } else {
+        // One dropped level is all it takes: Perfect Clear is meant to be rare.
         flawlessRef.current = false;
-        const out = lives <= 1;
-        setLives((n) => Math.max(0, n - 1));
-        setTaunt((prev) => pickTaunt(out ? GAME_OVER : LIFE_LOST, prev));
         setDying(true);
         cabinetRef.current?.death();
-        setPhase(out ? "over" : "lost");
+      }
+
+      const isFinalLevel = levelIndex >= LEVELS_PER_STAGE - 1;
+      if (!isFinalLevel) {
+        setTaunt((prev) => (won ? prev : pickTaunt(LIFE_LOST, prev)));
+        setPhase(won ? "level-clear" : "lost");
+        return;
+      }
+      // Three played. Two wins carries the game; one does not.
+      const wins = mark.filter((r) => r === "win").length;
+      if (wins >= WINS_NEEDED) {
+        setPhase("tribute");
+      } else {
+        setTaunt((prev) => pickTaunt(GAME_OVER, prev));
+        setPhase("over");
       }
     };
 
@@ -349,10 +375,10 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-    // `lives` decides game-over and `levelIndex` decides whether a clear ends
-    // the game. Both hold still for the length of a level, so re-arming the
-    // loop when they change is correct and costs one frame.
-  }, [phase, lives, levelIndex]);
+    // `levelIndex` decides whether a result ends the game. It holds still for
+    // the length of a level, so re-arming the loop when it changes is correct
+    // and costs one frame.
+  }, [phase, levelIndex]);
 
   /* ---- outcomes -------------------------------------------------------- */
 
@@ -417,7 +443,8 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     setCredits(attemptsRemaining());
     setBanked(0);
     bankedRef.current = 0;
-    setLives(LIVES);
+    cardRef.current = freshCard();
+    setScoreCard(cardRef.current);
     setStageIndex(0);
     setLevelIndex(0);
     peakRef.current = 0;
@@ -446,11 +473,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         setPaused(false);
         setPhase("play");
         break;
+      // Won or dropped, the next level is the next level. Nothing is replayed:
+      // the card is what decides whether the game carries.
       case "lost":
-        // A lost life costs you the level, not the game.
-        startStage(stageIndex, levelIndex);
-        setPhase("intro");
-        break;
       case "level-clear": {
         const next = levelIndex + 1;
         setLevelIndex(next);
@@ -466,9 +491,10 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         }
         setStageIndex(next);
         setLevelIndex(0);
-        // A fresh game, a fresh set of lives. Carrying a single life into a
-        // game you have not seen yet is a punishment for progress.
-        setLives(LIVES);
+        // A fresh game, a fresh card. Carrying a dropped level into a game you
+        // have not seen yet is a punishment for progress.
+        cardRef.current = freshCard();
+        setScoreCard(cardRef.current);
         startStage(next, 0);
         setPhase("intro");
         break;
@@ -635,7 +661,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         return {
           kicker: "LEGACY CIRCUIT",
           heading: "A HIDDEN CABINET",
-          body: `Three games. Three levels each. Three lives a game. ${credits} of ${MAX_ATTEMPTS} credits left.`,
+          body: `Three games, three levels each. Take ${WINS_NEEDED} of the 3 to carry a game. No retries. ${credits} of ${MAX_ATTEMPTS} credits left.`,
           // The reason the whole thing exists, on the first screen anyone who
           // finds their way in will see.
           dedication: CIRCUIT_TRIBUTE,
@@ -655,16 +681,20 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           body: stage.levelNote(levelIndex + 1),
           foot: "PRESS ENTER",
         };
-      case "lost":
+      case "lost": {
+        const dropped = scoreCard.filter((r) => r === "loss").length;
+        const left = LEVELS_PER_STAGE - scoreCard.filter(Boolean).length;
         return {
-          kicker: "CIRCUIT BROKEN",
-          heading: lives === 1 ? "LAST LIFE" : `${lives} LIVES LEFT`,
+          kicker: `LEVEL ${levelIndex + 1} DROPPED`,
+          heading: dropped >= 2 ? "THAT IS THE GAME" : "ONE DROPPED",
           taunt,
           body:
-            "The level restarts from the top. Everything banked is safe, and the next game hands you " +
-            "a fresh three. A Perfect Clear, however, is off the table for this run.",
+            dropped >= 2
+              ? `Two dropped out of three. You need ${WINS_NEEDED} to carry a game, so the rest of this one is a formality.`
+              : `No retries here: the next level is the next level. You need ${WINS_NEEDED} wins from three to carry this game, and you have ${left} left to take.`,
           foot: "PRESS ENTER",
         };
+      }
       case "cooldown":
         return {
           kicker: `CABINET COOLING · ${MAX_ATTEMPTS} CREDITS SPENT`,
@@ -678,8 +708,9 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         };
       case "tribute": {
         const t = TRIBUTES[Math.min(stageIndex, TRIBUTES.length - 1)];
+        const wins = scoreCard.filter((r) => r === "win").length;
         return {
-          kicker: `${t.kicker} · ${String(total).padStart(6, "0")} BANKED`,
+          kicker: `${t.kicker} · ${wins}/${LEVELS_PER_STAGE} TAKEN · ${String(total).padStart(6, "0")} BANKED`,
           heading: t.heading,
           body: t.lede,
           roll: t.roll,
@@ -689,7 +720,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       }
       case "over":
         return {
-          kicker: "GAME OVER",
+          kicker: `GAME OVER · ${scoreCard.filter((r) => r === "win").length}/${LEVELS_PER_STAGE} ON ${stage.title}`,
           heading: "THE THREAD SNAPS",
           taunt,
           body:
@@ -814,10 +845,18 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           <span className="lc-hud-val">{String(best).padStart(6, "0")}</span>
         </span>
         <span className="lc-hud-cell">
-          <span className="lc-hud-key">LIVES</span>
-          <span className="lc-lives" aria-label={`${lives} lives left`}>
-            {Array.from({ length: LIVES }, (_, i) => (
-              <Crest key={i} size={11} className={i < lives ? "" : "spent"} />
+          <span className="lc-hud-key">CARD</span>
+          <span
+            className="lc-card-marks"
+            aria-label={`This game: ${scoreCard.filter((r) => r === "win").length} won, ${scoreCard.filter((r) => r === "loss").length} dropped, ${WINS_NEEDED} needed`}
+          >
+            {scoreCard.map((r, i) => (
+              <span
+                key={i}
+                className={`lc-mark${r ? ` ${r}` : ""}${i === levelIndex && !r ? " now" : ""}`}
+              >
+                {r === "win" ? "W" : r === "loss" ? "X" : "·"}
+              </span>
             ))}
           </span>
         </span>
@@ -830,14 +869,19 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       </div>
 
       <div className="lc-stage" ref={stageWrapRef}>
-        <canvas
-          className={`lc-canvas${showCanvas ? "" : " hidden"}${dying ? " dying" : ""}`}
-          ref={canvasRef}
-          width={VIEW_W}
-          height={VIEW_H}
+        <div
+          className={`lc-screen${showCanvas ? "" : " hidden"}${dying ? " dying" : ""}`}
           style={{ width: VIEW_W * scale, height: VIEW_H * scale }}
-          aria-hidden="true"
-        />
+        >
+          <canvas
+            className="lc-canvas"
+            ref={canvasRef}
+            width={VIEW_W}
+            height={VIEW_H}
+            style={{ width: VIEW_W * scale, height: VIEW_H * scale }}
+            aria-hidden="true"
+          />
+        </div>
 
         {/* Every card centres its content when it fits and scrolls when it does
             not. The inner wrapper carries `margin: auto` rather than the card
