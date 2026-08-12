@@ -30,6 +30,49 @@ const CREST: readonly string[] = [
 
 const SPAN = 9;
 
+/**
+ * The finishing medals. One shape, three metals, because a medal you have to
+ * read the label of is not a medal.
+ *
+ *   BRONZE  finished the campaign, 6 or 7 of the 9 levels taken
+ *   SILVER  8 of 9: three clean games but one, where you dropped a single level
+ *   GOLD    9 of 9, nothing lost
+ *
+ * Ribbon straps at the top, disc below, bright core inside the disc.
+ */
+const MEDAL: readonly string[] = [
+  "##.......##",
+  ".##.....##.",
+  "..##...##..",
+  "...#####...",
+  "..#######..",
+  ".###***###.",
+  ".##*****##.",
+  ".###***###.",
+  "..#######..",
+  "...#####...",
+  "....###....",
+];
+
+/**
+ * The AI ABUSER AWARD. Deliberately the ugliest thing in the file: a smug
+ * little robot head in colours no self-respecting cabinet would use, because
+ * the joke only lands if the badge itself looks like a punishment.
+ */
+const ABUSER: readonly string[] = [
+  "....#.#....",
+  "..#######..",
+  ".#########.",
+  "#.##...##.#",
+  "#.#*#.#*#.#",
+  "#.##...##.#",
+  "#.#######.#",
+  "#.#*****#.#",
+  "#.#######.#",
+  ".#########.",
+  "..##...##..",
+];
+
 /** The face the cabinet pulls when you lose: crossed eyes and a flat frown,
  *  which is the entire emotional range a nine by nine grid affords. */
 const DEAD: readonly string[] = [
@@ -86,15 +129,20 @@ export function Crest({
   className?: string;
   /** Omit for a purely decorative crest sitting next to its own label. */
   title?: string;
-  variant?: "weaver" | "perfect" | "dead";
+  variant?: "weaver" | "perfect" | "dead" | "bronze" | "silver" | "gold" | "abuser";
 }) {
-  const map = variant === "perfect" ? PERFECT : variant === "dead" ? DEAD : CREST;
+  const map =
+    variant === "perfect" ? PERFECT
+    : variant === "dead" ? DEAD
+    : variant === "abuser" ? ABUSER
+    : variant === "bronze" || variant === "silver" || variant === "gold" ? MEDAL
+    : CREST;
   return (
     <svg
       className={`legacy-crest legacy-crest-${variant} ${className}`}
       width={size}
       height={size}
-      viewBox={`0 0 ${SPAN} ${SPAN}`}
+      viewBox={`0 0 ${map[0].length} ${map.length}`}
       role={title ? "img" : undefined}
       aria-label={title}
       aria-hidden={title ? undefined : true}

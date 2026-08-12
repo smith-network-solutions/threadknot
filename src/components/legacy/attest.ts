@@ -28,6 +28,16 @@ export type Attestation = "human" | "unverified";
 
 export interface WitnessReport {
   verdict: Attestation;
+  /**
+   * Not merely "unverified" but positively machine-shaped: events the browser
+   * did not mark as real, or a rhythm no set of hands produces.
+   *
+   * Kept separate from `verdict` on purpose. Failing verification is cheap and
+   * can happen to a person who played a short, tidy run; being ACCUSED should
+   * take actual evidence, because the badge it drives is a joke at somebody's
+   * expense and a false one stops being funny.
+   */
+  automated: boolean;
   /** Why it came out that way, in plain language, for the badge tooltip. */
   reasons: string[];
   events: number;
@@ -125,8 +135,15 @@ export class Witness {
     if (intervalCv < MIN_INTERVAL_CV) reasons.push("the gaps between keystrokes were too even");
     if (holdCv < MIN_HOLD_CV) reasons.push("keys were held for too uniform a time");
 
+    // Enough samples to judge rhythm at all, and then a rhythm that is simply
+    // not human: a metronome, or events that were never typed.
+    const enough = this.iN >= 60 && this.hN >= 30;
+    const automated =
+      this.tainted || (enough && (intervalCv < 0.12 || holdCv < 0.05));
+
     return {
       verdict: reasons.length === 0 ? "human" : "unverified",
+      automated,
       reasons,
       events: this.events,
       intervalCv: Math.round(intervalCv * 100) / 100,

@@ -56,6 +56,23 @@
   fill: #6b7591;
 }
 
+/* The finishing medals: one shape, three metals. */
+.legacy-crest-bronze .crest-edge { fill: #c87c3c; }
+.legacy-crest-bronze .crest-weave { fill: #ffb066; }
+.legacy-crest-silver .crest-edge { fill: #b9c6da; }
+.legacy-crest-silver .crest-weave { fill: #ffffff; }
+.legacy-crest-gold .crest-edge { fill: #ffcf4d; }
+.legacy-crest-gold .crest-weave { fill: #fff3b0; }
+.legacy-crest-gold { filter: drop-shadow(0 0 5px rgba(255, 207, 77, 0.75)); }
+.legacy-crest-silver { filter: drop-shadow(0 0 4px rgba(201, 212, 228, 0.5)); }
+
+/* The AI ABUSER AWARD, in colours chosen to be a small punishment. */
+.legacy-crest-abuser .crest-edge { fill: #9cff3d; }
+.legacy-crest-abuser .crest-weave { fill: #ff00a0; }
+.legacy-crest-abuser {
+  filter: drop-shadow(0 0 6px rgba(156, 255, 61, 0.6));
+}
+
 /* ---- About ------------------------------------------------------------- */
 
 .about-lede {
@@ -646,6 +663,65 @@
   font-variant-numeric: tabular-nums;
   color: #6ff2ff;
   text-shadow: 0 0 24px rgba(111, 242, 255, 0.4);
+}
+
+/* The medal on the winning screen. */
+.lc-medal {
+  display: flex;
+  align-items: center;
+  gap: calc(16px * var(--lc-zoom));
+  margin-top: calc(8px * var(--lc-zoom));
+  padding: calc(14px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
+  border: 2px solid #4a5570;
+  text-align: left;
+  max-width: 62ch;
+}
+.lc-medal.bronze { border-color: #c87c3c; background: rgba(200, 124, 60, 0.09); }
+.lc-medal.silver { border-color: #b9c6da; background: rgba(185, 198, 218, 0.09); }
+.lc-medal.gold {
+  border-color: #ffcf4d;
+  background: rgba(255, 207, 77, 0.1);
+  box-shadow: 0 0 28px rgba(255, 207, 77, 0.2);
+}
+.lc-medal-text { display: flex; flex-direction: column; gap: 4px; }
+.lc-medal-name {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(15px, 1.3vw, 22px) * var(--lc-zoom));
+  letter-spacing: 0.08em;
+}
+.lc-medal.bronze .lc-medal-name { color: #ffb066; }
+.lc-medal.silver .lc-medal-name { color: #ffffff; }
+.lc-medal.gold .lc-medal-name { color: #ffcf4d; }
+.lc-medal-sub {
+  font-size: calc(clamp(11.5px, 0.92vw, 15px) * var(--lc-zoom));
+  line-height: 1.5;
+  color: #c3cbec;
+}
+
+/* The AI ABUSER AWARD. Loud on purpose. */
+.lc-abuser {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(16px * var(--lc-zoom));
+  margin-top: calc(10px * var(--lc-zoom));
+  padding: calc(15px * var(--lc-zoom)) calc(20px * var(--lc-zoom));
+  border: 3px dashed #9cff3d;
+  background: rgba(156, 255, 61, 0.08);
+  text-align: left;
+  max-width: 64ch;
+}
+.lc-abuser-text { display: flex; flex-direction: column; gap: 8px; }
+.lc-abuser-name {
+  font-family: "Bungee", var(--font-ui);
+  font-size: calc(clamp(15px, 1.35vw, 23px) * var(--lc-zoom));
+  letter-spacing: 0.06em;
+  color: #9cff3d;
+  text-shadow: 0 0 16px rgba(156, 255, 61, 0.5);
+}
+.lc-abuser-body {
+  font-size: calc(clamp(11.5px, 0.95vw, 15px) * var(--lc-zoom));
+  line-height: 1.55;
+  color: #e6ffd6;
 }
 
 /* The Perfect Clear panel on the winning screen. */

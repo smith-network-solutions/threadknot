@@ -18,8 +18,13 @@ import { createPortal } from "react-dom";
 import {
   attemptCooldownRemaining,
   attemptsRemaining,
+  awardAbuser,
   awardLegacyCrest,
+  awardMedal,
   awardPerfectClear,
+  ABUSER_NAME,
+  medalFor,
+  type Medal,
   CIRCUIT_TRIBUTE,
   clampZoom,
   CREST_NAME,
@@ -186,10 +191,15 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
   /** The current game's card, mirrored for the loop: it has to read and write
    *  it inside a frame, before React has committed anything. */
   const cardRef = useRef<Card>(freshCard());
+  /** Levels taken across the whole campaign, out of nine. This is what the
+   *  medal is cut from. */
+  const totalWinsRef = useRef(0);
   /** Watches the shape of the input for this campaign; replaced at the start of
    *  every run so a perfect campaign is judged only on its own keystrokes. */
   const witnessRef = useRef<Witness>(new Witness());
   const [perfectReport, setPerfectReport] = useState<WitnessReport | null>(null);
+  const [medal, setMedal] = useState<Medal>("");
+  const [caught, setCaught] = useState(false);
   /** The line the cabinet is currently teasing you with, held in state so it
    *  does not reshuffle on every unrelated re-render mid-read. */
   const [taunt, setTaunt] = useState("");
@@ -385,6 +395,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         setPhase(won ? "level-clear" : "lost");
         return;
       }
+      totalWinsRef.current += wins;
       if (wins >= WINS_NEEDED) {
         setPhase("tribute");
       } else {
@@ -415,8 +426,17 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       // Nine levels, no life lost. Judge the input that produced it and record
       // both facts together: the badge without the verdict would be a claim
       // nobody could check.
+      const report = witnessRef.current.report();
+      // The medal is cut from how many of the nine you actually took.
+      const tier = medalFor(totalWinsRef.current);
+      setMedal(tier);
+      if (tier) awardMedal(tier);
+      // And the one nobody wants, on positive evidence only: failing to verify
+      // is not the same as being caught, and a false accusation is not funny.
+      setCaught(report.automated);
+      if (report.automated) awardAbuser();
+
       if (flawlessRef.current) {
-        const report = witnessRef.current.report();
         setPerfectReport(report);
         awardPerfectClear(report.verdict === "human", handle);
       } else {
@@ -472,6 +492,12 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
     setLevelIndex(0);
     peakRef.current = 0;
     flawlessRef.current = true;
+
+    totalWinsRef.current = 0;
+
+    setMedal("");
+
+    setCaught(false);
     witnessRef.current = new Witness();
     setPerfectReport(null);
     startStage(0, 0);
@@ -946,6 +972,49 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
               {/* The rare one. Only on the winning screen, only when nothing
                   was lost, and always shown with what the verification does
                   and does not establish. */}
+              {/* The medal, cut from how many of the nine you took. */}
+              {phase === "win" && medal && (
+                <div className={`lc-medal ${medal}`}>
+                  <Crest size={56} variant={medal} title={`${medal.toUpperCase()} MEDAL`} />
+                  <div className="lc-medal-text">
+                    <span className="lc-medal-name">{medal.toUpperCase()}</span>
+                    <span className="lc-medal-sub">
+                      {totalWinsRef.current} of 9 levels taken
+                      {medal === "gold"
+                        ? ". Every level, first time."
+                        : medal === "silver"
+                          ? ". One level dropped in the whole campaign."
+                          : ". You got there."}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* The one nobody wants. */}
+              {phase === "win" && caught && (
+                <div className="lc-abuser">
+                  <Crest size={56} variant="abuser" title={ABUSER_NAME} />
+                  <div className="lc-abuser-text">
+                    <span className="lc-abuser-name">{ABUSER_NAME}</span>
+                    <span className="lc-abuser-body">
+                      Oh, BRAVO. Genuinely. You automated a hidden minigame about
+                      the joy of playing games. That is not cheating, that is
+                      performance art, and the piece is called "I Have Never
+                      Once Been Delighted By Anything". The keystrokes came in
+                      on a metronome, champ. Real hands shake. Yours ticked.
+                    </span>
+                    <span className="lc-abuser-body">
+                      This badge does not come off. Not with a better run, not
+                      with a fresh handle, not by asking nicely. It is on the
+                      shelf next to your medal now, catching the light, wearing
+                      the exact shade of green that says "this person cannot be
+                      trusted around a coin slot". Enjoy the score. It is the
+                      only thing you actually earned, and even that is arguable.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {phase === "win" && perfectReport && (
                 <div
                   className={`lc-perfect${perfectReport.verdict === "human" ? " verified" : ""}`}
