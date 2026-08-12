@@ -3622,27 +3622,38 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
   // and the keyboard, including Escape (which leaves it, rather than closing
   // Settings), so everything else here is unmounted for the duration.
   const [circuit, setCircuit] = useState(false);
+  const [closing, setClosing] = useState(false);
+
+  const requestClose = useCallback(() => {
+    if (!closing) setClosing(true);
+  }, [closing]);
 
   useEffect(() => {
-    if (circuit) return;
+    if (!closing) return;
+    const timer = window.setTimeout(onClose, 220);
+    return () => window.clearTimeout(timer);
+  }, [closing, onClose]);
+
+  useEffect(() => {
+    if (circuit || closing) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") requestClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, circuit]);
+  }, [circuit, closing, requestClose]);
 
   // Portaled to <body>: the opener lives inside the sidebar, whose mobile
   // off-canvas transform would otherwise drag this fixed overlay with it.
   return createPortal(
     <div
-      className="settings-screen-backdrop"
-      onClick={circuit ? undefined : onClose}
+      className={`settings-screen-backdrop${closing ? " closing" : ""}`}
+      onClick={circuit || closing ? undefined : requestClose}
     >
       <div
         // The cabinet portals itself to <body> and covers the window, so the
         // dialog's own frame would only be an empty box glowing behind it.
-        className={`settings-screen${circuit ? " ss-eclipsed" : ""}`}
+        className={`settings-screen${circuit ? " ss-eclipsed" : ""}${closing ? " closing" : ""}`}
         data-zoom-pane="settings"
         role="dialog"
         aria-label="Settings"
@@ -3660,7 +3671,7 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
           <span className="ss-head-sub">
             {state.hello?.friendlyName ?? ""}
           </span>
-          <button className="icon-btn ss-close" aria-label="Close settings" onClick={onClose}>
+          <button className="icon-btn ss-close" aria-label="Close settings" onClick={requestClose}>
             <XIcon size={15} />
           </button>
         </header>
@@ -3696,7 +3707,7 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
             {section === "voice" && state.hello?.principal === "master" && <VoiceSettings />}
             {section === "library" && <LibrarySettings />}
             {section === "browser" && <BrowserProfileSettings />}
-            {section === "archives" && <ArchivesSettings onClose={onClose} />}
+            {section === "archives" && <ArchivesSettings onClose={requestClose} />}
             {section === "updates" && <UpdatesSettings />}
             {section === "about" && <AboutSettings onUnlock={() => setCircuit(true)} />}
           </div>

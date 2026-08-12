@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   Access,
@@ -15,10 +16,21 @@ import type { FeedItem } from "../state/feed";
 import {
   AgentMark,
   ArrowUpIcon,
+  BracketsIcon,
+  CheckIcon,
   ChevronIcon,
+  ChipIcon,
+  EyeIcon,
+  GaugeIcon,
+  GlobeIcon,
+  HammerIcon,
   MicIcon,
   PaperclipIcon,
+  PencilIcon,
+  PlusIcon,
+  ShieldAlertIcon,
   StopIcon,
+  WrenchIcon,
   XIcon,
 } from "./icons";
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
@@ -196,11 +208,398 @@ export function AgentSelect({
   );
 }
 
-const ACCESS: { id: Access; label: string }[] = [
-  { id: "read", label: "Read-only" },
-  { id: "edits", label: "Edits allowed" },
-  { id: "full", label: "Full access" },
+/** One selectable value inside a settings row's flyout. */
+interface SettingOption {
+  value: string;
+  label: string;
+  glyph?: ReactNode; // brand mark for agent options
+  dot?: string; // hermes presence kind — a coloured status pip
+  tag?: string; // trailing note ("offline")
+  selected: boolean;
+  onSelect: () => void;
+}
+
+/** One row of the consolidated composer settings menu. */
+interface SettingRow {
+  key: string;
+  icon: ReactNode;
+  label: string;
+  valueLabel?: string;
+  valueGlyph?: ReactNode;
+  hint?: string;
+  disabled?: boolean; // shown, but not openable (single/locked value)
+  options: SettingOption[];
+  action?: () => void; // a plain command row (e.g. attach files) — no flyout
+}
+
+/**
+ * Every composer control folded into a single menu behind a plus button. Each
+ * row shows the setting and its current value; hovering (desktop) or tapping
+ * (touch) a row swings out a second-level flyout with that setting's choices.
+ * One tidy surface in place of six naked <select>s.
+ */
+function ComposerSettings({ rows, isMobile }: { rows: SettingRow[]; isMobile: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setActive(null);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        setActive(null);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className={`cset${isMobile ? " mobile" : ""}`} ref={ref}>
+      <button
+        type="button"
+        className={`cset-trigger${open ? " on" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Conversation settings"
+        title="Conversation settings"
+        onClick={() => {
+          setOpen((v) => !v);
+          setActive(null);
+        }}
+      >
+        <PlusIcon size={19} strokeWidth={2.2} />
+      </button>
+
+      {open && (
+        <div className="cset-menu" role="menu">
+          {rows.map((row) => {
+            const isActive = active === row.key;
+            const isAction = !!row.action;
+            return (
+              <div
+                key={row.key}
+                className={`cset-row${isActive ? " active" : ""}${row.disabled ? " disabled" : ""}${isAction ? " cset-action" : ""}`}
+                onMouseEnter={() => !isMobile && !row.disabled && !isAction && setActive(row.key)}
+              >
+                <button
+                  type="button"
+                  className="cset-row-btn"
+                  role="menuitem"
+                  aria-haspopup={row.disabled || isAction ? undefined : "menu"}
+                  aria-expanded={isAction ? undefined : isActive}
+                  disabled={row.disabled}
+                  title={row.hint}
+                  onClick={() => {
+                    if (row.disabled) return;
+                    if (isAction) {
+                      row.action!();
+                      setOpen(false);
+                      setActive(null);
+                      return;
+                    }
+                    setActive((k) => (k === row.key ? null : row.key));
+                  }}
+                >
+                  <span className="cset-row-icon">{row.icon}</span>
+                  <span className="cset-row-label">{row.label}</span>
+                  {row.valueLabel !== undefined && (
+                    <span className="cset-row-value">
+                      {row.valueGlyph}
+                      <span className="cset-row-value-text">{row.valueLabel}</span>
+                    </span>
+                  )}
+                  {!row.disabled && !isAction && (
+                    <ChevronIcon size={13} className="cset-row-caret" />
+                  )}
+                </button>
+
+                {isActive && !row.disabled && !isAction && (
+                  <div className="cset-sub" role="menu">
+                    {row.options.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={opt.selected}
+                        className={`cset-opt${opt.selected ? " on" : ""}`}
+                        onClick={() => {
+                          opt.onSelect();
+                          setOpen(false);
+                          setActive(null);
+                        }}
+                      >
+                        {opt.glyph && <span className="cset-opt-glyph">{opt.glyph}</span>}
+                        {opt.dot && (
+                          <span className={`hermes-presence-inline ${opt.dot}`} aria-hidden="true" />
+                        )}
+                        <span className="cset-opt-label">{opt.label}</span>
+                        {opt.tag && <em className="cset-opt-tag">{opt.tag}</em>}
+                        {opt.selected && <CheckIcon size={14} className="cset-opt-check" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface PickerOption<T extends string> {
+  id: T;
+  icon: ReactNode;
+  title: string;
+  desc: string;
+}
+
+/**
+ * A quiet inline pill dropdown for the two settings kept out on the bar (Mode,
+ * Access). The trigger is a bare pill — icon only, or icon + short label —
+ * that opens a menu of icon/title/description rows above the composer.
+ */
+function PillPicker<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  showLabel = false,
+}: {
+  value: T;
+  options: PickerOption<T>[];
+  onChange: (id: T) => void;
+  ariaLabel: string;
+  showLabel?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const current = options.find((o) => o.id === value) ?? options[0];
+
+  return (
+    <div className="pill-picker" ref={ref}>
+      <button
+        type="button"
+        className={`pill-trigger${open ? " on" : ""}${showLabel ? " labeled" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        title={showLabel ? ariaLabel : `${ariaLabel}: ${current.title}`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="pill-trigger-icon">{current.icon}</span>
+        {showLabel && <span className="pill-trigger-label">{current.title}</span>}
+      </button>
+      {open && (
+        <div className="pill-menu" role="menu" aria-label={ariaLabel}>
+          {options.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={o.id === value}
+              className={`pill-opt${o.id === value ? " on" : ""}`}
+              onClick={() => {
+                onChange(o.id);
+                setOpen(false);
+              }}
+            >
+              <span className="pill-opt-icon">{o.icon}</span>
+              <span className="pill-opt-text">
+                <span className="pill-opt-title">{o.title}</span>
+                <span className="pill-opt-desc">{o.desc}</span>
+              </span>
+              {o.id === value && <CheckIcon size={15} className="pill-opt-check" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Icons sized to match the plus button (19), default stroke weight.
+const MODE_OPTIONS: PickerOption<Mode>[] = [
+  { id: "plan", icon: <HammerIcon size={19} />, title: "Plan", desc: "Chart the approach first — no file changes" },
+  { id: "build", icon: <WrenchIcon size={19} />, title: "Build", desc: "Do the work and make the changes" },
 ];
+
+const ACCESS_OPTIONS: PickerOption<Access>[] = [
+  { id: "read", icon: <EyeIcon size={19} />, title: "Read", desc: "Read-only — look, never touch" },
+  { id: "edits", icon: <PencilIcon size={19} />, title: "Edit", desc: "Edit files; asks before running" },
+  { id: "full", icon: <ShieldAlertIcon size={19} />, title: "Full", desc: "Full access — runs commands freely" },
+];
+
+/**
+ * Right-side pill (a picture of the current AI) that opens one menu for both
+ * switching the AI and picking a model within it. Reuses SettingOption arrays so
+ * the model-switch side effects (effort/context reset) stay in one place.
+ */
+function AgentModelPicker({
+  agent,
+  showAgents,
+  agentsDisabled,
+  agentOptions,
+  modelGroupLabel,
+  modelOptions,
+  effortOptions,
+}: {
+  agent: Agent;
+  showAgents: boolean;
+  agentsDisabled: boolean;
+  agentOptions: SettingOption[];
+  modelGroupLabel: string;
+  modelOptions: SettingOption[];
+  effortOptions: SettingOption[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="pill-picker ai-picker" ref={ref}>
+      <button
+        type="button"
+        className={`pill-trigger ai-trigger${open ? " on" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="AI and model"
+        title="AI & model"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <AgentMark agent={agent} size={20} />
+      </button>
+      {open && (
+        <div className="pill-menu ai-menu" role="menu">
+          {showAgents && (
+            <>
+              <div className="pill-menu-label">AI</div>
+              {agentOptions.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={o.selected}
+                  disabled={agentsDisabled && !o.selected}
+                  className={`pill-opt compact${o.selected ? " on" : ""}`}
+                  title={agentsDisabled ? "Wait for the current turn to finish" : undefined}
+                  onClick={() => o.onSelect()} // keep open so a model can follow
+                >
+                  <span className="pill-opt-icon">{o.glyph}</span>
+                  <span className="pill-opt-text">
+                    <span className="pill-opt-title">{o.label}</span>
+                  </span>
+                  {o.tag && <em className="cset-opt-tag">{o.tag}</em>}
+                  {o.selected && <CheckIcon size={15} className="pill-opt-check" />}
+                </button>
+              ))}
+              <div className="pill-menu-sep" />
+            </>
+          )}
+          <div className="pill-menu-label">{modelGroupLabel}</div>
+          {modelOptions.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={o.selected}
+              className={`pill-opt compact${o.selected ? " on" : ""}`}
+              onClick={() => {
+                o.onSelect();
+                setOpen(false);
+              }}
+            >
+              <span className="pill-opt-icon">
+                {o.dot ? (
+                  <span className={`hermes-presence-inline ${o.dot}`} aria-hidden="true" />
+                ) : (
+                  <ChipIcon size={15} />
+                )}
+              </span>
+              <span className="pill-opt-text">
+                <span className="pill-opt-title">{o.label}</span>
+              </span>
+              {o.tag && <em className="cset-opt-tag">{o.tag}</em>}
+              {o.selected && <CheckIcon size={15} className="pill-opt-check" />}
+            </button>
+          ))}
+          {effortOptions.length > 0 && (
+            <>
+              <div className="pill-menu-sep" />
+              <div className="pill-menu-label">Effort</div>
+              {effortOptions.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={o.selected}
+                  className={`pill-opt compact${o.selected ? " on" : ""}`}
+                  onClick={() => {
+                    o.onSelect();
+                    setOpen(false);
+                  }}
+                >
+                  <span className="pill-opt-icon">
+                    <GaugeIcon size={15} />
+                  </span>
+                  <span className="pill-opt-text">
+                    <span className="pill-opt-title">{o.label}</span>
+                  </span>
+                  {o.selected && <CheckIcon size={15} className="pill-opt-check" />}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** True on phone-width viewports (matches the CSS composer breakpoint). */
 function useIsMobile(): boolean {
@@ -280,14 +679,12 @@ export function Composer({ thread }: ComposerProps) {
   const [attachError, setAttachError] = useState<string | null>(null);
   const [fileDragActive, setFileDragActive] = useState(false);
   const isMobile = useIsMobile();
-  const [optionsOpen, setOptionsOpen] = useState(false);
   const [mic, setMic] = useState<MicState>("idle");
   const [micSeconds, setMicSeconds] = useState(0);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const taObserverRef = useRef<ResizeObserver | null>(null);
   const taWidthRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
-  const optionsRef = useRef<HTMLDivElement>(null);
   const recordingRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -395,6 +792,15 @@ export function Composer({ thread }: ComposerProps) {
     agent === "claude" || agent === "claudex" || agent === "codex" || agent === "kimi";
   const canSend =
     (text.trim().length > 0 || attachments.length > 0) && state.conn === "online";
+  // While a turn is live, the same primary control changes from Stop to Queue
+  // as soon as there is a follow-up to send. Keep this text-only for now:
+  // mid-turn attachments are not supported by the steer/queue protocol.
+  const canQueue =
+    running &&
+    !!thread &&
+    acceptsRunningInput &&
+    text.trim().length > 0 &&
+    state.conn === "online";
 
   // Latest renderable context snapshot for this thread. Dedicated snapshots
   // update during a turn/compaction/model switch; old turn-boundary usage stays
@@ -614,229 +1020,179 @@ export function Composer({ thread }: ComposerProps) {
     void actions.setSettings({ ...settings!, ...p });
   }
 
-  // Close the mobile options sheet when tapping outside it.
-  useEffect(() => {
-    if (!optionsOpen) return;
-    function onDown(e: MouseEvent) {
-      if (optionsRef.current && !optionsRef.current.contains(e.target as Node)) {
-        setOptionsOpen(false);
-      }
+  // AI + model now live in their own right-side pill (AgentModelPicker); these
+  // option arrays feed it. Everything else folds into the plus-button menu.
+  const isHermes = agent === "hermes";
+  const agentOptions: SettingOption[] = agents
+    .filter((a) => isAgentVisible(a.id))
+    .map((a) => ({
+      value: a.id,
+      label: a.name,
+      glyph: <AgentMark agent={a.id} size={17} />,
+      tag: a.available ? undefined : "offline",
+      selected: a.id === agent,
+      onSelect: () =>
+        thread ? void actions.setThreadAgent(a.id) : actions.setDraftAgent(a.id),
+    }));
+
+  const modelOptions: SettingOption[] = [];
+  // A stored model the roster no longer advertises still names itself.
+  if (!currentModel && settings.model) {
+    modelOptions.push({
+      value: settings.model,
+      label: settings.model,
+      selected: true,
+      onSelect: () => undefined,
+    });
+  }
+  for (const m of models) {
+    const kind = isHermes ? hermesPresence(state.hermesStatuses[m.id]).kind : undefined;
+    modelOptions.push({
+      value: m.id,
+      label: m.name,
+      dot: kind,
+      tag: kind === "offline" ? "offline" : kind === "checking" ? "checking" : undefined,
+      selected: m.id === settings.model,
+      onSelect: () =>
+        patch({
+          model: m.id,
+          effort: effortForModel(m, settings.effort, usesProviderEffortDefault),
+          wideContext:
+            m.supportsWideContext && agent === "claude" ? settings.wideContext : undefined,
+        }),
+    });
+  }
+  const modelGroupLabel = isHermes ? "Gateway" : agent === "claudex" ? "Profile" : "Model";
+
+  // Effort rides alongside model in the same AI pill — it belongs to the model.
+  const effortOptionList: SettingOption[] = [];
+  if (effortOptions.length > 0) {
+    const effortValue =
+      settings.effort && effortOptions.includes(settings.effort)
+        ? settings.effort
+        : usesProviderEffortDefault
+          ? ""
+          : (effortForModel(currentModel) ?? effortOptions[0]);
+    if (usesProviderEffortDefault) {
+      effortOptionList.push({
+        value: "",
+        label: `Default${currentModel?.defaultEffort ? ` (${effortLabel(currentModel.defaultEffort)})` : ""}`,
+        selected: effortValue === "",
+        onSelect: () => patch({ effort: undefined }),
+      });
     }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [optionsOpen]);
+    for (const id of effortOptions) {
+      effortOptionList.push({
+        value: id,
+        label: effortLabel(id),
+        selected: effortValue === id,
+        onSelect: () => patch({ effort: id }),
+      });
+    }
+  }
 
-  // Collapse the sheet automatically when leaving mobile width.
-  useEffect(() => {
-    if (!isMobile) setOptionsOpen(false);
-  }, [isMobile]);
+  // Everything else folds into one descriptor list; ComposerSettings renders it
+  // as a plus-button menu with hover-out flyouts.
+  const settingRows: SettingRow[] = [];
 
-  // The settings controls — rendered inline on desktop, and inside the
-  // collapsible options sheet on mobile so the bar isn't cluttered.
-  const controls = (
-    <>
-      {!hermesLocked && (
-        <div className="ctl">
-          <span className="ctl-label">Agent</span>
-          <AgentSelect
-            agents={agents}
-            value={agent}
-            disabled={running}
-            onChange={(a) =>
-              thread ? void actions.setThreadAgent(a) : actions.setDraftAgent(a)
-            }
-          />
-        </div>
-      )}
+  if (agent === "claude" || ((agent === "claudex" || agent === "kimi") && fixedContextLabel)) {
+    // Fixed-window models and 200K-only Claude models show the value but offer
+    // no choice; only wide-context Claude gets a real toggle.
+    const locked = !!fixedContextLabel || !supportsWideContext;
+    settingRows.push({
+      key: "ctx",
+      icon: <BracketsIcon size={16} />,
+      label: "Context",
+      disabled: locked,
+      valueLabel: fixedContextLabel
+        ? fixedContextLabel
+        : settings.wideContext && supportsWideContext
+          ? "1M"
+          : "200K",
+      hint: fixedContextLabel
+        ? `${currentModel?.name ?? "This model"} always uses a ${fixedContextLabel} context window`
+        : supportsWideContext
+          ? "Choose Claude's context-window size"
+          : `${currentModel?.name ?? "This Claude model"} supports a 200K context window`,
+      options: locked
+        ? []
+        : [
+            {
+              value: "200k",
+              label: "200K",
+              selected: !settings.wideContext,
+              onSelect: () => patch({ wideContext: false }),
+            },
+            {
+              value: "1m",
+              label: "1M",
+              selected: !!settings.wideContext,
+              onSelect: () => patch({ wideContext: true }),
+            },
+          ],
+    });
+  }
 
-      <label className="ctl">
-        <span className="ctl-label">
-          {agent === "hermes" ? "Hermes agent" : agent === "claudex" ? "Profile" : "Model"}
-          {/* Live presence of the selected gateway; the options carry a text
-              tag for the others. Offline gateways are never disabled (one may
-              come back mid-chat), only marked. */}
-          {agent === "hermes" &&
-            settings.model &&
-            (() => {
-              const p = hermesPresence(state.hermesStatuses[settings.model]);
-              return (
-                <span className={`hermes-presence-inline ctl-presence ${p.kind}`} title={p.title} />
-              );
-            })()}
-        </span>
-        <select
-          value={settings.model}
-          onChange={(e) => {
-            const m = models.find((x) => x.id === e.target.value);
-            patch({
-              model: e.target.value,
-              effort: effortForModel(m, settings.effort, usesProviderEffortDefault),
-              wideContext:
-                m?.supportsWideContext && agent === "claude"
-                  ? settings.wideContext
-                  : undefined,
-            });
-          }}
-        >
-          {!currentModel && settings.model && (
-            <option value={settings.model}>{settings.model}</option>
-          )}
-          {models.map((m) => {
-            // For hermes gateways, tag offline/checking ones inline (native
-            // <option>s can't host the colored dot the label carries).
-            const tag =
-              agent === "hermes"
-                ? (() => {
-                    const kind = hermesPresence(state.hermesStatuses[m.id]).kind;
-                    return kind === "offline" ? " · offline" : kind === "checking" ? " · checking" : "";
-                  })()
-                : "";
-            return (
-              <option key={m.id} value={m.id}>
-                {m.name}
-                {tag}
-              </option>
-            );
-          })}
-        </select>
-      </label>
+  if (agent === "claude") {
+    settingRows.push({
+      key: "chrome",
+      icon: <GlobeIcon size={16} />,
+      label: "Chrome",
+      valueLabel: settings.claudeChrome ? "Enabled" : "Default",
+      disabled: running,
+      hint: "Launch this Claude Code session with --chrome so it can use the Claude in Chrome extension",
+      options: [
+        {
+          value: "default",
+          label: "Default",
+          selected: !settings.claudeChrome,
+          onSelect: () => patch({ claudeChrome: false }),
+        },
+        {
+          value: "enabled",
+          label: "Enabled",
+          selected: !!settings.claudeChrome,
+          onSelect: () => patch({ claudeChrome: true }),
+        },
+      ],
+    });
+  }
 
-      {effortOptions.length > 0 && (
-        <label className="ctl">
-          <span className="ctl-label">Effort</span>
-          <select
-            value={
-              settings.effort && effortOptions.includes(settings.effort)
-                ? settings.effort
-                : usesProviderEffortDefault
-                  ? ""
-                  : (effortForModel(currentModel) ?? effortOptions[0])
-            }
-            onChange={(e) => patch({ effort: e.target.value || undefined })}
-          >
-            {usesProviderEffortDefault && (
-              <option value="">
-                Default
-                {currentModel?.defaultEffort
-                  ? ` (${effortLabel(currentModel.defaultEffort)})`
-                  : ""}
-              </option>
-            )}
-            {effortOptions.map((id) => (
-              <option key={id} value={id}>
-                {effortLabel(id)}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
+  // Access and Mode stay out on the bar itself (see the inline segmented
+  // controls below) rather than in the menu — they're the two settings changed
+  // often enough to want one click, not two. Remote Hermes agents govern their
+  // own approvals/plan mode server-side, so they get neither.
 
-      {(agent === "claude" ||
-        ((agent === "claudex" || agent === "kimi") && fixedContextLabel)) && (
-        <label
-          className="ctl"
-          title={
-            fixedContextLabel
-              ? `${currentModel?.name ?? "This model"} always uses a ${fixedContextLabel} context window`
-              : supportsWideContext
-              ? "Choose Claude's context-window size"
-              : `${currentModel?.name ?? "This Claude model"} supports a 200K context window`
-          }
-        >
-          <span className="ctl-label">Context window</span>
-          <select
-            aria-label="Context window"
-            value={
-              fixedContextLabel
-                ? "fixed"
-                : settings.wideContext && supportsWideContext
-                  ? "1m"
-                  : "200k"
-            }
-            disabled={!!fixedContextLabel || !supportsWideContext}
-            onChange={(e) => patch({ wideContext: e.target.value === "1m" })}
-          >
-            {fixedContextLabel ? (
-              <option value="fixed">{fixedContextLabel} · model default</option>
-            ) : (
-              <>
-                <option value="200k">
-                  {supportsWideContext ? "200K" : "200K · model limit"}
-                </option>
-                {supportsWideContext && <option value="1m">1M</option>}
-              </>
-            )}
-          </select>
-        </label>
-      )}
+  // Attaching files is a one-shot command, not a setting, so it sits at the
+  // foot of the same menu as its own row rather than a stray button.
+  settingRows.push({
+    key: "attach",
+    icon: <PaperclipIcon size={16} />,
+    label: "Attach files",
+    disabled: running || attachments.length >= MAX_ATTACHMENTS,
+    hint: "Attach images or files (or paste into the box)",
+    options: [],
+    action: () => fileRef.current?.click(),
+  });
 
-      {agent === "claude" && (
-        <label
-          className="ctl"
-          title="Launch this Claude Code session with --chrome so it can use the Claude in Chrome extension"
-        >
-          <span className="ctl-label">Claude in Chrome</span>
-          <select
-            aria-label="Claude in Chrome"
-            value={settings.claudeChrome ? "enabled" : "default"}
-            disabled={running}
-            onChange={(e) => patch({ claudeChrome: e.target.value === "enabled" })}
-          >
-            <option value="default">Default</option>
-            <option value="enabled">Enabled</option>
-          </select>
-        </label>
-      )}
-
-      {/* Remote Hermes agents govern their own approvals/tools server-side —
-          Threadknot's access levels and plan mode don't apply to them. */}
-      {agent !== "hermes" && (
-        <label className="ctl">
-          <span className="ctl-label">Access</span>
-          <select
-            value={settings.access}
-            onChange={(e) => patch({ access: e.target.value as Access })}
-          >
-            {ACCESS.map((x) => (
-              <option key={x.id} value={x.id}>
-                {x.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      {agent !== "hermes" && (
-        <div className="ctl">
-          <span className="ctl-label">Mode</span>
-          <div className="seg" role="group" aria-label="Mode">
-            {(["plan", "build"] as Mode[]).map((m) => (
-              <button
-                key={m}
-                className={settings.mode === m ? "seg-btn on" : "seg-btn"}
-                onClick={() => patch({ mode: m })}
-              >
-                {m === "plan" ? "Plan" : "Build"}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
-  );
-
+  // "Build with Opus 5…" / "Plan with Opus 5…", falling back to the mode word
+  // alone when the model doesn't name itself.
+  const verb = settings.mode === "plan" ? "Plan" : "Build";
+  const workPlaceholder = currentModel?.name
+    ? `${verb} with ${currentModel.name}…`
+    : settings.mode === "plan"
+      ? "Chart a course — describe what to plan…"
+      : "Give your orders…";
   const placeholder =
     running && acceptsRunningInput
       ? agent === "kimi"
-        ? "Queue a follow-up — Enter sends, Stop interrupts…"
-        : "Add context to the running turn — Enter sends, Stop interrupts…"
-      : settings.mode === "plan"
-        ? "Chart a course — describe what to plan…"
-        : agentInfo && !agentInfo.available
-          ? (agentInfo.authHint ?? `${agentInfo.name} is not available`)
-          : quickHome
-            ? "Ask anything…"
-            : "Give your orders…";
+        ? "Queue a follow-up — Enter queues, Stop interrupts…"
+        : "Queue a follow-up — Enter queues, Stop interrupts…"
+      : agentInfo && !agentInfo.available
+        ? (agentInfo.authHint ?? `${agentInfo.name} is not available`)
+        : quickHome
+          ? "Ask anything…"
+          : workPlaceholder;
 
   return (
     <div className="composer">
@@ -963,29 +1319,29 @@ export function Composer({ thread }: ComposerProps) {
           }}
         />
         <div className="composer-strip">
-          {!isMobile && <div className="composer-controls">{controls}</div>}
-          {isMobile && optionsOpen && (
-            <div className="composer-options" ref={optionsRef}>
-              {controls}
-            </div>
-          )}
+          <div className="composer-left">
+            <ComposerSettings rows={settingRows} isMobile={isMobile} />
+            {agent !== "hermes" && (
+              <>
+                <PillPicker
+                  ariaLabel="Mode"
+                  value={settings.mode}
+                  options={MODE_OPTIONS}
+                  onChange={(m) => patch({ mode: m })}
+                  showLabel
+                />
+                <PillPicker
+                  ariaLabel="Access"
+                  value={settings.access}
+                  options={ACCESS_OPTIONS}
+                  onChange={(a) => patch({ access: a })}
+                  showLabel
+                />
+              </>
+            )}
+          </div>
 
           <div className="composer-actions">
-            {isMobile && (
-              <button
-                type="button"
-                className={`opt-btn${optionsOpen ? " on" : ""}`}
-                aria-expanded={optionsOpen}
-                aria-label="Composer options"
-                onClick={() => setOptionsOpen((o) => !o)}
-              >
-                <AgentMark agent={agent} size={15} />
-                <span className="opt-label">
-                  {currentModel?.name ?? agentInfo?.name ?? agent}
-                </span>
-                <ChevronIcon size={10} open={optionsOpen} />
-              </button>
-            )}
             {latestUsage && <ContextMeter usage={latestUsage} />}
             {dictation?.available && (
               <button
@@ -1005,21 +1361,24 @@ export function Composer({ thread }: ComposerProps) {
                 }
                 onClick={() => (mic === "recording" ? void stopDictating() : void startDictating())}
               >
-                <MicIcon size={17} />
+                <MicIcon size={18} />
                 {mic === "recording" && <span className="mic-time">{clock(micSeconds)}</span>}
               </button>
             )}
-            <button
-              type="button"
-              className="attach-btn"
-              disabled={running || attachments.length >= MAX_ATTACHMENTS}
-              title="Attach images (or paste from clipboard)"
-              onClick={() => fileRef.current?.click()}
-            >
-              <PaperclipIcon size={17} />
-            </button>
-            {running && (
+            <AgentModelPicker
+              agent={agent}
+              showAgents={!hermesLocked}
+              agentsDisabled={running}
+              agentOptions={agentOptions}
+              modelGroupLabel={modelGroupLabel}
+              modelOptions={modelOptions}
+              effortOptions={effortOptionList}
+            />
+            {running && !canQueue ? (
+              // With an empty composer the primary button remains Stop. Once
+              // the user types, it becomes the queue action below.
               <button
+                type="button"
                 className="send-btn stop"
                 title="Interrupt turn"
                 aria-label="Interrupt turn"
@@ -1027,21 +1386,18 @@ export function Composer({ thread }: ComposerProps) {
               >
                 <StopIcon size={16} />
               </button>
+            ) : (
+              <button
+                type="button"
+                className={`send-btn${running ? " queue" : ""}`}
+                disabled={!canSend}
+                title={running ? "Queue message (Enter)" : "Send (Enter)"}
+                aria-label={running ? "Queue message" : "Send message"}
+                onClick={() => void submit()}
+              >
+                <ArrowUpIcon size={19} />
+              </button>
             )}
-            <button
-              className="send-btn"
-              disabled={!canSend || (running && !acceptsRunningInput)}
-              title={
-                running
-                  ? agent === "kimi"
-                    ? "Queue follow-up (Enter)"
-                    : "Add to running turn (Enter)"
-                  : "Send (Enter)"
-              }
-              onClick={() => void submit()}
-            >
-              <ArrowUpIcon size={17} />
-            </button>
           </div>
         </div>
       </div>

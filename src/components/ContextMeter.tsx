@@ -77,24 +77,17 @@ export function ContextMeter({ usage }: { usage: TurnUsage }) {
         </svg>
       </button>
       {open && (
-        <div className="ctx-pop" role="dialog">
-          <div className="ctx-pop-head">
-            <span className="ctx-pop-title">Context Window</span>
-            <span className="ctx-pop-nums">
-              {fmtPct(clamped)}
-              {used && max && (
-                <>
-                  {" · "}
-                  {used}/{max}
-                </>
-              )}
-            </span>
-          </div>
-          {usage.maxTokens != null && (
-            <div className="ctx-bar" role="progressbar" aria-valuenow={Math.round(clamped)}>
-              <div className={`ctx-bar-fill${over ? " over" : ""}`} style={{ width: `${clamped}%` }} />
-            </div>
-          )}
+        <div className={`ctx-pop${over ? " over" : ""}`} role="dialog">
+          <span className="ctx-pop-title">Context</span>
+          <span className="ctx-pop-nums">
+            {fmtPct(clamped)}
+            {used && max && (
+              <>
+                {" · "}
+                {used}/{max}
+              </>
+            )}
+          </span>
         </div>
       )}
     </div>

@@ -69,12 +69,16 @@ import {
   CheckIcon,
   ChevronIcon,
   ClockIcon,
+  CompassIcon,
   EyeIcon,
   FilterIcon,
   FolderIcon,
+  FolderPlusIcon,
   GearIcon,
+  PanelLeftIcon,
   GripIcon,
   MoreIcon,
+  NotebookPenIcon,
   PencilIcon,
   PlusIcon,
   PopoutIcon,
@@ -395,24 +399,7 @@ function QuickChatsSection({
 
   return (
     <section className="quick-chats" aria-label="Quick threads">
-      <header className="quick-chats-head">
-        <span className="quick-chats-mark" aria-hidden>
-          <PlusIcon size={15} />
-        </span>
-        <span className="quick-chats-title">Quick threads</span>
-        <ProjectPulse activity={activity} />
-        <span className="project-count">{active.length}</span>
-        <button
-          type="button"
-          className="icon-btn quick-new"
-          aria-label="New quick thread"
-          title="New quick thread"
-          onClick={() => actions.openQuickDraft()}
-        >
-          <PlusIcon size={14} />
-        </button>
-      </header>
-      <div className="quick-chats-rule" aria-hidden />
+      <div className="quick-chats-label">Chats</div>
       {shown.length === 0 && settled.length === 0 && forceOpen ? (
         <div className="sidebar-empty quick-search-empty">
           <p>No matching quick threads.</p>
@@ -1155,7 +1142,7 @@ function ThreadRow({
           className={`status-dot st-${thread.status}${needsAttention ? " unread" : ""}`}
           title={needsAttention ? "Unread activity" : undefined}
         />
-        <AgentMark agent={thread.agent} size={12} className="thread-row-mark" />
+        <AgentMark agent={thread.agent} size={18} className="thread-row-mark" />
         <input
           ref={inputRef}
           className="thread-rename-input"
@@ -1194,7 +1181,7 @@ function ThreadRow({
       <HermesPresenceDot status={hermesStatus} className="sm" />
     </span>
   ) : (
-    <AgentMark agent={thread.agent} size={12} className="thread-row-mark" />
+    <AgentMark agent={thread.agent} size={18} className="thread-row-mark" />
   );
   const chipsEl = (
     <>
@@ -1350,7 +1337,7 @@ function ThreadRow({
                 void settleThread();
               }}
             >
-              {settled ? <UndoIcon size={13} /> : <CheckIcon size={13} />}
+              {settled ? <UndoIcon size={16} /> : <CheckIcon size={16} />}
               <span>
                 {settled
                   ? "Bring back"
@@ -1368,7 +1355,7 @@ function ThreadRow({
                 void actions.setThreadFavorite(thread.id, !thread.favorite);
               }}
             >
-              <StarIcon size={13} filled={!!thread.favorite} />
+              <StarIcon size={16} filled={!!thread.favorite} />
               <span>{thread.favorite ? "Unfavorite" : "Favorite"}</span>
             </button>
             <button
@@ -1377,7 +1364,7 @@ function ThreadRow({
               className="thread-menu-item"
               onClick={startRename}
             >
-              <PencilIcon size={13} />
+              <PencilIcon size={16} />
               <span>Rename</span>
             </button>
             <button
@@ -1389,7 +1376,7 @@ function ThreadRow({
                 void actions.archiveThread(thread.id, thread.projectId);
               }}
             >
-              <ArchiveIcon size={13} />
+              <ArchiveIcon size={16} />
               <span>Archive</span>
             </button>
             <button
@@ -1405,7 +1392,7 @@ function ThreadRow({
                 }
               }}
             >
-              <TrashIcon size={13} />
+              <TrashIcon size={16} />
               <span>{confirmDelete ? "Delete permanently?" : "Delete"}</span>
             </button>
           </div>,
@@ -1773,21 +1760,6 @@ function WorkspaceSection({
             {...headerHover.hoverProps}
           >
             <ChevronIcon size={12} open={open} className="row-chevron" />
-            {workspace.image ? (
-              <span
-                className="sidebar-avatar workspace-avatar has-image"
-                {...workspacePreview.hoverProps}
-              >
-                <img src={workspace.image} alt="" />
-              </span>
-            ) : (
-              // No custom workspace image: badge the workspace with its owning
-              // machine's avatar/initials.
-              <MachineAvatar
-                {...machineLook(state, workspace.members[0]?.machineId)}
-                size={22}
-              />
-            )}
             <span className="project-name">{workspace.name}</span>
             {workspace.favorite && (
               <StarIcon size={11} filled className="project-fav-star" />
@@ -1817,16 +1789,6 @@ function WorkspaceSection({
           <span className="thread-chip project-local-chip" title="A folder of this workspace is on this machine">
             this machine
           </span>
-        )}
-        {members.length > 0 && (
-          <button
-            className="icon-btn"
-            aria-label="New thread"
-            title="New thread (pick where)"
-            onClick={onNewThread}
-          >
-            <PlusIcon size={13} />
-          </button>
         )}
         {!solo && primary && (
           <button
@@ -2552,6 +2514,168 @@ function SidebarResizeHandle({
   );
 }
 
+/** Full-screen conversation search, opened from the sidebar's Search button.
+ *  A blurred backdrop over a clean field; results are threads (across the
+ *  current project or all projects) each rendered with its agent mark. */
+function ThreadSearchModal({ onClose }: { onClose: () => void }) {
+  const { state, actions } = useStore();
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<"project" | "all">("project");
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Play the exit animation, then actually unmount. 160ms matches the CSS.
+  const close = () => {
+    setClosing(true);
+    window.setTimeout(onClose, 160);
+  };
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setClosing(true);
+        window.setTimeout(onClose, 160);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // "Current project" is wherever the open chat lives, else the pending draft's
+  // home, else the first project in the fleet.
+  const active = state.activeThreadId
+    ? findThread(state, state.activeThreadId)
+    : null;
+  const currentProjectId =
+    active?.projectId ?? state.draft?.projectId ?? state.projects[0]?.id ?? null;
+
+  const projectName = (id: string) => {
+    if (isQuickHomeProjectId(id)) return "Quick threads";
+    if (id === HERMES_HOME_PROJECT_ID) return "Agents";
+    return state.projects.find((p) => p.id === id)?.name ?? "Project";
+  };
+
+  const q = query.trim().toLowerCase();
+  const results = useMemo(() => {
+    const all: Thread[] = [];
+    for (const pid of Object.keys(state.threads)) {
+      if (scope === "project" && pid !== currentProjectId) continue;
+      for (const t of state.threads[pid]) all.push(t);
+    }
+    const matched = q
+      ? all.filter((t) => (t.title || "untitled thread").toLowerCase().includes(q))
+      : all;
+    return matched
+      .slice()
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .slice(0, 60);
+  }, [state.threads, scope, currentProjectId, q]);
+
+  function openThread(id: string) {
+    void actions.selectThread(id);
+    close();
+  }
+
+  const scopeLabel = scope === "project" ? "This project" : "All projects";
+
+  return createPortal(
+    <div
+      className={`search-modal-backdrop${closing ? " closing" : ""}`}
+      onMouseDown={close}
+    >
+      <div
+        className="search-modal"
+        role="dialog"
+        aria-label="Search conversations"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="search-modal-field">
+          <SearchIcon size={18} className="search-modal-glyph" />
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Search conversations…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setScopeOpen(false)}
+          />
+          <div className="search-scope">
+            <button
+              type="button"
+              className="search-scope-toggle"
+              aria-haspopup="menu"
+              aria-expanded={scopeOpen}
+              onClick={() => setScopeOpen((v) => !v)}
+            >
+              <span>{scopeLabel}</span>
+              <ChevronIcon size={12} open={scopeOpen} className="row-chevron" />
+            </button>
+            {scopeOpen && (
+              <div className="search-scope-menu" role="menu">
+                <button
+                  type="button"
+                  className={scope === "project" ? "on" : ""}
+                  onClick={() => {
+                    setScope("project");
+                    setScopeOpen(false);
+                  }}
+                >
+                  This project
+                </button>
+                <button
+                  type="button"
+                  className={scope === "all" ? "on" : ""}
+                  onClick={() => {
+                    setScope("all");
+                    setScopeOpen(false);
+                  }}
+                >
+                  All projects
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        <div
+          className="search-modal-results"
+          onMouseDown={() => setScopeOpen(false)}
+        >
+          {results.length === 0 ? (
+            <div className="search-modal-empty">
+              {q ? "No conversations found." : "No conversations yet."}
+            </div>
+          ) : (
+            results.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className="search-result"
+                onClick={() => openThread(t.id)}
+              >
+                <AgentMark
+                  agent={t.agent}
+                  size={18}
+                  className="search-result-mark"
+                />
+                <span className="search-result-title">
+                  {t.title || "Untitled thread"}
+                </span>
+                <span className="search-result-project">
+                  {projectName(t.projectId)}
+                </span>
+                <span className="search-result-time">{timeAgo(t.updatedAt)}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function Sidebar({
   onAddProject,
   onOpenSchedules,
@@ -2568,6 +2692,7 @@ export function Sidebar({
   // here and threaded down; the width also drives the --sidebar-w CSS var.
   const { layout, update: updateLayout, setWidthLive } = useSidebarLayout();
   const [filterOpen, setFilterOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
   const [view, setView] = useState<SidebarView>(() => {
     try {
@@ -3134,15 +3259,52 @@ export function Sidebar({
     setNewThreadMenu({ x: point.x, y: point.y, workspaceId });
   }
 
+  // The "New chat" button, resolved against wherever you are: a quick thread in
+  // the Quick/Agents homes, otherwise a thread in the current project. A single
+  // online root drafts straight in; multiple roots open the machine/folder menu.
+  function startNewChatHere(e: React.MouseEvent) {
+    const active = state.activeThreadId
+      ? findThread(state, state.activeThreadId)
+      : null;
+    const activePid = active?.projectId ?? state.draft?.projectId;
+    if (quickView || agentsView || (activePid && isQuickHomeProjectId(activePid))) {
+      actions.openQuickDraft();
+      return;
+    }
+    let wsId = pickedWorkspace?.id ?? shownWorkspaceId ?? null;
+    if (!wsId && activePid) {
+      for (const [id, d] of sectionData) {
+        if (d.members.some((m) => m.projectId === activePid)) {
+          wsId = id;
+          break;
+        }
+      }
+    }
+    wsId = wsId ?? visibleWorkspaces[0]?.id ?? null;
+    if (!wsId) {
+      actions.openQuickDraft();
+      return;
+    }
+    const members = sectionData.get(wsId)?.members ?? [];
+    const online = members.filter((m) => m.online);
+    if (online.length === 1) {
+      actions.openDraft(online[0].projectId, online[0].machineId || undefined);
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    startNewThread(wsId, { x: r.left, y: r.bottom + 4 });
+  }
+
   return (
+    <>
     <aside
       className={`sidebar${state.sidebarOpen ? " open" : ""}${
-        railMode ? " layout-rail" : ""
-      }${layout.view === "cards" ? " cards-view" : ""}${
-        layout.view === "compact" ? " compact-view" : ""
-      }${layout.bigNames ? " big-names" : ""}${
-        layout.showTimes ? "" : " no-times"
-      }`}
+        layout.collapsed ? " collapsed" : ""
+      }${railMode ? " layout-rail" : ""}${
+        layout.view === "cards" ? " cards-view" : ""
+      }${layout.view === "compact" ? " compact-view" : ""}${
+        layout.bigNames ? " big-names" : ""
+      }${layout.showTimes ? "" : " no-times"}`}
       data-zoom-pane="sidebar"
     >
       <SidebarResizeHandle
@@ -3177,29 +3339,6 @@ export function Sidebar({
         />
       )}
       <div className="sidebar-brand">
-        <img src="/threadknot-logo.png" alt="Threadknot" className="brand-logo" />
-        <span className="brand-word">THREADKNOT</span>
-        <span
-          className={`conn-pip conn-${state.conn}`}
-          title={`connection: ${state.conn}`}
-        />
-      </div>
-
-      <div className="sidebar-search">
-        <SearchIcon size={14} className="search-glyph" />
-        <input
-          type="search"
-          placeholder={
-            quickView
-              ? "Search quick threads…"
-              : agentsView
-                ? "Search agent threads…"
-                : "Search threads…"
-          }
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-busy={!!filter && searchingContent}
-        />
         <button
           ref={filterBtnRef}
           type="button"
@@ -3214,6 +3353,87 @@ export function Sidebar({
         >
           <FilterIcon size={15} />
         </button>
+        <span className="brand-mark">
+          Thread<span className="brand-mark-accent">Knot</span>
+        </span>
+        <button
+          type="button"
+          className="icon-btn sidebar-collapse-btn"
+          aria-label="Collapse sidebar"
+          title="Collapse sidebar"
+          onClick={() => updateLayout({ collapsed: true })}
+        >
+          <PanelLeftIcon size={16} />
+        </button>
+      </div>
+
+      <div className="sidebar-launch">
+        <button
+          type="button"
+          className="sidebar-action new-chat"
+          onClick={startNewChatHere}
+        >
+          <NotebookPenIcon size={18} />
+          <span>New chat</span>
+        </button>
+        <button
+          type="button"
+          className="sidebar-action search-open"
+          onClick={() => setSearchOpen(true)}
+        >
+          <SearchIcon size={18} />
+          <span>Search</span>
+        </button>
+        {!soloId && !agentsView && !quickView && (
+          <button type="button" className="sidebar-action" onClick={onAddProject}>
+            <FolderPlusIcon size={18} />
+            <span>Add workspace</span>
+          </button>
+        )}
+        {state.projects.some(
+          (p) => p.id !== HERMES_HOME_PROJECT_ID && !isQuickHomeProjectId(p.id),
+        ) && (
+          <button type="button" className="sidebar-action" onClick={onOpenSchedules}>
+            <ClockIcon size={18} />
+            <span>Scheduled runs</span>
+            {state.schedules.filter((s) => s.enabled).length > 0 && (
+              <span className="usermenu-count">
+                {state.schedules.filter((s) => s.enabled).length}
+              </span>
+            )}
+          </button>
+        )}
+        {!soloId && !quickView && (
+          <button
+            type="button"
+            className="sidebar-action"
+            onClick={() => switchView("quick")}
+          >
+            <CompassIcon size={18} />
+            <span>Quick threads</span>
+          </button>
+        )}
+        {showHermesAgents() && !soloId && !agentsView && (
+          <button
+            type="button"
+            className="sidebar-action"
+            onClick={() => switchView("agents")}
+          >
+            <AgentMark agent="hermes" size={18} />
+            <span>Hermes agents</span>
+            {hermesAttention > 0 && <span className="usermenu-dot" />}
+          </button>
+        )}
+        {(agentsView || quickView) && (
+          <button
+            type="button"
+            className="sidebar-action"
+            onClick={() => switchView("fleet")}
+          >
+            <FolderIcon size={18} />
+            <span>Workspaces</span>
+          </button>
+        )}
       </div>
       {filterOpen && (
         <SidebarViewPopover
@@ -3224,6 +3444,7 @@ export function Sidebar({
           onClose={() => setFilterOpen(false)}
         />
       )}
+      {searchOpen && <ThreadSearchModal onClose={() => setSearchOpen(false)} />}
 
       <div className="sidebar-scroll" ref={scrollRef} onScroll={onSidebarScroll}>
         {quickView && (
@@ -3291,19 +3512,13 @@ export function Sidebar({
               <button
                 type="button"
                 className="project-picker-btn"
-                // The rail already owns switching workspaces, so there the
-                // name is a label with a menu rather than a second picker.
+                // Clicking the name always opens the workspace switcher — the
+                // rail isn't there to switch from on a phone. Actions stay on
+                // right-click / long-press.
                 aria-haspopup="menu"
                 onClick={(e) => {
                   const r = e.currentTarget.getBoundingClientRect();
-                  const point = { x: r.left, y: r.bottom + 4 };
-                  if (projectLayout === "picker") setPickerMenu(point);
-                  else
-                    setMenu({
-                      ...point,
-                      workspace: pickedWorkspace,
-                      primary: sectionData.get(pickedWorkspace.id)?.projects[0],
-                    });
+                  setPickerMenu({ x: r.left, y: r.bottom + 4 });
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -3315,19 +3530,6 @@ export function Sidebar({
                   });
                 }}
               >
-                {/* Only the picker needs a badge here. In rail mode the rail
-                    already shows this project's own avatar right above, and
-                    this one is the MACHINE's — a second, different image for
-                    the same row. */}
-                {projectLayout === "picker" && (
-                  <MachineAvatar
-                    {...machineLook(
-                      state,
-                      pickedWorkspace.members[0]?.machineId,
-                    )}
-                    size={20}
-                  />
-                )}
                 <span className="project-picker-name">
                   {pickedWorkspace.name}
                 </span>
@@ -3347,37 +3549,22 @@ export function Sidebar({
               <span className="project-picker-count">
                 {sectionData.get(pickedWorkspace.id)?.threads.length ?? 0}
               </span>
-              {(sectionData.get(pickedWorkspace.id)?.members.length ?? 0) >
-                0 && (
-                <button
-                  className="icon-btn"
-                  aria-label="New thread"
-                  title={
-                    (sectionData.get(pickedWorkspace.id)?.members.length ?? 0) >
-                    1
-                      ? "New thread (pick machine + folder)"
-                      : "New thread"
-                  }
-                  onClick={(e) =>
-                    startNewThread(pickedWorkspace.id, {
-                      x: e.clientX,
-                      y: e.clientY,
-                    })
-                  }
-                >
-                  <PlusIcon size={13} />
-                </button>
-              )}
             </div>
           )}
         {pickerMenu && (
           <ContextMenu
             x={pickerMenu.x}
             y={pickerMenu.y}
+            title="Switch workspace"
             onClose={() => setPickerMenu(null)}
             items={visibleWorkspaces.map((w) => ({
               label: w.name,
-              icon: <FolderIcon size={13} />,
+              icon:
+                w.id === pickedWorkspace?.id ? (
+                  <CheckIcon size={15} />
+                ) : (
+                  <FolderIcon size={15} />
+                ),
               onSelect: () => setPickedId(w.id),
             }))}
           />
@@ -3457,87 +3644,21 @@ export function Sidebar({
           })}
       </div>
 
-      <div className="sidebar-actions">
-        {!soloId && !agentsView && !quickView && (
-          <button className="add-project" onClick={onAddProject}>
-            <PlusIcon size={14} />
-            <span>add workspace</span>
-          </button>
-        )}
-        {!soloId &&
-          !agentsView &&
-          !quickView &&
-          state.projects.some(
-            (p) => p.id !== HERMES_HOME_PROJECT_ID && !isQuickHomeProjectId(p.id),
-          ) && (
-            <button
-              className="add-project sched-entry"
-              onClick={onOpenSchedules}
-            >
-              <ClockIcon size={14} />
-              <span>scheduled runs</span>
-              {state.schedules.filter((s) => s.enabled).length > 0 && (
-                <span className="sched-count">
-                  {state.schedules.filter((s) => s.enabled).length}
-                </span>
-              )}
-            </button>
-          )}
-        {!soloId && !agentsView && !quickView && !railMode && (
-          <button className="add-project quick-entry" onClick={() => switchView("quick")}>
-            <span className="quick-entry-mark" aria-hidden>
-              <PlusIcon size={13} />
-            </span>
-            <span>quick threads</span>
-          </button>
-        )}
-        {showHermesAgents() && !soloId && !agentsView && !quickView && (
-          <button
-            className={`add-project hermes-entry${hermesAttention > 0 ? " has-attention" : ""}`}
-            onClick={() => switchView("agents")}
-          >
-            <AgentMark agent="hermes" size={14} />
-            <span>hermes agents</span>
-            {hermesAttention > 0 && (
-              <span
-                className="hermes-attention-dot"
-                title={`${hermesAttention} Hermes ${
-                  hermesAttention === 1 ? "chat needs" : "chats need"
-                } attention`}
-              />
-            )}
-          </button>
-        )}
-        {(agentsView || quickView) && (
-          <button className="add-project" onClick={() => switchView("fleet")}>
-            <FolderIcon size={14} />
-            <span>workspaces</span>
-          </button>
-        )}
-        <UsageMeter />
-      </div>
-
-      <div className="sidebar-foot">
-        <button
-          className={`icon-btn foot-gear${showSettings ? " on" : ""}${
-            updateReady ? " update-pulse" : ""
-          }`}
-          aria-label={
-            updateReady ? "Settings — an update is available" : "Settings"
-          }
-          title={updateReady ? updateHint : undefined}
-          onClick={() => setShowSettings((v) => !v)}
-        >
-          <GearIcon size={16} />
-        </button>
-        <VersionBadge />
-        {/* Renders nothing until the crest is earned on this machine, and CSS
-            keeps it to the skin it belongs to (see legacy.css). */}
-        <CrestBadge size={13} />
-        {showSettings && (
-          <SettingsScreen onClose={() => setShowSettings(false)} />
-        )}
-      </div>
+      {/* Footer: usage above a lone Settings button, both styled like the launch
+          buttons. They sit at the bottom because the scroll above is flex:1. */}
+      <UsageMeter />
+      <button
+        type="button"
+        className="sidebar-action sidebar-settings"
+        onClick={() => setShowSettings(true)}
+      >
+        <GearIcon size={18} />
+        <span>Settings</span>
+        {updateReady && <span className="usermenu-dot" title={updateHint} />}
+      </button>
+      {showSettings && (
+        <SettingsScreen onClose={() => setShowSettings(false)} />
+      )}
 
       {menu && (
         <ContextMenu
@@ -3817,5 +3938,20 @@ export function Sidebar({
         />
       )}
     </aside>
+      {/* Desktop-only re-open handle: the collapse toggle rides inside the
+          sidebar, so once it animates to zero width we need an affordance that
+          lives outside it. Hidden on phones (they use the hamburger drawer). */}
+      {layout.collapsed && (
+        <button
+          type="button"
+          className="sidebar-reveal"
+          aria-label="Show sidebar"
+          title="Show sidebar"
+          onClick={() => updateLayout({ collapsed: false })}
+        >
+          <PanelLeftIcon size={17} />
+        </button>
+      )}
+    </>
   );
 }

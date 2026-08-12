@@ -157,6 +157,12 @@ export interface ComposerPrefs {
   density: ComposerDensity;
 }
 
+interface StoredComposerPrefs extends ComposerPrefs {
+  /** Bumps when the shipped composer default changes, so old defaults do not
+   *  silently override the new input size on an existing install. */
+  fontSizeVersion?: number;
+}
+
 /** Swatch metadata for the Settings UI. preview colors are duplicated here as
  *  plain data so the picker can render chips without reading the stylesheet. */
 export interface ThemeInfo {
@@ -367,7 +373,7 @@ export const SCROLLBACK_MAX = 50000;
 /** Composer text band. The floor stays readable, the ceiling stops the box from
  *  eating the feed (the 220px autogrow cap is unchanged either way). */
 export const CFONT_MIN = 12;
-export const CFONT_MAX = 18;
+export const CFONT_MAX = 20;
 
 /** What each width preset writes into --composer-max-w. "cozy" is the exact
  *  900px .composer has always carried, so the default preserves today's layout;
@@ -431,13 +437,14 @@ const T_DEFAULT: TermPrefs = {
 };
 /** Nothing disabled: pick a skin and you get all of it until you say otherwise. */
 const K_DEFAULT: SkinPrefs = { off: [] };
-// Exactly what styles.css shipped: .composer's 900px cap, the textarea's 14px,
+// Exactly what styles.css ships: .composer's 900px cap, the textarea's 16px,
 // and the card's original paddings. Nobody's composer moves on update.
 const C_DEFAULT: ComposerPrefs = {
   width: "cozy",
-  fontSize: 14,
+  fontSize: 16,
   density: "comfortable",
 };
+const COMPOSER_FONT_VERSION = 5;
 
 export function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
@@ -801,8 +808,13 @@ function normalizeComposerDensity(value: unknown): ComposerDensity {
 }
 
 export function getComposerPrefs(): ComposerPrefs {
-  const c = read(C_KEY, C_DEFAULT);
-  const size = Number(c.fontSize);
+  // Leave the version absent in the fallback so only preferences explicitly
+  // written by the current code count as migrated.
+  const c = read<StoredComposerPrefs>(C_KEY, C_DEFAULT);
+  // Preferences written before the 16px default had no current version marker.
+  // Keep their width/density, but move the old input-size default to 16px.
+  const size =
+    c.fontSizeVersion === COMPOSER_FONT_VERSION ? Number(c.fontSize) : C_DEFAULT.fontSize;
   return {
     width: normalizeComposerWidth(c.width),
     fontSize: Number.isFinite(size)
@@ -815,8 +827,7 @@ export function getComposerPrefs(): ComposerPrefs {
 /** Push the composer size knobs onto :root. The two measurements ride CSS vars
  *  (.composer / .composer-card textarea read them) and density rides a data
  *  attribute, so every composer instance follows without a React subscription.
- *  At the defaults this writes 900px / 14px / "comfortable", which is precisely
- *  what the stylesheet already hardcoded. */
+ *  At the defaults this writes 900px / 16px / "comfortable". */
 export function applyComposerPrefs(c: ComposerPrefs = getComposerPrefs()): void {
   const root = document.documentElement;
   root.style.setProperty("--composer-max-w", COMPOSER_MAX_W[c.width]);
@@ -830,7 +841,10 @@ export function setComposerPrefs(next: ComposerPrefs): void {
     fontSize: clamp(Math.round(next.fontSize), CFONT_MIN, CFONT_MAX),
     density: normalizeComposerDensity(next.density),
   };
-  localStorage.setItem(C_KEY, JSON.stringify(clamped));
+  localStorage.setItem(
+    C_KEY,
+    JSON.stringify({ ...clamped, fontSizeVersion: COMPOSER_FONT_VERSION }),
+  );
   applyComposerPrefs(clamped);
   window.dispatchEvent(
     new CustomEvent<ComposerPrefs>(COMPOSERPREFS_EVENT, { detail: clamped }),

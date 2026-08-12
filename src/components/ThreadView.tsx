@@ -6,125 +6,158 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   HERMES_HOME_PROJECT_ID,
   isQuickHomeProjectId,
   threadParticipants,
 } from "../lib/protocol";
-import {
-  formatCompactDateTime,
-  formatDuration,
-  formatFullDateTime,
-} from "../lib/format";
-import {
-  APPEARANCE_EVENT,
-  ZOOM_APPLIED_EVENT,
-  getAppearance,
-  getAppliedZoom,
-  setAppearance,
-} from "../lib/appearance";
+import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
 import { findThread, resolveProjectView, useStore } from "../state/store";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { FeedItemView } from "./FeedItems";
-import { LaneChips, ParleyRoundSplash, ReviewMenu } from "./ReviewMenu";
+import { ParleyRoundSplash, ReviewMenu } from "./ReviewMenu";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
 import { Composer } from "./Composer";
-import { AgentMark, ArrowDownIcon, MenuIcon, PencilIcon } from "./icons";
+import {
+  AgentMark,
+  ArrowDownIcon,
+  CheckIcon,
+  MenuIcon,
+  MoreIcon,
+  PencilIcon,
+} from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
+import "../styles/workspace.css";
 
 /** How close to the end we can be before showing the jump-to-present button. */
 const BOTTOM_SLACK = 90;
 /** Auto-follow only engages at the real end; a larger threshold makes manual
  * scrolling snap the final stretch and keeps tugging the reader back down. */
 const BOTTOM_STICK_EPSILON = 2;
+/** After any manual scroll gesture, the per-render position restore below is
+ * suppressed for this long, so a streaming re-render can't yank the reader
+ * back to scrollTopRef mid-scroll. Without it, scrolling during a live turn
+ * fights the reader (onScroll lags the gesture, the restore wins the race). */
+const GESTURE_GRACE_MS = 350;
+/** Ignore sub-pixel/jitter differences when deciding to restore. Only a real
+ * jump — the WebKit nested-scroller reset the restore exists for — clears it. */
+const RESTORE_EPSILON = 8;
 
-/** Persistent chip showing the applied conversation zoom ("115%"). Sits in the
- *  thread header, which stays at 1x along with the composer: only the message
- *  feed below scales, so the chip is a fixed-size readout of what the log is
- *  doing. Click resets the zoom to 100%. */
-function ZoomChip() {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const bump = () => setTick((n) => n + 1);
-    window.addEventListener(APPEARANCE_EVENT, bump);
-    // Feed-only zoom has no dynamic cap so this never fires today; kept wired
-    // so the readout stays correct if an applied-vs-stored split returns.
-    window.addEventListener(ZOOM_APPLIED_EVENT, bump);
-    return () => {
-      window.removeEventListener(APPEARANCE_EVENT, bump);
-      window.removeEventListener(ZOOM_APPLIED_EVENT, bump);
-    };
-  }, []);
-  const applied = getAppliedZoom();
-  return (
-    <button
-      type="button"
-      className="zoom-chip"
-      title="conversation zoom: click to reset to 100%"
-      aria-label={`Conversation zoom ${Math.round(applied * 100)}%; click to reset to 100%`}
-      onClick={() => {
-        const a = getAppearance();
-        if (a.uiZoom !== 1) setAppearance({ ...a, uiZoom: 1 });
-      }}
-    >
-      {Math.round(applied * 100)}%
-    </button>
-  );
-}
-
-function ThreadTiming({
-  createdAt,
-  feed,
+/** The header's workspace panels (Files, Git, Artifacts, Browser, Terminal)
+ *  collapsed behind one "more" button — used on phones, where the desktop pills
+ *  would overflow. Opening a row toggles that panel; the button lights up while
+ *  any panel is open. Portaled + click-outside/Escape to close. */
+function WorkspaceMenu({
+  project,
+  openTab,
+  dispatch,
 }: {
-  createdAt: string;
-  feed: ReturnType<typeof useStore>["state"]["feed"];
+  project: { id: string } | undefined;
+  openTab: string | null;
+  dispatch: ReturnType<typeof useStore>["dispatch"];
 }) {
-  let lastMessageAt: string | undefined;
-  for (let i = feed.length - 1; i >= 0; i--) {
-    const item = feed[i];
-    if ((item.type === "user" || item.type === "assistant") && item.timestamp) {
-      lastMessageAt = item.timestamp;
-      break;
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  // Anchor under the button, right-aligned, clamped into the viewport. The
+  // header renders unzoomed, so the rect maps 1:1 onto the fixed panel.
+  useLayoutEffect(() => {
+    if (!open) return;
+    function place() {
+      const b = btnRef.current;
+      if (!b) return;
+      const r = b.getBoundingClientRect();
+      const width = 210;
+      setPos({ top: r.bottom + 6, left: Math.max(8, r.right - width) });
     }
-  }
-  const startedMs = Date.parse(createdAt);
-  const lastMs = lastMessageAt ? Date.parse(lastMessageAt) : Number.NaN;
-  const elapsedMs =
-    Number.isFinite(startedMs) && Number.isFinite(lastMs)
-      ? Math.max(0, lastMs - startedMs)
-      : null;
-  const startedTitle = formatFullDateTime(createdAt);
-  const lastTitle = lastMessageAt ? formatFullDateTime(lastMessageAt) : "";
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   return (
-    <span className="thread-timing" aria-label="Thread timing">
-      <span className="thread-timing-item" title={startedTitle}>
-        <b>Started</b>
-        <time dateTime={createdAt}>{formatCompactDateTime(createdAt)}</time>
-      </span>
-      {lastMessageAt && (
-        <>
-          <span className="thread-timing-dot" aria-hidden="true">·</span>
-          <span className="thread-timing-item" title={lastTitle}>
-            <b>Last</b>
-            <time dateTime={lastMessageAt}>{formatCompactDateTime(lastMessageAt)}</time>
-          </span>
-        </>
-      )}
-      {elapsedMs != null && (
-        <>
-          <span className="thread-timing-dot" aria-hidden="true">·</span>
-          <span
-            className="thread-timing-item"
-            title={`Thread span: ${startedTitle} to ${lastTitle}`}
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={`head-pill${open || openTab ? " on" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Workspace panels"
+        title="Workspace panels"
+        disabled={!project}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <MoreIcon size={16} />
+        <span>More</span>
+      </button>
+      {open && pos && project &&
+        createPortal(
+          <div
+            ref={popRef}
+            className="thread-menu ws-menu"
+            role="menu"
+            aria-label="Workspace panels"
+            style={{ top: pos.top, left: pos.left }}
           >
-            <b>Elapsed</b>
-            <span>{formatDuration(elapsedMs)}</span>
-          </span>
-        </>
-      )}
-    </span>
+            {VISIBLE_TABS.map(({ id, label, Icon }) => {
+              const active = openTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={active}
+                  className={`thread-menu-item${active ? " on" : ""}`}
+                  onClick={() => {
+                    dispatch({
+                      type: "workspace",
+                      projectId: project.id,
+                      tab: active ? null : id,
+                    });
+                    setOpen(false);
+                  }}
+                >
+                  <Icon size={16} />
+                  <span>{label}</span>
+                  {active && (
+                    <span className="ws-menu-check">
+                      <CheckIcon size={15} />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -145,7 +178,6 @@ export function ThreadView() {
   const quickHome = isQuickHomeProjectId(
     thread ? thread.projectId : draft?.projectId,
   );
-  const quickAccess = (thread ? thread.settings : draft?.settings)?.access;
   const hermesGatewayName = hermesHome
     ? state.hello?.agents
         .find((a) => a.id === "hermes")
@@ -173,6 +205,9 @@ export function ThreadView() {
   const scrollHeightRef = useRef(0);
   const clientHeightRef = useRef(0);
   const touchYRef = useRef<number | null>(null);
+  // Timestamp (ms) until which a manual scroll gesture is considered in flight.
+  // While it's in the future, the per-render restore stands down (see below).
+  const gestureUntilRef = useRef(0);
   // The zoom scrollTopRef's number was measured under. Compared (not just used)
   // so one zoom value is only ever rescaled once (see the APPEARANCE_EVENT
   // handler below).
@@ -206,9 +241,14 @@ export function ThreadView() {
     if (stickRef.current) {
       el.scrollTop = el.scrollHeight;
       scrollTopRef.current = el.scrollTop;
-    } else if (el.scrollTop !== scrollTopRef.current) {
+    } else if (
+      Date.now() >= gestureUntilRef.current &&
+      Math.abs(el.scrollTop - scrollTopRef.current) > RESTORE_EPSILON
+    ) {
       // WebKit can reset a nested scroller when unrelated app state rerenders.
-      // Keep the reader's last explicit position unless they were following the end.
+      // Restore the reader's last explicit position — but only for a real jump
+      // and only when no manual scroll is in flight, or a streaming re-render
+      // would fight the reader's own wheel/touch/drag mid-gesture.
       el.scrollTop = scrollTopRef.current;
     }
     scrollHeightRef.current = el.scrollHeight;
@@ -218,11 +258,26 @@ export function ThreadView() {
 
   const jumpToPresent = useCallback(() => {
     const el = scrollRef.current;
-    stickRef.current = true;
-    setAtPresent(true);
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-    scrollTopRef.current = el.scrollTop;
+    if (!el) {
+      stickRef.current = true;
+      setAtPresent(true);
+      return;
+    }
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      stickRef.current = true;
+      setAtPresent(true);
+      el.scrollTop = el.scrollHeight;
+      scrollTopRef.current = el.scrollTop;
+      return;
+    }
+    // Glide to the newest activity instead of teleporting. Deliberately DON'T
+    // arm live-follow here: the layout effect would then hard-pin to the bottom
+    // on the next render and cancel the animation. onScroll re-arms stick and
+    // hides this button on its own once the glide actually reaches the end.
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, []);
 
   // Growing content and a resizing composer both dispatch scroll events even
@@ -231,6 +286,13 @@ export function ThreadView() {
   // turn it back on once a reader genuinely reaches the bottom.
   const leavePresent = useCallback(() => {
     stickRef.current = false;
+  }, []);
+
+  // Opens the grace window that keeps the per-render restore from overriding a
+  // live scroll. Called from every genuine manual gesture (wheel, touch drag,
+  // arrow/page keys, scrollbar drag) — not from streaming-driven scroll events.
+  const markGesture = useCallback(() => {
+    gestureUntilRef.current = Date.now() + GESTURE_GRACE_MS;
   }, []);
 
   // The effect above only fires on a React render. Feed content also settles
@@ -336,6 +398,14 @@ export function ThreadView() {
             />
           ) : (
             <h1 className="thread-title">
+              {agentInfo &&
+                (hermesAvatar ? (
+                  <span className="chip-avatar title-agent-mark" {...chipPreview.hoverProps}>
+                    <img src={hermesAvatar} alt="" />
+                  </span>
+                ) : (
+                  <AgentMark agent={agentInfo.id} size={15} className="title-agent-mark" />
+                ))}
               {thread
                 ? thread.title || "Untitled thread"
                 : quickHome
@@ -355,38 +425,7 @@ export function ThreadView() {
               )}
             </h1>
           )}
-          <div className="thread-sub">
-            {agentInfo && (
-              <span className="agent-chip">
-                {hermesAvatar ? (
-                  <span className="chip-avatar" {...chipPreview.hoverProps}>
-                    <img src={hermesAvatar} alt="" />
-                  </span>
-                ) : (
-                  <AgentMark agent={agentInfo.id} size={11} />
-                )}
-                {hermesGatewayName ?? agentInfo.name}
-              </span>
-            )}
-            {chipPreview.portal}
-            {thread && <LaneChips thread={thread} />}
-            {quickHome && (
-              <span
-                className={`thread-scope-chip${quickAccess === "full" ? " broad" : ""}`}
-                title={
-                  quickAccess === "full"
-                    ? "Full access is enabled for this computer"
-                    : "Starts in an isolated scratch directory"
-                }
-              >
-                {quickAccess === "full" ? "computer access" : "scratch cwd"}
-              </span>
-            )}
-            {project && !hermesHome && !quickHome && (
-              <span className="thread-path">{project.path}</span>
-            )}
-            {thread && <ThreadTiming createdAt={thread.createdAt} feed={state.feed} />}
-          </div>
+          {chipPreview.portal}
         </div>
         {busy && (
           <div className="head-status">
@@ -401,31 +440,47 @@ export function ThreadView() {
         <div className="ws-toggles">
           {thread && <ReviewMenu thread={thread} />}
           {thread && <ParleyRoundSplash thread={thread} />}
-          {!hermesHome && !quickHome && VISIBLE_TABS.map(({ id, label, Icon }) => {
-            const openTab = project ? state.workspace[project.id] ?? null : null;
-            return (
-              <button
-                key={id}
-                type="button"
-                className={`icon-btn${openTab === id ? " on" : ""}`}
-                aria-label={label}
-                title={label}
-                disabled={!project}
-                onClick={() =>
-                  project &&
-                  dispatch({
-                    type: "workspace",
-                    projectId: project.id,
-                    tab: openTab === id ? null : id,
-                  })
-                }
-              >
-                <Icon size={16} />
-              </button>
-            );
-          })}
+          {!hermesHome && !quickHome && (
+            <>
+              {/* Desktop: one pill (icon + label) per panel. Hidden on phones. */}
+              <div className="head-tab-pills">
+                {VISIBLE_TABS.map(({ id, label, Icon }) => {
+                  const openTab = project ? state.workspace[project.id] ?? null : null;
+                  const active = openTab === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`head-pill${active ? " on" : ""}`}
+                      aria-pressed={active}
+                      title={label}
+                      disabled={!project}
+                      onClick={() =>
+                        project &&
+                        dispatch({
+                          type: "workspace",
+                          projectId: project.id,
+                          tab: active ? null : id,
+                        })
+                      }
+                    >
+                      <Icon size={15} />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Phones: the same panels collapsed into a dropdown. */}
+              <div className="head-tab-menu">
+                <WorkspaceMenu
+                  project={project}
+                  openTab={project ? state.workspace[project.id] ?? null : null}
+                  dispatch={dispatch}
+                />
+              </div>
+            </>
+          )}
         </div>
-        <ZoomChip />
       </header>
 
       <div
@@ -433,12 +488,14 @@ export function ThreadView() {
         data-zoom-pane="feed"
         ref={scrollRef}
         onWheel={(e) => {
+          markGesture();
           if (e.deltaY < 0) leavePresent();
         }}
         onTouchStart={(e) => {
           touchYRef.current = e.touches[0]?.clientY ?? null;
         }}
         onTouchMove={(e) => {
+          markGesture();
           const previousY = touchYRef.current;
           const nextY = e.touches[0]?.clientY;
           if (previousY != null && nextY != null && nextY > previousY) {
@@ -453,6 +510,16 @@ export function ThreadView() {
           touchYRef.current = null;
         }}
         onKeyDown={(e) => {
+          const scrollKeys = [
+            "ArrowUp",
+            "PageUp",
+            "Home",
+            "ArrowDown",
+            "PageDown",
+            "End",
+            " ",
+          ];
+          if (scrollKeys.includes(e.key)) markGesture();
           if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") {
             leavePresent();
           }
@@ -479,7 +546,9 @@ export function ThreadView() {
             stickRef.current = true;
           } else if (!geometryChanged && el.scrollTop < previousTop - BOTTOM_STICK_EPSILON) {
             // Covers dragging the desktop scrollbar, which does not reliably
-            // emit wheel or pointer events into the page.
+            // emit wheel or pointer events into the page. Treat it as a manual
+            // gesture too, so the restore doesn't fight a scrollbar drag.
+            markGesture();
             leavePresent();
           }
           const present = distanceFromEnd < BOTTOM_SLACK;
@@ -491,18 +560,18 @@ export function ThreadView() {
           {!state.feedLoading && feedLen === 0 && (
             <div className="feed-empty">
               <img
-                src="/threadknot-logo.png"
+                src="/threadknot-simple.png"
                 alt=""
                 aria-hidden="true"
-                className="feed-empty-icon"
+                className="feed-empty-logo"
               />
               <p>
                 {draft
                   ? hermesHome
-                    ? `Direct line to ${hermesGatewayName ?? "your Hermes agent"}. Say hello.`
+                    ? `Say hello to ${hermesGatewayName ?? "your Hermes agent"}`
                     : quickHome
-                      ? "A private scratch conversation. Ask anything."
-                      : `Fresh thread in ${project?.name ?? "project"}. Set your course below.`
+                      ? "Ask anything…"
+                      : "Let's get started…"
                   : "No traffic on this channel yet."}
               </p>
             </div>
@@ -537,7 +606,7 @@ export function ThreadView() {
             onClick={jumpToPresent}
           >
             <ArrowDownIcon size={13} />
-            present
+            Present
           </button>
         )}
         <AgentHud

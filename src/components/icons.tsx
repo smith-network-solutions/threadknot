@@ -3,11 +3,12 @@ import type { ReactNode } from "react";
 interface IconProps {
   size?: number;
   className?: string;
+  strokeWidth?: number;
 }
 
 function svg(
   path: ReactNode,
-  { size = 16, className }: IconProps,
+  { size = 16, className, strokeWidth = 1.8 }: IconProps,
   viewBox = "0 0 24 24",
 ) {
   return (
@@ -17,7 +18,7 @@ function svg(
       viewBox={viewBox}
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.8}
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
@@ -29,6 +30,17 @@ function svg(
 }
 
 export const PlusIcon = (p: IconProps) => svg(<path d="M12 5v14M5 12h14" />, p);
+
+/** Notebook with a pen nib — "start a new chat / write". */
+export const NotebookPenIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M13.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.5" />
+      <path d="M4 8H2M4 12H2M4 16H2" />
+      <path d="M18.4 3.6a1.6 1.6 0 0 1 2.3 2.3l-6.2 6.2-3 .7.7-3z" />
+    </>,
+    p,
+  );
 
 /** Two stacked rails — the universal "grab here to reorder" handle. */
 export const GripIcon = (p: IconProps) =>
@@ -47,6 +59,16 @@ export const PopoutIcon = (p: IconProps) =>
 // Classic funnel — opens the sidebar view/filter popover.
 export const FilterIcon = (p: IconProps) =>
   svg(<path d="M4 5h16l-6.4 7.6V19l-3.2-2v-4.4L4 5z" />, p);
+
+/** Framed panel with a left column — the "toggle sidebar" affordance. */
+export const PanelLeftIcon = (p: IconProps) =>
+  svg(
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </>,
+    p,
+  );
 
 export const SearchIcon = (p: IconProps) =>
   svg(
@@ -73,7 +95,7 @@ export const MenuIcon = (p: IconProps) =>
   svg(<path d="M4 6h16M4 12h16M4 18h16" />, p);
 
 export const ArrowUpIcon = (p: IconProps) =>
-  svg(<path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" />, p);
+  svg(<path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" />, { strokeWidth: 2.6, ...p });
 
 export const ArrowDownIcon = (p: IconProps) =>
   svg(<path d="M12 5v14M5.5 12.5L12 19l6.5-6.5" />, p);
@@ -234,6 +256,56 @@ export const WrenchIcon = (p: IconProps) =>
 
 export const CheckIcon = (p: IconProps) => svg(<path d="M4.5 12.5l5 5L19.5 7" />, p);
 
+// Processor die with pins — the model / profile picker row.
+export const ChipIcon = (p: IconProps) =>
+  svg(
+    <>
+      <rect x="7" y="7" width="10" height="10" rx="1.6" />
+      <path d="M10 3.5v3M14 3.5v3M10 17.5v3M14 17.5v3M3.5 10h3M3.5 14h3M17.5 10h3M17.5 14h3" />
+    </>,
+    p,
+  );
+
+// Speedometer arc with a needle — the reasoning-effort row.
+export const GaugeIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M4 15.5a8 8 0 0 1 16 0" />
+      <path d="M12 15.5l3.4-3" />
+    </>,
+    p,
+  );
+
+// Facing brackets — the context-window size row.
+export const BracketsIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M8.5 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h2.5" />
+      <path d="M15.5 4H18a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2.5" />
+    </>,
+    p,
+  );
+
+// Compass — Plan mode ("chart a course").
+export const CompassIcon = (p: IconProps) =>
+  svg(
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M15.5 8.5l-2.2 4.8-4.8 2.2 2.2-4.8 4.8-2.2z" fill="currentColor" stroke="none" />
+    </>,
+    p,
+  );
+
+// Hammer — Build mode ("do the work").
+export const HammerIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M13.5 6.5l4-4 4 4-4 4-1.6-1.6-6.4 6.4a2 2 0 0 1-2.8-2.8l6.4-6.4z" />
+      <path d="M8.7 11.3l-5 5a2 2 0 0 0 2.8 2.8l5-5" />
+    </>,
+    p,
+  );
+
 // Curved arrow doubling back — "pull this back out of the settled shelf".
 export const UndoIcon = (p: IconProps) =>
   svg(
@@ -288,12 +360,43 @@ export const ClockIcon = (p: IconProps) =>
     p,
   );
 
+/** Two hemispheres with a central seam — the time spent thinking before reply. */
+export const BrainIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M12 5a3 3 0 1 0-6 .2A4 4 0 0 0 4 12a4 4 0 0 0 2 6.8A4 4 0 0 0 12 16V5Z" />
+      <path d="M12 5a3 3 0 1 1 6 .2A4 4 0 0 1 20 12a4 4 0 0 1-2 6.8A4 4 0 0 1 12 16V5Z" />
+      <path d="M12 5v11M8 8h1M15 8h1M8 12h1M15 12h1M9 16h1M14 16h1" />
+    </>,
+    p,
+  );
+
+export const DollarIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M12 2.5v19" />
+      <path d="M16.5 6.5c-.8-.8-2.1-1.3-3.9-1.3-2.3 0-3.8 1.1-3.8 2.7 0 4.1 7.7 1.8 7.7 5.8 0 1.7-1.5 2.8-3.9 2.8-1.9 0-3.5-.6-4.4-1.6" />
+    </>,
+    p,
+  );
+
 export const PlayIcon = (p: IconProps) =>
   svg(<path d="M8 5.5v13l10-6.5-10-6.5z" fill="currentColor" stroke="none" />, p);
 
 export const ShieldIcon = (p: IconProps) =>
   svg(
     <path d="M12 3l7 2.8v5.4c0 4.5-3 8.1-7 9.8-4-1.7-7-5.3-7-9.8V5.8L12 3z" />,
+    p,
+  );
+
+// Shield with an exclamation — full access, the "handle with care" level.
+export const ShieldAlertIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M12 3l7 2.8v5.4c0 4.5-3 8.1-7 9.8-4-1.7-7-5.3-7-9.8V5.8L12 3z" />
+      <path d="M12 8v4" />
+      <circle cx="12" cy="15.4" r="0.6" fill="currentColor" stroke="none" />
+    </>,
     p,
   );
 

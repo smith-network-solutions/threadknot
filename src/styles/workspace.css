@@ -104,11 +104,51 @@
 /* Header toggle buttons (live in ThreadView header). */
 .ws-toggles {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 6px;
 }
 
 .ws-toggles .icon-btn.on {
   color: var(--brass, #d9a35c);
+}
+
+/* Header pills: icon + label, one per workspace panel (and Review). Right-
+   aligned as a group because .thread-head-main takes the remaining width. */
+.head-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--dim);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.head-pill svg { flex: none; }
+.head-pill:hover:not(:disabled),
+.head-pill:focus-visible:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.head-pill.on {
+  color: var(--brass-hi);
+  background: var(--brass-dim);
+}
+.head-pill:disabled { opacity: 0.45; cursor: default; }
+
+/* Desktop shows the pills (display:contents so they're flex items of
+   .ws-toggles); the phone dropdown is hidden. Flipped at the header's phone
+   breakpoint below. */
+.head-tab-pills { display: contents; }
+.head-tab-menu { display: none; }
+@media (max-width: 767px) {
+  .head-tab-pills { display: none; }
+  .head-tab-menu { display: inline-flex; }
 }
 
 @media (max-width: 1023px) {

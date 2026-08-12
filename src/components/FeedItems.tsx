@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { FeedItem } from "../state/feed";
 import { findThread, remoteMachineId, useStore } from "../state/store";
@@ -18,10 +18,16 @@ import { QuestionCard } from "./QuestionCard";
 import {
   AgentMark,
   ArchiveIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  BracketsIcon,
+  BrainIcon,
   CheckIcon,
+  ClockIcon,
   ChevronIcon,
   CopyIcon,
   DiffIcon,
+  DollarIcon,
   DownloadIcon,
   PopoutIcon,
   ShieldIcon,
@@ -517,28 +523,81 @@ function ApprovalDetail({ kind, detail }: { kind: string; detail: string }) {
 
 function TurnDivider({ item }: { item: Extract<FeedItem, { type: "turn_end" }> }) {
   const u = item.usage;
-  const parts: string[] = [];
+  const metrics: { key: string; label: string; value: string; icon: ReactNode }[] = [];
   if (item.durationMs != null) {
-    parts.push(
-      item.aborted
-        ? `interrupted after ${formatDuration(item.durationMs)}`
-        : `took ${formatDuration(item.durationMs)}`,
-    );
+    metrics.push({
+      key: "duration",
+      label: item.aborted ? "Interrupted after" : "Duration",
+      value: item.aborted
+        ? `after ${formatDuration(item.durationMs)}`
+        : formatDuration(item.durationMs),
+      icon: <ClockIcon size={12} />,
+    });
   } else if (item.aborted) {
-    parts.push("interrupted");
+    metrics.push({
+      key: "duration",
+      label: "Interrupted",
+      value: "interrupted",
+      icon: <ClockIcon size={12} />,
+    });
+  }
+  if (item.thinkingMs != null) {
+    metrics.push({
+      key: "thinking",
+      label: "Thought for",
+      value: formatDuration(item.thinkingMs),
+      icon: <BrainIcon size={12} />,
+    });
   }
   if (u) {
     const inp = formatTokens(u.inputTokens);
     const out = formatTokens(u.outputTokens);
-    if (inp) parts.push(`${inp} in`);
-    if (out) parts.push(`${out} out`);
-    if (u.contextPct != null) parts.push(`${Math.round(u.contextPct)}% ctx`);
-    if (u.costUsd != null) parts.push(`$${u.costUsd.toFixed(u.costUsd < 1 ? 3 : 2)}`);
+    if (inp) {
+      metrics.push({
+        key: "input",
+        label: "Input tokens",
+        value: inp,
+        icon: <ArrowDownIcon size={12} />,
+      });
+    }
+    if (out) {
+      metrics.push({
+        key: "output",
+        label: "Output tokens",
+        value: out,
+        icon: <ArrowUpIcon size={12} />,
+      });
+    }
+    if (u.contextPct != null) {
+      metrics.push({
+        key: "context",
+        label: "Context used",
+        value: `${Math.round(u.contextPct)}%`,
+        icon: <BracketsIcon size={12} />,
+      });
+    }
+    if (u.costUsd != null) {
+      metrics.push({
+        key: "cost",
+        label: "Estimated cost",
+        value: `$${u.costUsd.toFixed(u.costUsd < 1 ? 3 : 2)}`,
+        icon: <DollarIcon size={12} />,
+      });
+    }
   }
   return (
     <div className={`turn-divider${item.aborted ? " aborted" : ""}`}>
       <span className="turn-line" />
-      {parts.length > 0 && <span className="turn-meta">{parts.join(" · ")}</span>}
+      {metrics.length > 0 && (
+        <span className="turn-meta" aria-label="Turn details">
+          {metrics.map((metric) => (
+            <span className="turn-stat" key={metric.key} title={metric.label} aria-label={`${metric.label}: ${metric.value}`}>
+              {metric.icon}
+              <span>{metric.value}</span>
+            </span>
+          ))}
+        </span>
+      )}
       <span className="turn-line" />
     </div>
   );

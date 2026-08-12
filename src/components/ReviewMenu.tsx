@@ -73,7 +73,7 @@ export function ReviewMenu({ thread }: { thread: Thread }) {
     <>
       <button
         type="button"
-        className="icon-btn"
+        className="head-pill"
         disabled={busy || empty}
         aria-haspopup="dialog"
         aria-label="Review with another agent"
@@ -88,7 +88,8 @@ export function ReviewMenu({ thread }: { thread: Thread }) {
         }
         onClick={() => setOpen(true)}
       >
-        <ShieldIcon size={16} />
+        <ShieldIcon size={15} />
+        <span>Review</span>
       </button>
       {open && <ReviewDialog thread={thread} onClose={() => setOpen(false)} />}
     </>

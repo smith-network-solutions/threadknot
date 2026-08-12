@@ -207,7 +207,14 @@ export type FeedItem = FeedItemBase & (
       answered: boolean;
       pending?: boolean;
     }
-  | { type: "turn_end"; usage?: TurnUsage; aborted?: boolean; durationMs?: number }
+  | {
+      type: "turn_end";
+      usage?: TurnUsage;
+      aborted?: boolean;
+      durationMs?: number;
+      /** Time from the user's message until the AI began its answer. */
+      thinkingMs?: number;
+    }
   /** Latest context snapshot; retained in replay but intentionally not rendered. */
   | { type: "context_usage"; usage: TurnUsage }
   /** Provenance marker for a turn; renders as a handoff divider when `switched`. */
@@ -264,6 +271,35 @@ function turnDuration(items: FeedItem[], timestamp?: string): number | undefined
     if (item.type === "user" && !item.midTurn && item.timestamp) {
       const started = Date.parse(item.timestamp);
       return Number.isFinite(started) ? Math.max(0, ended - started) : undefined;
+    }
+    if (item.type === "turn_end") break;
+  }
+  return undefined;
+}
+
+/** Time from the user turn until the first assistant text starts streaming. */
+function turnThinkingDuration(items: FeedItem[]): number | undefined {
+  let userIndex = -1;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.type === "user" && !item.midTurn) {
+      userIndex = i;
+      break;
+    }
+    if (item.type === "turn_end") return undefined;
+  }
+  if (userIndex < 0) return undefined;
+
+  const userTimestamp = items[userIndex].timestamp;
+  if (!userTimestamp) return undefined;
+  const started = Date.parse(userTimestamp);
+  if (!Number.isFinite(started)) return undefined;
+
+  for (let i = userIndex + 1; i < items.length; i++) {
+    const item = items[i];
+    if (item.type === "assistant" && item.timestamp) {
+      const firstText = Date.parse(item.timestamp);
+      return Number.isFinite(firstText) ? Math.max(0, firstText - started) : undefined;
     }
     if (item.type === "turn_end") break;
   }
@@ -506,16 +542,18 @@ function foldEvent(items: FeedItem[], ev: AgentEvent, timestamp?: string): FeedI
       return [...items, { id: iid(), type: "context_usage", usage: ev.usage }];
     case "turn_completed": {
       const durationMs = turnDuration(items, timestamp);
+      const thinkingMs = turnThinkingDuration(items);
       return [
         ...finalizeStreams(items),
-        { id: iid(), type: "turn_end", usage: ev.usage, timestamp, durationMs },
+        { id: iid(), type: "turn_end", usage: ev.usage, timestamp, durationMs, thinkingMs },
       ];
     }
     case "turn_aborted": {
       const durationMs = turnDuration(items, timestamp);
+      const thinkingMs = turnThinkingDuration(items);
       return [
         ...finalizeStreams(items),
-        { id: iid(), type: "turn_end", aborted: true, timestamp, durationMs },
+        { id: iid(), type: "turn_end", aborted: true, timestamp, durationMs, thinkingMs },
       ];
     }
     case "session_started": {

@@ -20,6 +20,9 @@ export interface SidebarLayout {
   showHidden: boolean;
   /** Sidebar width in px, mirrored onto the --sidebar-w CSS variable. */
   width: number;
+  /** Collapsed (animated to zero width) on desktop. Ignored on mobile, where
+   *  the sidebar is a slide-over drawer toggled by the hamburger instead. */
+  collapsed: boolean;
   /** Manual workspace order by id. Listed ids sort first in this order; ids
    *  absent from the list fall back to their activity order after them; ids no
    *  longer in state are ignored and pruned on the next reorder write. Excluded
@@ -40,6 +43,7 @@ const DEFAULTS: SidebarLayout = {
   showTimes: true,
   showHidden: false,
   width: SIDEBAR_WIDTH_DEFAULT,
+  collapsed: false,
   workspaceOrder: [],
 };
 
@@ -79,6 +83,7 @@ function loadLayout(): SidebarLayout {
       width: clampWidth(
         typeof parsed.width === "number" ? parsed.width : SIDEBAR_WIDTH_DEFAULT,
       ),
+      collapsed: parsed.collapsed === true,
       workspaceOrder: Array.isArray(parsed.workspaceOrder)
         ? parsed.workspaceOrder.filter((x): x is string => typeof x === "string")
         : [],
