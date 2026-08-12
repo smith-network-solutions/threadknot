@@ -105,13 +105,23 @@ const BUTTONS: Record<string, Btn> = {
   KeyK: "bomb",
 };
 
-/** Levels you must win, out of the three in a game, to move on to the next.
- *  You may drop exactly one per game, and no level is ever replayed. */
+/**
+ * A game is three ATTEMPTS, and you need two wins from them to carry it.
+ *
+ * Losing does not push you up the difficulty. You replay the level you just
+ * lost, at exactly the setting it was on, and it costs you one of the three
+ * attempts. Only a win moves you to the next level, so the level you are on is
+ * always just the number of wins you have banked in this game.
+ */
+const ATTEMPTS_PER_GAME = 3;
 const WINS_NEEDED = 2;
 
-/** The result of each level in the game currently being played. */
-type Card = ("win" | "loss" | null)[];
-const freshCard = (): Card => [null, null, null];
+/** The attempts made in the game currently being played, oldest first. */
+type Card = ("win" | "loss")[];
+const freshCard = (): Card => [];
+const winsIn = (c: Card) => c.filter((r) => r === "win").length;
+/** The level an attempt lands on: one past your last win, capped at the top. */
+const levelFor = (c: Card) => Math.min(winsIn(c), LEVELS_PER_STAGE - 1);
 /** Never advance a stage by more than this in one tick. A backgrounded webview
  *  hands back a multi-second delta, and replaying it in one step is a death
  *  the player never saw coming. */
@@ -351,28 +361,30 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       if (!won && !lost) return;
 
       settledRef.current = true;
-      const mark: Card = [...cardRef.current];
-      mark[levelIndex] = won ? "win" : "loss";
+      const mark: Card = [...cardRef.current, won ? "win" : "loss"];
       cardRef.current = mark;
       setScoreCard(mark);
 
       if (won) {
         setBanked((s) => s + run.score);
       } else {
-        // One dropped level is all it takes: Perfect Clear is meant to be rare.
+        // One dropped level is all it takes: a Gold run is meant to be rare.
         flawlessRef.current = false;
         setDying(true);
         cabinetRef.current?.death();
       }
 
-      const isFinalLevel = levelIndex >= LEVELS_PER_STAGE - 1;
-      if (!isFinalLevel) {
+      const wins = winsIn(mark);
+      const spent = mark.length;
+      // The game is over when the attempts run out, or when all three levels
+      // have been taken. Anything else means there is another attempt to make,
+      // on the level your wins put you on: losing never moves you up.
+      const gameOver = spent >= ATTEMPTS_PER_GAME || wins >= LEVELS_PER_STAGE;
+      if (!gameOver) {
         setTaunt((prev) => (won ? prev : pickTaunt(LIFE_LOST, prev)));
         setPhase(won ? "level-clear" : "lost");
         return;
       }
-      // Three played. Two wins carries the game; one does not.
-      const wins = mark.filter((r) => r === "win").length;
       if (wins >= WINS_NEEDED) {
         setPhase("tribute");
       } else {
@@ -484,11 +496,11 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         setPaused(false);
         setPhase("play");
         break;
-      // Won or dropped, the next level is the next level. Nothing is replayed:
-      // the card is what decides whether the game carries.
+      // A win moves you up; a loss puts you back on the same level at the same
+      // setting. Either way the level is derived from the card, never bumped.
       case "lost":
       case "level-clear": {
-        const next = levelIndex + 1;
+        const next = levelFor(cardRef.current);
         setLevelIndex(next);
         startStage(stageIndex, next);
         setPhase("intro");
@@ -672,7 +684,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         return {
           kicker: "LEGACY CIRCUIT",
           heading: "A HIDDEN CABINET",
-          body: `Three games, three levels each. Take ${WINS_NEEDED} of the 3 to carry a game. No retries. ${credits} of ${MAX_ATTEMPTS} credits left.`,
+          body: `Three games, three levels each, ${ATTEMPTS_PER_GAME} attempts a game. Win ${WINS_NEEDED} to carry it. ${credits} of ${MAX_ATTEMPTS} credits left.`,
           // The reason the whole thing exists, on the first screen anyone who
           // finds their way in will see.
           dedication: CIRCUIT_TRIBUTE,
@@ -693,16 +705,14 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           foot: "PRESS ENTER",
         };
       case "lost": {
-        const dropped = scoreCard.filter((r) => r === "loss").length;
-        const left = LEVELS_PER_STAGE - scoreCard.filter(Boolean).length;
+        const left = ATTEMPTS_PER_GAME - scoreCard.length;
         return {
-          kicker: `LEVEL ${levelIndex + 1} DROPPED`,
-          heading: dropped >= 2 ? "THAT IS THE GAME" : "ONE DROPPED",
+          kicker: `LEVEL ${levelIndex + 1} LOST · ${left} ATTEMPT${left === 1 ? "" : "S"} LEFT`,
+          heading: "AGAIN, THEN",
           taunt,
           body:
-            dropped >= 2
-              ? `Two dropped out of three. You need ${WINS_NEEDED} to carry a game, so the rest of this one is a formality.`
-              : `No retries here: the next level is the next level. You need ${WINS_NEEDED} wins from three to carry this game, and you have ${left} left to take.`,
+            `Level ${levelIndex + 1} again, exactly as it was. Losing does not push you up the ladder, ` +
+            `it just costs you one of your ${ATTEMPTS_PER_GAME} attempts. You need ${WINS_NEEDED} wins to carry this game.`,
           foot: "PRESS ENTER",
         };
       }
@@ -719,7 +729,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
         };
       case "tribute": {
         const t = TRIBUTES[Math.min(stageIndex, TRIBUTES.length - 1)];
-        const wins = scoreCard.filter((r) => r === "win").length;
+        const wins = winsIn(scoreCard);
         return {
           kicker: `${t.kicker} · ${wins}/${LEVELS_PER_STAGE} TAKEN · ${String(total).padStart(6, "0")} BANKED`,
           heading: t.heading,
@@ -731,7 +741,7 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
       }
       case "over":
         return {
-          kicker: `GAME OVER · ${scoreCard.filter((r) => r === "win").length}/${LEVELS_PER_STAGE} ON ${stage.title}`,
+          kicker: `GAME OVER · ${winsIn(scoreCard)}/${LEVELS_PER_STAGE} ON ${stage.title}`,
           heading: "THE THREAD SNAPS",
           taunt,
           body:
@@ -859,16 +869,19 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           <span className="lc-hud-key">CARD</span>
           <span
             className="lc-card-marks"
-            aria-label={`This game: ${scoreCard.filter((r) => r === "win").length} won, ${scoreCard.filter((r) => r === "loss").length} dropped, ${WINS_NEEDED} needed`}
+            aria-label={`This game: ${winsIn(scoreCard)} won, ${scoreCard.length - winsIn(scoreCard)} lost, ${scoreCard.length} of ${ATTEMPTS_PER_GAME} attempts used, ${WINS_NEEDED} wins needed`}
           >
-            {scoreCard.map((r, i) => (
-              <span
-                key={i}
-                className={`lc-mark${r ? ` ${r}` : ""}${i === levelIndex && !r ? " now" : ""}`}
-              >
-                {r === "win" ? "W" : r === "loss" ? "X" : "·"}
-              </span>
-            ))}
+            {Array.from({ length: ATTEMPTS_PER_GAME }, (_, i) => {
+              const r = scoreCard[i];
+              return (
+                <span
+                  key={i}
+                  className={`lc-mark${r ? ` ${r}` : ""}${i === scoreCard.length ? " now" : ""}`}
+                >
+                  {r === "win" ? "W" : r === "loss" ? "X" : "·"}
+                </span>
+              );
+            })}
           </span>
         </span>
         <span className="lc-hud-cell wide">
