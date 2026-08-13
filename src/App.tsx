@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { discoverServer, pickDirectoryNative } from "./lib/discovery";
 import {
   advertiseSoloWindow,
@@ -51,15 +51,18 @@ import {
   loadThreadAttention,
   LS_THREAD_ATTENTION,
   persistThreadAttention,
+  lastProjectKey,
   lastThreadKey,
   projectOwner,
   remoteMachineId,
   rememberNewThreadSettings,
   reducer,
+  FeedStoreContext,
   StoreContext,
   threadSettled,
   workspaceIdForProject,
   type Action,
+  type AgentEventAction,
   type AppState,
   type ThreadknotActions,
 } from "./state/store";
@@ -78,6 +81,18 @@ function makeActions(
   dispatch: React.Dispatch<Action>,
   getState: () => AppState,
 ): ThreadknotActions {
+  const rememberProject = (projectId: string, machineId?: string) => {
+    if (isQuickHomeProjectId(projectId) || projectId === HERMES_HOME_PROJECT_ID) return;
+    try {
+      localStorage.setItem(
+        lastProjectKey(getState().solo),
+        JSON.stringify({ projectId, ...(machineId ? { machineId } : {}) }),
+      );
+    } catch {
+      // Navigation persistence is a convenience only.
+    }
+  };
+
   /** The machineId to route a thread's RPCs by (undefined = local). */
   const routeFor = (threadId: string): string | undefined =>
     remoteMachineId(getState(), findThread(getState(), threadId)?.machineId);
@@ -189,7 +204,7 @@ function makeActions(
     const { projects } = await client.request("project.list", {});
     dispatch({ type: "projects", projects });
     // The sidebar renders workspaces above projects — keep both in step.
-    void refreshWorkspaces().catch(() => undefined);
+    await refreshWorkspaces().catch(() => undefined);
     await Promise.all(
       projects.map((p) =>
         refreshThreads(p.id).catch(() => undefined),
@@ -254,6 +269,8 @@ function makeActions(
     if (!preserveFeed) {
       dispatch({ type: "openThread", threadId });
       localStorage.setItem(lastThreadKey(getState().solo), threadId);
+      const known = findThread(getState(), threadId);
+      if (known) rememberProject(known.projectId, known.machineId);
     }
     try {
       const { thread, events } = await client.request(
@@ -268,6 +285,7 @@ function makeActions(
         return;
       }
       dispatch({ type: "feedLoaded", threadId, thread, events });
+      if (!preserveFeed) rememberProject(thread.projectId, thread.machineId);
       // Repo summaries power the per-repo badges on chat diff cards — load
       // them once per project without waiting for the Git tab to be opened
       // (auto-routed to the owner for remote projects).
@@ -656,6 +674,7 @@ function makeActions(
     },
 
     openDraft(projectId: string, machineId?: string) {
+      rememberProject(projectId, machineId);
       dispatch({
         type: "openDraft",
         draft: defaultDraft(getState(), projectId, machineId),
@@ -735,6 +754,21 @@ function makeActions(
           noteError(s.activeThreadId, e instanceof Error ? e.message : String(e));
           throw e;
         }
+      }
+    },
+
+    async sendToThread(threadId: string, text: string, attachments?: OutgoingAttachment[]) {
+      const machineId = routeFor(threadId);
+      try {
+        await client.request("turn.start", {
+          threadId,
+          text,
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
+          ...(machineId ? { machineId } : {}),
+        });
+      } catch (e) {
+        noteError(threadId, e instanceof Error ? e.message : String(e));
+        throw e;
       }
     },
 
@@ -993,6 +1027,13 @@ function makeActions(
     async deleteProject(projectId: string) {
       await client.request("project.delete", { projectId }).catch(() => undefined);
       forgetNewThreadSettings(projectId);
+      try {
+        const key = lastProjectKey(getState().solo);
+        const remembered = JSON.parse(localStorage.getItem(key) ?? "null");
+        if (remembered?.projectId === projectId) localStorage.removeItem(key);
+      } catch {
+        // A malformed convenience value should not block project removal.
+      }
       dispatch({ type: "projectDeleted", projectId });
     },
 
@@ -1506,6 +1547,20 @@ function coalesced(delayMs: number): (key: string, run: () => void) => void {
   };
 }
 
+const FEED_ONLY_KEYS = new Set<keyof AppState>([
+  "feed",
+  "feedThreadId",
+  "feedLoading",
+  "lastSeq",
+]);
+const NON_FEED_KEYS = (Object.keys(initialState) as Array<keyof AppState>).filter(
+  (key) => !FEED_ONLY_KEYS.has(key),
+);
+
+function sameNonFeedState(a: AppState, b: AppState): boolean {
+  return NON_FEED_KEYS.every((key) => Object.is(a[key], b[key]));
+}
+
 /** Legacy copy for events received from a peer that predates server-composed
  * notification previews. */
 function legacyNoticeBody(frame: EventFrame): string | null {
@@ -1609,6 +1664,30 @@ export default function App() {
   // Unread completion markers survive a refresh and stay synchronized between
   // Threadknot's fleet and solo windows. They remain local to this browser/device.
   useEffect(() => persistThreadAttention(state.attention), [state.attention]);
+
+  // Queued follow-ups belong to their thread, not to the currently visible
+  // composer. Once that thread settles, release exactly one as a normal turn.
+  // The in-flight guard covers the small window before turn_started arrives.
+  const queuedSendRef = useRef(new Set<string>());
+  useEffect(() => {
+    for (const [threadId, messages] of Object.entries(state.queuedMessages)) {
+      const thread = findThread(state, threadId);
+      if (!thread || messages.length === 0) continue;
+      if (queuedSendRef.current.has(threadId)) {
+        if (thread.status !== "idle") queuedSendRef.current.delete(threadId);
+        continue;
+      }
+      if (thread.status !== "idle") continue;
+
+      const text = messages[0];
+      queuedSendRef.current.add(threadId);
+      dispatch({ type: "clearQueuedMessage", threadId });
+      void actions.sendToThread(threadId, text).catch(() => {
+        dispatch({ type: "queueMessage", threadId, text, front: true });
+        queuedSendRef.current.delete(threadId);
+      });
+    }
+  }, [actions, state.queuedMessages, state.threads]);
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key === LS_THREAD_ATTENTION) {
@@ -1628,18 +1707,44 @@ export default function App() {
     let cancelled = false;
     let stopFocusTracking: (() => void) | undefined;
     const coalesce = coalesced(200);
+    const pendingStreamEvents: AgentEventAction[] = [];
+    let streamRaf: number | null = null;
+    const flushStreamEvents = () => {
+      if (streamRaf !== null) window.cancelAnimationFrame(streamRaf);
+      streamRaf = null;
+      if (pendingStreamEvents.length === 0) return;
+      const events = pendingStreamEvents.splice(0, pendingStreamEvents.length);
+      dispatch({ type: "agentEvents", events });
+    };
+    const queueStreamEvent = (event: AgentEventAction) => {
+      pendingStreamEvents.push(event);
+      if (streamRaf === null) streamRaf = window.requestAnimationFrame(flushStreamEvents);
+    };
 
     client.onStatus = (conn) => dispatch({ type: "conn", conn });
     client.onEvent = (frame) => {
       maybeNotify(frame, stateRef.current, dispatch, actionsRef.current);
-      dispatch({
+      const event: AgentEventAction = {
         type: "agentEvent",
         threadId: frame.threadId,
         seq: frame.seq,
         timestamp: frame.ts ?? new Date().toISOString(),
         speaker: frame.speaker,
         event: frame.event,
-      });
+      };
+      // Text/output deltas can arrive much faster than a screen can paint.
+      // Preserve their order, but reduce them once per frame. Boundary events
+      // flush first so approvals, completion, and status changes stay ordered
+      // relative to the visible stream.
+      const highFrequency =
+        frame.event.kind === "assistant_delta" ||
+        frame.event.kind === "thinking_delta" ||
+        frame.event.kind === "tool_output_delta";
+      if (highFrequency) queueStreamEvent(event);
+      else {
+        flushStreamEvents();
+        dispatch(event);
+      }
       // An agent turn likely touched the tree — refresh the fleet view if the
       // project's Git tab is open (cheap: only fires at turn boundaries).
       if (frame.event.kind === "turn_completed" && frame.seq >= 0) {
@@ -1771,14 +1876,58 @@ export default function App() {
             // pane and close mounted popovers while the socket catches up.
             await actionsRef.current.selectThread(openId, { preserveFeed: true });
           } else if (!isReconnect) {
-            // Restore last-open thread; selectThread self-heals if it's gone.
+            // Restore the last project as a fresh draft. The old last-thread
+            // value is only a migration fallback for installs that predate
+            // project-level startup persistence; it is never reopened.
             const solo = stateRef.current.solo;
-            const last = localStorage.getItem(lastThreadKey(solo));
-            if (last) await actionsRef.current.selectThread(last);
-            else if (solo) {
-              // Fresh solo window: land on the project's most recent thread.
-              const recent = (stateRef.current.threads[solo] ?? [])[0];
-              if (recent) await actionsRef.current.selectThread(recent.id);
+            let destination: { projectId: string; machineId?: string } | null = null;
+            try {
+              const stored = JSON.parse(
+                localStorage.getItem(lastProjectKey(solo)) ?? "null",
+              );
+              if (stored && typeof stored.projectId === "string") {
+                destination = {
+                  projectId: stored.projectId,
+                  ...(typeof stored.machineId === "string"
+                    ? { machineId: stored.machineId }
+                    : {}),
+                };
+              }
+            } catch {
+              // Fall through to the legacy location below.
+            }
+            if (solo) destination = { projectId: solo };
+            const catalogLoaded =
+              stateRef.current.projects.length > 0 ||
+              stateRef.current.workspaces.length > 0;
+            const destinationProjectId = destination?.projectId;
+            const destinationExists = destinationProjectId
+              ? stateRef.current.projects.some((p) => p.id === destinationProjectId) ||
+                stateRef.current.workspaces.some((w) =>
+                  w.members.some((m) => m.projectId === destinationProjectId),
+                )
+              : false;
+            if (!solo && catalogLoaded && destination && !destinationExists) {
+              localStorage.removeItem(lastProjectKey(solo));
+              destination = null;
+            }
+            if (!destination) {
+              const legacyThreadId = localStorage.getItem(lastThreadKey(solo));
+              const legacyThread = legacyThreadId
+                ? findThread(stateRef.current, legacyThreadId)
+                : null;
+              if (legacyThread) {
+                destination = {
+                  projectId: legacyThread.projectId,
+                  machineId: legacyThread.machineId,
+                };
+              }
+            }
+            if (!destination && stateRef.current.projects[0]) {
+              destination = { projectId: stateRef.current.projects[0].id };
+            }
+            if (destination) {
+              actionsRef.current.openDraft(destination.projectId, destination.machineId);
             }
           }
         } catch {
@@ -1844,6 +1993,8 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      if (streamRaf !== null) window.cancelAnimationFrame(streamRaf);
+      pendingStreamEvents.length = 0;
       setNativeNavigationHandler(null);
       setNativeResumeHandler(null);
       stopMobileResumeTracking?.();
@@ -1898,17 +2049,28 @@ export default function App() {
   }, [state.hello]);
 
   const store = useMemo(() => ({ state, dispatch, actions }), [state, actions]);
+  // Keep the shell on a stable snapshot while only the transcript is changing.
+  // Boundary events replace this ref because they update thread status, titles,
+  // attention, or another non-feed field that the shell actually displays.
+  const nonFeedStateRef = useRef(state);
+  if (!sameNonFeedState(nonFeedStateRef.current, state)) {
+    nonFeedStateRef.current = state;
+  }
+  const nonFeedStore = useMemo(
+    () => ({ state: nonFeedStateRef.current, dispatch, actions }),
+    [nonFeedStateRef.current, actions],
+  );
 
-  async function pickLocalDirectory() {
+  const pickLocalDirectory = useCallback(async () => {
     try {
       const dir = await pickDirectoryNative();
       if (dir) await actions.addProject(dir);
     } catch (e) {
       console.error("add project failed", e);
     }
-  }
+  }, [actions]);
 
-  async function onAddProject() {
+  const onAddProject = useCallback(async () => {
     // With an online peer, WHICH machine gets the new workspace is a real
     // choice, so ask first; with none, keep the one-step local flow.
     if (state.peers.some((p) => p.online)) {
@@ -1918,9 +2080,9 @@ export default function App() {
     } else {
       setPicker({});
     }
-  }
+  }, [pickLocalDirectory, state.isTauri, state.peers]);
 
-  function onNewWorkspaceMachine(mc: { machineId: string; label: string }) {
+  const onNewWorkspaceMachine = useCallback((mc: { machineId: string; label: string }) => {
     setShowNewWorkspace(false);
     const isLocal = mc.machineId === state.hello?.machineId;
     if (isLocal && state.isTauri) {
@@ -1928,7 +2090,9 @@ export default function App() {
     } else {
       setPicker({ machineId: isLocal ? undefined : mc.machineId, label: mc.label });
     }
-  }
+  }, [pickLocalDirectory, state.hello?.machineId, state.isTauri]);
+
+  const onOpenSchedules = useCallback(() => setShowSchedules(true), []);
 
   useEffect(() => {
     function onCreateWorkspace() {
@@ -1936,7 +2100,7 @@ export default function App() {
     }
     window.addEventListener("threadknot:create-workspace", onCreateWorkspace);
     return () => window.removeEventListener("threadknot:create-workspace", onCreateWorkspace);
-  });
+  }, [onAddProject]);
 
   // Before the shell, not inside it: an unpaired browser has no session, so
   // every pane behind this would render empty and every request would 401. One
@@ -1944,15 +2108,16 @@ export default function App() {
   if (needsPairing) return <PairBrowser />;
 
   return (
-    <StoreContext.Provider value={store}>
-      <div className="app">
+    <StoreContext.Provider value={nonFeedStore}>
+      <FeedStoreContext.Provider value={store}>
+        <div className="app">
         {/* Custom themes live in server state, so boot-time apply has to wait
             for the records to arrive; this headless bridge re-applies the
             active one whenever the store's theme list or the choice changes. */}
         <ThemeSync />
         <Sidebar
-          onAddProject={() => void onAddProject()}
-          onOpenSchedules={() => setShowSchedules(true)}
+          onAddProject={onAddProject}
+          onOpenSchedules={onOpenSchedules}
         />
         {state.sidebarOpen && (
           <div
@@ -2024,7 +2189,8 @@ export default function App() {
         {showSchedules && <SchedulesPanel onClose={() => setShowSchedules(false)} />}
         <AvatarCropHost />
         {!state.isTauri && <PullToRefresh />}
-      </div>
+        </div>
+      </FeedStoreContext.Provider>
     </StoreContext.Provider>
   );
 }

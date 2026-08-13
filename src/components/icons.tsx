@@ -100,6 +100,13 @@ export const ArrowUpIcon = (p: IconProps) =>
 export const ArrowDownIcon = (p: IconProps) =>
   svg(<path d="M12 5v14M5.5 12.5L12 19l6.5-6.5" />, p);
 
+/** Curved return arrow — reply to the message beside it. */
+export const ReplyIcon = (p: IconProps) =>
+  svg(
+    <path d="M9 8 4 12l5 4v-3.2c5.2-.2 8.4 1.1 11 4.2-.6-5.4-3.5-8.2-11-8.8V8Z" />,
+    p,
+  );
+
 export const StopIcon = (p: IconProps) =>
   svg(<rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" stroke="none" />, p);
 
@@ -128,6 +135,22 @@ export const RefreshIcon = (p: IconProps) =>
     <>
       <path d="M20 11a8 8 0 1 0-.6 4" />
       <path d="M20 4.5V11h-6" />
+    </>,
+    p,
+  );
+
+/** Lucide's eight-spoke Loader — used for live generation state. */
+export const LoaderIcon = (p: IconProps) =>
+  svg(
+    <>
+      <line x1="12" x2="12" y1="2" y2="6" />
+      <line x1="12" x2="12" y1="18" y2="22" />
+      <line x1="4.93" x2="7.76" y1="4.93" y2="7.76" />
+      <line x1="16.24" x2="19.07" y1="16.24" y2="19.07" />
+      <line x1="2" x2="6" y1="12" y2="12" />
+      <line x1="18" x2="22" y1="12" y2="12" />
+      <line x1="4.93" x2="7.76" y1="19.07" y2="16.24" />
+      <line x1="16.24" x2="19.07" y1="7.76" y2="4.93" />
     </>,
     p,
   );
@@ -186,6 +209,15 @@ export const ArchiveIcon = (p: IconProps) =>
 export const FolderIcon = (p: IconProps) =>
   svg(
     <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.2l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5v-11z" />,
+    p,
+  );
+
+export const FolderClosedIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M3.5 19.5A1.5 1.5 0 0 1 2 18V5.5A1.5 1.5 0 0 1 3.5 4h4.4a2 2 0 0 1 1.6.8l1.2 1.7H20.5A1.5 1.5 0 0 1 22 8v10a1.5 1.5 0 0 1-1.5 1.5z" />
+      <path d="M2 10h20" />
+    </>,
     p,
   );
 

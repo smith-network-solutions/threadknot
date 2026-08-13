@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Access,
   Agent,
@@ -11,7 +11,7 @@ import type {
 } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
-import { effortForModel, resolveProjectView, useStore } from "../state/store";
+import { effortForModel, resolveProjectView, useFeedStore, useStore } from "../state/store";
 import type { FeedItem } from "../state/feed";
 import {
   AgentMark,
@@ -20,6 +20,7 @@ import {
   CheckIcon,
   ChevronIcon,
   ChipIcon,
+  ClockIcon,
   EyeIcon,
   GaugeIcon,
   GlobeIcon,
@@ -35,6 +36,7 @@ import {
 } from "./icons";
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
 import { markJustSent } from "../lib/justSent";
+import { formatReply, replyPreview, type ReplyTarget } from "../lib/reply";
 import { ContextMeter, isRenderableUsage } from "./ContextMeter";
 import { hermesPresence } from "./HermesPresence";
 
@@ -458,7 +460,7 @@ const MODE_OPTIONS: PickerOption<Mode>[] = [
 const ACCESS_OPTIONS: PickerOption<Access>[] = [
   { id: "read", icon: <EyeIcon size={19} />, title: "Read", desc: "Read-only — look, never touch" },
   { id: "edits", icon: <PencilIcon size={19} />, title: "Edit", desc: "Edit files; asks before running" },
-  { id: "full", icon: <ShieldAlertIcon size={19} />, title: "Full", desc: "Full access — runs commands freely" },
+  { id: "full", icon: <ShieldAlertIcon size={19} />, title: "Full Acess", desc: "Full access — runs commands freely" },
 ];
 
 /**
@@ -677,6 +679,8 @@ const attachDrafts = new Map<string, DraftAttachment[]>();
 interface ComposerProps {
   thread: Thread | null; // null when composing a brand-new thread
   quickMode?: "chat" | "build";
+  replyTo: ReplyTarget | null;
+  onClearReply: () => void;
 }
 
 const CREATE_WORKSPACE_EVENT = "threadknot:create-workspace";
@@ -779,8 +783,8 @@ function BuildWorkspaceTray() {
   );
 }
 
-export function Composer({ thread, quickMode }: ComposerProps) {
-  const { state, actions } = useStore();
+export const Composer = memo(function Composer({ thread, quickMode, replyTo, onClearReply }: ComposerProps) {
+  const { state, actions, dispatch } = useFeedStore();
   const draft = state.draft;
   const agents = state.hello?.agents ?? [];
 
@@ -839,6 +843,11 @@ export function Composer({ thread, quickMode }: ComposerProps) {
     setAttachments(attachDrafts.get(key) ?? []);
     setAttachError(null);
   }, [key]);
+
+  useEffect(() => {
+    if (!replyTo) return;
+    requestAnimationFrame(() => taRef.current?.focus());
+  }, [replyTo]);
 
   // The one place the draft box is measured, so every trigger below lands the
   // same height for the same box. (220px is the .composer-card textarea
@@ -932,22 +941,21 @@ export function Composer({ thread, quickMode }: ComposerProps) {
   // Waiting on the server either way, so the button can't be pressed again.
   const micBusy = mic === "starting" || mic === "transcribing";
   const running = thread ? thread.status !== "idle" : false;
-  // Claude and Codex inject immediately. Kimi's ACP surface has no steer
-  // method, so Threadknot accepts the same action and promotes it at the next
-  // provider turn boundary without interrupting the active prompt.
+  // A queued follow-up is deliberately provider-neutral: it waits outside the
+  // live turn and starts as an ordinary turn after the thread settles.
   const acceptsRunningInput =
     agent === "claude" || agent === "claudex" || agent === "codex" || agent === "kimi";
   const canSend =
     (text.trim().length > 0 || attachments.length > 0) && state.conn === "online";
   // While a turn is live, the same primary control changes from Stop to Queue
-  // as soon as there is a follow-up to send. Keep this text-only for now:
-  // mid-turn attachments are not supported by the steer/queue protocol.
+  // as soon as there is a text-only follow-up to store.
   const canQueue =
     running &&
     !!thread &&
-    acceptsRunningInput &&
     text.trim().length > 0 &&
+    attachments.length === 0 &&
     state.conn === "online";
+  const queuedMessages = thread ? state.queuedMessages[thread.id] ?? [] : [];
 
   const slashContext = slashContextAt(text, cursorPos ?? text.length);
   const slashCommands = SLASH_COMMANDS.filter(
@@ -967,16 +975,19 @@ export function Composer({ thread, quickMode }: ComposerProps) {
   // Latest renderable context snapshot for this thread. Dedicated snapshots
   // update during a turn/compaction/model switch; old turn-boundary usage stays
   // as a replay-compatible fallback. Usage-less turns never blank a good ring.
-  const latestUsage =
-    thread && state.feedThreadId === thread.id
-      ? [...state.feed]
-          .reverse()
-          .find(
-            (it): it is Extract<FeedItem, { type: "turn_end" | "context_usage" }> =>
-              (it.type === "context_usage" || it.type === "turn_end") &&
-              isRenderableUsage(it.usage),
-          )?.usage
-      : undefined;
+  const latestUsage = useMemo(() => {
+    if (!thread || state.feedThreadId !== thread.id) return undefined;
+    for (let i = state.feed.length - 1; i >= 0; i -= 1) {
+      const item = state.feed[i];
+      if (
+        (item.type === "context_usage" || item.type === "turn_end") &&
+        isRenderableUsage(item.usage)
+      ) {
+        return item.usage;
+      }
+    }
+    return undefined;
+  }, [state.feed, state.feedThreadId, thread]);
 
   function updateText(v: string) {
     setText(v);
@@ -1158,25 +1169,26 @@ export function Composer({ thread, quickMode }: ComposerProps) {
   // (and strip) it in both states so it never leaks into the prompt verbatim.
   const stripBtw = (s: string) => s.replace(/^\/btw\b\s*/i, "");
 
+  function queueMessage() {
+    if (!thread || !canQueue) return;
+    const note = stripBtw(text.trim());
+    if (!note) return;
+    const outgoingNote = replyTo ? formatReply(replyTo, note) : note;
+    dispatch({ type: "queueMessage", threadId: thread.id, text: outgoingNote });
+    updateText("");
+    setAttachError(null);
+    onClearReply();
+  }
+
   async function submit() {
     if (running && thread) {
-      const note = stripBtw(text.trim());
-      if (!note) return;
-      if (!acceptsRunningInput) {
+      if (!canQueue) {
         setAttachError(
-          "Messages while working aren't supported for this agent — press Stop to interrupt.",
+          "Queued messages are text-only — remove attachments or press Stop to interrupt.",
         );
         return;
       }
-      const typed = text;
-      updateText("");
-      setAttachError(null);
-      markJustSent();
-      try {
-        await actions.steer(note);
-      } catch {
-        updateText(typed); // restore so nothing is lost
-      }
+      queueMessage();
       return;
     }
     const body = stripBtw(text.trim());
@@ -1187,12 +1199,14 @@ export function Composer({ thread, quickMode }: ComposerProps) {
       data: a.data,
     }));
     const keptAttachments = attachments;
+    const outgoingBody = replyTo ? formatReply(replyTo, body) : body;
     updateText("");
     updateAttachments([]);
     setAttachError(null);
     markJustSent();
     try {
-      await actions.send(body, outgoing);
+      await actions.send(outgoingBody, outgoing);
+      onClearReply();
     } catch {
       updateText(body); // restore so nothing is lost
       updateAttachments(keptAttachments);
@@ -1436,10 +1450,8 @@ export function Composer({ thread, quickMode }: ComposerProps) {
       ? "Chart a course — describe what to plan…"
       : "Give your orders…";
   const placeholder =
-    running && acceptsRunningInput
-      ? agent === "kimi"
-        ? "Queue a follow-up — Enter queues, Stop interrupts…"
-        : "Queue a follow-up — Enter queues, Stop interrupts…"
+    running
+      ? "Queue a follow-up — Enter queues, Stop interrupts…"
       : agentInfo && !agentInfo.available
         ? (agentInfo.authHint ?? `${agentInfo.name} is not available`)
         : quickHome
@@ -1481,6 +1493,28 @@ export function Composer({ thread, quickMode }: ComposerProps) {
         }}
       >
         {quickMode === "build" && <BuildWorkspaceTray />}
+        {queuedMessages.length > 0 && thread && (
+          <div className="queued-messages" aria-label="Queued messages">
+            {queuedMessages.map((message, index) => (
+              <div className="queued-message" key={`${index}:${message}`}>
+                <ClockIcon className="queued-message-mark" size={14} />
+                <span className="queued-message-copy">
+                  <span className="queued-message-label">Queued</span>
+                  <span className="queued-message-text">{message}</span>
+                </span>
+                <button
+                  type="button"
+                  className="queued-message-remove"
+                  aria-label="Remove queued message"
+                  title="Remove queued message"
+                  onClick={() => dispatch({ type: "clearQueuedMessage", threadId: thread.id, index })}
+                >
+                  <XIcon size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {fileDragActive && <div className="composer-drop-hint">Drop files to attach</div>}
         {attachments.length > 0 && (
           <div className="composer-attachments">
@@ -1542,6 +1576,23 @@ export function Composer({ thread, quickMode }: ComposerProps) {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+          {replyTo && (
+            <div className="reply-context" role="status">
+              <div className="reply-context-copy">
+                <span className="reply-context-label">Replying to {replyTo.author}</span>
+                <span className="reply-context-text">{replyPreview(replyTo.text)}</span>
+              </div>
+              <button
+                type="button"
+                className="reply-context-close"
+                title="Cancel reply"
+                aria-label="Cancel reply"
+                onClick={onClearReply}
+              >
+                <XIcon size={14} />
+              </button>
             </div>
           )}
           {mic === "transcribing" && (
@@ -1704,8 +1755,16 @@ export function Composer({ thread, quickMode }: ComposerProps) {
               <button
                 type="button"
                 className="send-btn stop"
-                title="Interrupt turn"
-                aria-label="Interrupt turn"
+                title={
+                  queuedMessages.length > 0
+                    ? "Interrupt turn and send queued message"
+                    : "Interrupt turn"
+                }
+                aria-label={
+                  queuedMessages.length > 0
+                    ? "Interrupt turn and send queued message"
+                    : "Interrupt turn"
+                }
                 onClick={() => void actions.interrupt().catch(() => undefined)}
               >
                 <StopIcon size={16} />
@@ -1719,7 +1778,7 @@ export function Composer({ thread, quickMode }: ComposerProps) {
                 aria-label={running ? "Queue message" : "Send message"}
                 onClick={() => void submit()}
               >
-                <ArrowUpIcon size={19} />
+                {running ? <ClockIcon size={19} /> : <ArrowUpIcon size={19} />}
               </button>
             )}
           </div>
@@ -1727,4 +1786,4 @@ export function Composer({ thread, quickMode }: ComposerProps) {
       </div>
     </div>
   );
-}
+});

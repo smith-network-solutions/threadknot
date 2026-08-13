@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { Access, Agent, ReviewerPersona, Thread } from "../lib/protocol";
 import { threadParticipants } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
-import { effortForModel, useStore } from "../state/store";
+import { effortForModel, useFeedStore } from "../state/store";
 import { effortLabel } from "./Composer";
 import { AgentMark, PencilIcon, ShieldIcon, XIcon } from "./icons";
 
@@ -62,7 +62,7 @@ function storeSettings(s: StoredParleySettings): void {
 }
 
 export function ReviewMenu({ thread }: { thread: Thread }) {
-  const { state } = useStore();
+  const { state } = useFeedStore();
   const [open, setOpen] = useState(false);
 
   const busy = thread.status !== "idle" || !!thread.parley;
@@ -112,7 +112,7 @@ function fallbackPersonas(agents: { id: Agent; name: string; available: boolean 
 }
 
 function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void }) {
-  const { state, actions } = useStore();
+  const { state, actions } = useFeedStore();
   const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
   const lanes = threadParticipants(thread);
   const builder = lanes.find((p) => p.role === "builder") ?? lanes[0];
@@ -495,7 +495,7 @@ function PersonaEditor({
   onDone: () => void;
   onDelete: (id: string) => void;
 }) {
-  const { state, actions } = useStore();
+  const { state, actions } = useFeedStore();
   const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
   const [name, setName] = useState(persona?.name ?? "");
   const [agent, setAgent] = useState<Agent>(

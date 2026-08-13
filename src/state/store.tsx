@@ -30,6 +30,7 @@ import { isAgentVisible, setHermesConfigured } from "../lib/agentVisibility";
 import { applyEvent, type FeedItem } from "./feed";
 
 export const LS_LAST_THREAD = "threadknot.lastThread";
+export const LS_LAST_PROJECT = "threadknot.lastProject";
 const LS_NEW_THREAD_SETTINGS = "threadknot.newThreadSettings";
 export const LS_THREAD_ATTENTION = "threadknot.threadAttention";
 const NEW_THREAD_DEFAULTS_VERSION = 3;
@@ -66,6 +67,12 @@ export function persistThreadAttention(attention: Record<string, true>): void {
  *  shared across all windows of the app). */
 export function lastThreadKey(solo: string | null): string {
   return solo ? `${LS_LAST_THREAD}.${solo}` : LS_LAST_THREAD;
+}
+
+/** localStorage key for the last project destination. Startup restores a new
+ *  draft here instead of reopening the last conversation. */
+export function lastProjectKey(solo: string | null): string {
+  return solo ? `${LS_LAST_PROJECT}.${solo}` : LS_LAST_PROJECT;
 }
 
 /** New-thread choices are project-scoped and shared by fleet/solo windows. */
@@ -156,6 +163,8 @@ export interface AppState {
   /** Artifact id the Artifacts pane should open in its viewer (deep link from
    *  a chat artifact card); consumed and cleared by ArtifactsPane. */
   artifactFocus: string | null;
+  /** File reference requested by a chat citation; consumed by FilesPane. */
+  fileFocus: { projectId: string; path: string; requestId: number } | null;
   /** Discovered git repos per project (fleet summaries for the Git tab). */
   git: Record<string, import("../lib/protocol").GitRepoInfo[]>;
   /** Archived (exported + removed) sessions per machine, newest first within
@@ -171,6 +180,8 @@ export interface AppState {
    *  NOT the one on screen. Cleared when the thread is opened and persisted
    *  client-side so refreshes do not lose the unread marker. */
   attention: Record<string, true>;
+  /** Local follow-ups waiting for each thread to become idle. */
+  queuedMessages: Record<string, string[]>;
 }
 
 export const initialState: AppState = {
@@ -205,10 +216,12 @@ export const initialState: AppState = {
   terminals: {},
   artifacts: {},
   artifactFocus: null,
+  fileFocus: null,
   git: {},
   archives: {},
   update: null,
   attention: loadThreadAttention(),
+  queuedMessages: {},
 };
 
 export type Action =
@@ -230,15 +243,8 @@ export type Action =
   | { type: "openDraft"; draft: DraftThread }
   | { type: "closeActive" }
   | { type: "feedLoaded"; threadId: string; thread: Thread; events: PersistedEvent[] }
-  | {
-      type: "agentEvent";
-      threadId: string;
-      seq: number;
-      timestamp: string;
-      /** Producing lane, when the server attributed the event to one. */
-      speaker?: string;
-      event: AgentEvent;
-    }
+  | AgentEventAction
+  | { type: "agentEvents"; events: AgentEventAction[] }
   | { type: "threadUpserted"; thread: Thread }
   | { type: "threadDeleted"; threadId: string; projectId: string }
   | { type: "projectDeleted"; projectId: string }
@@ -255,11 +261,25 @@ export type Action =
   | { type: "terminals"; projectId: string; terminals: TermInfo[] }
   | { type: "artifacts"; projectId: string; artifacts: ArtifactRecord[] }
   | { type: "artifactFocus"; artifactId: string | null }
+  | { type: "fileFocus"; projectId: string; path: string }
+  | { type: "fileFocusClear"; requestId: number }
   | { type: "git"; projectId: string; repos: import("../lib/protocol").GitRepoInfo[] }
   | { type: "archives"; machineId: string; archives: ArchiveHeader[] }
   | { type: "update"; update: import("../lib/protocol").UpdateStatus | null }
   | { type: "attentionSync"; attention: Record<string, true> }
-  | { type: "attentionClear"; threadId: string };
+  | { type: "attentionClear"; threadId: string }
+  | { type: "queueMessage"; threadId: string; text: string; front?: boolean }
+  | { type: "clearQueuedMessage"; threadId: string; index?: number };
+
+export interface AgentEventAction {
+  type: "agentEvent";
+  threadId: string;
+  seq: number;
+  timestamp: string;
+  /** Producing lane, when the server attributed the event to one. */
+  speaker?: string;
+  event: AgentEvent;
+}
 
 function statusFromEvent(ev: AgentEvent): ThreadStatus | null {
   switch (ev.kind) {
@@ -530,6 +550,29 @@ export function reducer(state: AppState, action: Action): AppState {
       delete attention[action.threadId];
       return { ...state, attention };
     }
+    case "queueMessage": {
+      const current = state.queuedMessages[action.threadId] ?? [];
+      const next = action.front ? [action.text, ...current] : [...current, action.text];
+      return {
+        ...state,
+        queuedMessages: {
+          ...state.queuedMessages,
+          [action.threadId]: next,
+        },
+      };
+    }
+    case "clearQueuedMessage": {
+      const current = state.queuedMessages[action.threadId] ?? [];
+      if (current.length === 0) return state;
+      const next =
+        action.index == null
+          ? current.slice(1)
+          : current.filter((_, index) => index !== action.index);
+      const queuedMessages = { ...state.queuedMessages };
+      if (next.length > 0) queuedMessages[action.threadId] = next;
+      else delete queuedMessages[action.threadId];
+      return { ...state, queuedMessages };
+    }
     case "projects": {
       // Drop thread lists for removed projects.
       const keep = new Set(action.projects.map((p) => p.id));
@@ -628,11 +671,20 @@ export function reducer(state: AppState, action: Action): AppState {
       let next = state;
 
       const status = statusFromEvent(event);
-      const threads = patchThread(state.threads, threadId, (t) => ({
-        ...t,
-        status: status ?? t.status,
-        updatedAt: seq > 0 ? timestamp : t.updatedAt,
-      }));
+      const streamDelta =
+        event.kind === "assistant_delta" ||
+        event.kind === "thinking_delta" ||
+        event.kind === "tool_output_delta";
+      // Output deltas do not change anything the sidebar needs to display.
+      // Avoid rebuilding and resorting every project's thread list for each
+      // token; boundary events still update status and updatedAt immediately.
+      const threads = streamDelta
+        ? state.threads
+        : patchThread(state.threads, threadId, (t) => ({
+            ...t,
+            status: status ?? t.status,
+            updatedAt: seq > 0 ? timestamp : t.updatedAt,
+          }));
       if (threads !== state.threads) next = { ...next, threads };
 
       const viewing = state.feedThreadId === threadId && state.activeThreadId === threadId;
@@ -657,6 +709,11 @@ export function reducer(state: AppState, action: Action): AppState {
       }
       return next;
     }
+    case "agentEvents":
+      // High-frequency stream deltas are reduced as one state transition. The
+      // events stay ordered, but React only has to render the resulting state
+      // once per animation frame instead of once per token.
+      return action.events.reduce((current, event) => reducer(current, event), state);
     case "threadUpserted": {
       const t = action.thread;
       const list = state.threads[t.projectId] ?? [];
@@ -678,6 +735,8 @@ export function reducer(state: AppState, action: Action): AppState {
         attention = { ...attention };
         delete attention[action.threadId];
       }
+      const queuedMessages = { ...state.queuedMessages };
+      delete queuedMessages[action.threadId];
       return {
         ...state,
         threads: { ...state.threads, [action.projectId]: list },
@@ -686,6 +745,7 @@ export function reducer(state: AppState, action: Action): AppState {
         feedThreadId: cleared ? null : state.feedThreadId,
         feedLoading: cleared ? false : state.feedLoading,
         attention,
+        queuedMessages,
       };
     }
     case "projectDeleted": {
@@ -794,6 +854,19 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "artifactFocus":
       return { ...state, artifactFocus: action.artifactId };
+    case "fileFocus":
+      return {
+        ...state,
+        fileFocus: {
+          projectId: action.projectId,
+          path: action.path,
+          requestId: Date.now() + Math.random(),
+        },
+      };
+    case "fileFocusClear":
+      return state.fileFocus?.requestId === action.requestId
+        ? { ...state, fileFocus: null }
+        : state;
     case "git":
       return {
         ...state,
@@ -976,6 +1049,12 @@ export interface ThreadknotActions {
    *  project, locked to agent "hermes" with `model` = the registry agent id. */
   openHermesDraft: (hermesAgentId: string) => void;
   send: (text: string, attachments?: import("../lib/protocol").OutgoingAttachment[]) => Promise<void>;
+  /** Start a turn on a specific existing thread, regardless of which chat is open. */
+  sendToThread: (
+    threadId: string,
+    text: string,
+    attachments?: import("../lib/protocol").OutgoingAttachment[],
+  ) => Promise<void>;
   /** Inject or queue extra context without interrupting the running work. */
   steer: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -1207,10 +1286,18 @@ export interface StoreValue {
 }
 
 export const StoreContext = createContext<StoreValue | null>(null);
+/** Full snapshot for the few surfaces that render the active transcript. */
+export const FeedStoreContext = createContext<StoreValue | null>(null);
 
 export function useStore(): StoreValue {
   const ctx = useContext(StoreContext);
   if (!ctx) throw new Error("useStore outside provider");
+  return ctx;
+}
+
+export function useFeedStore(): StoreValue {
+  const ctx = useContext(FeedStoreContext);
+  if (!ctx) throw new Error("useFeedStore outside provider");
   return ctx;
 }
 

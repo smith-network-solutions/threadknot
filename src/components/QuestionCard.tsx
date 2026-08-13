@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Question } from "../lib/protocol";
 import type { FeedItem } from "../state/feed";
-import { useStore } from "../state/store";
 import { CheckIcon, ChevronIcon } from "./icons";
 
 type QItem = Extract<FeedItem, { type: "question" }>;
@@ -21,8 +20,15 @@ function toAnswer(sel: string[], custom: string): string[] {
   return out;
 }
 
-export function QuestionCard({ item }: { item: QItem }) {
-  const { actions } = useStore();
+export function QuestionCard({
+  item,
+  onSetAnswers,
+  onRespond,
+}: {
+  item: QItem;
+  onSetAnswers: (requestId: string, answers: Record<string, string[]>) => void;
+  onRespond: (requestId: string, answers: Record<string, string[]>) => Promise<void>;
+}) {
   const multiStep = item.questions.length > 1;
   const [step, setStep] = useState(0);
 
@@ -101,8 +107,8 @@ export function QuestionCard({ item }: { item: QItem }) {
     for (const q of item.questions) {
       answers[q.id] = toAnswer(sel[q.id] ?? [], custom[q.id] ?? "");
     }
-    actions.setQuestionAnswers(item.requestId, answers);
-    void actions.respondQuestion(item.requestId, answers);
+    onSetAnswers(item.requestId, answers);
+    void onRespond(item.requestId, answers);
   }
 
   if (item.answered) {

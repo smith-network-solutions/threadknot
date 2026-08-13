@@ -206,19 +206,26 @@ export interface AccentPreset {
   id: string;
   label: string;
   base: string;
+  /** Optional CSS palette token used by the Settings swatch and live accent. */
+  cssVar?: string;
 }
 
 export const ACCENTS: readonly AccentPreset[] = [
-  { id: "brass", label: "Brass", base: "#d9a35c" },
-  { id: "ember", label: "Ember", base: "#e0705f" },
+  { id: "brass", label: "Brass", base: "#d9a35c", cssVar: "--brass" },
+  { id: "ember", label: "Red", base: "#e0655f", cssVar: "--red" },
   { id: "coral", label: "Coral", base: "#e8896a" },
-  { id: "teal", label: "Teal", base: "#5fc6b0" },
-  { id: "ocean", label: "Ocean", base: "#6aa6e8" },
+  { id: "teal", label: "Teal", base: "#43c9a5", cssVar: "--teal" },
+  { id: "ocean", label: "Blue", base: "#6fa8e8", cssVar: "--blue" },
+  { id: "muted", label: "Muted", base: "#787878", cssVar: "--faint" },
   { id: "violet", label: "Violet", base: "#a58fe0" },
   { id: "emerald", label: "Emerald", base: "#6fca8f" },
   { id: "rose", label: "Rose", base: "#dd7fa8" },
   { id: "steel", label: "Steel", base: "#9aa7b8" },
+  { id: "amber", label: "Amber", base: "#e5b567", cssVar: "--amber" },
 ];
+
+/** Accent choices deliberately sourced from the palette tokens in styles.css. */
+export const CSS_ACCENTS: readonly AccentPreset[] = ACCENTS.filter((accent) => accent.cssVar);
 
 /** Font choices. stack is the CSS font-family list pushed onto a --font-* var;
  *  the first entry that resolves on the machine wins, hence the fallbacks.
@@ -502,6 +509,14 @@ export function toHex({ r, g, b }: Rgb): string {
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
+function cssColorHex(value: string): string | null {
+  const hex = parseHex(value);
+  if (hex) return value.toLowerCase();
+  const match = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(value);
+  if (!match) return null;
+  return toHex({ r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) });
+}
+
 export function rgbToHsl({ r, g, b }: Rgb): { h: number; s: number; l: number } {
   const rn = r / 255;
   const gn = g / 255;
@@ -552,6 +567,13 @@ export function shiftL(hex: string, deltaL: number): string {
  *  hex, a valid "#rrggbb" is used as-is, anything else is the brass default. */
 function accentBaseHex(accent: string): string {
   const preset = ACCENTS.find((a) => a.id === accent);
+  if (preset?.cssVar && typeof document !== "undefined") {
+    const cssValue = getComputedStyle(document.documentElement)
+      .getPropertyValue(preset.cssVar)
+      .trim();
+    const resolved = cssColorHex(cssValue);
+    if (resolved) return resolved;
+  }
   if (preset) return preset.base;
   return parseHex(accent) ? accent.toLowerCase() : ACCENTS[0].base;
 }
@@ -586,6 +608,17 @@ function brassTrio(
     return lightFamily
       ? { brass: "#b07322", hi: "#855309", dim: "rgba(176, 115, 34, 0.14)" }
       : { brass: "#d9a35c", hi: "#f2c98a", dim: "rgba(217, 163, 92, 0.14)" };
+  }
+  const preset = ACCENTS.find((a) => a.id === accent);
+  if (preset?.cssVar) {
+    const brass = accentBaseHex(accent);
+    const hi = shiftL(brass, lightFamily ? -0.18 : 0.18);
+    const rgb = parseHex(brass) ?? { r: 67, g: 201, b: 165 };
+    return {
+      brass,
+      hi,
+      dim: "rgba(" + Math.round(rgb.r) + ", " + Math.round(rgb.g) + ", " + Math.round(rgb.b) + ", 0.14)",
+    };
   }
   // Clamp the base into the family's usable lightness band first, so an extreme
   // custom hex can't derive an invisible/unreadable trio (hue/sat preserved).

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { findThread, resolveProjectView, useStore } from "../state/store";
 import { ThreadView } from "./ThreadView";
 import { WorkspacePanel, type WorkspaceOrient } from "./WorkspacePanel";
@@ -29,7 +29,7 @@ function loadFrac(): number {
  * `--ws-frac` is the workspace panel's fraction of the split (width when
  * `side`, height when `stacked`). Persisted to localStorage.
  */
-export function MainSplit() {
+export const MainSplit = memo(function MainSplit() {
   const { state } = useStore();
 
   // Mirror WorkspacePanel's own visibility guard so the divider only shows when
@@ -139,4 +139,4 @@ export function MainSplit() {
       )}
     </div>
   );
-}
+});

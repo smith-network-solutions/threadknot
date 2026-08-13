@@ -24,6 +24,38 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
+const FILE_EXTENSION = /(?:^|\/)[\w.-]+\.(?:tsx?|jsx?|css|scss|less|json|md|rs|py|go|java|kt|swift|html?|vue|svelte|sql|ya?ml|toml|sh|bash)\b/i;
+
+function filePathFromLink(href: string | undefined, label: string): string | null {
+  const labelMatch = label.trim().match(FILE_EXTENSION);
+  let candidate = "";
+  let localLink = !href;
+
+  if (href) {
+    try {
+      const url = new URL(href, window.location.href);
+      const localHost =
+        url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1" ||
+        url.hostname === "[::1]";
+      if (url.protocol === "file:" || localHost || !url.hostname) {
+        localLink = true;
+        candidate = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+      }
+    } catch {
+      localLink = true;
+      candidate = href;
+    }
+  }
+
+  const pathMatch = candidate.match(FILE_EXTENSION);
+  if (pathMatch) {
+    const start = pathMatch.index ?? 0;
+    return candidate.slice(start);
+  }
+  return localLink ? labelMatch?.[0] ?? null : null;
+}
+
 function CodeBlock({ children, lang }: { children: ReactNode; lang: string }) {
   const [done, setDone] = useState(false);
   const raw = textOf(children).replace(/\n$/, "");
@@ -50,7 +82,8 @@ function CodeBlock({ children, lang }: { children: ReactNode; lang: string }) {
   );
 }
 
-const components: Components = {
+function markdownComponents(onOpenFile?: (path: string) => void): Components {
+  return {
   // Block code: react-markdown passes the <code> as the child of <pre>.
   pre({ children }) {
     // Pull language off the inner <code> element.
@@ -75,6 +108,22 @@ const components: Components = {
     return <code className="inline-code">{children}</code>;
   },
   a({ children, href }) {
+    const label = textOf(children);
+    const filePath = onOpenFile ? filePathFromLink(href, label) : null;
+    if (filePath) {
+      return (
+        <button
+          type="button"
+          className="md-file-link"
+          title={`Open ${filePath} in Files`}
+          onClick={() => {
+            onOpenFile?.(filePath);
+          }}
+        >
+          {children}
+        </button>
+      );
+    }
     return (
       <a href={href} target="_blank" rel="noopener noreferrer">
         {children}
@@ -88,15 +137,28 @@ const components: Components = {
       </div>
     );
   },
-};
+  };
+}
 
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  streaming = false,
+  onOpenFile,
+}: {
+  text: string;
+  /** Live output is intentionally plain text; parse/highlight once at turn end. */
+  streaming?: boolean;
+  onOpenFile?: (path: string) => void;
+}) {
+  if (streaming) {
+    return <div className="md md-streaming">{text}</div>;
+  }
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-        components={components}
+        components={markdownComponents(onOpenFile)}
       >
         {text}
       </ReactMarkdown>

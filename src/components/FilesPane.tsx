@@ -86,7 +86,7 @@ export function FilesPane({
   /** Owning machine when the project lives on a peer (routes fs traffic). */
   machineId?: string;
 }) {
-  const { actions } = useStore();
+  const { state, dispatch, actions } = useStore();
   const [entries, setEntries] = useState<TreeEntry[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -96,7 +96,24 @@ export function FilesPane({
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const loadedFor = useRef<string | null>(null);
+
+  // Files owns Ctrl/Cmd+F while the tree is visible. FileViewer registers its
+  // own handler when a file is open, so the same shortcut can find within the
+  // document instead of unexpectedly returning to the tree filter.
+  useEffect(() => {
+    if (!active || selected) return;
+    function onFind(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+      if (!(event.target as HTMLElement | null)?.closest(".workspace-panel")) return;
+      event.preventDefault();
+      filterInputRef.current?.focus();
+      filterInputRef.current?.select();
+    }
+    window.addEventListener("keydown", onFind);
+    return () => window.removeEventListener("keydown", onFind);
+  }, [active, selected]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,6 +141,34 @@ export function FilesPane({
     setExpanded(new Set());
     void load();
   }, [active, project.id, load]);
+
+  // Chat citations can name either the project-relative path or a unique
+  // basename. Resolve only unique basenames so a common name in two folders
+  // never opens the wrong file silently.
+  useEffect(() => {
+    const focus = state.fileFocus;
+    if (!active || !focus || focus.projectId !== project.id || entries === null) return;
+    let requested = focus.path.replace(/^\.\//, "");
+    try {
+      requested = decodeURIComponent(requested);
+    } catch {
+      // Keep the original path when a model produced an incomplete escape.
+    }
+    const projectRoot = project.path.replace(/[\\/]$/, "");
+    if (requested.startsWith(`${projectRoot}/`)) {
+      requested = requested.slice(projectRoot.length + 1);
+    }
+    requested = requested.replace(/^\/+/, "");
+    const files = entries.filter((entry) => entry.kind === "file");
+    const exact = files.find((entry) => entry.path === requested);
+    const basename = requested.slice(requested.lastIndexOf("/") + 1);
+    const matches = files.filter(
+      (entry) => entry.path.slice(entry.path.lastIndexOf("/") + 1) === basename,
+    );
+    const target = exact ?? (matches.length === 1 ? matches[0] : undefined);
+    if (target) setSelected(target.path);
+    dispatch({ type: "fileFocusClear", requestId: focus.requestId });
+  }, [active, dispatch, entries, project.id, state.fileFocus]);
 
   // Debounce keystrokes into `query`, and apply it in a transition so the
   // input never blocks on re-rendering a big tree.
@@ -193,6 +238,7 @@ export function FilesPane({
         <label className="files-filter">
           <SearchIcon size={13} />
           <input
+            ref={filterInputRef}
             type="text"
             placeholder="Filter files…"
             value={filter}

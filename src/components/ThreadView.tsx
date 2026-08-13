@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -14,15 +15,19 @@ import {
   type ThreadSettings,
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
+import type { ReplyTarget } from "../lib/reply";
+import type { FeedItem } from "../state/feed";
 import {
   effortForModel,
   findThread,
   rememberNewThreadSettings,
+  remoteMachineId,
   resolveProjectView,
   useStore,
+  useFeedStore,
 } from "../state/store";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
-import { FeedItemView } from "./FeedItems";
+import { FeedItemView, thoughtTimesForFeed, type FeedRenderContext } from "./FeedItems";
 import { ParleyRoundSplash, ReviewMenu } from "./ReviewMenu";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
@@ -35,6 +40,8 @@ import {
   MenuIcon,
   MoreIcon,
   PencilIcon,
+  SearchIcon,
+  XIcon,
 } from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
 import "../styles/workspace.css";
@@ -44,14 +51,98 @@ const BOTTOM_SLACK = 90;
 /** Auto-follow only engages at the real end; a larger threshold makes manual
  * scrolling snap the final stretch and keeps tugging the reader back down. */
 const BOTTOM_STICK_EPSILON = 2;
-/** After any manual scroll gesture, the per-render position restore below is
- * suppressed for this long, so a streaming re-render can't yank the reader
- * back to scrollTopRef mid-scroll. Without it, scrolling during a live turn
- * fights the reader (onScroll lags the gesture, the restore wins the race). */
-const GESTURE_GRACE_MS = 350;
-/** Ignore sub-pixel/jitter differences when deciding to restore. Only a real
- * jump — the WebKit nested-scroller reset the restore exists for — clears it. */
-const RESTORE_EPSILON = 8;
+
+function feedSearchText(item: FeedItem): string {
+  switch (item.type) {
+    case "user":
+    case "assistant":
+    case "thinking":
+    case "note":
+      return item.text;
+    case "tool":
+      return `${item.name}\n${item.detail}\n${item.output}`;
+    case "diff":
+      return `${item.path}\n${item.unified}`;
+    case "artifact":
+      return `${item.name}\n${item.relPath}\n${item.description ?? ""}`;
+    case "approval":
+      return `${item.title}\n${item.detail}`;
+    case "question":
+      return JSON.stringify(item.questions) + JSON.stringify(item.answers);
+    case "turn":
+      return `${item.agent ?? ""} ${item.model ?? ""}`;
+    case "turn_end":
+    case "context_usage":
+      return "";
+  }
+}
+
+function ChatFindBar({
+  inputRef,
+  query,
+  onQueryChange,
+  matchCount,
+  matchIndex,
+  onPrevious,
+  onNext,
+  onClose,
+}: {
+  inputRef: RefObject<HTMLInputElement>;
+  query: string;
+  onQueryChange: (value: string) => void;
+  matchCount: number;
+  matchIndex: number;
+  onPrevious: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="chat-find" role="search" aria-label="Find in chat">
+      <SearchIcon size={15} className="chat-find-icon" />
+      <input
+        ref={inputRef}
+        type="search"
+        value={query}
+        placeholder="Find in this chat…"
+        aria-label="Find in this chat"
+        onChange={(event) => onQueryChange(event.target.value)}
+        spellCheck={false}
+      />
+      <span className="chat-find-count" aria-live="polite">
+        {query.trim() ? (matchCount > 0 ? `${matchIndex + 1} of ${matchCount}` : "No matches") : "Find"}
+      </span>
+      <button
+        type="button"
+        className="chat-find-nav"
+        aria-label="Previous match"
+        title="Previous match"
+        disabled={matchCount === 0}
+        onClick={onPrevious}
+      >
+        <ChevronIcon size={14} className="chat-find-prev" />
+      </button>
+      <button
+        type="button"
+        className="chat-find-nav"
+        aria-label="Next match"
+        title="Next match"
+        disabled={matchCount === 0}
+        onClick={onNext}
+      >
+        <ChevronIcon size={14} className="chat-find-next" />
+      </button>
+      <button
+        type="button"
+        className="chat-find-close"
+        aria-label="Close find"
+        title="Close find (Escape)"
+        onClick={onClose}
+      >
+        <XIcon size={14} />
+      </button>
+    </div>
+  );
+}
 
 /** The header's workspace panels (Files, Git, Artifacts, Browser, Terminal)
  *  collapsed behind one "more" button — used on phones, where the desktop pills
@@ -369,7 +460,7 @@ function WorkOnProject({
 }
 
 export function ThreadView() {
-  const { state, dispatch, actions } = useStore();
+  const { state, dispatch, actions } = useFeedStore();
   const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
   const draft = state.draft;
   const project = resolveProjectView(
@@ -407,6 +498,15 @@ export function ThreadView() {
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [quickMode, setQuickMode] = useState<"chat" | "build">("chat");
+  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findPresent, setFindPresent] = useState(false);
+  const [findClosing, setFindClosing] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const findItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const findCloseTimerRef = useRef<number | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -414,9 +514,6 @@ export function ThreadView() {
   const scrollHeightRef = useRef(0);
   const clientHeightRef = useRef(0);
   const touchYRef = useRef<number | null>(null);
-  // Timestamp (ms) until which a manual scroll gesture is considered in flight.
-  // While it's in the future, the per-render restore stands down (see below).
-  const gestureUntilRef = useRef(0);
   // The zoom scrollTopRef's number was measured under. Compared (not just used)
   // so one zoom value is only ever rescaled once (see the APPEARANCE_EVENT
   // handler below).
@@ -426,44 +523,176 @@ export function ThreadView() {
     state.activeThreadId && state.feedThreadId === state.activeThreadId
       ? state.activeThreadId
       : null;
+
+  useEffect(() => {
+    setReplyTo(null);
+  }, [loadedFeedId]);
+
+  const findMatches = useMemo(() => {
+    const q = findQuery.trim().toLowerCase();
+    if (!q) return [];
+    return state.feed.filter((item) => feedSearchText(item).toLowerCase().includes(q));
+  }, [findQuery, state.feed]);
+  const activeFindIndex = findMatches.length > 0
+    ? Math.min(findIndex, findMatches.length - 1)
+    : 0;
+  const activeFindId = findMatches[activeFindIndex]?.id;
+
+  const openFind = useCallback(() => {
+    if (findCloseTimerRef.current !== null) {
+      window.clearTimeout(findCloseTimerRef.current);
+      findCloseTimerRef.current = null;
+    }
+    setFindPresent(true);
+    setFindClosing(false);
+    setFindOpen(true);
+  }, []);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindClosing(true);
+    if (findCloseTimerRef.current !== null) window.clearTimeout(findCloseTimerRef.current);
+    findCloseTimerRef.current = window.setTimeout(() => {
+      findCloseTimerRef.current = null;
+      setFindPresent(false);
+      setFindClosing(false);
+    }, 180);
+  }, []);
+
+  // The browser's native find UI is not consistently available in the desktop
+  // webview. Keep the shortcut scoped to the chat unless it was pressed over a
+  // workspace panel, where that panel owns the search interaction.
+  useEffect(() => {
+    function onFind(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".workspace-panel, [role='dialog']")) return;
+      event.preventDefault();
+      openFind();
+      setFindIndex(0);
+    }
+    window.addEventListener("keydown", onFind);
+    return () => window.removeEventListener("keydown", onFind);
+  }, [openFind]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    findInputRef.current?.focus();
+    findInputRef.current?.select();
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") closeFind();
+    }
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [closeFind, findOpen]);
+
+  useEffect(() => () => {
+    if (findCloseTimerRef.current !== null) window.clearTimeout(findCloseTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!findOpen || !activeFindId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const match = findItemRefs.current[activeFindId];
+      const feed = scrollRef.current;
+      if (!match || !feed) return;
+      // Use the feed's own scrollport explicitly. This avoids the browser
+      // choosing the document/window as the nearest scroller when the find
+      // control is sticky inside the conversation.
+      const matchRect = match.getBoundingClientRect();
+      const feedRect = feed.getBoundingClientRect();
+      const targetTop = feed.scrollTop + matchRect.top - feedRect.top
+        - (feed.clientHeight - matchRect.height) / 2;
+      feed.scrollTo({
+        top: Math.max(0, targetTop),
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeFindId, findOpen, findQuery]);
   const observerRef = useRef<ResizeObserver | null>(null);
+  const pinRafRef = useRef<number | null>(null);
   const [atPresent, setAtPresent] = useState(true);
   const feedLen = state.feed.length;
   const subagents = useMemo(() => activeSubagents(state.feed), [state.feed]);
   const runningSubagents = subagents.filter((subagent) => subagent.status === "running").length;
+  const feedParticipants = useMemo(
+    () => (thread ? threadParticipants(thread) : []),
+    [thread?.participants, thread?.agent, thread?.settings],
+  );
+  const thoughtTimes = useMemo(() => thoughtTimesForFeed(state.feed), [state.feed]);
+  const selectReply = useCallback((target: ReplyTarget) => {
+    setReplyTo(target);
+  }, []);
+  const openFile = useCallback(
+    (path: string) => {
+      if (!project?.id) return;
+      dispatch({ type: "workspace", projectId: project.id, tab: "files" });
+      dispatch({ type: "fileFocus", projectId: project.id, path });
+    },
+    [dispatch, project?.id],
+  );
+  const feedRender = useMemo<FeedRenderContext>(
+    () => ({
+      threadId: loadedFeedId,
+      projectId: project?.id ?? null,
+      machineId: thread ? remoteMachineId(state, thread.machineId) : undefined,
+      http: state.http,
+      project: project ?? undefined,
+      gitRepos: project ? state.git[project.id] : undefined,
+      participants: feedParticipants,
+      dispatch,
+      actions,
+      onReply: selectReply,
+      onOpenFile: openFile,
+    }),
+    [
+      loadedFeedId,
+      project,
+      thread?.machineId,
+      state.http,
+      project ? state.git[project.id] : undefined,
+      feedParticipants,
+      dispatch,
+      actions,
+      selectReply,
+      openFile,
+    ],
+  );
 
-  // Scroll bookkeeping is all done on .feed-scroll, which is NOT zoomed (the
-  // conversation zoom sits on .feed-inner inside it), so scrollTop,
-  // scrollHeight and clientHeight are all true screen px and stay comparable:
-  // a zoom change simply grows or shrinks scrollHeight the way new messages
-  // would, and both the pin-to-bottom writes and the BOTTOM_SLACK test below
-  // keep working without a single zoom term.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!loadedFeedId || !el) return;
+  const pinToEnd = useCallback(() => {
+    if (pinRafRef.current !== null) return;
+    pinRafRef.current = window.requestAnimationFrame(() => {
+      pinRafRef.current = null;
+      const el = scrollRef.current;
+      if (!el || !stickRef.current) return;
+      const end = Math.max(0, el.scrollHeight - el.clientHeight);
+      if (Math.abs(el.scrollTop - end) > 1) el.scrollTop = end;
+      scrollTopRef.current = el.scrollTop;
+      scrollHeightRef.current = el.scrollHeight;
+      clientHeightRef.current = el.clientHeight;
+    });
+  }, []);
 
+  // Feed updates can arrive many times per second. Keep this effect free of
+  // synchronous scrollHeight/clientHeight reads: the pin callback below runs
+  // once in the browser's paint cycle and is shared with ResizeObserver.
+  useEffect(() => {
+    if (!loadedFeedId) return;
+    // An empty/new thread has no history to jump back from. Reset any stale
+    // scroll state left by the previous thread while the empty state is shown.
+    if (feedLen === 0) {
+      stickRef.current = true;
+      setAtPresent(true);
+      return;
+    }
     if (scrollFeedRef.current !== loadedFeedId) {
       scrollFeedRef.current = loadedFeedId;
       stickRef.current = true;
+      setAtPresent(true);
     }
-
-    if (stickRef.current) {
-      el.scrollTop = el.scrollHeight;
-      scrollTopRef.current = el.scrollTop;
-    } else if (
-      Date.now() >= gestureUntilRef.current &&
-      Math.abs(el.scrollTop - scrollTopRef.current) > RESTORE_EPSILON
-    ) {
-      // WebKit can reset a nested scroller when unrelated app state rerenders.
-      // Restore the reader's last explicit position — but only for a real jump
-      // and only when no manual scroll is in flight, or a streaming re-render
-      // would fight the reader's own wheel/touch/drag mid-gesture.
-      el.scrollTop = scrollTopRef.current;
-    }
-    scrollHeightRef.current = el.scrollHeight;
-    clientHeightRef.current = el.clientHeight;
-    setAtPresent((prev) => (prev === stickRef.current ? prev : stickRef.current));
-  });
+    if (stickRef.current) pinToEnd();
+  }, [loadedFeedId, feedLen, state.feed, pinToEnd]);
 
   const jumpToPresent = useCallback(() => {
     const el = scrollRef.current;
@@ -478,8 +707,7 @@ export function ThreadView() {
     if (reduceMotion) {
       stickRef.current = true;
       setAtPresent(true);
-      el.scrollTop = el.scrollHeight;
-      scrollTopRef.current = el.scrollTop;
+      pinToEnd();
       return;
     }
     // Glide to the newest activity instead of teleporting. Deliberately DON'T
@@ -487,7 +715,7 @@ export function ThreadView() {
     // on the next render and cancel the animation. onScroll re-arms stick and
     // hides this button on its own once the glide actually reaches the end.
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, []);
+  }, [pinToEnd]);
 
   // Growing content and a resizing composer both dispatch scroll events even
   // though the reader did not move the feed. Only an explicit gesture away
@@ -495,13 +723,6 @@ export function ThreadView() {
   // turn it back on once a reader genuinely reaches the bottom.
   const leavePresent = useCallback(() => {
     stickRef.current = false;
-  }, []);
-
-  // Opens the grace window that keeps the per-render restore from overriding a
-  // live scroll. Called from every genuine manual gesture (wheel, touch drag,
-  // arrow/page keys, scrollbar drag) — not from streaming-driven scroll events.
-  const markGesture = useCallback(() => {
-    gestureUntilRef.current = Date.now() + GESTURE_GRACE_MS;
   }, []);
 
   // The effect above only fires on a React render. Feed content also settles
@@ -517,8 +738,7 @@ export function ThreadView() {
     const ro = new ResizeObserver(() => {
       const el = scrollRef.current;
       if (!el || !stickRef.current) return;
-      el.scrollTop = el.scrollHeight;
-      scrollTopRef.current = el.scrollTop;
+      pinToEnd();
     });
     ro.observe(node);
     // The scrollport also changes height when a long prompt collapses out of
@@ -526,9 +746,15 @@ export function ThreadView() {
     // viewport changes just as we do when the feed content itself grows.
     if (scrollRef.current) ro.observe(scrollRef.current);
     observerRef.current = ro;
-  }, []);
+  }, [pinToEnd]);
 
-  useEffect(() => () => observerRef.current?.disconnect(), []);
+  useEffect(
+    () => () => {
+      observerRef.current?.disconnect();
+      if (pinRafRef.current !== null) window.cancelAnimationFrame(pinRafRef.current);
+    },
+    [],
+  );
 
   // Zoom moves the reader unless we move them back. scrollTop is screen px and
   // the zoom lives on .feed-inner INSIDE the scrollport, so the content
@@ -569,7 +795,7 @@ export function ThreadView() {
     }
     window.addEventListener(APPEARANCE_EVENT, onAppearance);
     return () => window.removeEventListener(APPEARANCE_EVENT, onAppearance);
-  }, []);
+  }, [pinToEnd]);
 
   const busy = thread && thread.status !== "idle";
   // Multi-lane threads get a two-row header on phones (the lane roster drops
@@ -632,7 +858,10 @@ export function ThreadView() {
                 ) : (
                   <AgentMark agent={agentInfo.id} size={15} className="title-agent-mark" />
                 ))}
-              <span className="thread-name">
+              <span
+                className="thread-name"
+                title={thread ? thread.title || "Untitled thread" : undefined}
+              >
                 {thread
                   ? thread.title || "Untitled thread"
                   : quickHome
@@ -698,7 +927,7 @@ export function ThreadView() {
               ? `parley · round ${thread!.parley.round}/${thread!.parley.maxRounds}`
               : thread!.status === "waiting_approval"
                 ? "awaiting approval"
-                : "underway"}
+                : null}
           </div>
         )}
         <div className="ws-toggles">
@@ -752,14 +981,12 @@ export function ThreadView() {
         data-zoom-pane="feed"
         ref={scrollRef}
         onWheel={(e) => {
-          markGesture();
           if (e.deltaY < 0) leavePresent();
         }}
         onTouchStart={(e) => {
           touchYRef.current = e.touches[0]?.clientY ?? null;
         }}
         onTouchMove={(e) => {
-          markGesture();
           const previousY = touchYRef.current;
           const nextY = e.touches[0]?.clientY;
           if (previousY != null && nextY != null && nextY > previousY) {
@@ -783,7 +1010,6 @@ export function ThreadView() {
             "End",
             " ",
           ];
-          if (scrollKeys.includes(e.key)) markGesture();
           if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") {
             leavePresent();
           }
@@ -811,14 +1037,36 @@ export function ThreadView() {
           } else if (!geometryChanged && el.scrollTop < previousTop - BOTTOM_STICK_EPSILON) {
             // Covers dragging the desktop scrollbar, which does not reliably
             // emit wheel or pointer events into the page. Treat it as a manual
-            // gesture too, so the restore doesn't fight a scrollbar drag.
-            markGesture();
+            // gesture too, so live-follow doesn't fight a scrollbar drag.
             leavePresent();
           }
           const present = distanceFromEnd < BOTTOM_SLACK;
           setAtPresent((prev) => (prev === present ? prev : present));
         }}
       >
+        {findPresent && (
+          <div className={`chat-find-slot${findClosing ? " closing" : ""}`}>
+            <ChatFindBar
+              inputRef={findInputRef}
+              query={findQuery}
+              onQueryChange={(value) => {
+                setFindQuery(value);
+                setFindIndex(0);
+              }}
+              matchCount={findMatches.length}
+              matchIndex={activeFindIndex}
+              onPrevious={() => {
+                if (findMatches.length === 0) return;
+                setFindIndex((index) => (index - 1 + findMatches.length) % findMatches.length);
+              }}
+              onNext={() => {
+                if (findMatches.length === 0) return;
+                setFindIndex((index) => (index + 1) % findMatches.length);
+              }}
+              onClose={closeFind}
+            />
+          </div>
+        )}
         <div className="feed-inner" ref={feedInnerRef}>
           {state.feedLoading && <div className="feed-note note-status">loading log…</div>}
           {!state.feedLoading && feedLen === 0 && (
@@ -842,19 +1090,41 @@ export function ThreadView() {
               )}
             </div>
           )}
-          {state.feed.map((item) => (
-            <FeedItemView key={item.id} item={item} />
-          ))}
+          {state.feed.map((item) => {
+            const matched = findMatches.some((match) => match.id === item.id);
+            const current = activeFindId === item.id;
+            return (
+              <div
+                key={item.id}
+                ref={(node) => {
+                  findItemRefs.current[item.id] = node;
+                }}
+                className={`feed-find-item${matched ? " is-match" : ""}${current ? " is-current" : ""}`}
+              >
+                <FeedItemView
+                  item={item}
+                  render={feedRender}
+                  thoughtTime={thoughtTimes[item.id]}
+                />
+              </div>
+            );
+          })}
           {busy && (
             <div className="working-row">
-              <span className="sonar" />
-              <span>
-                {thread!.status === "waiting_approval"
-                  ? "Holding for approval…"
-                  : runningSubagents > 0
-                    ? `Waiting on ${runningSubagents} child agent${runningSubagents === 1 ? "" : "s"}…`
-                    : "Working…"}
+              <span className="working-signal" aria-hidden="true">
+                <i /><i /><i />
               </span>
+              <span className="working-copy">
+                <strong>
+                  {thread!.status === "waiting_approval"
+                    ? "Holding for approval"
+                    : runningSubagents > 0
+                      ? "Waiting on a child agent"
+                      : "Working"}
+                </strong>
+                <em>{runningSubagents > 0 ? "still in motion…" : "following the thread…"}</em>
+              </span>
+              <span className="working-sweep" aria-hidden="true" />
             </div>
           )}
         </div>
@@ -863,7 +1133,7 @@ export function ThreadView() {
       {/* Pinned above the composer (outside the scroll container) so it stays
           put on every layout — desktop, the stacked mobile panes, and zoom. */}
       <div className="composer-dock">
-        {!atPresent && (
+        {feedLen > 0 && !atPresent && (
           <button
             type="button"
             className="jump-present"
@@ -879,7 +1149,12 @@ export function ThreadView() {
           subagents={subagents}
           onOpenThread={(threadId) => void actions.selectThread(threadId)}
         />
-        <Composer thread={thread ?? null} quickMode={quickHome ? quickMode : undefined} />
+        <Composer
+          thread={thread ?? null}
+          quickMode={quickHome ? quickMode : undefined}
+          replyTo={replyTo}
+          onClearReply={() => setReplyTo(null)}
+        />
       </div>
     </section>
   );

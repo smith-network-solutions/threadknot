@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  memo,
   useMemo,
   useRef,
   useState,
@@ -74,9 +75,11 @@ import {
   CompassIcon,
   EyeIcon,
   FilterIcon,
+  FolderClosedIcon,
   FolderIcon,
   FolderPlusIcon,
   GearIcon,
+  LoaderIcon,
   PanelLeftIcon,
   GripIcon,
   MoreIcon,
@@ -864,8 +867,9 @@ function ChatFolderDialog({
   );
 }
 
-/** Which list the sidebar shows: the workspace fleet, or the dedicated
- *  Hermes-agents view. Persisted so the choice survives restarts. */
+/** Which list the sidebar shows: the workspace fleet, or a dedicated global
+ *  destination. Startup intentionally begins in the fleet so it can open a
+ *  fresh chat in the last project. */
 type SidebarView = "fleet" | "agents" | "quick";
 const LS_SIDEBAR_VIEW = "threadknot.sidebarView";
 
@@ -968,6 +972,28 @@ function ThreadRow({
   // pending approvals and unread finishes — which is what makes a glance at
   // a 5-project sidebar answer "what needs me?" instead of "what exists?".
   const recede = !active && !needsAttention && thread.status === "running";
+  const isGenerating = thread.status === "running";
+  // Keep the loader mounted for one short beat after a turn ends so the
+  // spinner can scale back down instead of disappearing mid-motion.
+  const [showGeneratingIndicator, setShowGeneratingIndicator] =
+    useState(isGenerating);
+  const wasGenerating = useRef(isGenerating);
+  useEffect(() => {
+    if (isGenerating) {
+      wasGenerating.current = true;
+      setShowGeneratingIndicator(true);
+      return;
+    }
+    if (!wasGenerating.current) {
+      setShowGeneratingIndicator(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      wasGenerating.current = false;
+      setShowGeneratingIndicator(false);
+    }, 240);
+    return () => window.clearTimeout(timer);
+  }, [isGenerating]);
   // Work in flight can't be parked — `threadSettled` refuses to classify a
   // running or waiting chat as settled, so offering the control anyway would
   // be a button that visibly does nothing. Bringing one BACK is always fine.
@@ -1224,19 +1250,54 @@ function ThreadRow({
   // Only the card variant has room for a portrait, so the lookup is skipped
   // entirely for the list and shelf rows.
   const portrait = card ? resolvePortrait(thread.settings.model, thread.agent) : null;
+  const hasStatusIndicator =
+    !isGenerating &&
+    (thread.status === "waiting_approval" || needsAttention);
+  const statusEl = (
+    <span
+      className={`status-slot${hasStatusIndicator ? " has-indicator" : ""}`}
+      title={isGenerating ? "Generating" : needsAttention ? "Unread activity" : undefined}
+    >
+      <span
+        className={`status-dot st-${thread.status}${needsAttention ? " unread" : ""}`}
+      />
+    </span>
+  );
+
+  const markVisual = hermesAvatar ? (
+    <span className="hermes-avatar-wrap">
+      <span className="thread-row-avatar" {...hermesPreview.hoverProps}>
+        <img src={hermesAvatar} alt="" />
+      </span>
+      <HermesPresenceDot status={hermesStatus} className="sm" />
+    </span>
+  ) : (
+    <AgentMark agent={thread.agent} size={18} className="thread-row-mark" />
+  );
+  const markEl = (
+    <span
+      className={`agent-mark-slot${isGenerating ? " generating" : ""}${
+        showGeneratingIndicator ? " transitioning" : ""
+      }`}
+    >
+      <span className="agent-mark-visual">{markVisual}</span>
+      {(isGenerating || showGeneratingIndicator) && (
+        <span className="sidebar-loader">
+          <LoaderIcon size={14} />
+        </span>
+      )}
+    </span>
+  );
 
   if (editing) {
     return (
       <div
         className={`thread-row editing${card ? " thread-card" : ""}${
           active ? " active" : ""
-        }${needsAttention ? " has-attention" : ""}${nest}`}
+        }${needsAttention ? " has-attention" : ""}${isGenerating ? " is-generating" : ""}${nest}`}
       >
-        <span
-          className={`status-dot st-${thread.status}${needsAttention ? " unread" : ""}`}
-          title={needsAttention ? "Unread activity" : undefined}
-        />
-        <AgentMark agent={thread.agent} size={18} className="thread-row-mark" />
+        {statusEl}
+        {markEl}
         <input
           ref={inputRef}
           className="thread-rename-input"
@@ -1261,22 +1322,6 @@ function ThreadRow({
   const chipTitle = peer?.online
     ? `runs on ${peer.name}`
     : `on ${peer?.name ?? "another machine"} (offline)`;
-  const statusEl = (
-    <span
-      className={`status-dot st-${thread.status}${needsAttention ? " unread" : ""}`}
-      title={needsAttention ? "Unread activity" : undefined}
-    />
-  );
-  const markEl = hermesAvatar ? (
-    <span className="hermes-avatar-wrap">
-      <span className="thread-row-avatar" {...hermesPreview.hoverProps}>
-        <img src={hermesAvatar} alt="" />
-      </span>
-      <HermesPresenceDot status={hermesStatus} className="sm" />
-    </span>
-  ) : (
-    <AgentMark agent={thread.agent} size={18} className="thread-row-mark" />
-  );
   const chipsEl = (
     <>
       {isRemote && peerColor && (
@@ -1601,7 +1646,7 @@ function ThreadRow({
             active ? " active" : ""
           }${needsAttention ? " has-attention" : ""}${recede ? " recede" : ""}${
             settled ? " slim" : ""
-          }${settled && lit ? " lit" : ""}${nest}`}
+          }${settled && lit ? " lit" : ""}${isGenerating ? " is-generating" : ""}${nest}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1617,7 +1662,12 @@ function ThreadRow({
             {statusEl}
             {markEl}
             {hermesPreview.portal}
-            <span className="thread-card-title">{thread.title || "Untitled thread"}</span>
+            <span
+              className="thread-card-title"
+              title={thread.title || "Untitled thread"}
+            >
+              {thread.title || "Untitled thread"}
+            </span>
           </div>
           <div className="thread-card-meta">
             {chipsEl}
@@ -1650,7 +1700,7 @@ function ThreadRow({
         <div
           className={`thread-row two-line long-press-menu${active ? " active" : ""}${
             needsAttention ? " has-attention" : ""
-          }${recede ? " recede" : ""}${nest}`}
+          }${recede ? " recede" : ""}${isGenerating ? " is-generating" : ""}${nest}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1658,7 +1708,12 @@ function ThreadRow({
             {statusEl}
             {markEl}
             {hermesPreview.portal}
-            <span className="thread-row-title">{thread.title || "Untitled thread"}</span>
+            <span
+              className="thread-row-title"
+              title={thread.title || "Untitled thread"}
+            >
+              {thread.title || "Untitled thread"}
+            </span>
           </div>
           <div className="thread-row-sub">
             {chipsEl}
@@ -1681,14 +1736,19 @@ function ThreadRow({
           needsAttention ? " has-attention" : ""
         }${recede ? " recede" : ""}${settled ? " slim" : ""}${
           settled && lit ? " lit" : ""
-        }${nest}`}
+        }${isGenerating ? " is-generating" : ""}${nest}`}
         {...rowGestures}
         {...hover.hoverProps}
       >
         {statusEl}
         {markEl}
         {hermesPreview.portal}
-        <span className="thread-row-title">{thread.title || "Untitled thread"}</span>
+        <span
+          className="thread-row-title"
+          title={thread.title || "Untitled thread"}
+        >
+          {thread.title || "Untitled thread"}
+        </span>
         {chipsEl}
         <span className="thread-row-time">{timeAgo(thread.updatedAt)}</span>
         {settleEl}
@@ -1839,12 +1899,6 @@ function WorkspaceSection({
     const assigned = chatFolderAssignments[thread.id];
     return !assigned || !chatFolderIds.has(assigned);
   });
-  const attentionCount = threads.filter((thread) =>
-    threadNeedsAttention(state, thread),
-  ).length;
-  // Reads the WHOLE project, parked chats included: a settled chat that starts
-  // working again still belongs on its project's status light.
-  const activity = projectActivity(state, threads);
   const solo = !!state.solo;
   // `disarm` is destructured out rather than spread: the rest of the bag is
   // DOM event props, and React would warn about (and emit) a stray `disarm`
@@ -1940,8 +1994,7 @@ function WorkspaceSection({
             }
             {...headerHover.hoverProps}
           >
-            <ChevronIcon size={12} open={open} className="row-chevron" />
-            <FolderIcon size={13} className="project-folder-icon" />
+            <FolderClosedIcon size={13} className="project-folder-icon" />
             <span className="project-name">{workspace.name}</span>
             {workspace.favorite && (
               <StarIcon size={11} filled className="project-fav-star" />
@@ -1952,7 +2005,6 @@ function WorkspaceSection({
             {workspace.hidden && (
               <EyeIcon size={11} off className="project-hidden-mark" />
             )}
-            <ProjectPulse activity={activity} count={attentionCount} />
             {/* Counts what is actually in play. The shelf carries its own
                 number, so the header stops reading "69" forever. */}
             {/* While searching this counts every match, shelf included —
@@ -2036,10 +2088,9 @@ function WorkspaceSection({
                     dispatch({ type: "toggleProject", projectId: collapseKey })
                   }
                 >
-                  <ChevronIcon size={11} open={folderOpen} className="row-chevron" />
-                  <FolderIcon size={13} />
+                  <FolderClosedIcon size={18} />
                   <span>{folder.name}</span>
-                  <small>{total}</small>
+                  <ChevronIcon size={11} open={folderOpen} className="row-chevron" />
                 </button>
                 {folderOpen && (
                   <div className="chat-folder-threads">
@@ -2660,6 +2711,16 @@ function SidebarViewPopover({
       <button
         type="button"
         role="switch"
+        aria-checked={layout.showAgents}
+        className={`sidebar-view-row${layout.showAgents ? " on" : ""}`}
+        onClick={() => update({ showAgents: !layout.showAgents })}
+      >
+        <span>Show AI agent on chats</span>
+        <span className="sidebar-view-switch" />
+      </button>
+      <button
+        type="button"
+        role="switch"
         aria-checked={layout.bigNames}
         className={`sidebar-view-row${layout.bigNames ? " on" : ""}`}
         onClick={() => update({ bigNames: !layout.bigNames })}
@@ -2921,7 +2982,7 @@ function ThreadSearchModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   onAddProject,
   onOpenSchedules,
 }: {
@@ -2939,16 +3000,7 @@ export function Sidebar({
   const [filterOpen, setFilterOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
-  const [view, setView] = useState<SidebarView>(() => {
-    try {
-      const stored = localStorage.getItem(LS_SIDEBAR_VIEW);
-      if (stored === "quick") return "quick";
-      if (showHermesAgents() && stored === "agents") return "agents";
-      return "fleet";
-    } catch {
-      return "fleet";
-    }
-  });
+  const [view, setView] = useState<SidebarView>("fleet");
   const switchView = (v: SidebarView) => {
     setView(v);
     try {
@@ -3121,10 +3173,16 @@ export function Sidebar({
     actions.openQuickDraft();
   }, [actions, openProjectId, quickView, state.hello?.machineId]);
   useEffect(() => {
-    if (soloId || !isQuickHomeProjectId(openProjectId) || view === "quick") return;
-    setView("quick");
+    if (soloId || !openProjectId) return;
+    const destinationView: SidebarView = isQuickHomeProjectId(openProjectId)
+      ? "quick"
+      : openProjectId === HERMES_HOME_PROJECT_ID
+        ? "agents"
+        : "fleet";
+    if (view === destinationView) return;
+    setView(destinationView);
     try {
-      localStorage.setItem(LS_SIDEBAR_VIEW, "quick");
+      localStorage.setItem(LS_SIDEBAR_VIEW, destinationView);
     } catch {
       // Navigation persistence is a convenience only.
     }
@@ -3459,9 +3517,10 @@ export function Sidebar({
     const active = state.activeThreadId
       ? findThread(state, state.activeThreadId)
       : null;
-    if (!active) return null;
+    const activeProjectId = active?.projectId ?? state.draft?.projectId;
+    if (!activeProjectId) return null;
     for (const [id, data] of sectionData) {
-      if (data.threads.some((t) => t.id === active.id)) return id;
+      if (data.members.some((member) => member.projectId === activeProjectId)) return id;
     }
     return null;
   }, [state, sectionData]);
@@ -3677,7 +3736,7 @@ export function Sidebar({
         layout.view === "cards" ? " cards-view" : ""
       }${layout.view === "compact" ? " compact-view" : ""}${
         layout.bigNames ? " big-names" : ""
-      }${layout.showTimes ? "" : " no-times"}`}
+      }${layout.showTimes ? "" : " no-times"}${layout.showAgents ? "" : " hide-agents"}`}
       data-zoom-pane="sidebar"
     >
       <SidebarResizeHandle
@@ -3724,7 +3783,7 @@ export function Sidebar({
           title="View options"
           onClick={() => setFilterOpen((v) => !v)}
         >
-          <FilterIcon size={15} />
+          <FilterIcon size={18} />
         </button>
         <span className="brand-mark">
           Thread<span className="brand-mark-accent">Knot</span>
@@ -3736,7 +3795,7 @@ export function Sidebar({
           title="Collapse sidebar"
           onClick={() => updateLayout({ collapsed: true })}
         >
-          <PanelLeftIcon size={16} />
+          <PanelLeftIcon size={18} />
         </button>
       </div>
 
@@ -3788,7 +3847,7 @@ export function Sidebar({
             </button>
             <button
               type="button"
-              className="sidebar-action"
+              className="sidebar-action ai-organize"
               disabled={organizingChats}
               title="Organize project chats with gpt-5.3-codex-spark (medium reasoning)"
               onClick={() => void organizeProjectChats()}
@@ -3914,26 +3973,15 @@ export function Sidebar({
                     primary: sectionData.get(pickedWorkspace.id)?.projects[0],
                   });
                 }}
-              >
+                >
                 <span className="project-picker-name">
                   {pickedWorkspace.name}
                 </span>
-                <ChevronIcon
-                  size={12}
-                  open={!!pickerMenu}
-                  className="row-chevron"
-                />
+                <span className="project-picker-count">
+                  {sectionData.get(pickedWorkspace.id)?.threads.length ?? 0}
+                </span>
               </button>
               )}
-              <ProjectPulse
-                activity={projectActivity(
-                  state,
-                  sectionData.get(pickedWorkspace.id)?.threads ?? [],
-                )}
-              />
-              <span className="project-picker-count">
-                {sectionData.get(pickedWorkspace.id)?.threads.length ?? 0}
-              </span>
             </div>
           )}
         {pickerMenu && (
@@ -4375,4 +4423,4 @@ export function Sidebar({
       )}
     </>
   );
-}
+});

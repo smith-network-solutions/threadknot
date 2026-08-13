@@ -9,10 +9,11 @@
 // cross-window edits) and falls back to the presets when that id no longer
 // resolves (deleted on another window).
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   ACCENTS,
+  CSS_ACCENTS,
   BG_DIM_MAX,
   BG_DIM_MIN,
   BG_PAN_MAX,
@@ -93,8 +94,8 @@ function ThemeDeleteButton({ label, onConfirm }: { label: string; onConfirm: () 
   );
 }
 
-/** A row of the 9 accent presets + a custom-color swatch. Value is a preset id
- *  or a "#rrggbb"; clicking "custom" toggles the inline ColorPicker. */
+/** A row of the styles.css palette accents + a custom-color swatch. Value is a
+ * preset id or a "#rrggbb"; clicking "custom" toggles the inline ColorPicker. */
 function AccentSwatches({
   value,
   onPick,
@@ -107,12 +108,12 @@ function AccentSwatches({
   return (
     <div className="theme-accent-picker">
       <div className="theme-accent-row">
-        {ACCENTS.map((p) => (
+        {CSS_ACCENTS.map((p) => (
           <button
             key={p.id}
             type="button"
             className={`theme-accent-dot${value === p.id ? " on" : ""}`}
-            style={{ background: p.base }}
+            style={{ background: p.cssVar ? "var(" + p.cssVar + ")" : p.base }}
             title={p.label}
             aria-label={`Accent ${p.label}`}
             onClick={() => {
@@ -159,7 +160,7 @@ function AccentSwatches({
  * inside the Settings screen for the settings-open case; App.tsx should mount
  * it once at the root for the boot + settings-closed case.
  */
-export function ThemeSync() {
+export const ThemeSync = memo(function ThemeSync() {
   const { state } = useStore();
   const themes = state.customThemes;
   const loaded = state.themesLoaded;
@@ -176,7 +177,7 @@ export function ThemeSync() {
     else setAppearance({ ...a, customThemeId: null }); // loaded & missing: fall back
   }, [themes, loaded]);
   return null;
-}
+});
 
 // ---- the studio editor -----------------------------------------------------
 

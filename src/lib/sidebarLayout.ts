@@ -19,6 +19,8 @@ export interface SidebarLayout {
   /** Show the relative-time column on thread rows (list + cards). Compact view
    *  always hides it regardless (the time still lives in the hover card). */
   showTimes: boolean;
+  /** Show the model/agent mark beside each chat row. */
+  showAgents: boolean;
   /** Reveal workspaces stashed with "Hide project" alongside the rest, marked
    *  rather than removed, so a batch can be brought back in place. This is a
    *  per-device view toggle; what is hidden is on the workspace record and
@@ -52,6 +54,7 @@ const DEFAULTS: SidebarLayout = {
   bigNames: false,
   pinLocal: true,
   showTimes: true,
+  showAgents: true,
   showHidden: false,
   width: SIDEBAR_WIDTH_DEFAULT,
   collapsed: false,
@@ -68,6 +71,7 @@ export function isNonDefaultLayout(l: SidebarLayout): boolean {
     l.bigNames !== DEFAULTS.bigNames ||
     l.pinLocal !== DEFAULTS.pinLocal ||
     l.showTimes !== DEFAULTS.showTimes ||
+    l.showAgents !== DEFAULTS.showAgents ||
     l.showHidden !== DEFAULTS.showHidden
   );
 }
@@ -92,6 +96,8 @@ function loadLayout(): SidebarLayout {
       pinLocal: parsed.pinLocal !== false,
       // showTimes defaults to true, so only an explicit false turns it off.
       showTimes: parsed.showTimes !== false,
+      // showAgents defaults to true, so only an explicit false turns it off.
+      showAgents: parsed.showAgents !== false,
       showHidden: parsed.showHidden === true,
       width: clampWidth(
         typeof parsed.width === "number" ? parsed.width : SIDEBAR_WIDTH_DEFAULT,

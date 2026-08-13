@@ -6,7 +6,7 @@
    for everything the machines say. */
 
 :root {
-  --bg: #0b0b0b;
+  --bg: #0c0c0c;
   --bg-raise: #000000;
   --panel: #090909;
   --panel-2: #121212;
@@ -42,7 +42,7 @@
   --bg: #f3f5f9;
   --bg-raise: #f8f8f8;
   --panel: #ffffff;
-  --panel-2: #e6e6e6;
+  --panel-2: #ededed;
   --panel-3: #eceff6;
   --line: rgba(140, 140, 140, 0.12);
   --line-2: rgba(97, 97, 97, 0.2);
@@ -168,6 +168,14 @@ code, pre { font-family: var(--font-mono); }
   min-width: var(--sidebar-w);
   display: flex;
   flex-direction: column;
+  /* Sidebar copy is intentionally high-contrast: black on light palettes and
+     white on dark palettes. Keep this scoped so the conversation can retain
+     its softer metadata hierarchy. */
+  --text: #fff;
+  --dim: #fff;
+  --faint: #fff;
+  --sidebar-muted: #8a8a8a;
+  --sidebar-copy-size: 16px;
   background: #0e0e0e;
   border-right: 1px solid var(--line);
   z-index: 30;
@@ -176,6 +184,12 @@ code, pre { font-family: var(--font-mono); }
   /* Animate the desktop collapse/expand. Disabled mid-drag (below) so the
      resize handle tracks the pointer without lag. */
   transition: width 0.22s ease, min-width 0.22s ease;
+}
+:root[data-family="light"] .sidebar {
+  --text: #000;
+  --dim: #000;
+  --faint: #000;
+  --sidebar-muted: #777;
 }
 body.sidebar-resizing .sidebar { transition: none; }
 @media (min-width: 768px) {
@@ -278,44 +292,48 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 
 /* New-chat / Search buttons that replace the old search field. Styled exactly
    like a thread row: no border or fill at rest, a soft fill on hover/press, the
-   same 8px 12px padding, 12px radius and 8px gutter, so they read as the head
-   of the same list. (Renamed off .sidebar-actions — that plural class is the
-   footer's action stack.) */
+     same 8px 12px padding, 12px radius and 8px gutter, so they read as the head
+     of the same list. (Renamed off .sidebar-actions — that plural class is the
+     footer's action stack.) */
 .sidebar-launch {
   display: flex;
   flex-direction: column;
-  padding: 4px 0 2px;
+  padding: 2px 0 1px;
 }
 .sidebar-action {
   display: flex;
   align-items: center;
   gap: 10px;
   /* Mirror a thread row: same 1px 8px outer gutter, same 8px 12px inner padding,
-     same 16px text. A row is ~40px tall because its meta line carries 24px icon
+     same 14px text. A row is ~36px tall because its meta line carries 24px icon
      buttons; these have only ~21px of content, so a min-height matches them. */
   margin: 1px 8px;
-  padding: 8px 12px;
-  min-height: 40px;
-  border-radius: 12px;
-  font-size: 16px;
+  padding: 6px 12px;
+  min-height: 36px;
+  border-radius: 999px;
+  font-size: var(--sidebar-copy-size);
   font-weight: 500;
-  /* Muted, like the chat titles below — the bold lives in the icon, not here. */
-  color: var(--dim);
+  color: var(--text);
   background: none;
   border: 0;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
-.sidebar-action:hover { background: rgba(155, 170, 210, 0.07); color: var(--text); }
-.sidebar-action:active { background: rgba(155, 170, 210, 0.12); }
+.sidebar-action:hover,
+.sidebar-action:active {
+  background: color-mix(in srgb, var(--brass) 12%, transparent);
+  color: var(--text);
+}
 /* Match the agent mark in a row: 18px, with a heavier stroke than the default. */
 .sidebar-action svg {
   flex: none;
-  color: var(--dim);
+  color: var(--sidebar-muted);
+  opacity: 0.7;
   stroke-width: 2.1;
   transition: color 0.12s;
 }
-.sidebar-action:hover svg { color: var(--text); }
+.sidebar-action:hover svg { color: var(--sidebar-muted); opacity: 0.7; }
+.sidebar-action.ai-organize svg { color: var(--sidebar-muted); opacity: 0.7; }
 /* The label takes the middle so any trailing count/dot rides the right edge. */
 .sidebar-action > span:first-of-type {
   flex: 1;
@@ -327,8 +345,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 }
 /* Settings is the footer button: same styling, pinned to the bottom (the scroll
    above it is flex:1) with a little breathing room beneath. */
-.sidebar-settings { margin-top: 4px; margin-bottom: 8px; }
-.sidebar-settings svg { color: var(--dim); }
+.sidebar-settings { margin-top: 2px; margin-bottom: 6px; }
 
 /* View-options button floats at the right of the brand row so the centered
    wordmark stays centered. */
@@ -337,6 +354,17 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   left: 10px;
   top: 50%;
   transform: translateY(-50%);
+}
+.sidebar-brand .icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: var(--sidebar-muted);
+  background: none;
+}
+.sidebar-brand .icon-btn:hover {
+  background: color-mix(in srgb, var(--brass) 12%, transparent);
+  color: var(--sidebar-muted);
 }
 .sidebar-brand .sidebar-collapse-btn {
   position: absolute;
@@ -350,10 +378,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   .sidebar-brand .sidebar-collapse-btn { display: none; }
 }
 .sidebar-filter-btn { flex: none; }
-.sidebar-filter-btn.on { color: var(--text); background: var(--panel-3); }
+.sidebar-filter-btn.on { color: var(--sidebar-muted); background: none; }
 .sidebar-filter-btn.active {
   color: var(--brass-hi);
-  background: var(--brass-dim);
+  background: none;
 }
 
 /* ---- Conversation search modal ---- */
@@ -420,7 +448,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .search-scope-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 9px;
   padding: 6px 10px;
   border-radius: 9px;
   border: 1px solid var(--line);
@@ -612,8 +640,8 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   flex: 1;
   min-width: 0;
   text-align: left;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--sidebar-copy-size);
+  font-weight: 550;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -947,28 +975,38 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 /* Picker layout: this bar replaces the per-project headers entirely, so the
    chat list gets the whole sidebar. */
 .project-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 8px 2px 4px;
+  margin-bottom: 2px;
+  border-radius: 999px;
+  user-select: none;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.project-picker:hover {
+  background: color-mix(in srgb, var(--sidebar-muted) 14%, transparent);
+}
+.project-picker-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px 2px 4px;
-  margin-bottom: 2px;
-}
-.project-picker-btn {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   padding: 5px 6px;
   background: none;
   border: 0;
-  border-radius: 8px;
+  border-radius: 999px;
   cursor: pointer;
-  /* Quiet muted label like the "Chats" heading — no hover, no caps. */
-  color: var(--faint);
+  user-select: none;
+  color: var(--sidebar-muted);
   font-family: var(--font-ui);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--sidebar-copy-size);
+  font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
   text-align: left;
@@ -981,16 +1019,19 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   text-overflow: ellipsis;
 }
 .project-picker-count {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
   flex: none;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(155, 170, 210, 0.1);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--faint);
+  padding: 0;
+  background: none;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--sidebar-muted);
 }
 
-.project-section { margin-top: 6px; position: relative; }
+.project-section { margin-top: 4px; position: relative; }
 
 /* Folderless Quick Threads destination. The hairline beneath the compact masthead
    echoes a notebook index rather than a workspace container. */
@@ -998,7 +1039,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 /* Quiet section label that replaces the old "Quick threads" header block. */
 .quick-chats-label {
   padding: 8px 12px 4px;
-  font-size: 11px;
+  font-size: var(--sidebar-copy-size);
   font-weight: 600;
   color: var(--faint);
 }
@@ -1006,7 +1047,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-height: 38px;
+  min-height: 36px;
   padding: 3px 10px 4px 12px;
 }
 .quick-chats-mark,
@@ -1026,7 +1067,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   flex: 1;
   min-width: 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--sidebar-copy-size);
   font-weight: 650;
   letter-spacing: normal;
   text-transform: none;
@@ -1151,14 +1192,19 @@ body.reordering { cursor: grabbing; user-select: none; }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 2px;
+  padding: 4px 2px;
   color: var(--dim);
+  border-radius: 999px;
+  transition: background 0.12s, color 0.12s;
 }
-.project-toggle .row-chevron { color: var(--faint); flex: none; }
+.project-toggle:hover {
+  background: color-mix(in srgb, var(--sidebar-muted) 14%, transparent);
+}
+.project-toggle .row-chevron { color: var(--sidebar-muted); flex: none; }
 .project-folder-icon,
 .settled-shelf-icon {
   flex: none;
-  color: var(--faint);
+  color: var(--sidebar-muted);
 }
 
 .sidebar-avatar {
@@ -1171,7 +1217,7 @@ body.reordering { cursor: grabbing; user-select: none; }
   overflow: hidden;
   border: 1px solid var(--line-2);
   border-radius: 7px;
-  color: var(--faint);
+  color: var(--sidebar-muted);
   background: linear-gradient(145deg, var(--panel-3), var(--panel));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
@@ -1663,44 +1709,48 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 .project-name {
   /* Quiet muted label, matching the "Chats" heading in quick threads. */
-  font-size: 12px;
+  font-size: var(--sidebar-copy-size);
   font-weight: 600;
   letter-spacing: normal;
   text-transform: none;
-  color: var(--faint);
+  color: var(--sidebar-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .project-count {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--faint);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0 6px;
-  line-height: 15px;
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: var(--sidebar-copy-size);
+  color: var(--sidebar-muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  line-height: normal;
 }
 
-.project-threads { padding: 1px 0 3px; }
+.project-threads { padding: 0 0 2px; }
 
-.chat-folder { margin: 3px 5px 2px 10px; }
+.chat-folder { margin: 2px 5px 1px 10px; }
 .chat-folder-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   width: 100%;
-  padding: 5px 7px;
-  border-radius: 7px;
-  color: var(--dim);
-  font-size: 11.5px;
-  font-weight: 600;
+  min-height: 36px;
+  margin: 1px 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--text);
+  background: none;
+  font-size: var(--sidebar-copy-size);
+  font-weight: 500;
   text-align: left;
+  transition: background 0.12s, color 0.12s;
 }
-.chat-folder-head:hover { background: var(--panel-2); color: var(--text); }
-.chat-folder-head svg { flex: none; color: var(--faint); }
+.chat-folder-head:hover { background: color-mix(in srgb, var(--brass) 12%, transparent); color: var(--text); }
+.chat-folder-head svg { flex: none; color: var(--sidebar-muted); stroke-width: 2.1; }
 .chat-folder-head > span {
   flex: 1;
   min-width: 0;
@@ -1708,12 +1758,7 @@ body.reordering { cursor: grabbing; user-select: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chat-folder-head small {
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-}
-.chat-folder-threads { margin-left: 9px; border-left: 1px solid var(--line-2); }
+.chat-folder-threads { margin-left: 9px; }
 .chat-folder-empty {
   padding: 4px 10px 5px 15px;
   color: var(--faint);
@@ -1756,12 +1801,12 @@ body.reordering { cursor: grabbing; user-select: none; }
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   margin: 1px 8px;
-  border-radius: 12px;
+  border-radius: 999px;
   cursor: pointer;
 }
-.thread-row:hover { background: rgba(155, 170, 210, 0.07); }
+.thread-row:hover { background: color-mix(in srgb, var(--brass) 12%, transparent); }
 .thread-row.active { background: color-mix(in srgb, var(--brass) 12%, transparent); }
 /* An active row already carries its colour; hovering it must not repaint. */
 .thread-row.active:hover { background: color-mix(in srgb, var(--brass) 12%, transparent); }
@@ -1786,7 +1831,7 @@ body.reordering { cursor: grabbing; user-select: none; }
 .thread-row.slim {
   padding-top: 3px;
   padding-bottom: 3px;
-  min-height: 40px;
+  min-height: 36px;
   opacity: 0.55;
 }
 .thread-row.slim:hover { opacity: 1; }
@@ -1794,10 +1839,18 @@ body.reordering { cursor: grabbing; user-select: none; }
    reads as a disabled non-result. */
 .thread-row.slim.lit { opacity: 0.9; }
 .thread-row.slim.lit .thread-row-title { color: var(--dim); }
-.thread-row.slim .thread-row-title { font-size: 12.5px; color: var(--faint); }
+.thread-row.slim .thread-row-title { font-size: var(--sidebar-copy-size); color: var(--faint); }
 .thread-row.slim:hover .thread-row-title { color: var(--dim); }
 .thread-row.slim .thread-row-mark { opacity: 0.45; }
 .thread-row.slim.active { opacity: 1; }
+
+/* Agent identity is optional row chrome. Hide the whole avatar wrapper too,
+   so Hermes presence dots cannot remain as an unexplained gap. */
+.sidebar.hide-agents .thread-row-mark,
+.sidebar.hide-agents .thread-row .hermes-avatar-wrap,
+.sidebar.hide-agents .thread-row .fighter-portrait {
+  display: none;
+}
 
 /* The one-line shelf header that keeps parked work out of the scroll. */
 /* ===== project status lights =====
@@ -1977,7 +2030,7 @@ body.reordering { cursor: grabbing; user-select: none; }
   cursor: pointer;
   color: var(--faint);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--sidebar-copy-size);
   font-weight: 600;
 }
 .settled-shelf:hover { background: rgba(155, 170, 210, 0.05); color: var(--dim); }
@@ -2007,7 +2060,7 @@ body.reordering { cursor: grabbing; user-select: none; }
   cursor: pointer;
   color: var(--faint);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--sidebar-copy-size);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -2073,6 +2126,111 @@ body.reordering { cursor: grabbing; user-select: none; }
    only rows that still want you (running, awaiting approval, or an unread
    finish) show one. */
 .status-dot.st-idle:not(.unread) { display: none; }
+
+/* A live chat swaps the model mark for the loader in the same visual slot.
+   Keeping both mounted through the end of a turn lets the mark and spinner
+   reverse their scale cleanly instead of popping out of the row. */
+.status-slot {
+  position: relative;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 18px;
+}
+.status-slot.has-indicator { display: inline-flex; }
+.status-slot .status-dot {
+  position: absolute;
+  margin: 0;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.status-slot .status-dot.st-idle:not(.unread) { display: block; }
+.status-slot:not(.has-indicator) .status-dot { display: none; }
+.status-slot.generating .status-dot,
+.status-slot.transitioning:not(.generating) .status-dot.st-idle:not(.unread) {
+  opacity: 0;
+  transform: scale(0.2);
+}
+.sidebar-loader {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--sidebar-muted);
+  opacity: 0;
+  transform: scale(0.2);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.sidebar-loader svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+.agent-mark-slot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+.agent-mark-visual {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: scale(1);
+  transform-origin: center;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.agent-mark-slot.generating .agent-mark-visual {
+  opacity: 0;
+  transform: scale(0.2);
+}
+.agent-mark-slot.transitioning:not(.generating) .agent-mark-visual {
+  opacity: 1;
+  transform: scale(1);
+}
+.agent-mark-slot.generating .sidebar-loader {
+  opacity: 1;
+  transform: scale(1);
+}
+.agent-mark-slot.generating .sidebar-loader svg {
+  transform-origin: center;
+  backface-visibility: hidden;
+  will-change: transform;
+  animation: sidebar-loader-spin 1.35s linear infinite;
+}
+@keyframes sidebar-loader-spin {
+  to { transform: rotate(359.999deg); }
+}
+
+.thread-row .fighter-portrait {
+  transform-origin: center;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.thread-row.is-generating .fighter-portrait {
+  opacity: 0.72;
+  transform: scale(0.78);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-loader,
+  .thread-row .fighter-portrait,
+  .agent-mark-visual,
+  .status-slot .status-dot {
+    animation: none;
+    transition: none;
+  }
+  .agent-mark-slot.generating .sidebar-loader svg {
+    animation: sidebar-loader-spin 1.35s linear infinite;
+  }
+}
+
 .thread-row.has-attention .thread-row-title {
   color: var(--text);
   font-weight: 650;
@@ -2090,18 +2248,18 @@ body.reordering { cursor: grabbing; user-select: none; }
 .thread-row-title {
   flex: 1;
   min-width: 0;
-  font-size: 16px;
+  font-size: var(--sidebar-copy-size);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.thread-row.active .thread-row-title { color: var(--brass-hi); }
+.thread-row.active .thread-row-title { color: var(--text); }
 
 .thread-row-time {
   flex: none;
   font-family: var(--font-ui);
   font-size: 11.5px;
-  color: var(--faint);
+  color: var(--sidebar-muted);
 }
 
 /* List row: everything on one line — the mark and title flex on the left and
@@ -2789,7 +2947,7 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 
 /* ---- Larger workspace names (big-names layout pref) ---- */
-.sidebar.big-names .project-name { font-size: 15px; font-weight: 600; }
+.sidebar.big-names .project-name { font-size: var(--sidebar-copy-size); font-weight: 600; }
 .sidebar.big-names .project-head { padding-top: 5px; padding-bottom: 5px; }
 .sidebar.big-names .workspace-avatar { width: 26px; height: 26px; }
 
@@ -2803,7 +2961,7 @@ body.reordering { cursor: grabbing; user-select: none; }
   margin: 0;
   min-height: 24px;
 }
-.sidebar.compact-view .thread-row-title { font-size: 12px; }
+.sidebar.compact-view .thread-row-title { font-size: var(--sidebar-copy-size); }
 .sidebar.compact-view .thread-row-mark { width: 10px; height: 10px; }
 .sidebar.compact-view .thread-row-avatar { width: 12px; height: 12px; }
 /* The time still lives in the hover card, so compact hides it unconditionally. */
@@ -3994,6 +4152,121 @@ span.title-agent-mark { width: 16px; height: 16px; }
   gap: 10px;
 }
 
+/* A long conversation should not keep painting every historical code block
+   while the reader scrolls or a live message grows. The intrinsic size keeps
+   the scrollbar stable until a row approaches the viewport. Empty and message
+   rows stay outside paint containment: their menus and hover actions are
+   intentionally allowed to extend beyond the row's box. */
+.feed-inner > :not(.feed-empty):not(.msg-user-wrap):not(.msg-assistant),
+.feed-inner > .feed-find-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
+/* Contextual find — centered inside the conversation viewport. It is layered
+   only over the feed, so the rest of the app stays untouched and the feed
+   geometry does not move when find opens. */
+.chat-find-slot {
+  position: sticky;
+  top: 10px;
+  width: 100%;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 5;
+  animation: chat-find-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.chat-find-slot.closing {
+  animation: chat-find-out 160ms ease-in both;
+}
+@keyframes chat-find-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes chat-find-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-8px) scale(0.98); }
+}
+.chat-find-slot .chat-find {
+  position: relative;
+  inset: auto;
+  transform: none;
+  pointer-events: auto;
+}
+.chat-find {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: min(480px, calc(100% - 24px));
+  min-height: 46px;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 13px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.42), 0 3px 9px rgba(0, 0, 0, 0.2);
+}
+:root[data-family="light"] .chat-find {
+  box-shadow: 0 16px 38px rgba(35, 50, 90, 0.16), 0 3px 9px rgba(35, 50, 90, 0.08);
+}
+.chat-find-icon { flex: none; color: var(--dim); }
+.chat-find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 14px var(--font-ui);
+}
+.chat-find input::placeholder { color: var(--faint); }
+.chat-find-count {
+  flex: none;
+  min-width: 50px;
+  color: var(--dim);
+  font: 10px var(--font-mono);
+  text-align: right;
+  white-space: nowrap;
+}
+.chat-find-nav,
+.chat-find-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--dim);
+}
+.chat-find-nav:hover:not(:disabled),
+.chat-find-close:hover,
+.chat-find-nav:focus-visible,
+.chat-find-close:focus-visible {
+  color: var(--text);
+  background: var(--panel-3);
+}
+.chat-find-nav:disabled { opacity: 0.3; cursor: default; }
+.chat-find-prev { transform: rotate(-90deg); }
+.chat-find-next { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-find-slot,
+  .chat-find-slot.closing { animation: none; }
+}
+.feed-find-item.is-match {
+  border-radius: 10px;
+  outline: 1px solid color-mix(in srgb, var(--brass) 24%, transparent);
+  outline-offset: 4px;
+}
+.feed-find-item.is-current {
+  outline-color: var(--brass);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brass) 9%, transparent);
+}
+
 .feed-empty {
   margin: 26vh auto 0;
   text-align: center;
@@ -4229,6 +4502,65 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 12px;
   padding: 4px 2px;
 }
+.working-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  width: 18px;
+}
+.working-signal i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--teal);
+  animation: working-dot 1.1s ease-in-out infinite;
+}
+.working-signal i:nth-child(2) { animation-delay: 0.16s; }
+.working-signal i:nth-child(3) { animation-delay: 0.32s; }
+.working-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.working-copy strong { font-weight: 500; }
+.working-copy em {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.working-sweep {
+  width: 48px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+}
+.working-sweep::after {
+  content: "";
+  display: block;
+  width: 55%;
+  height: 100%;
+  background: var(--teal);
+  box-shadow: 0 0 8px var(--teal);
+  animation: working-sweep 1.8s ease-in-out infinite;
+}
+@keyframes working-dot {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+@keyframes working-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(190%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .working-signal i,
+  .working-sweep::after { animation-duration: 2.8s; }
+}
 
 /* user message */
 
@@ -4238,6 +4570,36 @@ span.title-agent-mark { width: 16px; height: 16px; }
   align-items: flex-end;
 }
 
+/* Only locally sent messages receive .just-sent (see lib/justSent.ts), so
+   opening a thread never replays entrances across its history. The bubble
+   rises from the composer's direction and settles without changing layout or
+   interfering with the feed's stick-to-bottom measurements. */
+@keyframes user-message-send-in {
+  from {
+    opacity: 0;
+    transform: translate3d(10px, 18px, 0) scale(0.97);
+  }
+  65% {
+    opacity: 1;
+    transform: translate3d(-1px, -1px, 0) scale(1.005);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.msg-user-wrap.just-sent {
+  transform-origin: 100% 100%;
+  animation: user-message-send-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-user-wrap.just-sent {
+    animation: none;
+  }
+}
+
 .msg-user-midturn {
   font-size: 10.5px;
   letter-spacing: 0.04em;
@@ -4245,6 +4607,69 @@ span.title-agent-mark { width: 16px; height: 16px; }
   color: var(--brass);
   opacity: 0.75;
   margin-bottom: 2px;
+}
+
+/* The reply envelope is context, not the message itself. Keep it above the
+   bubble as a small reading cue so the actual response remains the visual
+   anchor. */
+.msg-reply-reference {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: min(78%, 560px);
+  min-width: 0;
+  margin: 0 4px 3px 0;
+  padding: 2px 0 3px 9px;
+  overflow: hidden;
+  border-left: 2px solid color-mix(in srgb, var(--brass) 64%, transparent);
+  color: var(--faint);
+  text-align: left;
+}
+.msg-reply-reference-label {
+  flex: none;
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 600;
+}
+.msg-reply-reference-quote {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-reply-reference-file {
+  display: inline;
+  padding: 0;
+  border-bottom: 1px dotted color-mix(in srgb, var(--brass) 65%, transparent);
+  border-radius: 2px;
+  color: var(--brass-hi);
+  font: inherit;
+  text-align: left;
+}
+.msg-reply-reference-file:hover,
+.msg-reply-reference-file:focus-visible {
+  background: color-mix(in srgb, var(--brass) 14%, transparent);
+  border-bottom-style: solid;
+  outline: none;
+}
+
+.md-file-link {
+  display: inline;
+  padding: 0;
+  border-bottom: 1px dotted color-mix(in srgb, var(--brass) 70%, transparent);
+  border-radius: 2px;
+  background: none;
+  color: var(--brass-hi);
+  font: inherit;
+  text-align: left;
+}
+.md-file-link:hover,
+.md-file-link:focus-visible {
+  background: color-mix(in srgb, var(--brass) 14%, transparent);
+  border-bottom-style: solid;
+  outline: none;
 }
 
 .msg-user {
@@ -4259,6 +4684,33 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 13.5px;
 }
 
+/* Reply is intentionally a quiet edge affordance: the action appears when the
+   reader is already on the message, while the selected context becomes the
+   stronger brass rail in the composer below. */
+.msg-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  margin-top: 2px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 11px;
+  opacity: 0;
+  transition: color 0.12s, background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+.msg-reply:hover,
+.msg-reply:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  outline: none;
+}
+.msg-user-wrap:hover .msg-reply,
+.msg-reply:focus-visible { opacity: 1; }
+
 /* assistant message */
 
 .msg-assistant {
@@ -4266,6 +4718,23 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 14px;
   position: relative;
 }
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.assistant-thought-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.assistant-thought-stat > svg { color: var(--dim); }
 
 .msg-time {
   display: block;
@@ -4300,11 +4769,33 @@ span.title-agent-mark { width: 16px; height: 16px; }
   position: absolute;
   top: -4px;
   right: -6px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  width: auto;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
   opacity: 0;
 }
+.msg-copy:hover,
+.msg-copy:focus-visible {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+  outline: none;
+}
 .msg-assistant:hover .msg-copy { opacity: 1; }
+.msg-assistant > .msg-reply {
+  position: absolute;
+  top: -4px;
+  right: 22px;
+  margin-top: 0;
+}
+.msg-assistant:hover > .msg-reply { opacity: 1; }
+
+@media (any-pointer: coarse) {
+  .msg-reply { opacity: 1; }
+}
 
 .tool-output-wrap {
   position: relative;
@@ -4349,6 +4840,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
+.md.md-streaming { white-space: pre-wrap; overflow-wrap: anywhere; }
 .md p { margin: 0.55em 0; }
 .md h1, .md h2, .md h3, .md h4 {
   font-weight: 700;
@@ -4496,23 +4988,40 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .row-card {
   max-width: 74ch;
   border: 1px solid var(--line);
-  border-radius: 9px;
-  background: rgba(16, 20, 29, 0.65);
+  border-radius: 16px;
+  background: var(--panel-2);
   overflow: hidden;
+  transition: border-color 140ms ease, background 140ms ease;
 }
+.row-card:hover {
+  border-color: var(--line-2);
+  background: var(--panel-2);
+}
+.tool-row { border-left: 2px solid color-mix(in srgb, var(--teal) 45%, var(--line)); }
+.diff-card { border-left: 2px solid color-mix(in srgb, var(--brass) 45%, var(--line)); }
+.subagent-row { border-left: 2px solid color-mix(in srgb, var(--blue) 45%, var(--line)); }
 
 .row-head {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-height: 31px;
   padding: 6px 10px;
   text-align: left;
-  min-height: 31px;
 }
 .row-head:not(:disabled):hover { background: rgba(155, 170, 210, 0.05); }
+.row-head:focus-visible,
+.row-head-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brass) 70%, transparent);
+  outline-offset: -2px;
+}
 
-.row-glyph { color: var(--dim); display: inline-flex; flex: none; }
+.row-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dim);
+}
 
 .row-name {
   font-family: var(--font-mono);
@@ -4533,7 +5042,10 @@ span.title-agent-mark { width: 16px; height: 16px; }
   text-overflow: ellipsis;
 }
 
-.row-chevron { color: var(--faint); flex: none; }
+.row-chevron {
+  flex: none;
+  color: var(--faint);
+}
 
 /* Produced files live in the conversation as real media, not receipts that
    send the reader somewhere else. The preview is deliberately quieter than a
@@ -4543,8 +5055,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
   max-width: 74ch;
   overflow: hidden;
   border: 1px solid var(--line-2);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border-radius: 18px;
+  background: var(--panel-2);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
 }
 
@@ -4954,7 +5466,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 @keyframes artifactBackdropIn { from { opacity: 0; } }
 @keyframes artifactViewerIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
 
-.tool-row.is-error { border-color: rgba(224, 101, 95, 0.4); background: rgba(224, 101, 95, 0.06); }
+.tool-row.is-error { border-color: rgba(224, 101, 95, 0.4); background: var(--panel-2); }
 .tool-row.is-error .row-glyph, .tool-row.is-error .row-name { color: var(--red); }
 
 .tool-row.is-live .row-glyph { color: var(--teal); }
@@ -5032,12 +5544,12 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
 .subagent-row {
   border-color: rgba(122, 162, 247, 0.32);
-  background: rgba(122, 162, 247, 0.05);
+  background: var(--panel-2);
 }
 .subagent-row.status-running .row-glyph { color: var(--teal); }
 .subagent-row.status-error {
   border-color: rgba(224, 101, 95, 0.4);
-  background: rgba(224, 101, 95, 0.06);
+  background: var(--panel-2);
 }
 .subagent-type {
   flex: none;
@@ -5396,10 +5908,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .approval-card {
   max-width: 74ch;
   border: 1px solid rgba(229, 181, 103, 0.45);
-  border-radius: 12px;
-  background:
-    linear-gradient(180deg, rgba(229, 181, 103, 0.09), rgba(229, 181, 103, 0.02)),
-    var(--panel);
+  border-radius: 18px;
+  background: var(--panel-2);
   padding: 12px 14px;
   box-shadow: 0 0 0 3px rgba(229, 181, 103, 0.05), 0 8px 26px rgba(0, 0, 0, 0.35);
   animation: rise 0.18s ease-out;
@@ -5514,10 +6024,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .question-card {
   max-width: 74ch;
   border: 1px solid rgba(111, 168, 232, 0.4);
-  border-radius: 12px;
-  background:
-    linear-gradient(180deg, rgba(111, 168, 232, 0.08), rgba(111, 168, 232, 0.02)),
-    var(--panel);
+  border-radius: 18px;
+  background: var(--panel-2);
   padding: 13px 15px 14px;
   box-shadow: 0 0 0 3px rgba(111, 168, 232, 0.05), 0 8px 26px rgba(0, 0, 0, 0.35);
   animation: rise 0.18s ease-out;
@@ -5653,6 +6161,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   margin: 6px 0;
   max-width: 74ch;
 }
+.turn-divider.stats-only { justify-content: flex-start; }
 .turn-line { flex: 1; height: 1px; background: var(--line-2); }
 .turn-meta {
   display: inline-flex;
@@ -5741,6 +6250,65 @@ span.title-agent-mark { width: 16px; height: 16px; }
   padding: 0 6px 6px;
 }
 
+/* Pending follow-ups are part of the composer, like reply context: a quiet
+   divider above the input rather than a second floating card. */
+.queued-messages {
+  display: grid;
+  gap: 2px;
+  margin: 0 4px 7px;
+  padding: 0 0 7px;
+  border-bottom: 1px solid var(--line);
+}
+.queued-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 25px;
+  padding: 2px 0;
+}
+.queued-message-mark {
+  flex: none;
+  color: var(--brass);
+}
+.queued-message-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+}
+.queued-message-label {
+  flex: none;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.queued-message-text {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queued-message-remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  border-radius: 50%;
+  color: var(--faint);
+}
+.queued-message-remove:hover,
+.queued-message-remove:focus-visible {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+  outline: none;
+}
+
 /* The composer floats as one soft, heavily-rounded card on the conversation
    background. Light themes drop the stroke entirely and let a deep shadow lift
    a white card off the page; dark themes have no shadow to show on near-black,
@@ -5782,12 +6350,60 @@ span.title-agent-mark { width: 16px; height: 16px; }
   outline: none;
   color: var(--text);
   font-size: var(--composer-font, 16px);
+  font-weight: 450;
   line-height: 1.55;
   padding: 4px 6px 8px;
   min-height: 26px;
   max-height: 240px;
 }
 .composer-card textarea::placeholder { color: var(--faint); }
+
+.reply-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin: 0 4px 5px;
+  padding: 0 0 5px;
+  border-bottom: 1px solid var(--line);
+}
+.reply-context-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+}
+.reply-context-label {
+  flex: none;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.reply-context-text {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reply-context-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  border-radius: 50%;
+  color: var(--faint);
+}
+.reply-context-close:hover,
+.reply-context-close:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  outline: none;
+}
 
 .build-workspace-tray {
   position: relative;
@@ -6078,7 +6694,13 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .pill-trigger-icon { display: flex; align-items: center; color: var(--dim); }
 .pill-trigger:hover .pill-trigger-icon,
 .pill-trigger.on .pill-trigger-icon { color: var(--brass); }
-.pill-trigger-label { font-size: 13.5px; font-weight: 500; letter-spacing: 0.01em; }
+.pill-trigger-label { font-size: 14.5px; font-weight: 500; letter-spacing: 0.01em; }
+
+/* Composer controls are the app's primary interaction surface. Give their
+   line icons a slightly sturdier stroke, without affecting brand marks or
+   iconography elsewhere in the interface. */
+.composer-card button > svg { stroke-width: 2.25; }
+.composer-card .ctx-ring svg { stroke-width: 3.35; }
 .pill-caret { flex: none; color: var(--faint); }
 
 .pill-menu {
@@ -7893,9 +8515,9 @@ span.title-agent-mark { width: 16px; height: 16px; }
      mobile message grid it spans the full row above the text — auto-placement
      would otherwise drop it into the 24px copy-button column and clip it. */
   .speaker-chip { white-space: nowrap; }
-  .msg-assistant:not(.streaming) > .speaker-chip { grid-column: 1 / -1; grid-row: 1; }
-  .msg-assistant:not(.streaming):has(> .speaker-chip) > .md,
-  .msg-assistant:not(.streaming):has(> .speaker-chip) > .msg-copy { grid-row: 2; }
+  .msg-assistant:not(.streaming) > .assistant-head { grid-column: 1 / -1; grid-row: 1; }
+  .msg-assistant:not(.streaming):has(> .assistant-head) > .md,
+  .msg-assistant:not(.streaming):has(> .assistant-head) > .msg-copy { grid-row: 2; }
 
   /* Review dialog: near-sheet on phones, settings stack one per row, and
      persona rows keep just mark + name + check (the "built this" hint is a
@@ -7908,7 +8530,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
   .feed-inner { padding: 14px 12px 116px; } /* clear the floating composer */
   .msg-user { max-width: 88%; }
-  .artifact-card { width: 100%; max-width: none; border-radius: 11px; }
+  .artifact-card { width: 100%; max-width: none; border-radius: 18px; }
   .artifact-inline-preview { min-height: 132px; max-height: 310px; }
   .artifact-preview-image,
   .artifact-preview-video { max-height: 310px; }
@@ -8077,6 +8699,15 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* A generating chat is an active progress indicator, so keep its Loader
+   continuous even when the global reduced-motion rule shortens decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-mark-slot.generating .sidebar-loader svg {
+    animation: sidebar-loader-spin 1.35s linear infinite !important;
+    animation-duration: 1.35s !important;
+  }
 }
 
 /* ---- compact provider usage meter (sidebar) ------------------------------- */
@@ -9108,7 +9739,7 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .thread-card-title {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: 15px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

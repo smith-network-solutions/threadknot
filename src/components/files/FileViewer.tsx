@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import hljs from "highlight.js/lib/common";
 import "highlight.js/styles/github-dark.css";
 import type { FileReadData, Project } from "../../lib/protocol";
@@ -6,7 +6,7 @@ import { fileUrl } from "../../lib/discovery";
 import { downloadViaShell } from "../../lib/download";
 import { Markdown } from "../Markdown";
 import { useStore } from "../../state/store";
-import { ChevronIcon, DownloadIcon } from "../icons";
+import { ChevronIcon, DownloadIcon, SearchIcon, XIcon } from "../icons";
 import { absoluteProjectPath, ViewerClipboardActions } from "./ViewerActions";
 
 const PdfViewer = lazy(() =>
@@ -82,6 +82,77 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function countMatches(text: string, query: string): number {
+  const q = query.trim().toLowerCase();
+  if (!q) return 0;
+  let count = 0;
+  let cursor = 0;
+  const haystack = text.toLowerCase();
+  while ((cursor = haystack.indexOf(q, cursor)) !== -1) {
+    count += 1;
+    cursor += q.length;
+  }
+  return count;
+}
+
+function nativeFind(query: string, backwards = false): void {
+  if (!query.trim()) return;
+  const finder = (window as Window & {
+    find?: (
+      text: string,
+      caseSensitive?: boolean,
+      backwards?: boolean,
+      wrapAround?: boolean,
+    ) => boolean;
+  }).find;
+  finder?.(query, false, backwards, true);
+}
+
+function FileFindBar({
+  inputRef,
+  query,
+  matchCount,
+  onQueryChange,
+  onPrevious,
+  onNext,
+  onClose,
+}: {
+  inputRef: RefObject<HTMLInputElement>;
+  query: string;
+  matchCount: number;
+  onQueryChange: (value: string) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="files-find" role="search" aria-label="Find in file">
+      <SearchIcon size={14} />
+      <input
+        ref={inputRef}
+        type="search"
+        value={query}
+        placeholder="Find in file…"
+        aria-label="Find in file"
+        onChange={(event) => onQueryChange(event.target.value)}
+        spellCheck={false}
+      />
+      <span className="files-find-count" aria-live="polite">
+        {query.trim() ? (matchCount > 0 ? `${matchCount} match${matchCount === 1 ? "" : "es"}` : "No matches") : "Find"}
+      </span>
+      <button type="button" aria-label="Previous match" title="Previous match" disabled={matchCount === 0} onClick={onPrevious}>
+        <ChevronIcon size={13} className="files-find-prev" />
+      </button>
+      <button type="button" aria-label="Next match" title="Next match" disabled={matchCount === 0} onClick={onNext}>
+        <ChevronIcon size={13} className="files-find-next" />
+      </button>
+      <button type="button" aria-label="Close find" title="Close find (Escape)" onClick={onClose}>
+        <XIcon size={13} />
+      </button>
+    </div>
+  );
+}
+
 export function FileViewer({
   project,
   path,
@@ -109,6 +180,9 @@ export function FileViewer({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [rendered, setRendered] = useState(true);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const findInputRef = useRef<HTMLInputElement>(null);
   const dlRef = useRef<HTMLAnchorElement | null>(null);
 
   // Image/video/PDF render straight from /file — no need to pull the bytes over
@@ -118,6 +192,39 @@ export function FileViewer({
 
   // Every newly opened Markdown/HTML file starts in its rendered view.
   useEffect(() => setRendered(true), [path]);
+
+  useEffect(() => {
+    if (!needsRead || data?.binary) return;
+    function onFind(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+      if (!(event.target as HTMLElement | null)?.closest(".workspace-panel")) return;
+      event.preventDefault();
+      setFindOpen(true);
+    }
+    window.addEventListener("keydown", onFind);
+    return () => window.removeEventListener("keydown", onFind);
+  }, [data?.binary, needsRead]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    findInputRef.current?.focus();
+    findInputRef.current?.select();
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setFindOpen(false);
+    }
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [findOpen]);
+
+  useEffect(() => {
+    setFindOpen(false);
+    setFindQuery("");
+  }, [path]);
+
+  const findMatchCount = useMemo(
+    () => countMatches(data?.contents ?? "", findQuery),
+    [data?.contents, findQuery],
+  );
 
   useEffect(() => {
     if (!needsRead) return;
@@ -184,6 +291,21 @@ export function FileViewer({
         </div>
         <a ref={dlRef} hidden aria-hidden="true" download />
       </header>
+
+      {findOpen && needsRead && !data?.binary && (
+        <FileFindBar
+          inputRef={findInputRef}
+          query={findQuery}
+          matchCount={findMatchCount}
+          onQueryChange={(value) => {
+            setFindQuery(value);
+            nativeFind(value);
+          }}
+          onPrevious={() => nativeFind(findQuery, true)}
+          onNext={() => nativeFind(findQuery)}
+          onClose={() => setFindOpen(false)}
+        />
+      )}
 
       {hasRenderedView && data && !data.binary && (
         <div className="files-viewer-sub">

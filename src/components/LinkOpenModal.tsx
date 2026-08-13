@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { findThread, useStore } from "../state/store";
 import { isQuickHomeProjectId } from "../lib/protocol";
 import { LINK_CHOICE_EVENT, openExternally } from "../lib/links";
@@ -16,7 +16,7 @@ import { GlobeIcon, XIcon } from "./icons";
  *
  * A styled in-app dialog, never a native prompt. Esc / backdrop / X cancel.
  */
-export function LinkOpenModal() {
+export const LinkOpenModal = memo(function LinkOpenModal() {
   const { state, dispatch } = useStore();
   const [href, setHref] = useState<string | null>(null);
 
@@ -100,4 +100,4 @@ export function LinkOpenModal() {
       </div>
     </div>
   );
-}
+});

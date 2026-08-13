@@ -100,6 +100,14 @@
     opacity: 1;
     pointer-events: auto;
   }
+
+  /* Resizing writes --ws-frac on every pointer move. Do not interpolate those
+     live values: the divider must stay pinned to the pointer. Open/close motion
+     resumes as soon as the drag ends. */
+  .main-split.dragging .workspace-panel,
+  .main-split.dragging .ws-divider {
+    transition: none;
+  }
   .ws-divider::after {
     content: "";
     position: absolute;

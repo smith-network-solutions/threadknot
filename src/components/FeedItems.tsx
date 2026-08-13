@@ -1,7 +1,8 @@
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type Dispatch, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { FeedItem } from "../state/feed";
-import { findThread, remoteMachineId, useStore } from "../state/store";
+import type { Action, AppState, ThreadknotActions } from "../state/store";
+import type { GitRepoInfo, Participant, Project } from "../lib/protocol";
 import {
   copyText,
   formatDuration,
@@ -15,6 +16,7 @@ import { downloadViaShell } from "../lib/download";
 import { claimJustSent } from "../lib/justSent";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
+import { parseReply, replyPreview, type ReplyTarget } from "../lib/reply";
 import {
   AgentMark,
   ArchiveIcon,
@@ -30,6 +32,7 @@ import {
   DollarIcon,
   DownloadIcon,
   PopoutIcon,
+  ReplyIcon,
   ShieldIcon,
   ToolGlyph,
   XIcon,
@@ -40,17 +43,42 @@ import {
   artifactTypeLabel,
 } from "./artifacts/ArtifactPreview";
 
-import { AGENT_LABELS as AGENT_NAMES, threadParticipant, threadParticipants } from "../lib/protocol";
+import { AGENT_LABELS as AGENT_NAMES } from "../lib/protocol";
+
+type FeedActions = Pick<
+  ThreadknotActions,
+  "toolOutput" | "respondApproval" | "setQuestionAnswers" | "respondQuestion"
+>;
+
+/** Stable, non-feed state needed by an individual row. Keeping this out of the
+ * global StoreContext lets memoized historical rows stay asleep while tokens
+ * arrive for the one live assistant message. */
+export interface FeedRenderContext {
+  threadId: string | null;
+  projectId: string | null;
+  machineId?: string;
+  http: AppState["http"];
+  project?: Project;
+  gitRepos?: GitRepoInfo[];
+  participants: Participant[];
+  dispatch: Dispatch<Action>;
+  actions: FeedActions;
+  onReply: (target: ReplyTarget) => void;
+  onOpenFile: (path: string) => void;
+}
 
 /** The provider identity badge on every assistant message. */
-function SpeakerChip({ speaker }: { speaker?: string }) {
-  const { state } = useStore();
-  const thread = state.feedThreadId ? findThread(state, state.feedThreadId) : undefined;
-  if (!thread) return null;
+function SpeakerChip({
+  speaker,
+  participants,
+}: {
+  speaker?: string;
+  participants: Participant[];
+}) {
   // New events carry their lane id. Older single-agent logs do not, so use the
   // synthesized builder lane as a safe fallback for those messages.
-  const lane = threadParticipant(thread, speaker) ??
-    (!speaker ? threadParticipants(thread)[0] : undefined);
+  const lane = participants.find((participant) => participant.id === speaker) ??
+    (!speaker ? participants[0] : undefined);
   if (!lane) return null;
   return (
     <span
@@ -93,7 +121,11 @@ export function CopyButton({
         }
       }}
     >
-      {done ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+      {done ? (
+        <CheckIcon size={className.includes("msg-copy") ? 15 : 13} />
+      ) : (
+        <CopyIcon size={className.includes("msg-copy") ? 15 : 13} />
+      )}
       {className.includes("copy-pill") && <span>{done ? "Copied" : "Copy"}</span>}
     </button>
   );
@@ -122,15 +154,18 @@ export function DiffBody({ unified }: { unified: string }) {
   );
 }
 
-function DiffCard({ item }: { item: Extract<FeedItem, { type: "diff" }> }) {
-  const { state } = useStore();
+function DiffCard({
+  item,
+  render,
+}: {
+  item: Extract<FeedItem, { type: "diff" }>;
+  render: FeedRenderContext;
+}) {
   const [open, setOpen] = useState(true);
   const added = (item.unified.match(/^\+(?!\+\+)/gm) ?? []).length;
   const removed = (item.unified.match(/^-(?!--)/gm) ?? []).length;
   // Multi-repo projects: tag the diff with the repo that owns the file.
-  const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
-  const project = state.projects.find((p) => p.id === thread?.projectId);
-  const repo = thread ? repoForPath(state.git[thread.projectId], project, item.path) : null;
+  const repo = repoForPath(render.gitRepos, render.project, item.path);
   return (
     <div className="row-card diff-card">
       <div className="row-head diff-head">
@@ -161,27 +196,31 @@ function formatBytes(n: number): string {
 /** A deliverable the agent produced this turn. Its durable snapshot is shown
  * right in the log; a larger viewer is portaled above the feed so conversation
  * zoom and narrow workspace panes cannot constrain it. */
-function ArtifactCard({ item }: { item: Extract<FeedItem, { type: "artifact" }> }) {
-  const { state, dispatch } = useStore();
-  const thread = state.feedThreadId ? findThread(state, state.feedThreadId) : null;
+function ArtifactCard({
+  item,
+  render,
+}: {
+  item: Extract<FeedItem, { type: "artifact" }>;
+  render: FeedRenderContext;
+}) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const machineId = remoteMachineId(state, thread?.machineId);
-  const url = state.http ? artifactFileUrl(state.http, item.artifactId, { machineId }) : null;
+  const machineId = render.machineId;
+  const url = render.http ? artifactFileUrl(render.http, item.artifactId, { machineId }) : null;
   const kind = artifactKind({ ...item, id: item.artifactId });
   const typeLabel = artifactTypeLabel({ ...item, id: item.artifactId });
 
   const openArtifacts = () => {
-    if (!thread) return;
+    if (!render.projectId) return;
     setViewerOpen(false);
-    dispatch({ type: "workspace", projectId: thread.projectId, tab: "artifacts" });
-    dispatch({ type: "artifactFocus", artifactId: item.artifactId });
+    render.dispatch({ type: "workspace", projectId: render.projectId, tab: "artifacts" });
+    render.dispatch({ type: "artifactFocus", artifactId: item.artifactId });
   };
 
   const download = () => {
-    if (!state.http) return;
+    if (!render.http) return;
     setDownloadError(null);
-    const href = artifactFileUrl(state.http, item.artifactId, { download: true, machineId });
+    const href = artifactFileUrl(render.http, item.artifactId, { download: true, machineId });
     const suggested = item.relPath.slice(item.relPath.lastIndexOf("/") + 1) || item.name;
     void downloadViaShell(href, suggested)
       .then((handled) => {
@@ -263,7 +302,7 @@ function ArtifactCard({ item }: { item: Extract<FeedItem, { type: "artifact" }> 
                 <button type="button" onClick={openArtifacts} title="Open in Artifacts">
                   <ArchiveIcon size={14} /><span>Artifacts</span>
                 </button>
-                <button type="button" onClick={download} disabled={!state.http} title="Download file">
+                  <button type="button" onClick={download} disabled={!render.http} title="Download file">
                   <DownloadIcon size={14} /><span>Download</span>
                 </button>
                 <button type="button" onClick={() => setViewerOpen(false)} title="Close preview">
@@ -277,7 +316,7 @@ function ArtifactCard({ item }: { item: Extract<FeedItem, { type: "artifact" }> 
             </div>
             <footer className="artifact-lightbox-mobile-actions">
               <button type="button" onClick={openArtifacts}><PopoutIcon size={15} /> Artifacts</button>
-              <button type="button" onClick={download} disabled={!state.http}><DownloadIcon size={15} /> Download</button>
+              <button type="button" onClick={download} disabled={!render.http}><DownloadIcon size={15} /> Download</button>
             </footer>
           </section>
         </div>,
@@ -368,15 +407,20 @@ function SubagentCard({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
   );
 }
 
-function ToolRow({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
-  const { state, actions } = useStore();
+function ToolRow({
+  item,
+  render,
+}: {
+  item: Extract<FeedItem, { type: "tool" }>;
+  render: FeedRenderContext;
+}) {
   const [open, setOpen] = useState(false);
   // A replayed card carries an elided output; the full text is fetched the
   // first time someone actually opens it, so a long log stays cheap to load
   // without ever losing what the agent printed.
   const [full, setFull] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
-  const threadId = state.feedThreadId;
+  const threadId = render.threadId;
   if (item.subagent) return <SubagentCard item={item} />;
   const hasDetail = item.detail.trim().length > 0;
   const hasOutput = item.output.length > 0;
@@ -389,7 +433,7 @@ function ToolRow({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
     setOpen(next);
     if (next && item.truncated && full === null && !loadingFull && threadId) {
       setLoadingFull(true);
-      void actions
+      void render.actions
         .toolOutput(threadId, item.callId)
         .then((text) => text != null && setFull(text))
         .catch(() => undefined)
@@ -450,7 +494,7 @@ function ThinkingBlock({ item }: { item: Extract<FeedItem, { type: "thinking" }>
       </button>
       {open && (
         <div className="thinking-body">
-          <Markdown text={item.text} />
+          <Markdown text={item.text} streaming={item.streaming} />
         </div>
       )}
     </div>
@@ -459,8 +503,13 @@ function ThinkingBlock({ item }: { item: Extract<FeedItem, { type: "thinking" }>
 
 // ---- approval -----------------------------------------------------------
 
-function ApprovalCard({ item }: { item: Extract<FeedItem, { type: "approval" }> }) {
-  const { actions } = useStore();
+function ApprovalCard({
+  item,
+  render,
+}: {
+  item: Extract<FeedItem, { type: "approval" }>;
+  render: FeedRenderContext;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   if (item.resolvedOptionId) {
@@ -503,7 +552,7 @@ function ApprovalCard({ item }: { item: Extract<FeedItem, { type: "approval" }> 
             key={o.id}
             className={`btn tone-${o.tone}`}
             disabled={item.pending}
-            onClick={() => actions.respondApproval(item.approvalId, o.id)}
+            onClick={() => render.actions.respondApproval(item.approvalId, o.id)}
           >
             {o.label}
           </button>
@@ -546,14 +595,6 @@ function TurnDivider({ item }: { item: Extract<FeedItem, { type: "turn_end" }> }
       icon: <ClockIcon size={12} />,
     });
   }
-  if (item.thinkingMs != null) {
-    metrics.push({
-      key: "thinking",
-      label: "Thought for",
-      value: formatDuration(item.thinkingMs),
-      icon: <BrainIcon size={12} />,
-    });
-  }
   if (u) {
     const inp = formatTokens(u.inputTokens);
     const out = formatTokens(u.outputTokens);
@@ -591,8 +632,7 @@ function TurnDivider({ item }: { item: Extract<FeedItem, { type: "turn_end" }> }
     }
   }
   return (
-    <div className={`turn-divider${item.aborted ? " aborted" : ""}`}>
-      <span className="turn-line" />
+    <div className={`turn-divider stats-only${item.aborted ? " aborted" : ""}`}>
       {metrics.length > 0 && (
         <span className="turn-meta" aria-label="Turn details">
           {metrics.map((metric) => (
@@ -603,9 +643,36 @@ function TurnDivider({ item }: { item: Extract<FeedItem, { type: "turn_end" }> }
           ))}
         </span>
       )}
-      <span className="turn-line" />
     </div>
   );
+}
+
+/** Calculate thought time for the first assistant item in each turn in one
+ * forward pass. This used to scan the whole feed once per assistant row. */
+export function thoughtTimesForFeed(feed: FeedItem[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  let turnStarted: number | null = null;
+  let sawAssistant = false;
+  for (const item of feed) {
+    if (item.type === "turn_end") {
+      turnStarted = null;
+      sawAssistant = false;
+      continue;
+    }
+    if (item.type === "user" && !item.midTurn) {
+      const started = item.timestamp ? Date.parse(item.timestamp) : NaN;
+      turnStarted = Number.isFinite(started) ? started : null;
+      sawAssistant = false;
+      continue;
+    }
+    if (item.type !== "assistant" || sawAssistant || turnStarted == null || !item.timestamp) continue;
+    const firstText = Date.parse(item.timestamp);
+    if (Number.isFinite(firstText)) {
+      out[item.id] = formatDuration(Math.max(0, firstText - turnStarted));
+    }
+    sawAssistant = true;
+  }
+  return out;
 }
 
 /** Mid-thread handoff to a different provider/model (Traycer-style switch). */
@@ -697,33 +764,125 @@ function MessageImage({ url, name }: { url: string; name: string }) {
   );
 }
 
-function UserMessage({ item }: { item: Extract<FeedItem, { type: "user" }> }) {
-  const { state } = useStore();
-  const threadId = state.feedThreadId;
+function ReplyButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="msg-reply"
+      title="Reply to message"
+      aria-label="Reply to message"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <ReplyIcon size={15} />
+      <span>Reply</span>
+    </button>
+  );
+}
+
+const FILE_REFERENCE = /`([^`\n]+)`|(?<![\w./-])([\w.-]+(?:\/[\w.-]+)*\.[A-Za-z0-9]+)\b/g;
+
+function ReplyReference({
+  author,
+  quote,
+  onOpenFile,
+}: {
+  author: string;
+  quote: string;
+  onOpenFile: (path: string) => void;
+}) {
+  const preview = replyPreview(quote, 280);
+  const pieces: ReactNode[] = [];
+  let cursor = 0;
+  FILE_REFERENCE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = FILE_REFERENCE.exec(preview))) {
+    const path = match[1] ?? match[2];
+    const start = match.index;
+    if (start > cursor) pieces.push(preview.slice(cursor, start));
+    pieces.push(
+      <button
+        key={`${path}-${start}`}
+        type="button"
+        className="msg-reply-reference-file"
+        title={`Open ${path} in Files`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenFile(path);
+        }}
+      >
+        {path}
+      </button>,
+    );
+    cursor = start + match[0].length;
+  }
+  if (cursor < preview.length) pieces.push(preview.slice(cursor));
+
+  return (
+    <div className="msg-reply-reference">
+      <span className="msg-reply-reference-label">Replying to {author}</span>
+      <span className="msg-reply-reference-quote">{pieces.length > 0 ? pieces : preview}</span>
+    </div>
+  );
+}
+
+function UserMessage({
+  item,
+  render,
+}: {
+  item: Extract<FeedItem, { type: "user" }>;
+  render: FeedRenderContext;
+}) {
+  const threadId = render.threadId;
   const images = (item.attachments ?? []).filter((a) => a.mimeType.startsWith("image/"));
-  const hasText = item.text.trim().length > 0;
+  const reply = parseReply(item.text);
+  const messageText = reply?.body ?? item.text;
+  const hasText = messageText.trim().length > 0;
   // Claimed once, at first render: this bubble is the echo of a send from this
-  // client, so it gets the arcade slam entrance. Scrollback and messages from
-  // other devices find the beacon empty and mount silently.
+  // client, so it gets the send entrance (or the arcade theme's slam variant).
+  // Scrollback and messages from other devices find the beacon empty and mount
+  // silently.
   const [justSent] = useState(claimJustSent);
   return (
     <div className={`msg-user-wrap${justSent ? " just-sent" : ""}`}>
       {item.midTurn && <div className="msg-user-midturn">added while working</div>}
+      {reply && (
+        <ReplyReference
+          author={reply.author}
+          quote={reply.quote}
+          onOpenFile={render.onOpenFile}
+        />
+      )}
       <div
         className={`msg-user${images.length > 0 ? " has-attachments" : ""}${!hasText ? " image-only" : ""}`}
       >
-        {hasText && <div className="msg-user-text">{item.text}</div>}
-        {state.http && threadId && images.length > 0 && (
+        {hasText && <div className="msg-user-text">{messageText}</div>}
+        {render.http && threadId && images.length > 0 && (
           <div className={`msg-user-attachments ${images.length === 1 ? "single" : "gallery"}`}>
             {images.map((a) => {
-              const url = attachmentUrl(state.http!, threadId, a.id, {
-                machineId: remoteMachineId(state, findThread(state, threadId)?.machineId),
+              const url = attachmentUrl(render.http!, threadId, a.id, {
+                machineId: render.machineId,
               });
               return <MessageImage key={a.id} url={url} name={a.name} />;
             })}
           </div>
         )}
       </div>
+      {hasText && (
+        <ReplyButton
+          onClick={() =>
+            render.onReply({
+              id: item.id,
+              kind: "user",
+              author: "You",
+              text: item.text,
+              timestamp: item.timestamp,
+            })
+          }
+        />
+      )}
       <MessageTime timestamp={item.timestamp} side="user" />
     </div>
   );
@@ -731,19 +890,56 @@ function UserMessage({ item }: { item: Extract<FeedItem, { type: "user" }> }) {
 
 // ---- dispatcher ---------------------------------------------------------
 
-export const FeedItemView = memo(function FeedItemView({ item }: { item: FeedItem }) {
+export const FeedItemView = memo(function FeedItemView({
+  item,
+  render,
+  thoughtTime,
+}: {
+  item: FeedItem;
+  render: FeedRenderContext;
+  thoughtTime?: string;
+}) {
   switch (item.type) {
     case "user":
       // A role brief is not the user talking — see BriefDivider.
-      return item.injected ? <BriefDivider item={item} /> : <UserMessage item={item} />;
+      return item.injected
+        ? <BriefDivider item={item} />
+        : <UserMessage item={item} render={render} />;
     case "assistant":
       return (
         <div className={`msg-assistant${item.streaming ? " streaming" : ""}`}>
-          <SpeakerChip speaker={item.speaker} />
-          <Markdown text={item.text} />
+          <div className="assistant-head">
+            <SpeakerChip speaker={item.speaker} participants={render.participants} />
+            {thoughtTime && (
+              <span className="assistant-thought-stat" title="Thought time">
+                <BrainIcon size={12} />
+                Thought for {thoughtTime}
+              </span>
+            )}
+          </div>
+          <Markdown
+            text={item.text}
+            streaming={item.streaming}
+            onOpenFile={render.onOpenFile}
+          />
           {item.streaming && <span className="stream-caret" />}
           {!item.streaming && item.text.length > 0 && (
             <CopyButton value={item.text} label="Copy message" className="copy-btn msg-copy" />
+          )}
+          {!item.streaming && item.text.trim().length > 0 && (
+            <ReplyButton
+              onClick={() =>
+                render.onReply({
+                  id: item.id,
+                  kind: "assistant",
+                  author:
+                    render.participants.find((participant) => participant.id === item.speaker)?.name ??
+                    "Assistant",
+                  text: item.text,
+                  timestamp: item.timestamp,
+                })
+              }
+            />
           )}
           {!item.streaming && (
             <MessageTime timestamp={item.timestamp} side="assistant" />
@@ -753,15 +949,21 @@ export const FeedItemView = memo(function FeedItemView({ item }: { item: FeedIte
     case "thinking":
       return <ThinkingBlock item={item} />;
     case "tool":
-      return <ToolRow item={item} />;
+      return <ToolRow item={item} render={render} />;
     case "diff":
-      return <DiffCard item={item} />;
+      return <DiffCard item={item} render={render} />;
     case "artifact":
-      return <ArtifactCard item={item} />;
+      return <ArtifactCard item={item} render={render} />;
     case "approval":
-      return <ApprovalCard item={item} />;
+      return <ApprovalCard item={item} render={render} />;
     case "question":
-      return <QuestionCard item={item} />;
+      return (
+        <QuestionCard
+          item={item}
+          onSetAnswers={render.actions.setQuestionAnswers}
+          onRespond={render.actions.respondQuestion}
+        />
+      );
     case "turn_end":
       return <TurnDivider item={item} />;
     case "context_usage":
