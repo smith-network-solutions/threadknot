@@ -3289,7 +3289,30 @@ pub async fn handle_request(
                 })?,
                 _ => state.lan_origin(),
             };
-            let code = state.mobile.begin_pairing(capabilities.clone());
+            // A long-lived code exists for one situation: handing an external
+            // tester (App Store review) a link that still works whenever they
+            // get to it, days later. It stays one-time and capability-scoped —
+            // only the window widens — and it is refused on `lan`, where the
+            // owner is standing at the screen and a 3-minute code costs nothing.
+            // Capped, so a typo cannot mint something effectively permanent.
+            let ttl = match p.get("ttlSeconds").and_then(|v| v.as_u64()) {
+                Some(requested) if target == "remote" => {
+                    anyhow::ensure!(
+                        requested > 0,
+                        "ttlSeconds must be positive"
+                    );
+                    std::time::Duration::from_secs(
+                        requested.min(crate::mobile::PAIRING_TTL_MAX.as_secs()),
+                    )
+                }
+                Some(_) => anyhow::bail!(
+                    "a long-lived pairing code is only allowed for the remote origin"
+                ),
+                None => crate::mobile::PAIRING_TTL,
+            };
+            let code = state
+                .mobile
+                .begin_pairing_with_ttl(capabilities.clone(), ttl);
             let payload = pairing_payload(&origin, &code);
             Ok(json!({
                 "payload": payload,
@@ -3297,7 +3320,7 @@ pub async fn handle_request(
                 "code": crate::mobile::format_pairing_code(&code),
                 "url": origin,
                 "target": target,
-                "ttlSeconds": crate::mobile::PAIRING_TTL.as_secs(),
+                "ttlSeconds": ttl.as_secs(),
                 "capabilities": capabilities.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
             }))
         }
