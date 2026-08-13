@@ -384,6 +384,12 @@ struct DiskDevice {
 /// and open the scanner, short enough that a photographed screen is worthless
 /// by the time anyone acts on it.
 pub const PAIRING_TTL: Duration = Duration::from_secs(180);
+/// Ceiling for an explicitly requested pairing window. The short default is the
+/// right answer for a person standing at the screen; this exists only so an
+/// external tester (App Store review) can be handed a link that still works
+/// when they get to it. Capped at 30 days so a mistyped value cannot mint
+/// something effectively permanent, and never the default.
+pub const PAIRING_TTL_MAX: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// Live codes are capped so a stuck client reopening the dialog can't grow the
 /// set of valid secrets without bound. Oldest is evicted first.
@@ -462,7 +468,7 @@ impl MobileStore {
         self.begin_pairing_with_ttl(capabilities, PAIRING_TTL)
     }
 
-    fn begin_pairing_with_ttl(&self, capabilities: Vec<Capability>, ttl: Duration) -> String {
+    pub fn begin_pairing_with_ttl(&self, capabilities: Vec<Capability>, ttl: Duration) -> String {
         use rand::Rng;
         let mut rng = rand::rng();
         let code: String = (0..PAIRING_CODE_LEN)
