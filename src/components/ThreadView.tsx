@@ -11,9 +11,16 @@ import {
   HERMES_HOME_PROJECT_ID,
   isQuickHomeProjectId,
   threadParticipants,
+  type ThreadSettings,
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
-import { findThread, resolveProjectView, useStore } from "../state/store";
+import {
+  effortForModel,
+  findThread,
+  rememberNewThreadSettings,
+  resolveProjectView,
+  useStore,
+} from "../state/store";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { FeedItemView } from "./FeedItems";
 import { ParleyRoundSplash, ReviewMenu } from "./ReviewMenu";
@@ -24,6 +31,7 @@ import {
   AgentMark,
   ArrowDownIcon,
   CheckIcon,
+  ChevronIcon,
   MenuIcon,
   MoreIcon,
   PencilIcon,
@@ -161,6 +169,205 @@ function WorkspaceMenu({
   );
 }
 
+/** The new-thread empty state is also the moment a person chooses the folder
+ * they want an agent to work in. Keep that choice in the sentence itself,
+ * rather than making it a separate piece of chrome above the composer. */
+function WorkOnProject({
+  project,
+  agent,
+  settings,
+}: {
+  project: { id: string; name: string };
+  agent: string;
+  settings: ThreadSettings;
+}) {
+  const { state, dispatch, actions } = useStore();
+  const [open, setOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const modelRef = useRef<HTMLDivElement>(null);
+  const agentInfo = state.hello?.agents.find((candidate) => candidate.id === agent);
+  const currentModel = agentInfo?.models.find((model) => model.id === settings.model);
+  const agentModels = (state.hello?.agents ?? []).flatMap((candidate) =>
+    candidate.available || candidate.id === agent
+      ? candidate.models.map((model) => ({ agent: candidate, model }))
+      : [],
+  );
+  const choices = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string; machineId?: string }>();
+
+    for (const candidate of state.projects) {
+      byId.set(candidate.id, { id: candidate.id, name: candidate.name });
+    }
+    // A fleet view can be working in a root that only exists on a paired
+    // machine. Include those alongside local projects so the switcher does
+    // not strand the person on the local machine.
+    for (const workspace of state.workspaces) {
+      for (const member of workspace.members) {
+        const view = resolveProjectView(state, member.projectId);
+        if (view && !byId.has(view.project.id)) {
+          byId.set(view.project.id, {
+            id: view.project.id,
+            name: view.project.name,
+            machineId: view.machineId,
+          });
+        }
+      }
+    }
+    if (!byId.has(project.id)) {
+      const view = resolveProjectView(state, project.id);
+      byId.set(project.id, {
+        id: project.id,
+        name: project.name,
+        machineId: view?.machineId,
+      });
+    }
+    return [...byId.values()];
+  }, [state.projects, state.workspaces, state.hello?.machineId, project]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!modelOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!modelRef.current?.contains(event.target as Node)) setModelOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setModelOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [modelOpen]);
+
+  const selectProject = (choice: (typeof choices)[number]) => {
+    setOpen(false);
+    actions.openDraft(choice.id, choice.machineId);
+  };
+
+  return (
+    <p className="empty-work-on">
+      <span className="empty-work-on-prefix">Let's work on</span>
+      <span className="empty-project-picker" ref={pickerRef}>
+        <button
+          type="button"
+          className="empty-project-trigger"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={`Change project, currently ${project.name}`}
+          onClick={() => {
+            setModelOpen(false);
+            setOpen((wasOpen) => !wasOpen);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(true);
+            }
+          }}
+        >
+          <span className="empty-project-label">{project.name}</span>
+          <ChevronIcon open size={14} className="empty-project-chevron" />
+        </button>
+        {open && (
+          <span className="empty-project-menu" role="menu" aria-label="Choose project">
+          {choices.map((choice) => (
+            <button
+              key={choice.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={choice.id === project.id}
+              className={`empty-project-option${choice.id === project.id ? " selected" : ""}`}
+              onClick={() => selectProject(choice)}
+            >
+              {choice.name}
+            </button>
+          ))}
+          </span>
+        )}
+      </span>
+      <span className="empty-model-picker" ref={modelRef}>
+        <button
+          type="button"
+          className="empty-model-trigger"
+          aria-haspopup="menu"
+          aria-expanded={modelOpen}
+          aria-label={`Change AI or model, currently ${agentInfo?.name ?? agent} ${currentModel?.name ?? settings.model}`}
+          onClick={() => {
+            setOpen(false);
+            setModelOpen((wasOpen) => !wasOpen);
+          }}
+        >
+          <span className="empty-model-using">Using</span>
+          <AgentMark agent={agent} size={13} />
+          <span>{agentInfo?.name ?? agent}</span>
+          <span className="empty-model-name">{currentModel?.name ?? settings.model}</span>
+          <ChevronIcon open size={12} className="empty-model-chevron" />
+        </button>
+        {modelOpen && (
+          <span className="empty-model-menu" role="menu" aria-label="Choose AI and model">
+            {agentModels.map(({ agent: candidate, model }) => (
+              <button
+                key={`${candidate.id}:${model.id}`}
+                type="button"
+                role="menuitemradio"
+                aria-checked={candidate.id === agent && model.id === settings.model}
+                className={`empty-model-option${candidate.id === agent && model.id === settings.model ? " selected" : ""}`}
+                onClick={() => {
+                  setModelOpen(false);
+                  const changingAgent = candidate.id !== agent;
+                  const nextSettings = {
+                    ...settings,
+                    model: model.id,
+                    effort: effortForModel(
+                      model,
+                      changingAgent ? undefined : settings.effort,
+                      candidate.id === "claude",
+                    ),
+                    wideContext:
+                      !changingAgent && model.supportsWideContext && candidate.id === "claude"
+                        ? settings.wideContext
+                        : undefined,
+                    claudeChrome: changingAgent ? undefined : settings.claudeChrome,
+                  };
+                  // This is a draft-only surface, so commit the complete pair
+                  // at once instead of first selecting an agent's default
+                  // model and then replacing it in a second render.
+                  dispatch({ type: "draftSettings", agent: candidate.id, settings: nextSettings });
+                  if (state.draft) {
+                    rememberNewThreadSettings(state.draft.projectId, candidate.id, nextSettings);
+                  }
+                }}
+              >
+                <AgentMark agent={candidate.id} size={13} />
+                <span className="empty-model-option-agent">{candidate.name}</span>
+                <span className="empty-model-option-name">{model.name}</span>
+              </button>
+            ))}
+          </span>
+        )}
+      </span>
+    </p>
+  );
+}
+
 export function ThreadView() {
   const { state, dispatch, actions } = useStore();
   const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
@@ -178,6 +385,7 @@ export function ThreadView() {
   const quickHome = isQuickHomeProjectId(
     thread ? thread.projectId : draft?.projectId,
   );
+  const projectDraft = !!draft && !!project && !hermesHome && !quickHome;
   const hermesGatewayName = hermesHome
     ? state.hello?.agents
         .find((a) => a.id === "hermes")
@@ -198,6 +406,7 @@ export function ThreadView() {
 
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [quickMode, setQuickMode] = useState<"chat" | "build">("chat");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -367,11 +576,28 @@ export function ThreadView() {
   // to its own scrolling strip) — see the mobile `.thread-head.has-lanes` CSS.
   const hasLanes = !!thread && threadParticipants(thread).length > 1;
 
-  if (!thread && !draft) return <EmptyPane />;
+  // Navigation normally establishes a draft before this view paints. During a
+  // brief boot/navigation handoff, render the pane shell instead of reviving
+  // the old center-screen "New quick thread" gate.
+  if (!thread && !draft) {
+    return (
+      <section className="thread-pane empty-pane">
+        <button
+          className="icon-btn hamburger empty-hamburger"
+          aria-label="Open sidebar"
+          onClick={() => dispatch({ type: "sidebar", open: true })}
+        >
+          <MenuIcon size={18} />
+        </button>
+      </section>
+    );
+  }
 
   return (
     <section className="thread-pane">
-      <header className={`thread-head${hasLanes ? " has-lanes" : ""}`}>
+      <header
+        className={`thread-head${hasLanes ? " has-lanes" : ""}${quickHome ? " quick-thread-head" : ""}`}
+      >
         <button
           className="icon-btn hamburger"
           aria-label="Open sidebar"
@@ -406,11 +632,13 @@ export function ThreadView() {
                 ) : (
                   <AgentMark agent={agentInfo.id} size={15} className="title-agent-mark" />
                 ))}
-              {thread
-                ? thread.title || "Untitled thread"
-                : quickHome
-                  ? "New quick thread"
-                  : "New thread"}
+              <span className="thread-name">
+                {thread
+                  ? thread.title || "Untitled thread"
+                  : quickHome
+                    ? "New quick thread"
+                    : "New thread"}
+              </span>
               {thread && (
                 <button
                   className="icon-btn title-edit"
@@ -425,8 +653,44 @@ export function ThreadView() {
               )}
             </h1>
           )}
+          {project?.path && !hermesHome && !quickHome && (
+            <div
+              className="thread-project-path"
+              title={project.path}
+              aria-label={`Project directory: ${project.path}`}
+            >
+              {project.path}
+            </div>
+          )}
           {chipPreview.portal}
         </div>
+        {quickHome && (
+          <div
+            className={`quick-mode-tabs mode-${quickMode}`}
+            role="tablist"
+            aria-label="Quick thread mode"
+          >
+            <span className="quick-mode-indicator" aria-hidden="true" />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={quickMode === "chat"}
+              className={quickMode === "chat" ? "active" : ""}
+              onClick={() => setQuickMode("chat")}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={quickMode === "build"}
+              className={quickMode === "build" ? "active" : ""}
+              onClick={() => setQuickMode("build")}
+            >
+              Build
+            </button>
+          </div>
+        )}
         {busy && (
           <div className="head-status">
             <span className="sonar" />
@@ -559,21 +823,23 @@ export function ThreadView() {
           {state.feedLoading && <div className="feed-note note-status">loading log…</div>}
           {!state.feedLoading && feedLen === 0 && (
             <div className="feed-empty">
-              <img
-                src="/threadknot-simple.png"
-                alt=""
-                aria-hidden="true"
-                className="feed-empty-logo"
-              />
-              <p>
-                {draft
-                  ? hermesHome
-                    ? `Say hello to ${hermesGatewayName ?? "your Hermes agent"}`
-                    : quickHome
-                      ? "Ask anything…"
-                      : "Let's get started…"
-                  : "No traffic on this channel yet."}
-              </p>
+              {projectDraft ? (
+                <WorkOnProject
+                  project={project}
+                  agent={draft.agent}
+                  settings={draft.settings}
+                />
+              ) : (
+                <p>
+                  {draft
+                    ? hermesHome
+                      ? `Say hello to ${hermesGatewayName ?? "your Hermes agent"}`
+                      : quickHome
+                        ? "Ask anything…"
+                        : "Let's get started…"
+                    : "No traffic on this channel yet."}
+                </p>
+              )}
             </div>
           )}
           {state.feed.map((item) => (
@@ -613,38 +879,7 @@ export function ThreadView() {
           subagents={subagents}
           onOpenThread={(threadId) => void actions.selectThread(threadId)}
         />
-        <Composer thread={thread ?? null} />
-      </div>
-    </section>
-  );
-}
-
-function EmptyPane() {
-  const { dispatch, actions } = useStore();
-  return (
-    <section className="thread-pane empty-pane">
-      <button
-        className="icon-btn hamburger empty-hamburger"
-        aria-label="Open sidebar"
-        onClick={() => dispatch({ type: "sidebar", open: true })}
-      >
-        <MenuIcon size={18} />
-      </button>
-      <div className="empty-hero">
-        <img src="/threadknot-logo.png" alt="Threadknot" className="empty-anchor-img" />
-        <div className="empty-wordmark">THREADKNOT</div>
-        <p className="empty-tag">every coding agent on one thread</p>
-        <p className="empty-hint">
-          Ask something now, or choose a workspace when the work belongs to a project.
-        </p>
-        <button
-          type="button"
-          className="empty-quick-action"
-          onClick={() => actions.openQuickDraft()}
-        >
-          <span>New quick thread</span>
-          <small>no workspace needed</small>
-        </button>
+        <Composer thread={thread ?? null} quickMode={quickHome ? quickMode : undefined} />
       </div>
     </section>
   );

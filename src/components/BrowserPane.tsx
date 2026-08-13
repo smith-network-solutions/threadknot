@@ -122,8 +122,10 @@ export function BrowserPane({
   const { state, actions } = useStore();
   const http = state.http;
 
+  const paneRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const moreRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const frameSize = useRef({ w: 0, h: 0 });
   const editingRef = useRef(false);
@@ -151,6 +153,9 @@ export function BrowserPane({
   const [pasteText, setPasteText] = useState("");
   const [readingClipboard, setReadingClipboard] = useState(false);
   const [layoutRevision, setLayoutRevision] = useState(0);
+  const [stageRevision, setStageRevision] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -164,9 +169,36 @@ export function BrowserPane({
     if (active) setEnabled(true);
   }, [active]);
 
+  // Keep the affordance honest when the person leaves fullscreen with Esc or
+  // the browser's native control rather than the button in our chrome.
+  useEffect(() => {
+    const syncFullscreen = () => setFullscreen(document.fullscreenElement === paneRef.current);
+    syncFullscreen();
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+
   useEffect(() => {
     setDialogReply(dialog?.defaultPrompt ?? "");
   }, [dialog]);
+
+  // Secondary browser controls live in one quiet popover. Dismiss it using
+  // the same gestures people expect from a native browser menu.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const closeOnOutsidePress = (event: MouseEvent) => {
+      if (!moreRef.current?.contains(event.target as Node)) setMoreOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoreOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsidePress);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsidePress);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [moreOpen]);
 
   const rescan = useCallback(async () => {
     setScanning(true);
@@ -417,7 +449,7 @@ export function BrowserPane({
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    const observer = new ResizeObserver(() => setLayoutRevision((value) => value + 1));
+    const observer = new ResizeObserver(() => setStageRevision((value) => value + 1));
     observer.observe(stage);
     return () => observer.disconnect();
   }, [enabled]);
@@ -447,6 +479,16 @@ export function BrowserPane({
     const preset = DEVICES.find((item) => item.id === device) ?? DEVICES[0];
     if (preset.width && preset.height) {
       send({ type: "resize", width: preset.width, height: preset.height });
+    } else if (fullscreen && stageRef.current) {
+      // In fullscreen, "Fill" should be a real fullscreen viewport instead
+      // of a fixed 1280 × 800 frame scaled up by the canvas. The stage's rect
+      // is in visual pixels, so undo pane zoom before giving CDP its CSS size.
+      const rect = stageRef.current.getBoundingClientRect();
+      send({
+        type: "resize",
+        width: Math.max(1, Math.round(rect.width / browserZoom)),
+        height: Math.max(1, Math.round(rect.height / browserZoom)),
+      });
     } else {
       send({
         type: "resize",
@@ -454,7 +496,7 @@ export function BrowserPane({
         height: Math.round(800 / browserZoom),
       });
     }
-  }, [connection, device, send, browserZoom]);
+  }, [connection, device, send, browserZoom, fullscreen, stageRevision]);
 
   function toFrameCoords(event: React.PointerEvent | React.WheelEvent): { x: number; y: number } {
     const canvas = canvasRef.current;
@@ -523,6 +565,13 @@ export function BrowserPane({
   const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
   const attachedId = thread?.settings.browserProfileId ?? "";
   const attached = profiles.find((profile) => profile.id === attachedId) ?? null;
+  const profileTitle = attached
+    ? attached.origins.includes("*")
+      ? `Signed in as ${attached.name} — this browser keeps the login and may visit any site`
+      : `Signed in as ${attached.name} — this browser may only visit ${attached.origins.join(", ")}`
+    : profilesLoaded && attachedId
+      ? "This chat points at a signed-in profile that no longer exists (it was deleted). Switch to Disposable, or attach another profile."
+      : "Disposable browser: nothing stays signed in. Pick a profile to keep a login.";
 
   useEffect(() => {
     if (!enabled) return;
@@ -618,8 +667,22 @@ export function BrowserPane({
     setPasteOpen(false);
   };
 
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === paneRef.current) {
+        await document.exitFullscreen();
+      } else {
+        await paneRef.current?.requestFullscreen();
+      }
+    } catch {
+      // A host may decline fullscreen (for example, a restricted embedded
+      // browser). Leave the current view alone; the control remains usable if
+      // the host's policy changes.
+    }
+  };
+
   return (
-    <div className="browser-pane">
+    <div className="browser-pane" ref={paneRef}>
       {attached && (
         <div className="browser-signin-note">
           <b>Signed in: {attached.name}</b>
@@ -640,6 +703,16 @@ export function BrowserPane({
         </button>
         <button type="button" className="browser-btn" onClick={() => send({ type: "reload" })} aria-label="Reload" title="Reload">
           <ReloadIcon />
+        </button>
+        <button
+          type="button"
+          className={`browser-btn browser-fullscreen${fullscreen ? " on" : ""}`}
+          onClick={() => void toggleFullscreen()}
+          aria-label={fullscreen ? "Exit browser fullscreen" : "Enter browser fullscreen"}
+          aria-pressed={fullscreen}
+          title={fullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
+        >
+          {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
         </button>
 
         <input
@@ -677,98 +750,116 @@ export function BrowserPane({
 
         <span className={`browser-connection ${connection}`} title={`Browser engine: ${connection}`}>
           <span className="browser-connection-dot" />
-          <span className="browser-connection-label">{connection === "live" ? "Live" : connection === "retrying" ? "Retrying" : "Connecting"}</span>
         </span>
 
-        <button
-          type="button"
-          className={`browser-btn browser-activity-toggle${activityOpen ? " on" : ""}`}
-          onClick={() => setActivityOpen((open) => !open)}
-          aria-label="Agent browser activity"
-          aria-expanded={activityOpen}
-          title="Agent browser activity"
-        >
-          <ActivityIcon />
-          {activities.length > 0 && <span className="browser-activity-count">{activities.length}</span>}
-        </button>
-
-        <button
-          type="button"
-          className={`browser-btn browser-paste-btn${readingClipboard ? " reading" : ""}`}
-          onClick={() => void pasteFromClipboard()}
-          disabled={readingClipboard || connection !== "live"}
-          aria-label={readingClipboard ? "Reading clipboard" : "Paste into browser"}
-          title={readingClipboard ? "Reading clipboard…" : "Paste into the focused browser field"}
-        >
-          <PasteIcon />
-        </button>
-
-        {thread && (
-          <select
-            className={`browser-profile${attached ? " on" : ""}`}
-            value={attachedId}
-            onChange={(event) => attachProfile(event.target.value)}
-            aria-label="Signed-in browser profile"
-            title={
-              attached
-                ? attached.origins.includes("*")
-                  ? `Signed in as ${attached.name} — this browser keeps the login and may visit any site`
-                  : `Signed in as ${attached.name} — this browser may only visit ${attached.origins.join(", ")}`
-                : profilesLoaded && attachedId
-                  ? "This chat points at a signed-in profile that no longer exists (it was deleted). Switch to Disposable, or attach another profile."
-                  : "Disposable browser: nothing stays signed in. Pick a profile to keep a login."
-            }
+        <div className="browser-more" ref={moreRef}>
+          <button
+            type="button"
+            className={`browser-btn browser-more-toggle${moreOpen ? " on" : ""}`}
+            onClick={() => setMoreOpen((open) => !open)}
+            aria-label="More browser controls"
+            aria-expanded={moreOpen}
+            aria-haspopup="dialog"
+            title="More browser controls"
           >
-            <option value="">Disposable browser</option>
-            {profilesLoaded && attachedId && !attached && (
-              <option value={attachedId}>Signed-in profile missing (deleted)</option>
-            )}
-            {profiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                Signed in: {profile.name}
-              </option>
-            ))}
-          </select>
-        )}
+            <MoreIcon />
+            {activities.length > 0 && !activityOpen && <span className="browser-activity-count">{activities.length}</span>}
+          </button>
 
-        <select
-          className="browser-device"
-          value={device}
-          onChange={(event) => setDevice(event.target.value)}
-          aria-label="Device size"
-          title="Device size"
-        >
-          {DEVICES.map((preset) => (
-            <option key={preset.id} value={preset.id}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
+          {moreOpen && (
+            <div className="browser-more-menu" role="dialog" aria-label="More browser controls">
+              <div className="browser-more-section">
+                <button
+                  type="button"
+                  className={`browser-more-action${activityOpen ? " on" : ""}`}
+                  onClick={() => {
+                    setActivityOpen((open) => !open);
+                    setMoreOpen(false);
+                  }}
+                >
+                  <ActivityIcon />
+                  <span>Agent activity</span>
+                  {activities.length > 0 && <em>{activities.length}</em>}
+                </button>
+                <button
+                  type="button"
+                  className={`browser-more-action${readingClipboard ? " reading" : ""}`}
+                  onClick={() => {
+                    void pasteFromClipboard();
+                    setMoreOpen(false);
+                  }}
+                  disabled={readingClipboard || connection !== "live"}
+                >
+                  <PasteIcon />
+                  <span>{readingClipboard ? "Reading clipboard…" : "Paste into browser"}</span>
+                </button>
+              </div>
 
-        <button
-          type="button"
-          className="browser-btn"
-          onClick={restartBrowser}
-          aria-label="Restart isolated browser"
-          title="Restart isolated browser"
-        >
-          <PowerIcon />
-        </button>
+              <div className="browser-more-section browser-more-fields">
+                {thread && (
+                  <label>
+                    <span>Browser profile</span>
+                    <select
+                      className={attached ? "on" : ""}
+                      value={attachedId}
+                      onChange={(event) => attachProfile(event.target.value)}
+                      aria-label="Signed-in browser profile"
+                      title={profileTitle}
+                    >
+                      <option value="">Disposable browser</option>
+                      {profilesLoaded && attachedId && !attached && (
+                        <option value={attachedId}>Signed-in profile missing (deleted)</option>
+                      )}
+                      {profiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          Signed in: {profile.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label>
+                  <span>Viewport</span>
+                  <select value={device} onChange={(event) => setDevice(event.target.value)} aria-label="Device size">
+                    {DEVICES.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
 
-        <a
-          className="browser-btn browser-ext"
-          href={url || undefined}
-          target="_blank"
-          rel="noreferrer"
-          aria-label="Open in system browser"
-          title="Open in system browser"
-          aria-disabled={!url}
-          onClick={(event) => {
-            if (!url) event.preventDefault();
-          }}
-        >
-          <ExternalIcon />
-        </a>
+              <div className="browser-more-section">
+                <a
+                  className={`browser-more-action${url ? "" : " disabled"}`}
+                  href={url || undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-disabled={!url}
+                  onClick={(event) => {
+                    if (!url) event.preventDefault();
+                    else setMoreOpen(false);
+                  }}
+                >
+                  <ExternalIcon />
+                  <span>Open in system browser</span>
+                </a>
+                <button
+                  type="button"
+                  className="browser-more-action"
+                  onClick={() => {
+                    restartBrowser();
+                    setMoreOpen(false);
+                  }}
+                >
+                  <PowerIcon />
+                  <span>Restart isolated browser</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="browser-tabs" role="tablist" aria-label="Browser tabs">
@@ -1076,6 +1167,23 @@ const ExternalIcon = () => (
     <path d="M14 4h6v6" />
     <path d="M20 4l-8 8" />
     <path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1 2-2V8a2 2 0 0 1 2-2h5" />
+  </svg>
+);
+const FullscreenIcon = () => (
+  <svg {...svgProps}>
+    <path d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4" />
+  </svg>
+);
+const FullscreenExitIcon = () => (
+  <svg {...svgProps}>
+    <path d="M8 4v4H4M16 4v4h4M20 16h-4v4M4 16h4v4" />
+  </svg>
+);
+const MoreIcon = () => (
+  <svg {...svgProps}>
+    <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none" />
   </svg>
 );
 const ActivityIcon = () => (

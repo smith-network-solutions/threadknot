@@ -6,10 +6,10 @@
    for everything the machines say. */
 
 :root {
-  --bg: #070707;
+  --bg: #0b0b0b;
   --bg-raise: #000000;
   --panel: #090909;
-  --panel-2: #0e0e0e;
+  --panel-2: #121212;
   --panel-3: #000000;
   --line: rgba(66, 66, 66, 0.09);
   --line-2: rgba(214, 214, 214, 0.18);
@@ -29,7 +29,7 @@
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, "SF Mono", monospace;
   --radius: 10px;
   --sidebar-w: 292px;
-  --rail-w: 56px;
+  --rail-w: 64px;
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
 
@@ -41,7 +41,7 @@
   --bg: #f3f5f9;
   --bg-raise: #f8f8f8;
   --panel: #ffffff;
-  --panel-2: #ededed;
+  --panel-2: #e6e6e6;
   --panel-3: #eceff6;
   --line: rgba(140, 140, 140, 0.12);
   --line-2: rgba(97, 97, 97, 0.2);
@@ -59,7 +59,7 @@
   --blue: #3d6fc0;
 }
 :root[data-family="light"] .sidebar {
-  background: #f9f9f9;
+  background: #f6f6f6;
 }
 :root[data-family="light"] .thread-pane {
   background: #ffffff;
@@ -723,7 +723,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 
 /* ---- rail layout (the chat-app-style project icon column) ---- */
 
-:root { --rail-w: 56px; }
+:root { --rail-w: 64px; }
 
 /* The rail is absolutely positioned and the sidebar's own content is inset
    past it, so the existing single-column structure — and every popover and
@@ -731,7 +731,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 
    Inset the FLOW children only. The sidebar's other absolutely-positioned
    chrome must be exempt like the rail itself: `.sidebar-resize` is a 5px strip
-   pinned to the right edge, and under `box-sizing: border-box` a 56px
+   pinned to the right edge, and under `box-sizing: border-box` a 64px
    padding-left cannot shrink inside a 5px width — it inflates the strip to a
    56px-wide, full-height hit area lying over the right of the sidebar, which
    swallowed every click on the rail header's "new thread" +. */
@@ -749,34 +749,40 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   width: var(--rail-w);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 0 calc(10px + var(--safe-b)) 8px;
+  align-items: stretch;
+  gap: 4px;
+  padding: 14px 8px calc(14px + var(--safe-b));
   overflow-y: auto;
   scrollbar-width: none;
-  background: rgba(6, 8, 13, 0.55);
+  background: inherit;
   border-right: 1px solid var(--line);
 }
 .project-rail::-webkit-scrollbar { display: none; }
-:root[data-family="light"] .project-rail { background: rgba(20, 30, 60, 0.045); }
 
 .rail-item {
   position: relative;
   flex: none;
-  width: 44px;
-  height: 44px;
+  width: 100%;
+  height: 46px;
   display: grid;
   place-items: center;
   padding: 0;
   background: none;
-  border: 0;
-  border-radius: 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   cursor: pointer;
-  opacity: 0.62;
-  transition: opacity 0.15s ease;
+  opacity: 0.68;
+  transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
-.rail-item:hover { opacity: 1; }
-.rail-item.on { opacity: 1; }
+.rail-item:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.rail-item.on {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--brass) 22%, var(--line));
+  background: color-mix(in srgb, var(--brass) 8%, var(--panel));
+}
 /* The tile IS the drag handle here — there is no room for a grip — so it opts
    out of touch panning only once a hold has claimed it (see lib/reorder.ts);
    until then a finger on the rail still scrolls it. */
@@ -788,35 +794,41 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
    rail behind it. */
 .rail-item.on .sidebar-avatar,
 .rail-item.on .rail-avatar {
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--brass) 45%, transparent);
+  box-shadow:
+    0 0 0 1px var(--brass),
+    0 0 0 3px color-mix(in srgb, var(--brass) 12%, transparent);
 }
 
-/* The edge pill: a stub on hover, full height for the open project. */
+/* A steady index bar makes the current project obvious without a glowing halo
+   or a shape change. */
 .rail-pip {
   position: absolute;
-  left: -6px;
-  top: 50%;
+  left: -8px;
+  top: 7px;
+  bottom: 7px;
   width: 3px;
-  height: 0;
+  height: auto;
   border-radius: 0 3px 3px 0;
   background: var(--brass-hi);
-  transform: translateY(-50%);
-  transition: height 0.16s ease;
+  opacity: 0;
+  transition: opacity 0.16s ease;
 }
-.rail-item:hover .rail-pip { height: 16px; }
-.rail-item.on .rail-pip { height: 26px; }
+.rail-item:hover .rail-pip { opacity: 0.5; }
+.rail-item.on .rail-pip { opacity: 1; }
 
-/* One squircle for every project, selected or not. The shared avatar component
-   renders a circle; the rail overrides it. (This used to morph to a full circle
-   when selected — the odd shape out in the column read as a glitch rather than
-   as selection, which the edge pill and ring already carry.) */
+/* The rail is an index, not a social surface: project markers stay square-ish
+   and their accent is a border cue rather than a glow. */
 .rail-item .machine-avatar,
-.rail-avatar { border-radius: 14px; }
+.rail-avatar { border-radius: 9px; }
+.rail-item .machine-avatar.has-color {
+  border-color: color-mix(in srgb, var(--machine-color) 72%, var(--line-2));
+  box-shadow: none;
+}
 
 .rail-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
   overflow: hidden;
   display: block;
 }
@@ -832,51 +844,46 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   flex: none;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 7px;
-  padding-bottom: 1px;
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  padding-bottom: 8px;
+  background: inherit;
 }
 .rail-quick { opacity: 0.78; }
 .rail-quick-face {
   position: relative;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--brass) 22%, var(--line));
-  border-radius: 14px;
-  background:
-    radial-gradient(circle at 50% 25%, color-mix(in srgb, var(--brass) 10%, transparent), transparent 58%),
-    var(--panel-2);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--panel-2);
 }
 .rail-quick-face svg { color: var(--brass-hi); stroke-width: 1.7; }
 .rail-quick.on .rail-quick-face {
-  border-color: color-mix(in srgb, var(--brass-hi) 48%, var(--line));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--brass) 18%, transparent),
-    inset 0 1px rgba(255, 255, 255, 0.05);
+  border-color: var(--brass);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 12%, transparent);
 }
 .rail-divider {
   flex: none;
-  width: 28px;
+  width: 34px;
   height: 1px;
-  margin: 1px 0 2px;
+  margin: 1px auto 2px;
   background: linear-gradient(90deg, transparent, var(--line-2), transparent);
 }
 
 /* Unread/approval badge, notched out of the avatar's corner. */
 .rail-dot {
   position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 11px;
-  height: 11px;
+  right: 5px;
+  bottom: 5px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--amber);
-  box-shadow: 0 0 0 2.5px var(--panel), 0 0 6px rgba(229, 181, 103, 0.7);
+  box-shadow: 0 0 0 2px var(--panel);
   /* Mounted at all times like the ring beside it, lit by class. */
   opacity: 0;
   transition: opacity 0.18s ease;
@@ -907,9 +914,9 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   position: relative;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
   border: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
   background: rgba(255, 255, 255, 0.03);
 }
@@ -933,7 +940,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 }
 
 @media (max-width: 767px) {
-  :root { --rail-w: 52px; }
+  :root { --rail-w: 56px; }
 }
 
 /* Picker layout: this bar replaces the per-project headers entirely, so the
@@ -1147,6 +1154,11 @@ body.reordering { cursor: grabbing; user-select: none; }
   color: var(--dim);
 }
 .project-toggle .row-chevron { color: var(--faint); flex: none; }
+.project-folder-icon,
+.settled-shelf-icon {
+  flex: none;
+  color: var(--faint);
+}
 
 .sidebar-avatar {
   width: 22px;
@@ -1673,6 +1685,41 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 .project-threads { padding: 1px 0 3px; }
 
+.chat-folder { margin: 3px 5px 2px 10px; }
+.chat-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 7px;
+  border-radius: 7px;
+  color: var(--dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: left;
+}
+.chat-folder-head:hover { background: var(--panel-2); color: var(--text); }
+.chat-folder-head svg { flex: none; color: var(--faint); }
+.chat-folder-head > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-folder-head small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+.chat-folder-threads { margin-left: 9px; border-left: 1px solid var(--line-2); }
+.chat-folder-empty {
+  padding: 4px 10px 5px 15px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-style: italic;
+}
+
 .project-empty {
   color: var(--faint);
   font-size: 12px;
@@ -1738,6 +1785,7 @@ body.reordering { cursor: grabbing; user-select: none; }
 .thread-row.slim {
   padding-top: 3px;
   padding-bottom: 3px;
+  min-height: 40px;
   opacity: 0.55;
 }
 .thread-row.slim:hover { opacity: 1; }
@@ -1883,6 +1931,38 @@ body.reordering { cursor: grabbing; user-select: none; }
   }
 }
 
+/* The rail's activity cue is deliberately quieter than the feed's motion:
+   one thin teal frame is enough to say "this project is working". Keep the
+   indicator geometric and local to the tile instead of adding another glow. */
+.rail-ring {
+  inset: 3px;
+  border: 1px solid rgba(67, 201, 165, 0.72);
+  border-radius: 12px;
+  padding: 0;
+  background: none;
+  -webkit-mask: none;
+  mask: none;
+  filter: none;
+}
+.rail-ring.underway {
+  animation: rail-activity 1.8s ease-in-out infinite;
+}
+@keyframes rail-activity {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.42; }
+}
+.rail-item.on .machine-avatar.has-color {
+  box-shadow:
+    0 0 0 1px var(--brass),
+    0 0 0 3px color-mix(in srgb, var(--brass) 12%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-ring.underway {
+    background: none;
+    animation: none;
+  }
+}
+
 .settled-shelf {
   display: flex;
   align-items: center;
@@ -1895,10 +1975,9 @@ body.reordering { cursor: grabbing; user-select: none; }
   border-radius: 7px;
   cursor: pointer;
   color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
 }
 .settled-shelf:hover { background: rgba(155, 170, 210, 0.05); color: var(--dim); }
 .settled-shelf-label { flex: 1; text-align: left; }
@@ -2588,6 +2667,17 @@ body.reordering { cursor: grabbing; user-select: none; }
 .thread-menu-item svg { flex: none; color: var(--dim); stroke-width: 2.4; }
 .thread-menu-item:hover { background: var(--panel-3); }
 .thread-menu-item:hover svg { color: var(--text); }
+.thread-menu-title {
+  padding: 6px 13px 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.thread-menu-item.divided {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 11px 11px;
+}
 /* Workspace panels dropdown (the header "more" button). Reuses the .thread-menu
    panel + .thread-menu-item rows; adds a right-aligned check + active accent. */
 .ws-menu { min-width: 200px; }
@@ -3624,6 +3714,73 @@ body.reordering { cursor: grabbing; user-select: none; }
   backdrop-filter: blur(8px);
 }
 
+/* Quick threads keep their title and controls in the conversation plane. The
+   centered mode capsule is the only solid object in this otherwise floating
+   masthead. */
+.thread-head.quick-thread-head {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 20;
+  min-height: 58px;
+  border-bottom-color: transparent !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+.thread-head.quick-thread-head::after { display: none !important; }
+.thread-pane:has(> .quick-thread-head) .feed-inner { padding-top: 80px; }
+.quick-mode-tabs {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(72px, 1fr));
+  padding: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent);
+  isolation: isolate;
+}
+.quick-mode-tabs button {
+  position: relative;
+  z-index: 1;
+  min-height: 30px;
+  padding: 5px 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--faint);
+  font: 600 12.5px/1 var(--font-ui);
+  cursor: pointer;
+  transition: color 180ms ease;
+}
+.quick-mode-tabs button.active { color: var(--text); }
+.quick-mode-tabs button:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 1px;
+}
+.quick-mode-indicator {
+  position: absolute;
+  z-index: 0;
+  inset: 3px auto 3px 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-2) 88%, var(--text) 12%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  transform: translateX(0);
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.quick-mode-tabs.mode-build .quick-mode-indicator { transform: translateX(100%); }
+@media (prefers-reduced-motion: reduce) {
+  .quick-mode-indicator { transition: none; }
+}
+:root[data-family="light"] .quick-mode-tabs { background: rgba(36, 48, 72, 0.08); }
+:root[data-family="light"] .quick-mode-indicator {
+  background: #ffffff;
+  box-shadow: 0 3px 10px rgba(35, 50, 90, 0.13);
+}
+
 .hamburger { display: none; }
 
 .thread-head-main { flex: 1; min-width: 0; }
@@ -3638,6 +3795,34 @@ body.reordering { cursor: grabbing; user-select: none; }
   gap: 6px;
   white-space: nowrap;
   overflow: hidden;
+}
+.thread-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thread-project-path {
+  display: block;
+  margin-top: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+@media (min-width: 768px) {
+  .thread-project-path {
+    margin-top: 3px;
+    font-size: 10.5px;
+  }
+  .thread-project-path::before {
+    content: "project · ";
+    color: var(--dim);
+  }
 }
 .title-edit { opacity: 0; }
 .thread-title:hover .title-edit { opacity: 1; }
@@ -3814,22 +3999,203 @@ span.title-agent-mark { width: 16px; height: 16px; }
   max-width: 620px;
   padding: 0 20px;
 }
-.feed-empty-logo {
-  display: block;
-  width: 46px;
-  height: 46px;
-  margin: 0 auto 14px;
-  object-fit: contain;
-}
-/* Light mode: fade the mark to read as a soft, muted grey; dark keeps it as-is. */
-:root[data-family="light"] .feed-empty-logo { opacity: 0.55; }
-.feed-empty p {
+.feed-empty p,
+.empty-work-on {
   margin: 0;
   font-size: 30px;
   font-weight: 600;
   line-height: 1.25;
   letter-spacing: -0.01em;
+}
+.feed-empty > p { color: var(--dim); }
+.empty-work-on {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex-direction: column;
+  color: var(--text);
+}
+.empty-work-on-prefix { color: var(--text); }
+.empty-project-picker {
+  position: relative;
+  display: inline-flex;
+  width: fit-content;
+  max-width: min(100%, 420px);
+  color: var(--faint);
+}
+.empty-project-trigger {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  gap: 5px;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+}
+.empty-project-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brass) 75%, transparent);
+  outline-offset: 5px;
+  border-radius: 3px;
+}
+.empty-project-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty-project-chevron {
+  flex: none;
+  transition: transform 140ms ease;
+}
+.empty-project-trigger[aria-expanded="true"] .empty-project-chevron {
+  transform: rotate(180deg);
+}
+.empty-project-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 10px);
+  left: 50%;
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(420px, calc(100vw - 40px));
+  max-height: min(320px, 36dvh);
+  overflow: auto;
+  padding: 5px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-2) 94%, var(--bg));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
+  animation: rise 0.14s ease-out;
+}
+.empty-project-option {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  border-radius: 6px;
   color: var(--dim);
+  font: 600 13px/1.3 var(--font-ui);
+  letter-spacing: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty-project-option:hover,
+.empty-project-option:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+.empty-project-option.selected {
+  color: var(--brass-hi);
+  background: color-mix(in srgb, var(--brass) 10%, transparent);
+}
+.empty-model-picker {
+  position: relative;
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 8px;
+}
+.empty-model-trigger {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  padding: 0;
+  color: var(--dim);
+  font: 500 12px/1.35 var(--font-ui);
+  letter-spacing: 0;
+}
+.empty-model-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brass) 75%, transparent);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.empty-model-using { color: var(--faint); }
+.empty-model-name {
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty-model-chevron {
+  flex: none;
+  color: var(--faint);
+  transition: transform 140ms ease;
+}
+.empty-model-trigger[aria-expanded="true"] .empty-model-chevron {
+  transform: rotate(180deg);
+}
+.empty-model-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 8px);
+  left: 50%;
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(340px, calc(100vw - 40px));
+  max-height: min(300px, 36dvh);
+  overflow: auto;
+  padding: 5px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-2) 94%, var(--bg));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
+  animation: rise 0.14s ease-out;
+}
+.empty-model-option {
+  display: grid;
+  grid-template-columns: 13px max-content minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  column-gap: 7px;
+  padding: 7px 9px;
+  overflow: hidden;
+  border-radius: 5px;
+  color: var(--dim);
+  font: 600 12px/1.3 var(--font-ui);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty-model-option-agent { color: inherit; }
+.empty-model-option-name {
+  overflow: hidden;
+  color: var(--faint);
+  text-align: right;
+  text-overflow: ellipsis;
+}
+.empty-model-option:hover,
+.empty-model-option:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+.empty-model-option.selected {
+  color: var(--brass-hi);
+  background: color-mix(in srgb, var(--brass) 10%, transparent);
+}
+
+/* Match the light family's floating menu surfaces: a clean white card with a
+   soft blue-grey lift, rather than a tinted panel that blends into the page. */
+:root[data-family="light"] .empty-project-menu,
+:root[data-family="light"] .empty-model-menu {
+  background: #fff;
+  border-color: transparent;
+  box-shadow:
+    0 22px 52px rgba(35, 50, 90, 0.14),
+    0 4px 12px rgba(35, 50, 90, 0.07);
 }
 
 .thread-scope-chip {
@@ -3851,37 +4217,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   border-color: color-mix(in srgb, var(--amber) 34%, var(--line));
   color: color-mix(in srgb, var(--amber) 76%, var(--dim));
   background: color-mix(in srgb, var(--amber) 8%, transparent);
-}
-
-.empty-quick-action {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 190px;
-  margin-top: 8px;
-  padding: 10px 14px;
-  border: 1px solid color-mix(in srgb, var(--brass) 38%, var(--line));
-  border-radius: 10px;
-  color: var(--brass-hi);
-  background:
-    linear-gradient(120deg, color-mix(in srgb, var(--brass) 10%, transparent), transparent 62%),
-    var(--panel-2);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
-  text-align: left;
-  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-}
-.empty-quick-action span {
-  font-size: 12px;
-  font-weight: 750;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-.empty-quick-action small { color: var(--faint); font-size: 10.5px; }
-.empty-quick-action:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--brass-hi) 58%, var(--line));
-  background: var(--brass-dim);
 }
 
 .working-row {
@@ -5390,8 +5725,9 @@ span.title-agent-mark { width: 16px; height: 16px; }
    before the prefs land (or with them cleared) looks exactly as it always did.
    Width is a cap on an otherwise 100%-wide box, so it centres itself. */
 .composer {
-  padding: 4px 20px calc(16px + var(--safe-b));
-  max-width: var(--composer-max-w, 900px);
+  /* Cozy uses the same 983px content-column cap as the conversation. */
+  padding: 4px 22px calc(16px + var(--safe-b));
+  max-width: var(--composer-max-w, 983px);
   width: 100%;
   margin: 0 auto;
 }
@@ -5410,6 +5746,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
    data-family blocks just below. */
 .composer-card {
   position: relative; /* anchor for the context-window popover */
+  z-index: 6; /* keep its popovers above the Present pill (z-index: 5) */
   /* No outline in dark either — a faint fill lift off the page keeps the card
      legible without a stroke. The light family overrides both below. */
   background: color-mix(in srgb, #ffffff 5%, var(--panel));
@@ -5450,6 +5787,92 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .composer-card textarea::placeholder { color: var(--faint); }
 
+.build-workspace-tray {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: -16px -18px 12px;
+  padding: 20px 30px 20px 32px;
+  border-radius: 27px 27px 14px 14px;
+  background:
+    linear-gradient(
+      112deg,
+      rgba(139, 120, 190, 0.18) 0%,
+      rgba(112, 145, 176, 0.13) 48%,
+      rgba(65, 165, 151, 0.17) 100%
+    ),
+    color-mix(in srgb, var(--text) 3%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, #91a9b7 16%, transparent);
+}
+.build-workspace-label {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.build-workspace-actions { display: flex; align-items: center; gap: 6px; }
+.build-workspace-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 6px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--dim);
+  font: 600 12px/1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+.build-workspace-button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 11%, transparent); }
+.build-workspace-button.primary { color: var(--text); background: var(--brass-dim); }
+.build-workspace-button:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+.build-workspace-picker { position: relative; }
+.build-workspace-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 0;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow:
+    0 22px 52px rgba(35, 50, 90, 0.18),
+    0 5px 14px rgba(35, 50, 90, 0.1);
+}
+.build-workspace-menu button {
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #20242d;
+  font: 500 12.5px/1.2 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.build-workspace-menu button:hover { background: rgba(35, 50, 90, 0.07); }
+.build-workspace-empty { padding: 10px; color: #747b88; font-size: 12px; }
+:root[data-family="light"] .build-workspace-tray {
+  background: linear-gradient(
+    112deg,
+    rgba(201, 189, 231, 0.48) 0%,
+    rgba(211, 224, 231, 0.42) 48%,
+    rgba(183, 224, 215, 0.5) 100%
+  );
+  border-bottom-color: rgba(96, 126, 139, 0.1);
+}
+
 /* Compact density: the same card with its vertical padding pulled in, handing
    the height back to the message feed. "comfortable" writes no rules at all, so
    it is the stylesheet above, unchanged. Only the vertical longhands are set:
@@ -5470,8 +5893,104 @@ span.title-agent-mark { width: 16px; height: 16px; }
 :root[data-composer-density="compact"] .composer-strip { padding-top: 6px; }
 
 /* Anchor for the dictation badge, which has to sit on the text box itself. */
-.composer-input { position: relative; }
+.composer-input {
+  position: relative;
+}
 
+/* Slash command guessing stays attached to the input, not the composer card:
+   the card can grow vertically with a draft, while this menu should always
+   feel like a small keyboard-first shelf just above the typing line. */
+.slash-pop {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  width: min(390px, calc(100vw - 28px));
+  transform: translateX(-50%);
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), 0 5px 14px rgba(0, 0, 0, 0.16);
+  animation: rise 0.14s ease-out;
+}
+.slash-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.slash-pop-mark {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--brass) 18%, transparent);
+  color: var(--brass-hi);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+.slash-pop-hint {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.slash-pop-list {
+  display: grid;
+  gap: 3px;
+  padding: 5px;
+}
+.slash-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 11px;
+  text-align: left;
+  color: var(--text);
+  transition: background 0.12s, color 0.12s;
+}
+.slash-option:hover,
+.slash-option.selected {
+  background: color-mix(in srgb, var(--brass) 12%, var(--panel-3));
+}
+.slash-option-name {
+  flex: none;
+  min-width: 72px;
+  color: var(--brass-hi);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.slash-option-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.slash-option-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.slash-option-detail {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Keep whatever is already typed from running underneath the badge: the words
    about to arrive land at the cursor, which is exactly where it sits. */
 .composer-input.busy textarea { padding-right: 124px; }
@@ -5902,24 +6421,31 @@ span.title-agent-mark { width: 16px; height: 16px; }
   background: color-mix(in srgb, var(--lane-color, var(--line)) 18%, transparent);
 }
 
-/* Attribution badge above an assistant message. Only rendered when the thread
-   actually has more than one lane. */
+/* Provider identity badge above every assistant message. */
 .speaker-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin-bottom: 6px;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  padding: 3px 9px 3px 5px;
+  border: 1px solid color-mix(in srgb, var(--lane-color, var(--line)) 38%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lane-color, var(--panel-2)) 10%, transparent);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
   color: var(--lane-color, var(--dim));
+  white-space: nowrap;
 }
-.speaker-chip::after {
-  content: "";
-  width: 18px;
-  height: 1px;
-  background: color-mix(in srgb, var(--lane-color, var(--line)) 45%, transparent);
+.speaker-chip-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--lane-color, var(--panel-2)) 17%, transparent);
 }
 
 /* A role brief, collapsed to a divider — the wall of instructions a reviewer
@@ -6151,7 +6677,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   background: color-mix(in srgb, var(--red) 18%, transparent);
   color: var(--red);
   border: none;
-  box-shadow: none;
+  box-shadow: none !important;
 }
 :root[data-family="light"] .send-btn.stop {
   background: color-mix(in srgb, var(--red) 16%, transparent);
@@ -6207,8 +6733,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .composer-options .seg { align-self: flex-start; }
 
 /* context-window ring gauge (ported from t3code's ContextWindowMeter) */
-/* The popover is anchored to .composer-card (which is position:relative), not
-   this tiny ring, so it always opens on-screen — even from a corner on mobile. */
+/* The popover is measured against the text-input anchor by ContextMeter, not
+   this tiny ring, so it stays centered over the place the user is typing. */
 .ctx-meter { align-self: center; display: flex; }
 .ctx-ring {
   display: flex;
@@ -6234,7 +6760,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
    hairline so the pill still reads against a near-black card). */
 .ctx-pop {
   position: absolute;
-  bottom: calc(100% + 12px); /* above the whole composer card */
+  bottom: calc(100% + 12px); /* fallback before the input anchor is measured */
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -6264,6 +6790,22 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-variant-numeric: tabular-nums;
 }
 .ctx-pop.over .ctx-pop-nums { color: var(--red); }
+.ctx-compact-btn {
+  flex: none;
+  padding: 4px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--dim);
+  font: 600 10.5px var(--font-ui);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ctx-compact-btn:hover {
+  border-color: color-mix(in srgb, var(--brass) 45%, transparent);
+  background: var(--brass-dim);
+  color: var(--brass-hi);
+}
 .ctx-bar {
   height: 6px;
   width: 100%;
@@ -7289,7 +7831,21 @@ span.title-agent-mark { width: 16px; height: 16px; }
   .hamburger { display: inline-flex; }
 
   .thread-head { padding: 10px 12px; }
+  .thread-head.quick-thread-head {
+    min-height: 92px;
+    align-items: flex-start;
+    padding-top: 52px;
+  }
+  .thread-pane:has(> .quick-thread-head) .feed-inner { padding-top: 108px; }
+  .quick-mode-tabs { top: 9px; }
   .thread-head .ws-toggles { display: flex; flex: none; gap: 2px; }
+  /* Keep the project location readable on phones too. Ordinary threads keep
+     it inside the title column; multi-lane threads promote it to a full-width
+     line so the lane strip still gets its own row below. */
+  .thread-head.has-lanes .thread-project-path {
+    order: 2;
+    flex: 0 0 100%;
+  }
   /* Two-row header on phones, ONLY for multi-lane threads: title + workspace
      actions up top; the lane roster (agent chip, Parley lane chips, timing)
      drops to its own horizontally scrolling strip so a full debate panel can
@@ -7434,6 +7990,18 @@ span.title-agent-mark { width: 16px; height: 16px; }
      from squeezing the box in the one place it must span the screen. */
   .composer { padding: 4px 8px calc(10px + var(--safe-b)); max-width: none; }
   .composer-card { border-radius: 24px; padding: 12px 14px 10px; }
+  .build-workspace-tray {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    margin: -12px -14px 10px;
+    padding: 18px 20px;
+    border-radius: 23px 23px 12px 12px;
+  }
+  .build-workspace-actions { width: 100%; }
+  .build-workspace-button { flex: 1; }
+  .build-workspace-picker { display: flex; flex: 1; }
+  .build-workspace-picker > .build-workspace-button { width: 100%; }
 
   /* Every setting lives in the plus menu now, so the bar stays one tidy row:
      [+]  …  [ctx] [mic] [send]. */
@@ -7480,8 +8048,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
     /* Vertical scrolling stays native; the row owns nothing horizontal. */
     touch-action: pan-y;
   }
-  /* Parked rows are history — denser still. */
-  .thread-row.slim { min-height: 34px; opacity: 0.72; }
+  /* Parked rows keep the regular row height so the list rhythm stays even. */
+  .thread-row.slim { min-height: 40px; opacity: 0.72; }
   /* A real 36px box rather than a 32px button with a 44px ::after overlay.
      The overlay version measured fine and hit-tested to the button, but the
      tap stopped reaching React's handler — not worth the 8px when the button
@@ -8140,6 +8708,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
   position: fixed;
   z-index: 220;
   min-width: 224px;
+  max-height: calc(100dvh - 8px);
+  overflow-y: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -8188,6 +8758,27 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   white-space: nowrap;
 }
 
+.ctx-section {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px 5px;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ctx-section svg { color: var(--brass); opacity: 0.8; flex: none; }
+.ctx-item.inset { padding-left: 30px; }
+.ctx-item.divided,
+.ctx-section.divided {
+  margin-top: 5px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
 .ctx-item {
   display: flex;
   align-items: center;
@@ -8207,6 +8798,15 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .ctx-item:hover { background: var(--panel-3); }
 .ctx-item.danger { color: var(--red); }
 .ctx-item.danger svg { color: var(--red); }
+
+.chat-folder-modal { width: 360px; }
+.chat-folder-field {
+  display: grid;
+  gap: 7px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.chat-folder-field .modal-input { width: 100%; }
 
 /* ===== light theme overrides =====
    Dark mode is unaffected: every rule below is scoped to
@@ -9248,6 +9848,17 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   filter: brightness(1.45);
   transition-duration: 0.05s;
   animation: none; /* hold the flash steady while slammed */
+}
+/* Stop is an interrupt control, not a pressable arcade plunger: keep its
+   generating-state red disc completely flat in every interaction state. */
+:root[data-theme="arcade"] .send-btn.stop,
+:root[data-theme="arcade"] .send-btn.stop:hover,
+:root[data-theme="arcade"] .send-btn.stop:active {
+  box-shadow: none !important;
+  filter: none;
+}
+:root[data-theme="arcade"] .send-btn.stop::after {
+  display: none;
 }
 /* Shockwave: a square ring that flares out from the cap on press. */
 :root[data-theme="arcade"] .send-btn:not(:disabled)::after {

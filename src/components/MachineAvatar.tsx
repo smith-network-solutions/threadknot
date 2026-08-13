@@ -40,13 +40,8 @@ export function machineLook(state: AppState, machineId: string | undefined): Mac
 }
 
 /** Round machine badge: image when set, else initials; ringed in the machine's
- *  accent color when one is chosen. Hovering pops the shared 4x preview badge
- *  (skipped automatically for plain initials-only looks).
- *
- *  `preview={false}` opts out where the badge is decoration beside a label that
- *  already names the thing: a 176px blow-up flung out of a 16px menu-row icon is
- *  noise, not information. The project rail keeps it, because there the tile is
- *  ALL there is and the enlarged image plus its name pill is how you read it. */
+ *  accent color when one is chosen. `preview={false}` opts out of the shared
+ *  hover card when the surrounding control already provides the identity. */
 export function MachineAvatar({
   image,
   color,

@@ -141,6 +141,20 @@
 }
 .head-pill:disabled { opacity: 0.45; cursor: default; }
 
+/* Desktop header actions are primary workspace controls, so give their labels
+   and glyphs enough room to read as a deliberate action rail. Phones keep the
+   compact header treatment below. */
+@media (min-width: 768px) {
+  .ws-toggles { gap: 8px; }
+  .head-pill {
+    gap: 8px;
+    min-height: 30px;
+    padding: 7px 14px;
+    font-size: 13.5px;
+  }
+  .head-pill svg { width: 17px; height: 17px; }
+}
+
 /* Desktop shows the pills (display:contents so they're flex items of
    .ws-toggles); the phone dropdown is hidden. Flipped at the header's phone
    breakpoint below. */

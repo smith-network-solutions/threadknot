@@ -60,12 +60,14 @@ import {
   useSidebarLayout,
   isNonDefaultLayout,
   SIDEBAR_WIDTH_DEFAULT,
+  type ChatFolder,
   type SidebarLayout,
 } from "../lib/sidebarLayout";
 import {
   AgentMark,
   ArchiveIcon,
   BellIcon,
+  BrainIcon,
   CheckIcon,
   ChevronIcon,
   ClockIcon,
@@ -307,11 +309,19 @@ function SettledShelf({
   threads,
   forceOpen,
   view,
+  folders = [],
+  folderAssignments = {},
+  onMoveToFolder,
+  onAddFolder,
 }: {
   threads: Thread[];
   forceOpen: boolean;
   /** Sidebar presentation, forwarded to each shelf row. */
   view: SidebarLayout["view"];
+  folders?: ChatFolder[];
+  folderAssignments?: Record<string, string>;
+  onMoveToFolder?: (threadId: string, folderId?: string) => void;
+  onAddFolder?: (threadId: string) => void;
 }) {
   const { state } = useStore();
   const [open, setOpen] = useState(false);
@@ -329,6 +339,7 @@ function SettledShelf({
           onClick={() => setOpen((v) => !v)}
         >
           <ChevronIcon size={11} open={open} className="row-chevron" />
+          <FolderIcon size={13} className="settled-shelf-icon" />
           <span className="settled-shelf-label">settled</span>
           <span className="settled-shelf-count">{threads.length}</span>
         </button>
@@ -341,6 +352,10 @@ function SettledShelf({
           view={view}
           settled
           lit={forceOpen}
+          folders={folders}
+          folderId={folderAssignments[t.id]}
+          onMoveToFolder={onMoveToFolder}
+          onAddFolder={onAddFolder}
         />
       ))}
       {open && hidden > 0 && !forceOpen && (
@@ -449,11 +464,9 @@ function QuickChatsSection({
   );
 }
 
-/** The project rail: every project as an avatar down the left edge, the
- *  selected one filling the rest of the sidebar. Switching costs one tap with
- *  no menu, and — unlike the dropdown picker — the projects you are NOT in
- *  stay on screen, so an unread badge on a project you had forgotten about is
- *  still visible. */
+/** The project rail: a compact project index down the left edge. The selected
+ *  project fills the rest of the sidebar, while every other project remains
+ *  visible so unread work is never hidden behind a picker. */
 /** The one project-level status light, shared by every layout so "working"
  *  and "needs you" never mean different things in different modes.
  *
@@ -655,20 +668,15 @@ function ProjectRail({
           >
             {/* The edge pill: grows on hover, full height when open. */}
             <span className="rail-pip" aria-hidden />
-            {/* The PROJECT's identity, not the machine's: `.project-head`
-                can lean on the machine badge because the name sits beside
-                it, but here the badge is all there is.
-
-                Which is exactly why the rail opts back INTO the shared hover
-                preview instead of suppressing it: at 38px with no label, seeing
-                the image big and reading the name is the whole point of
-                hovering a tile. The portaled badge does both, and it escapes
-                the rail's scroll clip on its own. */}
+            {/* The project marker is intentionally quiet in the rail. The
+                native title and accessible label carry the full name; the
+                rail should not turn a navigation marker into a profile card. */}
             <MachineAvatar
               image={w.image}
               color={projectAccent(w.id)}
               name={w.name}
-              size={38}
+              size={34}
+              preview={false}
             />
             {/* The ring rides OUTSIDE the avatar so an image-backed project
                 shows it as clearly as an initials one.
@@ -782,6 +790,80 @@ function PickerRenameInput({
   );
 }
 
+/** Small, focused naming step opened from the workspace switcher. Folder
+ * creation is organizational only, so it belongs beside that switcher rather
+ * than in the filesystem-oriented project picker. */
+function ChatFolderDialog({
+  folders,
+  onClose,
+  onCreate,
+}: {
+  folders: ChatFolder[];
+  onClose: () => void;
+  onCreate: (name: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+
+  function submit() {
+    const next = name.trim();
+    if (!next) {
+      setError("Enter a folder name.");
+      return;
+    }
+    if (folders.some((folder) => folder.name.toLowerCase() === next.toLowerCase())) {
+      setError("A folder with that name already exists.");
+      return;
+    }
+    onCreate(next);
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal chat-folder-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="chat-folder-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-head">
+          <span id="chat-folder-title">Add chat folder</span>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
+            <XIcon size={14} />
+          </button>
+        </div>
+        <label className="chat-folder-field">
+          <span>Folder name</span>
+          <input
+            className="modal-input"
+            autoFocus
+            value={name}
+            placeholder="e.g. Client work"
+            onChange={(event) => {
+              setName(event.target.value);
+              setError("");
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submit();
+              else if (event.key === "Escape") onClose();
+            }}
+          />
+        </label>
+        {error && <div className="modal-error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="settings-toggle" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="settings-toggle on" onClick={submit}>
+            Add folder
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Which list the sidebar shows: the workspace fleet, or the dedicated
  *  Hermes-agents view. Persisted so the choice survives restarts. */
 type SidebarView = "fleet" | "agents" | "quick";
@@ -849,6 +931,10 @@ function ThreadRow({
   lit = false,
   nested = false,
   view,
+  folders = [],
+  folderId,
+  onMoveToFolder,
+  onAddFolder,
 }: {
   thread: Thread;
   active: boolean;
@@ -864,6 +950,12 @@ function ThreadRow({
   /** Which sidebar presentation to render. Threaded down from the layout hook
    *  (a fresh useSidebarLayout() here would be a second, out-of-sync copy). */
   view: SidebarLayout["view"];
+  /** Chat folders belonging to this thread's workspace. Omitted for Quick
+   *  Threads, Hermes chats, and dispatched workers. */
+  folders?: ChatFolder[];
+  folderId?: string;
+  onMoveToFolder?: (threadId: string, folderId?: string) => void;
+  onAddFolder?: (threadId: string) => void;
 }) {
   const { state, dispatch, actions } = useStore();
   // One modifier appended to every variant's className, the same way `.slim`
@@ -918,6 +1010,7 @@ function ThreadRow({
     null,
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [choosingFolder, setChoosingFolder] = useState(false);
   // Settling is one hover-height away from the star and the kebab, so the tick
   // asks before it parks: a small anchored "are you sure?" instead of acting
   // on the first click. Bringing a chat BACK stays one click (that direction
@@ -960,6 +1053,7 @@ function ThreadRow({
   function closeMenu() {
     setMenuAnchor(null);
     setConfirmDelete(false);
+    setChoosingFolder(false);
     // The press has been consumed by the menu it opened, so the click guard
     // has no ghost left to swallow. Disarming here is what stops it eating
     // the user's NEXT tap — typically the settle tick on this very row,
@@ -1326,6 +1420,64 @@ function ThreadRow({
             style={{ top: menuPos.top, left: menuPos.left }}
             onClick={(e) => e.stopPropagation()}
           >
+            {choosingFolder ? (
+              <>
+                <div className="thread-menu-title">Move to folder</div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="thread-menu-item"
+                  onClick={() => {
+                    closeMenu();
+                    onMoveToFolder?.(thread.id);
+                  }}
+                >
+                  {!folderId ? <CheckIcon size={16} /> : <FolderIcon size={16} />}
+                  <span>No folder</span>
+                </button>
+                {folders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    role="menuitem"
+                    className="thread-menu-item"
+                    onClick={() => {
+                      closeMenu();
+                      onMoveToFolder?.(thread.id, folder.id);
+                    }}
+                  >
+                    {folderId === folder.id ? (
+                      <CheckIcon size={16} />
+                    ) : (
+                      <FolderIcon size={16} />
+                    )}
+                    <span>{folder.name}</span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="thread-menu-item divided"
+                  onClick={() => {
+                    closeMenu();
+                    onAddFolder?.(thread.id);
+                  }}
+                >
+                  <FolderPlusIcon size={16} />
+                  <span>New folder…</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="thread-menu-item"
+                  onClick={() => setChoosingFolder(false)}
+                >
+                  <UndoIcon size={16} />
+                  <span>Back</span>
+                </button>
+              </>
+            ) : (
+              <>
             <button
               type="button"
               role="menuitem"
@@ -1367,6 +1519,20 @@ function ThreadRow({
               <PencilIcon size={16} />
               <span>Rename</span>
             </button>
+            {onMoveToFolder && (
+              <button
+                type="button"
+                role="menuitem"
+                className="thread-menu-item"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  setChoosingFolder(true);
+                }}
+              >
+                <FolderIcon size={16} />
+                <span>Move to folder…</span>
+              </button>
+            )}
             <button
               type="button"
               role="menuitem"
@@ -1395,6 +1561,8 @@ function ThreadRow({
               <TrashIcon size={16} />
               <span>{confirmDelete ? "Delete permanently?" : "Delete"}</span>
             </button>
+              </>
+            )}
           </div>,
           document.body,
         )
@@ -1553,6 +1721,10 @@ function WorkspaceSection({
   onRenameDone,
   onMenu,
   onNewThread,
+  chatFolders,
+  chatFolderAssignments,
+  onMoveChatToFolder,
+  onAddChatFolder,
 }: {
   workspace: Workspace;
   /** First locally-present member project — target for pop-out and removal.
@@ -1597,6 +1769,10 @@ function WorkspaceSection({
   /** New-thread entry point; the parent shows a machine→root picker when
    *  the workspace has several roots. */
   onNewThread: (e: React.MouseEvent) => void;
+  chatFolders: ChatFolder[];
+  chatFolderAssignments: Record<string, string>;
+  onMoveChatToFolder: (threadId: string, folderId?: string) => void;
+  onAddChatFolder: (threadId?: string) => void;
 }) {
   const { state, dispatch, actions } = useStore();
   const [visibleThreadCount, setVisibleThreadCount] = useState(pageSize);
@@ -1658,6 +1834,11 @@ function WorkspaceSection({
           isRecentlyKeptActive(t, now),
       );
   const remaining = active.length - shown.length;
+  const chatFolderIds = new Set(chatFolders.map((folder) => folder.id));
+  const rootShown = shown.filter((thread) => {
+    const assigned = chatFolderAssignments[thread.id];
+    return !assigned || !chatFolderIds.has(assigned);
+  });
   const attentionCount = threads.filter((thread) =>
     threadNeedsAttention(state, thread),
   ).length;
@@ -1760,6 +1941,7 @@ function WorkspaceSection({
             {...headerHover.hoverProps}
           >
             <ChevronIcon size={12} open={open} className="row-chevron" />
+            <FolderIcon size={13} className="project-folder-icon" />
             <span className="project-name">{workspace.name}</span>
             {workspace.favorite && (
               <StarIcon size={11} filled className="project-fav-star" />
@@ -1818,12 +2000,15 @@ function WorkspaceSection({
               {forceOpen ? "no matches" : "no threads yet"}
             </div>
           )}
-          {shown.map((t) => (
+          {rootShown.map((t) => (
             <Fragment key={t.id}>
               <ThreadRow
                 thread={t}
                 active={state.activeThreadId === t.id}
                 view={view}
+                folders={chatFolders}
+                onMoveToFolder={onMoveChatToFolder}
+                onAddFolder={(threadId) => onAddChatFolder(threadId)}
               />
               <DispatchWorkers
                 workers={workersOf.get(t.id) ?? []}
@@ -1832,6 +2017,58 @@ function WorkspaceSection({
               />
             </Fragment>
           ))}
+          {chatFolders.map((folder) => {
+            const folderThreads = shown.filter(
+              (thread) => chatFolderAssignments[thread.id] === folder.id,
+            );
+            const total = active.filter(
+              (thread) => chatFolderAssignments[thread.id] === folder.id,
+            ).length;
+            const collapseKey = `chat-folder:${folder.id}`;
+            const folderOpen = forceOpen || !state.collapsed[collapseKey];
+            return (
+              <div className="chat-folder" key={folder.id}>
+                <button
+                  type="button"
+                  className="chat-folder-head"
+                  aria-expanded={folderOpen}
+                  onClick={() =>
+                    dispatch({ type: "toggleProject", projectId: collapseKey })
+                  }
+                >
+                  <ChevronIcon size={11} open={folderOpen} className="row-chevron" />
+                  <FolderIcon size={13} />
+                  <span>{folder.name}</span>
+                  <small>{total}</small>
+                </button>
+                {folderOpen && (
+                  <div className="chat-folder-threads">
+                    {folderThreads.length === 0 && total === 0 && (
+                      <div className="chat-folder-empty">empty</div>
+                    )}
+                    {folderThreads.map((thread) => (
+                      <Fragment key={thread.id}>
+                        <ThreadRow
+                          thread={thread}
+                          active={state.activeThreadId === thread.id}
+                          view={view}
+                          folders={chatFolders}
+                          folderId={folder.id}
+                          onMoveToFolder={onMoveChatToFolder}
+                          onAddFolder={(threadId) => onAddChatFolder(threadId)}
+                        />
+                        <DispatchWorkers
+                          workers={workersOf.get(thread.id) ?? []}
+                          forceOpen={forceOpen}
+                          view={view}
+                        />
+                      </Fragment>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {remaining > 0 && (
             <button
               className="load-more-threads"
@@ -1849,7 +2086,15 @@ function WorkspaceSection({
               costs one row of sidebar instead of N. Hidden entirely when
               nothing is parked, and skipped while searching (the matches are
               already flattened into the list above). */}
-          <SettledShelf threads={settled} forceOpen={forceOpen} view={view} />
+          <SettledShelf
+            threads={settled}
+            forceOpen={forceOpen}
+            view={view}
+            folders={chatFolders}
+            folderAssignments={chatFolderAssignments}
+            onMoveToFolder={onMoveChatToFolder}
+            onAddFolder={(threadId) => onAddChatFolder(threadId)}
+          />
         </div>
       )}
     </div>
@@ -2860,6 +3105,21 @@ export function Sidebar({
   const openProjectId = state.activeThreadId
     ? findThread(state, state.activeThreadId)?.projectId
     : state.draft?.projectId;
+  // Quick Threads is already the place for starting a folderless chat. Keep a
+  // draft ready whenever that destination has no quick thread selected, so the
+  // pane opens on the composer instead of asking for a second "new thread"
+  // click. A layout effect prevents the redundant empty pane from flashing
+  // while switching destinations; the machine id dependency retries after the
+  // initial hello handshake if Quick Threads was restored on launch.
+  useLayoutEffect(() => {
+    if (
+      !quickView ||
+      (openProjectId !== undefined && isQuickHomeProjectId(openProjectId))
+    ) {
+      return;
+    }
+    actions.openQuickDraft();
+  }, [actions, openProjectId, quickView, state.hello?.machineId]);
   useEffect(() => {
     if (soloId || !isQuickHomeProjectId(openProjectId) || view === "quick") return;
     setView("quick");
@@ -3164,9 +3424,37 @@ export function Sidebar({
   // opening Threadknot lands you where you were working, not on an arbitrary one.
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [pickerMenu, setPickerMenu] = useState<MenuPoint | null>(null);
+  const [folderDialog, setFolderDialog] = useState<{
+    workspaceId: string;
+    moveThreadId?: string;
+  } | null>(null);
+  const [organizingChats, setOrganizingChats] = useState(false);
   /** Where the rail's stash tile was clicked; non-null renders the bring-back
    *  menu. Portaled from here with the sidebar's other menus. */
   const [stashMenu, setStashMenu] = useState<MenuPoint | null>(null);
+
+  const moveChatToFolder = useCallback(
+    (threadId: string, folderId?: string) => {
+      const next = { ...layout.chatFolderAssignments };
+      if (folderId) next[threadId] = folderId;
+      else delete next[threadId];
+      updateLayout({ chatFolderAssignments: next });
+    },
+    [layout.chatFolderAssignments, updateLayout],
+  );
+
+  const createChatFolder = useCallback(
+    (name: string, workspaceId: string, moveThreadId?: string) => {
+      const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const chatFolders = [...layout.chatFolders, { id, workspaceId, name }];
+      const chatFolderAssignments = moveThreadId
+        ? { ...layout.chatFolderAssignments, [moveThreadId]: id }
+        : layout.chatFolderAssignments;
+      updateLayout({ chatFolders, chatFolderAssignments });
+      setFolderDialog(null);
+    },
+    [layout.chatFolderAssignments, layout.chatFolders, updateLayout],
+  );
   const activeWorkspaceId = useMemo(() => {
     const active = state.activeThreadId
       ? findThread(state, state.activeThreadId)
@@ -3201,6 +3489,34 @@ export function Sidebar({
     () => new Map([...sectionData].map(([id, d]) => [id, d.threads])),
     [sectionData],
   );
+
+  // The center-screen new-thread empty state is not a destination. Whenever a
+  // workspace is the selected destination but no chat or draft is open, put a
+  // draft for that workspace in the pane immediately. Prefer this machine's
+  // root, then any reachable root; if the workspace only exists on an offline
+  // peer, leave navigation alone until that peer can actually host the draft.
+  useLayoutEffect(() => {
+    if (
+      quickView ||
+      agentsView ||
+      state.activeThreadId ||
+      state.draft ||
+      !shownWorkspaceId
+    ) {
+      return;
+    }
+    const members = sectionData.get(shownWorkspaceId)?.members ?? [];
+    const target = members.find((member) => member.isLocal) ?? members.find((member) => member.online);
+    if (target) actions.openDraft(target.projectId, target.machineId || undefined);
+  }, [
+    actions,
+    agentsView,
+    quickView,
+    sectionData,
+    shownWorkspaceId,
+    state.activeThreadId,
+    state.draft,
+  ]);
 
   /** Tapping a project on the rail switches to it AND opens something in it.
    *  Switching the list alone left the previous project's chat filling the
@@ -3293,6 +3609,63 @@ export function Sidebar({
     }
     const r = e.currentTarget.getBoundingClientRect();
     startNewThread(wsId, { x: r.left, y: r.bottom + 4 });
+  }
+
+  async function organizeProjectChats() {
+    if (organizingChats) return;
+    const workspaces = sections
+      .map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        chats: (sectionData.get(workspace.id)?.threads ?? [])
+          // Workers stay nested under the chat that dispatched them; filing
+          // them independently would split one unit of work across folders.
+          .filter((thread) => !thread.dispatch)
+          .map((thread) => ({
+            id: thread.id,
+            title: thread.title || "Untitled thread",
+          })),
+      }))
+      .filter((workspace) => workspace.chats.length > 0);
+    if (workspaces.length === 0) {
+      window.alert("There are no project chats to organize yet.");
+      return;
+    }
+
+    setOrganizingChats(true);
+    try {
+      const organized = await actions.organizeChats(workspaces);
+      const organizedWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+      const organizedThreadIds = new Set(
+        workspaces.flatMap((workspace) => workspace.chats.map((chat) => chat.id)),
+      );
+      const retainedFolders = layout.chatFolders.filter(
+        (folder) => !organizedWorkspaceIds.has(folder.workspaceId),
+      );
+      const nextFolders: ChatFolder[] = [];
+      const nextAssignments = Object.fromEntries(
+        Object.entries(layout.chatFolderAssignments).filter(
+          ([threadId]) => !organizedThreadIds.has(threadId),
+        ),
+      );
+      for (const folder of organized) {
+        const id = `folder-${Date.now()}-${nextFolders.length}-${Math.random()
+          .toString(36)
+          .slice(2, 7)}`;
+        nextFolders.push({ id, workspaceId: folder.workspaceId, name: folder.name });
+        for (const threadId of folder.threadIds) nextAssignments[threadId] = id;
+      }
+      updateLayout({
+        chatFolders: [...retainedFolders, ...nextFolders],
+        chatFolderAssignments: nextAssignments,
+      });
+    } catch (error) {
+      window.alert(
+        `Could not organize chats: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setOrganizingChats(false);
+    }
   }
 
   return (
@@ -3404,14 +3777,26 @@ export function Sidebar({
           </button>
         )}
         {!soloId && !quickView && (
-          <button
-            type="button"
-            className="sidebar-action"
-            onClick={() => switchView("quick")}
-          >
-            <CompassIcon size={18} />
-            <span>Quick threads</span>
-          </button>
+          <>
+            <button
+              type="button"
+              className="sidebar-action"
+              onClick={() => switchView("quick")}
+            >
+              <CompassIcon size={18} />
+              <span>Quick threads</span>
+            </button>
+            <button
+              type="button"
+              className="sidebar-action"
+              disabled={organizingChats}
+              title="Organize project chats with gpt-5.3-codex-spark (medium reasoning)"
+              onClick={() => void organizeProjectChats()}
+            >
+              <BrainIcon size={18} />
+              <span>{organizingChats ? "Organizing chats…" : "AI Organize Chats"}</span>
+            </button>
+          </>
         )}
         {showHermesAgents() && !soloId && !agentsView && (
           <button
@@ -3557,16 +3942,28 @@ export function Sidebar({
             y={pickerMenu.y}
             title="Switch workspace"
             onClose={() => setPickerMenu(null)}
-            items={visibleWorkspaces.map((w) => ({
-              label: w.name,
-              icon:
-                w.id === pickedWorkspace?.id ? (
-                  <CheckIcon size={15} />
-                ) : (
-                  <FolderIcon size={15} />
-                ),
-              onSelect: () => setPickedId(w.id),
-            }))}
+            items={[
+              ...visibleWorkspaces.map((workspace) => ({
+                label: workspace.name,
+                icon:
+                  workspace.id === pickedWorkspace?.id ? (
+                    <CheckIcon size={15} />
+                  ) : (
+                    <FolderIcon size={15} />
+                  ),
+                onSelect: () => setPickedId(workspace.id),
+              })),
+              ...(pickedWorkspace
+                ? [
+                    {
+                      label: "Add folder",
+                      icon: <FolderPlusIcon size={15} />,
+                      dividerBefore: true,
+                      onSelect: () => setFolderDialog({ workspaceId: pickedWorkspace.id }),
+                    },
+                  ]
+                : []),
+            ]}
           />
         )}
         {!quickView && !agentsView &&
@@ -3628,6 +4025,14 @@ export function Sidebar({
                 forceOpen={!!filter}
                 renaming={renamingId === w.id}
                 onRenameDone={() => setRenamingId(null)}
+                chatFolders={layout.chatFolders.filter(
+                  (folder) => folder.workspaceId === w.id,
+                )}
+                chatFolderAssignments={layout.chatFolderAssignments}
+                onMoveChatToFolder={moveChatToFolder}
+                onAddChatFolder={(threadId) =>
+                  setFolderDialog({ workspaceId: w.id, moveThreadId: threadId })
+                }
                 onMenu={(point, workspace) =>
                   setMenu({
                     x: point.x,
@@ -3807,9 +4212,25 @@ export function Sidebar({
         />
       )}
 
+      {folderDialog && (
+        <ChatFolderDialog
+          folders={layout.chatFolders.filter(
+            (folder) => folder.workspaceId === folderDialog.workspaceId,
+          )}
+          onClose={() => setFolderDialog(null)}
+          onCreate={(name) =>
+            createChatFolder(
+              name,
+              folderDialog.workspaceId,
+              folderDialog.moveThreadId,
+            )
+          }
+        />
+      )}
+
       {/* The rail's stash, opened from the tile at the foot of the column.
-          Every hidden project by name and avatar — the rail is avatars-only, so
-          a list that says what each one IS is the whole point of the menu —
+          The menu restores the names that the compact rail intentionally keeps
+          out of its resting state,
           and one click both unhides it and takes you there. The trailing
           "unhide all" only appears when there is more than one to save, since
           for a single project it would just duplicate the row above it. */}

@@ -431,6 +431,11 @@ function makeActions(
       });
     },
 
+    async organizeChats(workspaces) {
+      const result = await client.request("thread.organize", { workspaces });
+      return result.folders;
+    },
+
     // Browser logins belong to the machine whose Chrome holds the session, so
     // every one of these takes the machine it applies to; omitted means here.
     async listBrowserProfiles(machineId?: string) {
@@ -1924,6 +1929,14 @@ export default function App() {
       setPicker({ machineId: isLocal ? undefined : mc.machineId, label: mc.label });
     }
   }
+
+  useEffect(() => {
+    function onCreateWorkspace() {
+      void onAddProject();
+    }
+    window.addEventListener("threadknot:create-workspace", onCreateWorkspace);
+    return () => window.removeEventListener("threadknot:create-workspace", onCreateWorkspace);
+  });
 
   // Before the shell, not inside it: an unpaired browser has no session, so
   // every pane behind this would render empty and every request would 401. One

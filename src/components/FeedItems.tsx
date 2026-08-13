@@ -42,20 +42,25 @@ import {
 
 import { AGENT_LABELS as AGENT_NAMES, threadParticipant, threadParticipants } from "../lib/protocol";
 
-/**
- * The lane badge on an attributed message. Renders only when the thread
- * actually has more than one participant, so an ordinary single-agent chat
- * looks exactly as it did before Parley.
- */
+/** The provider identity badge on every assistant message. */
 function SpeakerChip({ speaker }: { speaker?: string }) {
   const { state } = useStore();
   const thread = state.feedThreadId ? findThread(state, state.feedThreadId) : undefined;
-  if (!speaker || !thread || threadParticipants(thread).length < 2) return null;
-  const lane = threadParticipant(thread, speaker);
+  if (!thread) return null;
+  // New events carry their lane id. Older single-agent logs do not, so use the
+  // synthesized builder lane as a safe fallback for those messages.
+  const lane = threadParticipant(thread, speaker) ??
+    (!speaker ? threadParticipants(thread)[0] : undefined);
   if (!lane) return null;
   return (
-    <span className="speaker-chip" style={{ ["--lane-color" as string]: lane.color }}>
-      <AgentMark agent={lane.agent} size={11} />
+    <span
+      className="speaker-chip"
+      style={{ ["--lane-color" as string]: lane.color }}
+      aria-label={`${lane.name} agent`}
+    >
+      <span className="speaker-chip-mark">
+        <AgentMark agent={lane.agent} size={12} />
+      </span>
       {lane.name}
     </span>
   );

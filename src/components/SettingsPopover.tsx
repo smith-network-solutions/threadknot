@@ -223,7 +223,7 @@ function SidebarSettings() {
 }
 
 const COMPOSER_WIDTH_HINTS: Record<ComposerWidth, string> = {
-  cozy: "A 900px column down the middle of the pane: the width Threadknot has always used.",
+  cozy: "A 983px column aligned to the conversation's content limit.",
   wide: "A roomier 1040px column, so long prompts wrap less often.",
   full: "Edge to edge: the box takes whatever width the pane has.",
 };

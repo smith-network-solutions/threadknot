@@ -2933,6 +2933,7 @@ pub async fn handle_request(
             Ok(json!({}))
         }
         "workspace.list" => Ok(json!({ "workspaces": store.list_workspaces() })),
+        "thread.organize" => crate::agents::organize::organize_chats(&p).await,
         "workspace.rename" => {
             let ws = store.rename_workspace(
                 field(&p, "workspaceId")?,

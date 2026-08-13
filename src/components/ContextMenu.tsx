@@ -13,6 +13,12 @@ export interface CtxItem {
   icon?: ReactNode;
   danger?: boolean;
   disabled?: boolean;
+  /** Non-interactive label used to group related menu items. */
+  kind?: "item" | "heading";
+  /** Visually nests an item beneath the heading above it. */
+  inset?: boolean;
+  /** Starts a new command group without introducing another heading. */
+  dividerBefore?: boolean;
   onSelect: () => void;
 }
 
@@ -133,23 +139,33 @@ export function ContextMenu({
       onKeyDown={onKeyDown}
     >
       {title && <div className="ctx-title">{title}</div>}
-      {items.map((it) => (
-        <button
-          key={it.label}
-          type="button"
-          role="menuitem"
-          tabIndex={-1}
-          className={`ctx-item${it.danger ? " danger" : ""}`}
-          disabled={it.disabled}
-          onClick={() => {
-            onClose();
-            it.onSelect();
-          }}
-        >
-          {it.icon}
-          <span>{it.label}</span>
-        </button>
-      ))}
+      {items.map((it, index) =>
+        it.kind === "heading" ? (
+          <div
+            key={`heading:${it.label}:${index}`}
+            className={`ctx-section${it.dividerBefore ? " divided" : ""}`}
+          >
+            {it.icon}
+            <span>{it.label}</span>
+          </div>
+        ) : (
+          <button
+            key={`item:${it.label}:${index}`}
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className={`ctx-item${it.danger ? " danger" : ""}${it.inset ? " inset" : ""}${it.dividerBefore ? " divided" : ""}`}
+            disabled={it.disabled}
+            onClick={() => {
+              onClose();
+              it.onSelect();
+            }}
+          >
+            {it.icon}
+            <span>{it.label}</span>
+          </button>
+        ),
+      )}
     </div>,
     document.body,
   );

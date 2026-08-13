@@ -5,6 +5,7 @@ pub mod codex;
 pub mod content;
 pub mod hermes;
 pub mod kimi;
+pub mod organize;
 pub mod repair;
 mod title;
 pub mod transcript;

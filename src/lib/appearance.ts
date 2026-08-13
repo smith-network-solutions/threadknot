@@ -137,9 +137,9 @@ export interface TermPrefs {
   fontFamily: string;
 }
 
-/** How wide the composer box is allowed to grow inside its pane. "cozy" is the
- *  900px cap Threadknot has always had, "wide" gives long prompts more room, and
- *  "full" lets it span the pane edge to edge. */
+/** How wide the composer box is allowed to grow inside its pane. "cozy" matches
+ *  the conversation's 983px content column, "wide" gives long prompts more
+ *  room, and "full" lets it span the pane edge to edge. */
 export type ComposerWidth = "cozy" | "wide" | "full";
 /** Vertical breathing room in the composer card. "comfortable" is the shipped
  *  padding; "compact" tightens it so the message feed keeps more height. */
@@ -375,11 +375,10 @@ export const SCROLLBACK_MAX = 50000;
 export const CFONT_MIN = 12;
 export const CFONT_MAX = 20;
 
-/** What each width preset writes into --composer-max-w. "cozy" is the exact
- *  900px .composer has always carried, so the default preserves today's layout;
- *  "full" is a no-op cap against the pane's own width. */
+/** What each width preset writes into --composer-max-w. Cozy matches the feed's
+ *  983px content-column cap; "full" is a no-op cap against the pane's width. */
 const COMPOSER_MAX_W: Record<ComposerWidth, string> = {
-  cozy: "900px",
+  cozy: "983px",
   wide: "1040px",
   full: "100%",
 };
@@ -437,8 +436,8 @@ const T_DEFAULT: TermPrefs = {
 };
 /** Nothing disabled: pick a skin and you get all of it until you say otherwise. */
 const K_DEFAULT: SkinPrefs = { off: [] };
-// Exactly what styles.css ships: .composer's 900px cap, the textarea's 16px,
-// and the card's original paddings. Nobody's composer moves on update.
+// Exactly what styles.css ships: the cozy 983px content cap, the textarea's
+// 16px size, and the card's original paddings. Nobody's composer moves on update.
 const C_DEFAULT: ComposerPrefs = {
   width: "cozy",
   fontSize: 16,
@@ -827,7 +826,7 @@ export function getComposerPrefs(): ComposerPrefs {
 /** Push the composer size knobs onto :root. The two measurements ride CSS vars
  *  (.composer / .composer-card textarea read them) and density rides a data
  *  attribute, so every composer instance follows without a React subscription.
- *  At the defaults this writes 900px / 16px / "comfortable". */
+ *  At the defaults this writes 983px / 16px / "comfortable". */
 export function applyComposerPrefs(c: ComposerPrefs = getComposerPrefs()): void {
   const root = document.documentElement;
   root.style.setProperty("--composer-max-w", COMPOSER_MAX_W[c.width]);

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Access,
   Agent,
@@ -11,7 +11,7 @@ import type {
 } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
-import { effortForModel, useStore } from "../state/store";
+import { effortForModel, resolveProjectView, useStore } from "../state/store";
 import type { FeedItem } from "../state/feed";
 import {
   AgentMark,
@@ -621,6 +621,47 @@ function useIsMobile(): boolean {
  */
 type MicState = "idle" | "starting" | "recording" | "transcribing";
 
+interface SlashCommand {
+  name: string;
+  label: string;
+  detail: string;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  {
+    name: "/btw",
+    label: "Add a note",
+    detail: "Add context without interrupting the current turn",
+  },
+  {
+    name: "/compact",
+    label: "Compact context",
+    detail: "Summarize the conversation to make room for more work",
+  },
+  {
+    name: "/cost",
+    label: "Show cost",
+    detail: "Show the current session usage",
+  },
+  {
+    name: "/help",
+    label: "Show help",
+    detail: "See the available agent commands",
+  },
+];
+
+function slashContextAt(
+  value: string,
+  cursor: number,
+): { start: number; query: string } | null {
+  const beforeCursor = value.slice(0, cursor);
+  const match = beforeCursor.match(/(?:^|\s)(\/[^\s]*)$/);
+  if (!match) return null;
+  const token = match[1];
+  if (!/^\/[a-z0-9_-]*$/i.test(token)) return null;
+  return { start: cursor - token.length, query: token.slice(1).toLowerCase() };
+}
+
 /** Matches the server's own cap; stop before it so the UI never hangs waiting. */
 const MAX_DICTATION_SECONDS = 120;
 
@@ -634,9 +675,110 @@ const attachDrafts = new Map<string, DraftAttachment[]>();
 
 interface ComposerProps {
   thread: Thread | null; // null when composing a brand-new thread
+  quickMode?: "chat" | "build";
 }
 
-export function Composer({ thread }: ComposerProps) {
+const CREATE_WORKSPACE_EVENT = "threadknot:create-workspace";
+
+function BuildWorkspaceTray() {
+  const { state, actions } = useStore();
+  const [open, setOpen] = useState(false);
+  const trayRef = useRef<HTMLDivElement>(null);
+  const choices = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string; machineId?: string }>();
+
+    for (const project of state.projects) {
+      if (!isQuickHomeProjectId(project.id) && project.id !== HERMES_HOME_PROJECT_ID) {
+        byId.set(project.id, { id: project.id, name: project.name });
+      }
+    }
+    for (const workspace of state.workspaces) {
+      for (const member of workspace.members) {
+        const view = resolveProjectView(state, member.projectId);
+        if (
+          view &&
+          !byId.has(view.project.id) &&
+          !isQuickHomeProjectId(view.project.id) &&
+          view.project.id !== HERMES_HOME_PROJECT_ID
+        ) {
+          byId.set(view.project.id, {
+            id: view.project.id,
+            name: view.project.name,
+            machineId: view.machineId,
+          });
+        }
+      }
+    }
+    return [...byId.values()];
+  }, [state]);
+
+  useEffect(() => {
+    if (!open) return;
+    function closeOnOutside(event: PointerEvent) {
+      if (!trayRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="build-workspace-tray" ref={trayRef}>
+      <span className="build-workspace-label">Build in a workspace</span>
+      <div className="build-workspace-actions">
+        <button
+          type="button"
+          className="build-workspace-button primary"
+          onClick={() => window.dispatchEvent(new Event(CREATE_WORKSPACE_EVENT))}
+        >
+          <PlusIcon size={14} />
+          Create workspace
+        </button>
+        <span className="build-workspace-picker">
+          <button
+            type="button"
+            className="build-workspace-button"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+          >
+            Select workspace
+            <ChevronIcon open={open} size={13} />
+          </button>
+          {open && (
+            <span className="build-workspace-menu" role="menu" aria-label="Select workspace">
+              {choices.length > 0 ? (
+                choices.map((choice) => (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      actions.openDraft(choice.id, choice.machineId);
+                    }}
+                  >
+                    {choice.name}
+                  </button>
+                ))
+              ) : (
+                <span className="build-workspace-empty">No workspaces yet</span>
+              )}
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function Composer({ thread, quickMode }: ComposerProps) {
   const { state, actions } = useStore();
   const draft = state.draft;
   const agents = state.hello?.agents ?? [];
@@ -681,7 +823,11 @@ export function Composer({ thread }: ComposerProps) {
   const isMobile = useIsMobile();
   const [mic, setMic] = useState<MicState>("idle");
   const [micSeconds, setMicSeconds] = useState(0);
+  const [cursorPos, setCursorPos] = useState<number | null>(null);
+  const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerInputRef = useRef<HTMLDivElement | null>(null);
   const taObserverRef = useRef<ResizeObserver | null>(null);
   const taWidthRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -802,6 +948,21 @@ export function Composer({ thread }: ComposerProps) {
     text.trim().length > 0 &&
     state.conn === "online";
 
+  const slashContext = slashContextAt(text, cursorPos ?? text.length);
+  const slashCommands = SLASH_COMMANDS.filter(
+    (command) => command.name.slice(1).startsWith(slashContext?.query ?? ""),
+  );
+  const slashKey = slashContext
+    ? `${slashContext.start}:${slashContext.query}`
+    : null;
+  const slashOpen =
+    slashContext != null && slashCommands.length > 0 && dismissedSlashKey !== slashKey;
+  const selectedSlashIndex = Math.min(slashIndex, Math.max(0, slashCommands.length - 1));
+
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashKey]);
+
   // Latest renderable context snapshot for this thread. Dedicated snapshots
   // update during a turn/compaction/model switch; old turn-boundary usage stays
   // as a replay-compatible fallback. Usage-less turns never blank a good ring.
@@ -819,6 +980,27 @@ export function Composer({ thread }: ComposerProps) {
   function updateText(v: string) {
     setText(v);
     textDrafts.set(key, v);
+  }
+
+  function trackCursor(next: HTMLTextAreaElement) {
+    setCursorPos(next.selectionStart);
+    setDismissedSlashKey(null);
+  }
+
+  function chooseSlashCommand(command: SlashCommand) {
+    const currentCursor = cursorPos ?? text.length;
+    const context = slashContextAt(text, currentCursor);
+    if (!context) return;
+    const insertion = `${command.name} `;
+    const next = `${text.slice(0, context.start)}${insertion}${text.slice(currentCursor)}`;
+    updateText(next);
+    const nextCursor = context.start + insertion.length;
+    setCursorPos(nextCursor);
+    setDismissedSlashKey(null);
+    requestAnimationFrame(() => {
+      taRef.current?.focus();
+      taRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
   }
 
   function updateAttachments(next: DraftAttachment[]) {
@@ -1016,6 +1198,30 @@ export function Composer({ thread }: ComposerProps) {
     }
   }
 
+  async function runCompact() {
+    if (running && thread) {
+      if (!acceptsRunningInput) {
+        setAttachError(
+          "Messages while working aren't supported for this agent — press Stop to interrupt.",
+        );
+        return;
+      }
+      markJustSent();
+      try {
+        await actions.steer("/compact");
+      } catch {
+        setAttachError("Couldn't compact the context.");
+      }
+      return;
+    }
+    markJustSent();
+    try {
+      await actions.send("/compact", []);
+    } catch {
+      setAttachError("Couldn't compact the context.");
+    }
+  }
+
   function patch(p: Partial<ThreadSettings>) {
     void actions.setSettings({ ...settings!, ...p });
   }
@@ -1191,7 +1397,9 @@ export function Composer({ thread }: ComposerProps) {
       : agentInfo && !agentInfo.available
         ? (agentInfo.authHint ?? `${agentInfo.name} is not available`)
         : quickHome
-          ? "Ask anything…"
+          ? quickMode === "build"
+            ? "Describe what you want to build…"
+            : "Ask anything…"
           : workPlaceholder;
 
   return (
@@ -1226,6 +1434,7 @@ export function Composer({ thread }: ComposerProps) {
           void addFiles(files);
         }}
       >
+        {quickMode === "build" && <BuildWorkspaceTray />}
         {fileDragActive && <div className="composer-drop-hint">Drop files to attach</div>}
         {attachments.length > 0 && (
           <div className="composer-attachments">
@@ -1256,7 +1465,39 @@ export function Composer({ thread }: ComposerProps) {
             ))}
           </div>
         )}
-        <div className={`composer-input${mic === "transcribing" ? " busy" : ""}`}>
+        <div
+          ref={composerInputRef}
+          className={`composer-input${mic === "transcribing" ? " busy" : ""}`}
+        >
+          {slashOpen && (
+            <div className="slash-pop" role="listbox" aria-label="Commands">
+              <div className="slash-pop-head">
+                <span className="slash-pop-mark">/</span>
+                <span>Commands</span>
+                <span className="slash-pop-hint">↑↓ choose · Enter insert</span>
+              </div>
+              <div className="slash-pop-list">
+                {slashCommands.map((command, index) => (
+                  <button
+                    key={command.name}
+                    type="button"
+                    role="option"
+                    aria-selected={index === selectedSlashIndex}
+                    className={`slash-option${index === selectedSlashIndex ? " selected" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setSlashIndex(index)}
+                    onClick={() => chooseSlashCommand(command)}
+                  >
+                    <span className="slash-option-name">{command.name}</span>
+                    <span className="slash-option-copy">
+                      <span className="slash-option-label">{command.label}</span>
+                      <span className="slash-option-detail">{command.detail}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {mic === "transcribing" && (
             <div className="dictation-busy" role="status">
               <span className="dictation-spinner" aria-hidden="true" />
@@ -1268,7 +1509,12 @@ export function Composer({ thread }: ComposerProps) {
             rows={1}
             value={text}
             placeholder={placeholder}
-            onChange={(e) => updateText(e.target.value)}
+            onChange={(e) => {
+              updateText(e.target.value);
+              trackCursor(e.currentTarget);
+            }}
+            onClick={(e) => trackCursor(e.currentTarget)}
+            onSelect={(e) => trackCursor(e.currentTarget)}
             onPaste={(e) => {
               const files = clipboardFiles(e.clipboardData);
               if (files.length > 0) {
@@ -1300,6 +1546,30 @@ export function Composer({ thread }: ComposerProps) {
               });
             }}
             onKeyDown={(e) => {
+              if (slashOpen) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashIndex((index) => (index + 1) % slashCommands.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashIndex(
+                    (index) => (index - 1 + slashCommands.length) % slashCommands.length,
+                  );
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setDismissedSlashKey(slashKey);
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  chooseSlashCommand(slashCommands[selectedSlashIndex]);
+                  return;
+                }
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void submit();
@@ -1330,19 +1600,27 @@ export function Composer({ thread }: ComposerProps) {
                   onChange={(m) => patch({ mode: m })}
                   showLabel
                 />
-                <PillPicker
-                  ariaLabel="Access"
-                  value={settings.access}
-                  options={ACCESS_OPTIONS}
-                  onChange={(a) => patch({ access: a })}
-                  showLabel
-                />
+                {!quickHome && (
+                  <PillPicker
+                    ariaLabel="Access"
+                    value={settings.access}
+                    options={ACCESS_OPTIONS}
+                    onChange={(a) => patch({ access: a })}
+                    showLabel
+                  />
+                )}
               </>
             )}
           </div>
 
           <div className="composer-actions">
-            {latestUsage && <ContextMeter usage={latestUsage} />}
+            {latestUsage && (
+              <ContextMeter
+                usage={latestUsage}
+                anchorRef={composerInputRef}
+                onCompact={() => void runCompact()}
+              />
+            )}
             {dictation?.available && (
               <button
                 type="button"

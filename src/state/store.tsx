@@ -924,6 +924,14 @@ export interface ThreadknotActions {
    *  deleted: its roots, chats and running agents are untouched. */
   setWorkspaceHidden(workspaceId: string, hidden: boolean): Promise<void>;
   setWorkspaceImage: (workspaceId: string, image?: string) => Promise<void>;
+  /** Group supplied chat titles with a cheap ephemeral Codex run. */
+  organizeChats: (
+    workspaces: Array<{
+      id: string;
+      name: string;
+      chats: Array<{ id: string; title: string }>;
+    }>,
+  ) => Promise<import("../lib/protocol").OrganizedChatFolder[]>;
   /** Reload paired peers + LAN-discovered machines into state. */
   refreshPeers: () => Promise<void>;
   /** Attach a folder on `machineId` as a new root of the workspace; resolves

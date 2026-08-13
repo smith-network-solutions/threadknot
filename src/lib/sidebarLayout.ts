@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+export interface ChatFolder {
+  id: string;
+  workspaceId: string;
+  name: string;
+}
+
 /** Sidebar presentation preferences, persisted whole so a single read/write
  *  keeps the four knobs in sync. Consumed by the Sidebar and (later) the card
  *  view and hover cards built on top of it. */
@@ -28,6 +34,11 @@ export interface SidebarLayout {
    *  longer in state are ignored and pruned on the next reorder write. Excluded
    *  from the filter tint - a drag order is not a "filter". */
   workspaceOrder: string[];
+  /** User-made chat groups inside workspaces. Like manual order, these are
+   *  presentation preferences for this device rather than project metadata. */
+  chatFolders: ChatFolder[];
+  /** Thread id -> folder id. Missing means the chat stays at workspace root. */
+  chatFolderAssignments: Record<string, string>;
 }
 
 export const SIDEBAR_WIDTH_DEFAULT = 292;
@@ -45,6 +56,8 @@ const DEFAULTS: SidebarLayout = {
   width: SIDEBAR_WIDTH_DEFAULT,
   collapsed: false,
   workspaceOrder: [],
+  chatFolders: [],
+  chatFolderAssignments: {},
 };
 
 /** True when nothing is at its default: drives the filter button's tint.
@@ -87,6 +100,28 @@ function loadLayout(): SidebarLayout {
       workspaceOrder: Array.isArray(parsed.workspaceOrder)
         ? parsed.workspaceOrder.filter((x): x is string => typeof x === "string")
         : [],
+      chatFolders: Array.isArray(parsed.chatFolders)
+        ? parsed.chatFolders.filter(
+            (folder): folder is ChatFolder =>
+              !!folder &&
+              typeof folder === "object" &&
+              typeof (folder as ChatFolder).id === "string" &&
+              typeof (folder as ChatFolder).workspaceId === "string" &&
+              typeof (folder as ChatFolder).name === "string" &&
+              (folder as ChatFolder).name.trim().length > 0,
+          )
+        : [],
+      chatFolderAssignments:
+        parsed.chatFolderAssignments &&
+        typeof parsed.chatFolderAssignments === "object" &&
+        !Array.isArray(parsed.chatFolderAssignments)
+          ? Object.fromEntries(
+              Object.entries(parsed.chatFolderAssignments).filter(
+                (entry): entry is [string, string] =>
+                  typeof entry[0] === "string" && typeof entry[1] === "string",
+              ),
+            )
+          : {},
     };
   } catch {
     return { ...DEFAULTS };

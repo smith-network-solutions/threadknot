@@ -236,6 +236,14 @@ struct SessionState {
     /// Steers rejected because the provider crossed or cannot accept the active
     /// boundary. Deliver them as ordinary follow-ups after that turn ends.
     pending_followups: VecDeque<String>,
+    /// A manual `/compact` requested while another Codex turn was active. The
+    /// app-server only accepts manual compaction as its own turn, so interrupt
+    /// the current turn and start compaction at its boundary.
+    pending_compaction: bool,
+    /// `thread/compact/start` has been accepted and its turn is in progress.
+    /// This lets the terminal notification distinguish completing a compaction
+    /// from reaching the boundary that a queued compaction was waiting for.
+    compaction_in_flight: bool,
     last_usage: Option<Usage>,
     /// our approvalId -> jsonrpc id to answer
     pending_approvals: HashMap<String, Value>,
@@ -254,6 +262,8 @@ impl SessionState {
             current_model: String::new(),
             current_settings: None,
             pending_followups: VecDeque::new(),
+            pending_compaction: false,
+            compaction_in_flight: false,
             last_usage: None,
             pending_approvals: HashMap::new(),
             pending_questions: HashMap::new(),
@@ -277,7 +287,12 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                 let Some(cmd) = cmd else { break };
                 match cmd {
                     AgentCommand::User { text, settings, attachments } => {
-                        if let Err(e) = start_turn(&ctx, &rpc, &mut st, &text, &settings, &attachments).await {
+                        let result = if is_compact_command(&text) && attachments.is_empty() {
+                            start_compaction(&ctx, &rpc, &mut st, &settings).await
+                        } else {
+                            start_turn(&ctx, &rpc, &mut st, &text, &settings, &attachments).await
+                        };
+                        if let Err(e) = result {
                             ctx.emit(AgentEvent::Error { message: format!("{e:#}") });
                         }
                     }
@@ -289,7 +304,9 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                     }
                     AgentCommand::Retire => break,
                     AgentCommand::Steer { text } => {
-                        if let (Some(thread_id), Some(turn_id)) =
+                        if is_compact_command(&text) {
+                            request_compaction(&ctx, &rpc, &mut st).await;
+                        } else if let (Some(thread_id), Some(turn_id)) =
                             (&st.provider_thread_id, &st.active_turn_id)
                         {
                             let result = rpc
@@ -362,7 +379,24 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                         let turn_ended = matches!(method.as_str(), "turn/completed" | "turn/aborted");
                         handle_notification(&ctx, &mut st, &method, params);
                         if turn_ended {
-                            if let (Some(text), Some(settings)) = (
+                            if st.compaction_in_flight {
+                                st.compaction_in_flight = false;
+                                st.pending_compaction = false;
+                            } else if st.pending_compaction {
+                                if let Some(settings) = st.current_settings.clone() {
+                                    if let Err(error) = start_compaction(&ctx, &rpc, &mut st, &settings).await {
+                                        st.pending_compaction = false;
+                                        ctx.emit(AgentEvent::Error {
+                                            message: format!("Codex could not compact the context: {error:#}"),
+                                        });
+                                    }
+                                } else {
+                                    st.pending_compaction = false;
+                                    ctx.emit(AgentEvent::Error {
+                                        message: "Codex could not compact the context: no active settings".into(),
+                                    });
+                                }
+                            } else if let (Some(text), Some(settings)) = (
                                 st.pending_followups.pop_front(),
                                 st.current_settings.clone(),
                             ) {
@@ -392,6 +426,116 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
     Ok(())
 }
 
+/// The one slash command Threadknot intercepts for Codex: `/compact` runs the
+/// app-server's manual compaction as its own turn. Codex has no local
+/// command surface like Claude's, so nothing else is special-cased here.
+fn is_compact_command(text: &str) -> bool {
+    text.trim().eq_ignore_ascii_case("/compact")
+}
+
+/// Make sure the app-server has an active thread for this session, resuming a
+/// saved one (falling back to a fresh start seeded from Threadknot history when
+/// the native session is gone) or starting a new one. Returns the provider
+/// thread id and is a no-op once the thread is established.
+async fn ensure_thread(
+    ctx: &DriverCtx,
+    rpc: &Rpc,
+    st: &mut SessionState,
+    settings: &ThreadSettings,
+) -> Result<String> {
+    if let Some(tid) = &st.provider_thread_id {
+        return Ok(tid.clone());
+    }
+
+    let (approval_policy, sandbox, _sandbox_policy) = policies(settings);
+    let params = json!({
+        "cwd": ctx.cwd,
+        "approvalPolicy": approval_policy,
+        "sandbox": sandbox,
+        "model": settings.model,
+    });
+    let result = match &ctx.resume_session_id {
+        Some(existing) => {
+            let mut p = params.clone();
+            p["threadId"] = json!(existing);
+            match rpc.request("thread/resume", p).await {
+                Ok(r) => r,
+                // Stale/unknown native history must not brick the durable
+                // Threadknot thread. Start a replacement and seed it with the
+                // complete persisted transcript on its first turn.
+                Err(error) => {
+                    tracing::warn!(
+                        "unable to resume Codex thread {existing}; restoring from Threadknot history: {error:#}"
+                    );
+                    st.seed = ctx.resume_fallback_seed.clone();
+                    ctx.emit(AgentEvent::Status {
+                        text: "Codex session was unavailable; restored from Threadknot history"
+                            .into(),
+                    });
+                    rpc.request("thread/start", params).await?
+                }
+            }
+        }
+        None => rpc.request("thread/start", params).await?,
+    };
+    let tid = result
+        .pointer("/thread/id")
+        .and_then(|v| v.as_str())
+        .context("thread start/resume returned no thread id")?
+        .to_string();
+    ctx.emit(AgentEvent::SessionStarted {
+        provider_session_id: tid.clone(),
+        model: settings.model.clone(),
+        agent: Some(Agent::Codex),
+    });
+    st.provider_thread_id = Some(tid.clone());
+    Ok(tid)
+}
+
+/// Run the app-server's manual compaction as its own turn. It emits no visible
+/// output while it works, ending in a `turn/completed` (which the run loop
+/// treats as the compaction finishing via `compaction_in_flight`) and a
+/// `thread/compacted` notification that reports "Context compacted".
+async fn start_compaction(
+    ctx: &DriverCtx,
+    rpc: &Rpc,
+    st: &mut SessionState,
+    settings: &ThreadSettings,
+) -> Result<()> {
+    let tid = ensure_thread(ctx, rpc, st, settings).await?;
+    st.current_settings = Some(settings.clone());
+    rpc.request("thread/compact/start", json!({ "threadId": tid }))
+        .await?;
+    st.compaction_in_flight = true;
+    Ok(())
+}
+
+/// A `/compact` steered while a turn is running. Codex only accepts manual
+/// compaction as its own turn, so interrupt the active turn and start compaction
+/// at its boundary (see the `pending_compaction` handling in the run loop). If
+/// nothing is actually running, compact right away.
+async fn request_compaction(ctx: &DriverCtx, rpc: &Rpc, st: &mut SessionState) {
+    if let (Some(tid), Some(turn)) = (st.provider_thread_id.clone(), st.active_turn_id.clone()) {
+        st.pending_compaction = true;
+        let _ = rpc
+            .request("turn/interrupt", json!({ "threadId": tid, "turnId": turn }))
+            .await;
+        ctx.emit(AgentEvent::Status {
+            text: "Codex will compact the context once the current turn stops".into(),
+        });
+    } else if let Some(settings) = st.current_settings.clone() {
+        if let Err(error) = start_compaction(ctx, rpc, st, &settings).await {
+            ctx.emit(AgentEvent::Error {
+                message: format!("Codex could not compact the context: {error:#}"),
+            });
+        }
+    } else {
+        ctx.emit(AgentEvent::Error {
+            message: "Codex could not compact the context: no active settings".into(),
+        });
+    }
+}
+
 async fn start_turn(
     ctx: &DriverCtx,
     rpc: &Rpc,
@@ -400,51 +544,9 @@ async fn start_turn(
     settings: &ThreadSettings,
     attachments: &[AttachmentRef],
 ) -> Result<()> {
-    let (approval_policy, sandbox, sandbox_policy) = policies(settings);
+    let (approval_policy, _sandbox, sandbox_policy) = policies(settings);
 
-    if st.provider_thread_id.is_none() {
-        let params = json!({
-            "cwd": ctx.cwd,
-            "approvalPolicy": approval_policy,
-            "sandbox": sandbox,
-            "model": settings.model,
-        });
-        let result = match &ctx.resume_session_id {
-            Some(existing) => {
-                let mut p = params.clone();
-                p["threadId"] = json!(existing);
-                match rpc.request("thread/resume", p).await {
-                    Ok(r) => r,
-                    // Stale/unknown native history must not brick the durable
-                    // Threadknot thread. Start a replacement and seed it with the
-                    // complete persisted transcript on its first turn.
-                    Err(error) => {
-                        tracing::warn!(
-                            "unable to resume Codex thread {existing}; restoring from Threadknot history: {error:#}"
-                        );
-                        st.seed = ctx.resume_fallback_seed.clone();
-                        ctx.emit(AgentEvent::Status {
-                            text: "Codex session was unavailable; restored from Threadknot history"
-                                .into(),
-                        });
-                        rpc.request("thread/start", params).await?
-                    }
-                }
-            }
-            None => rpc.request("thread/start", params).await?,
-        };
-        let tid = result
-            .pointer("/thread/id")
-            .and_then(|v| v.as_str())
-            .context("thread start/resume returned no thread id")?
-            .to_string();
-        ctx.emit(AgentEvent::SessionStarted {
-            provider_session_id: tid.clone(),
-            model: settings.model.clone(),
-            agent: Some(Agent::Codex),
-        });
-        st.provider_thread_id = Some(tid);
-    }
+    ensure_thread(ctx, rpc, st, settings).await?;
 
     st.current_model = settings.model.clone();
     st.current_settings = Some(settings.clone());
@@ -708,6 +810,13 @@ fn handle_notification(ctx: &DriverCtx, st: &mut SessionState, method: &str, par
                     output: None,
                     is_error: false,
                     truncated: false,
+                }),
+                // Recent app-server versions report a manual compaction as a
+                // `contextCompaction` item. They no longer necessarily emit
+                // the older `thread/compacted` notification, so surface the
+                // successful forced operation from the authoritative item.
+                "contextCompaction" => ctx.emit(AgentEvent::Status {
+                    text: "Context compacted".into(),
                 }),
                 "error" => ctx.emit(AgentEvent::Error {
                     message: item_field(item, "message")
@@ -1076,6 +1185,15 @@ mod tests {
 
         assert!(state.provider_thread_id.is_none());
         assert_eq!(state.seed.as_deref(), Some("missed transcript"));
+    }
+
+    #[test]
+    fn only_the_standalone_compact_command_is_intercepted() {
+        assert!(is_compact_command("/compact"));
+        assert!(is_compact_command("  /COMPACT  "));
+        assert!(!is_compact_command("/compact please"));
+        assert!(!is_compact_command("Please /compact"));
+        assert!(!is_compact_command("/compact\nthen summarize"));
     }
 
     #[test]

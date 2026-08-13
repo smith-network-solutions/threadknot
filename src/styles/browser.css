@@ -8,6 +8,21 @@
   background: var(--bg, #0b0d12);
 }
 
+/* Fullscreen belongs to the whole browser cockpit, rather than the canvas
+   alone: navigation, tabs, and the shared-session signal stay reachable while
+   the page gets the entire display. */
+.browser-pane:fullscreen {
+  width: 100%;
+  height: 100%;
+}
+
+/* WebKit's selector keeps the desktop shell's older webviews in step with
+   standards-based browsers. */
+.browser-pane:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
+}
+
 /* ---- compact browser chrome --------------------------------------------- */
 
 .browser-chrome {
@@ -49,7 +64,9 @@
 
 .browser-btn:focus-visible,
 .browser-rescan:focus-visible,
-.browser-panel-close:focus-visible {
+.browser-panel-close:focus-visible,
+.browser-more-action:focus-visible,
+.browser-more-fields select:focus-visible {
   outline: 2px solid var(--brass, #d9a35c);
   outline-offset: 1px;
 }
@@ -59,6 +76,119 @@
   opacity: 0.4;
   cursor: default;
   pointer-events: none;
+}
+
+/* Secondary controls are grouped by what they affect: immediate session
+   actions first, then its identity and viewport, then browser lifecycle.
+   This keeps the chrome useful at a glance without hiding capabilities. */
+.browser-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.browser-more-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(272px, calc(100vw - 20px));
+  padding: 5px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel, #10141d) 94%, #17242a);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+}
+
+.browser-more-section + .browser-more-section {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+}
+
+.browser-more-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim, #8b93a9);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.browser-more-action svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.browser-more-action:hover:not(:disabled):not(.disabled),
+.browser-more-action.on {
+  background: var(--panel-3, #1a2030);
+  color: var(--text, #d8dde9);
+}
+
+.browser-more-action:disabled,
+.browser-more-action.disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.browser-more-action em {
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--brass, #d9a35c);
+  color: #17100a;
+  font: 700 8px/1 var(--font-mono, ui-monospace, monospace);
+  font-style: normal;
+}
+
+.browser-more-fields {
+  display: grid;
+  gap: 8px;
+  padding: 5px 8px 7px;
+}
+
+.browser-more-fields label {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--faint, #687188);
+  font: 700 8.5px/1 var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.browser-more-fields select {
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg-raise, #0e111a);
+  color: var(--dim, #8b93a9);
+  font: 11.5px var(--font-mono, ui-monospace, monospace);
+  cursor: pointer;
+}
+
+.browser-more-fields select.on {
+  border-color: rgba(120, 200, 255, 0.55);
+  color: #9fd4ff;
+  background: rgba(70, 140, 210, 0.14);
 }
 
 .browser-url {
@@ -143,18 +273,13 @@
 
 .browser-connection {
   flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 25px;
-  padding: 0 7px;
-  border: 1px solid var(--line, rgba(155, 170, 210, 0.09));
-  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 50%;
   color: var(--faint, #5c6478);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .browser-connection-dot {
@@ -854,63 +979,7 @@
 
   .browser-url {
     order: 2;
-    flex-basis: calc(100% - 92px);
-  }
-
-  .browser-device {
-    order: 2;
-  }
-
-  .browser-connection-label {
-    display: none;
-  }
-
-  /* Signed-in profile picker. A browser holding a real login should never look
-   like an anonymous one, so the attached state is visibly marked. */
-.browser-profile {
-  flex: 0 0 auto;
-  height: 34px;
-  max-width: 150px;
-  padding: 0 6px;
-  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
-  border-radius: 8px;
-  background: var(--bg-raise, #0e111a);
-  color: var(--dim, #8b93a9);
-  font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
-  outline: none;
-}
-
-.browser-profile.on {
-  border-color: rgba(120, 200, 255, 0.55);
-  color: #9fd4ff;
-  background: rgba(70, 140, 210, 0.14);
-}
-
-.browser-signin-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
-  background: rgba(70, 140, 210, 0.1);
-  color: #9fd4ff;
-  font-size: 11.5px;
-}
-
-.browser-signin-note b {
-  font-weight: 600;
-}
-
-.browser-signin-note span {
-  color: var(--dim, #8b93a9);
-}
-
-.browser-connection {
-    width: 26px;
-    padding: 0;
-    justify-content: center;
+    flex-basis: 100%;
   }
 }
 

@@ -69,6 +69,12 @@ export interface Workspace {
   members: WorkspaceMember[];
 }
 
+export interface OrganizedChatFolder {
+  workspaceId: string;
+  name: string;
+  threadIds: string[];
+}
+
 /** A paired peer Threadknot machine (Settings → machines). Its master token is
  *  held server-side only and never serialized to clients. */
 export interface PeerInfo {
@@ -1543,6 +1549,16 @@ export interface RequestMap {
   "workspace.detachRoot": {
     payload: { workspaceId: string; machineId: string; projectId: string };
     data: Workspace;
+  };
+  "thread.organize": {
+    payload: {
+      workspaces: Array<{
+        id: string;
+        name: string;
+        chats: Array<{ id: string; title: string }>;
+      }>;
+    };
+    data: { folders: OrganizedChatFolder[] };
   };
   /** `machineId` names the machine the folder (and its new workspace) is
    *  created on — absent means this machine. Remote creation is handled by
