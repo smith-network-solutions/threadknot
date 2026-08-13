@@ -8,6 +8,13 @@
   min-width: 0;
   border-left: 1px solid var(--line, rgba(255, 255, 255, 0.08));
   background: var(--panel, rgba(14, 18, 26, 0.6));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.main-split.ws-open .workspace-panel {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .workspace-head {
@@ -173,6 +180,13 @@
     flex: none;
     border-left: none;
     background: var(--bg, #0b0e14);
+    transform: translateX(100%);
+    transition:
+      opacity 0.18s ease,
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .main-split.ws-open .workspace-panel {
+    transform: translateX(0);
   }
   /* Tighter tabs so the five of them come closer to fitting a phone width
      (they still scroll if not), leaving the close button on screen. */
@@ -183,6 +197,12 @@
   .ws-tab {
     gap: 5px;
     padding: 6px 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-panel {
+    transition-duration: 0.01ms !important;
   }
 }
 

@@ -41,33 +41,64 @@
 
 @media (min-width: 1024px) {
   /* Side-by-side: workspace takes a fraction of the width, chat takes the rest. */
-  .main-split.side.ws-open .workspace-panel {
-    flex: 0 0 calc(var(--ws-frac, 0.42) * 100%);
-    min-width: 240px;
+  .main-split.side .workspace-panel {
+    flex: 0 0 0;
+    min-width: 0;
     max-width: 82%;
+    transform: translateX(18px);
+    overflow: hidden;
+    transition:
+      flex-basis 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.16s ease,
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 0.16s ease;
+  }
+  .main-split.side.ws-open .workspace-panel {
+    flex-basis: max(240px, calc(var(--ws-frac, 0.42) * 100%));
+    transform: translateX(0);
   }
 
   /* Stacked: switch the split to a column; workspace sits below the chat. */
-  .main-split.stacked.ws-open {
+  .main-split.stacked.ws-present {
     flex-direction: column;
   }
   .main-split.stacked .thread-pane {
     min-height: 0;
   }
-  .main-split.stacked.ws-open .workspace-panel {
-    flex: 0 0 calc(var(--ws-frac, 0.42) * 100%);
-    min-height: 160px;
+  .main-split.stacked .workspace-panel {
+    flex: 0 0 0;
+    min-height: 0;
     max-height: 82%;
     border-left: none;
     border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+    transform: translateY(18px);
+    overflow: hidden;
+    transition:
+      flex-basis 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.16s ease,
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 0.16s ease;
+  }
+  .main-split.stacked.ws-open .workspace-panel {
+    flex-basis: max(160px, calc(var(--ws-frac, 0.42) * 100%));
+    transform: translateY(0);
   }
 
   /* Divider: a thin hairline with a comfortable drag target around it. */
   .ws-divider {
-    flex: 0 0 7px;
+    flex: 0 0 0;
     position: relative;
     z-index: 40;
     background: transparent;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition: flex-basis 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.14s ease;
+  }
+  .main-split.ws-open .ws-divider {
+    flex-basis: 7px;
+    opacity: 1;
+    pointer-events: auto;
   }
   .ws-divider::after {
     content: "";
@@ -94,6 +125,13 @@
   .main-split.stacked .ws-divider::after {
     height: 1px;
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-split .workspace-panel,
+  .main-split .ws-divider {
+    transition-duration: 0.01ms !important;
   }
 }
 

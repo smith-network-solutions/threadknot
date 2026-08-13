@@ -230,6 +230,7 @@ interface SettingRow {
   disabled?: boolean; // shown, but not openable (single/locked value)
   options: SettingOption[];
   action?: () => void; // a plain command row (e.g. attach files) — no flyout
+  sectionBreak?: boolean; // visually separate a utility action from settings above it
 }
 
 /**
@@ -290,7 +291,7 @@ function ComposerSettings({ rows, isMobile }: { rows: SettingRow[]; isMobile: bo
             return (
               <div
                 key={row.key}
-                className={`cset-row${isActive ? " active" : ""}${row.disabled ? " disabled" : ""}${isAction ? " cset-action" : ""}`}
+                className={`cset-row${isActive ? " active" : ""}${row.disabled ? " disabled" : ""}${isAction ? " cset-action" : ""}${row.sectionBreak ? " section-break" : ""}`}
                 onMouseEnter={() => !isMobile && !row.disabled && !isAction && setActive(row.key)}
               >
                 <button
@@ -1226,6 +1227,24 @@ export function Composer({ thread, quickMode }: ComposerProps) {
     void actions.setSettings({ ...settings!, ...p });
   }
 
+  function confirmClaudeSwitch(feature: "Context" | "Chrome") {
+    const claude = agents.find((candidate) => candidate.id === "claude");
+    if (!claude?.available) {
+      setAttachError(claude?.authHint ?? "Claude is not available on this machine.");
+      return;
+    }
+    const subject = thread ? "conversation" : "draft";
+    if (
+      !window.confirm(
+        `${feature} is available only with Claude. Switch this ${subject} from Codex to Claude?`,
+      )
+    ) {
+      return;
+    }
+    if (thread) void actions.setThreadAgent("claude");
+    else actions.setDraftAgent("claude");
+  }
+
   // AI + model now live in their own right-side pill (AgentModelPicker); these
   // option arrays feed it. Everything else folds into the plus-button menu.
   const isHermes = agent === "hermes";
@@ -1301,6 +1320,20 @@ export function Composer({ thread, quickMode }: ComposerProps) {
   // as a plus-button menu with hover-out flyouts.
   const settingRows: SettingRow[] = [];
 
+  if (agent === "codex") {
+    settingRows.push({
+      key: "ctx",
+      icon: <BracketsIcon size={16} />,
+      label: "Context",
+      valueGlyph: <AgentMark agent="claude" size={14} />,
+      valueLabel: "Claude only",
+      disabled: running,
+      hint: "Claude only — click to confirm switching this conversation to Claude",
+      options: [],
+      action: () => confirmClaudeSwitch("Context"),
+    });
+  }
+
   if (agent === "claude" || ((agent === "claudex" || agent === "kimi") && fixedContextLabel)) {
     // Fixed-window models and 200K-only Claude models show the value but offer
     // no choice; only wide-context Claude gets a real toggle.
@@ -1362,6 +1395,18 @@ export function Composer({ thread, quickMode }: ComposerProps) {
         },
       ],
     });
+  } else if (agent === "codex") {
+    settingRows.push({
+      key: "chrome",
+      icon: <GlobeIcon size={16} />,
+      label: "Chrome",
+      valueGlyph: <AgentMark agent="claude" size={14} />,
+      valueLabel: "Claude only",
+      disabled: running,
+      hint: "Claude only — click to confirm switching this conversation to Claude",
+      options: [],
+      action: () => confirmClaudeSwitch("Chrome"),
+    });
   }
 
   // Access and Mode stay out on the bar itself (see the inline segmented
@@ -1379,6 +1424,7 @@ export function Composer({ thread, quickMode }: ComposerProps) {
     hint: "Attach images or files (or paste into the box)",
     options: [],
     action: () => fileRef.current?.click(),
+    sectionBreak: true,
   });
 
   // "Build with Opus 5…" / "Plan with Opus 5…", falling back to the mode word

@@ -597,6 +597,21 @@ function brassTrio(
   return { brass, hi, dim };
 }
 
+/** Pick black or white copy for a solid accent surface using WCAG luminance. */
+function accentInk(hex: string): string {
+  const rgb = parseHex(hex);
+  if (!rgb) return "#0b0b0b";
+  const linear = (channel: number) => {
+    const value = channel / 255;
+    return value <= 0.04045
+      ? value / 12.92
+      : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b);
+  return luminance > 0.179 ? "#0b0b0b" : "#ffffff";
+}
+
 /** Unknown/hand-edited stored values fall back rather than breaking render. */
 function normalizeTheme(value: unknown): Theme {
   return THEMES.some((t) => t.id === value) ? (value as Theme) : "dark";
@@ -1027,6 +1042,7 @@ export function applyAppearance(
   root.style.setProperty("--brass", brass);
   root.style.setProperty("--brass-hi", hi);
   root.style.setProperty("--brass-dim", dim);
+  root.style.setProperty("--accent-ink", accentInk(brass));
   // Fonts: inline stacks win over the :root defaults in styles.css.
   root.style.setProperty("--font-ui", uiFontStack(a.fontUi));
   root.style.setProperty("--font-mono", monoFontStack(a.fontMono));

@@ -37,9 +37,13 @@ export const VISIBLE_TABS = WORKSPACE_TABS;
  * lazy-init on first `active`.
  */
 export function WorkspacePanel({
+  present,
+  open,
   orient,
   onToggleOrient,
 }: {
+  present: boolean;
+  open: boolean;
   orient?: WorkspaceOrient;
   onToggleOrient?: () => void;
 }) {
@@ -52,29 +56,48 @@ export function WorkspacePanel({
   const project = view?.project ?? null;
   const machineId = view?.machineId;
   const tab = project ? state.workspace[project.id] ?? null : null;
+  const lastPanel = useRef<{
+    project: NonNullable<typeof project>;
+    machineId: typeof machineId;
+    tab: WorkspaceTab;
+  } | null>(null);
+  if (project && tab) lastPanel.current = { project, machineId, tab };
+  const panel = project && tab ? { project, machineId, tab } : lastPanel.current;
+  const renderTab = panel?.tab ?? null;
 
   // The strip scrolls when the tabs outrun the panel width, so the selected tab
   // can sit off-screen when the switch came from elsewhere (ThreadView's header
   // toggles) — pull it into view. `nearest` keeps the page itself from moving.
+  const panelRef = useRef<HTMLElement | null>(null);
   const tabsRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    if (open) el.removeAttribute("inert");
+    else el.setAttribute("inert", "");
+  }, [open]);
   useEffect(() => {
     const on = tabsRef.current?.querySelector(".ws-tab.on");
     on?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [tab]);
+  }, [renderTab]);
 
-  if (!tab || !project) return null;
+  if (!present || !panel || !renderTab) return null;
 
   return (
-    <aside className="workspace-panel">
+    <aside
+      ref={panelRef}
+      className="workspace-panel"
+      aria-hidden={!open || undefined}
+    >
       <header className="workspace-head">
         <nav className="workspace-tabs" ref={tabsRef}>
           {VISIBLE_TABS.map(({ id, label, Icon }) => (
             <button
               key={id}
               type="button"
-              className={`ws-tab${tab === id ? " on" : ""}`}
+              className={`ws-tab${renderTab === id ? " on" : ""}`}
               onClick={() =>
-                dispatch({ type: "workspace", projectId: project.id, tab: id as WorkspaceTab })
+                dispatch({ type: "workspace", projectId: panel.project.id, tab: id as WorkspaceTab })
               }
             >
               <Icon size={14} />
@@ -97,43 +120,47 @@ export function WorkspacePanel({
           type="button"
           className="icon-btn ws-close"
           aria-label="Close panel"
-          onClick={() => dispatch({ type: "workspace", projectId: project.id, tab: null })}
+          onClick={() => dispatch({ type: "workspace", projectId: panel.project.id, tab: null })}
         >
           <XIcon size={16} />
         </button>
       </header>
       <div className="workspace-body">
-        <div className="ws-pane" data-zoom-pane="files" hidden={tab !== "files"}>
-          <FilesPane project={project} active={tab === "files"} machineId={machineId} />
-        </div>
-        <div className="ws-pane" data-zoom-pane="git" hidden={tab !== "git"}>
-          <GitPane project={project} active={tab === "git"} />
-        </div>
-        <div className="ws-pane" data-zoom-pane="artifacts" hidden={tab !== "artifacts"}>
-          <ArtifactsPane
-            project={project}
-            active={tab === "artifacts"}
-            machineId={machineId}
+        <div className="ws-pane" data-zoom-pane="files" hidden={renderTab !== "files"}>
+          <FilesPane
+            project={panel.project}
+            active={open && renderTab === "files"}
+            machineId={panel.machineId}
           />
         </div>
-        <div className="ws-pane" data-zoom-pane="browser" hidden={tab !== "browser"}>
+        <div className="ws-pane" data-zoom-pane="git" hidden={renderTab !== "git"}>
+          <GitPane project={panel.project} active={open && renderTab === "git"} />
+        </div>
+        <div className="ws-pane" data-zoom-pane="artifacts" hidden={renderTab !== "artifacts"}>
+          <ArtifactsPane
+            project={panel.project}
+            active={open && renderTab === "artifacts"}
+            machineId={panel.machineId}
+          />
+        </div>
+        <div className="ws-pane" data-zoom-pane="browser" hidden={renderTab !== "browser"}>
           {/* Chrome runs on the workspace's owning machine; for a remote
               workspace this server splices the socket through to it, so the
               pane drives that machine's browser and its stored logins. */}
           <BrowserPane
-            key={state.activeThreadId ?? `project:${project.id}`}
-            project={project}
-            active={tab === "browser"}
-            sessionId={state.activeThreadId ?? `project:${project.id}`}
-            machineId={machineId}
+            key={state.activeThreadId ?? `project:${panel.project.id}`}
+            project={panel.project}
+            active={open && renderTab === "browser"}
+            sessionId={state.activeThreadId ?? `project:${panel.project.id}`}
+            machineId={panel.machineId}
           />
         </div>
-        <div className="ws-pane" hidden={tab !== "terminal"}>
+        <div className="ws-pane" hidden={renderTab !== "terminal"}>
           <TerminalPane
-            key={project.id}
-            project={project}
-            active={tab === "terminal"}
-            machineId={machineId}
+            key={panel.project.id}
+            project={panel.project}
+            active={open && renderTab === "terminal"}
+            machineId={panel.machineId}
           />
         </div>
       </div>

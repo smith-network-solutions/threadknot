@@ -9,6 +9,7 @@ const LS_FRAC = "threadknot.ws.frac";
 const DEFAULT_FRAC = 0.42;
 const MIN_FRAC = 0.18;
 const MAX_FRAC = 0.82;
+const PANEL_TRANSITION_MS = 220;
 
 function loadOrient(): WorkspaceOrient {
   return localStorage.getItem(LS_ORIENT) === "stacked" ? "stacked" : "side";
@@ -41,6 +42,11 @@ export function MainSplit() {
   const [orient, setOrient] = useState<WorkspaceOrient>(loadOrient);
   const [frac, setFrac] = useState<number>(loadFrac);
   const [dragging, setDragging] = useState(false);
+  // Keep the panel mounted long enough to play its exit transition. `shown`
+  // changes one frame after `present` on entry so the browser has a collapsed
+  // starting state to animate from.
+  const [panelPresent, setPanelPresent] = useState(workspaceOpen);
+  const [panelShown, setPanelShown] = useState(workspaceOpen);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,6 +55,22 @@ export function MainSplit() {
   useEffect(() => {
     localStorage.setItem(LS_FRAC, String(frac));
   }, [frac]);
+
+  useEffect(() => {
+    if (workspaceOpen) {
+      setPanelPresent(true);
+      return;
+    }
+    setPanelShown(false);
+    const timer = window.setTimeout(() => setPanelPresent(false), PANEL_TRANSITION_MS);
+    return () => window.clearTimeout(timer);
+  }, [workspaceOpen]);
+
+  useEffect(() => {
+    if (!panelPresent || !workspaceOpen || panelShown) return;
+    const frame = window.requestAnimationFrame(() => setPanelShown(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [panelPresent, panelShown, workspaceOpen]);
 
   useEffect(() => {
     if (!dragging) return;
@@ -88,21 +110,24 @@ export function MainSplit() {
   return (
     <div
       ref={ref}
-      className={`main-split ${orient}${workspaceOpen ? " ws-open" : ""}${dragging ? " dragging" : ""}`}
+      className={`main-split ${orient}${panelPresent ? " ws-present" : ""}${panelShown ? " ws-open" : ""}${dragging ? " dragging" : ""}`}
       style={style}
     >
       <ThreadView />
-      {workspaceOpen && (
+      {panelPresent && (
         <div
           className="ws-divider"
           role="separator"
+          aria-hidden={!panelShown || undefined}
           aria-orientation={orient === "side" ? "vertical" : "horizontal"}
           aria-label="Resize workspace panel"
-          onPointerDown={onDividerDown}
+          onPointerDown={panelShown ? onDividerDown : undefined}
           onDoubleClick={() => setFrac(DEFAULT_FRAC)}
         />
       )}
       <WorkspacePanel
+        present={panelPresent}
+        open={panelShown}
         orient={orient}
         onToggleOrient={() => setOrient((o) => (o === "side" ? "stacked" : "side"))}
       />

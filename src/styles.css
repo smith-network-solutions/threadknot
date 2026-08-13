@@ -19,6 +19,7 @@
   --brass: #d9a35c;
   --brass-hi: #f2c98a;
   --brass-dim: rgba(217, 163, 92, 0.14);
+  --accent-ink: #0b0b0b;
   --teal: #43c9a5;
   --teal-dim: rgba(67, 201, 165, 0.14);
   --red: #e0655f;
@@ -4248,7 +4249,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
 .msg-user {
   max-width: min(78%, 560px);
-  background: var(--panel-2);
+  color: var(--accent-ink);
+  background: var(--brass);
   border: none;
   border-radius: 16px;
   padding: 9px 14px;
@@ -6186,7 +6188,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 
 .cset-row { position: relative; }
-.cset-row + .cset-row.cset-action { margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--line); }
+.cset-row.section-break { margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--line); }
 .cset-row-btn {
   display: flex;
   align-items: center;
@@ -8826,11 +8828,11 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 /* sidebar footer actions bar (was a near-opaque dark fill) */
 :root[data-family="light"] .sidebar-actions { background: rgba(255, 255, 255, 0.9); }
 
-/* user message bubble: the gradient had a hardcoded dark second stop */
-/* Light: a muted flat bubble, no outline, rounded as much as the composer.
-   image-only messages stay a bare thumbnail, so leave them alone. */
+/* Sent messages carry the user's selected accent in both palette families.
+   Image-only messages stay a bare thumbnail, so leave them alone. */
 :root[data-family="light"] .msg-user:not(.image-only) {
-  background: var(--panel-2);
+  color: var(--accent-ink);
+  background: var(--brass);
   border: none;
   border-radius: 16px;
 }
@@ -9447,10 +9449,11 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   box-shadow: 4px 4px 0 color-mix(in srgb, var(--brass) 35%, transparent),
     0 0 26px -4px var(--glow-soft);
 }
-:root[data-theme="arcade"] .msg-user {
+:root[data-theme="arcade"] .msg-user:not(.image-only) {
+  color: var(--accent-ink);
   border-width: 2px;
   border-right-width: 4px;
-  background: linear-gradient(135deg, var(--panel-3), #1b1545);
+  background: var(--brass);
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
 }
 /* Sidebar cards are the "cards" module's territory, so their share of the
