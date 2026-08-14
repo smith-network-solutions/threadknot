@@ -128,7 +128,13 @@
 .term-host {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 6px 8px;
+  /* Deeper bottom gutter than top on purpose. On desktop the accessory key row
+     is hidden, so this host is the pane's last element and its padding is the
+     only thing between the newest line — the one you are actually reading — and
+     the window edge. FitAddon floors rows against this same box (it reads the
+     host's content height), so the slack it leaves can be ~0 and the gutter is
+     all that remains. Costs at most one row; buys a readable last line. */
+  padding: 6px 8px 14px;
   overflow: hidden;
 }
 .term-host .xterm {
@@ -333,6 +339,12 @@
 @media (max-width: 1023px), (hover: none) and (pointer: coarse) {
   .term-keys {
     display: flex;
+  }
+  /* The key row is now the pane's last element and carries the safe-area inset
+     itself, so the host's deep gutter would only cost a row of grid on the
+     screen with the least of it. */
+  .term-host {
+    padding-bottom: 6px;
   }
 }
 

@@ -595,6 +595,16 @@ export function reducer(state: AppState, action: Action): AppState {
     case "projects": {
       // Drop thread lists for removed projects.
       const keep = new Set(action.projects.map((p) => p.id));
+      // `project.list` is this machine's roots ONLY. A workspace member living
+      // on a peer is never in it, so pruning against that list alone deleted
+      // every remote project's threads on each refresh — and this action fires
+      // on any state.changed the client has no branch for, several times a
+      // minute. For the ~50-150ms until refreshRemoteThreads() refilled them,
+      // findThread() could not see the open remote thread, so WorkspacePanel
+      // and the split collapsed: the file viewer was destroyed mid-read and
+      // the workspace snapped back to the chat. Membership is what makes a
+      // project ours to remember, not locality.
+      for (const w of state.workspaces) for (const m of w.members) keep.add(m.projectId);
       const threads: Record<string, Thread[]> = {};
       for (const pid of Object.keys(state.threads)) {
         if (keep.has(pid) || isQuickHomeProjectId(pid)) threads[pid] = state.threads[pid];

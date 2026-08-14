@@ -1,3 +1,7 @@
+// First, before react-dom: the render tracer installs the DevTools global hook
+// that react-dom reads while its own module evaluates. It is inert unless armed
+// (?tktrace=1). See docs/RENDER-FORENSICS.md.
+import "./lib/renderTrace";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
