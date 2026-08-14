@@ -279,6 +279,25 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
 }
 .brand-mark-accent { color: var(--brass); }
+/* Wordmark image in place of the "ThreadKnot" text in the sidebar header.
+   Height-locked; width follows the 3:1 aspect. Sits between the filter and
+   collapse buttons, which are absolutely positioned at the row edges. */
+.brand-wordmark {
+  height: 40px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+  /* Keep clear of the edge buttons on a narrow sidebar. */
+  max-width: calc(100% - 88px);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* The wordmark art is pale gold — near-invisible on the light sidebar. Invert
+   lightness but keep the gold hue (invert + 180deg hue-rotate) so it lands as a
+   dark brass that reads on white. */
+:root[data-family="light"] .brand-wordmark {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9);
+}
 
 .conn-pip {
   width: 7px; height: 7px;
@@ -363,8 +382,8 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   background: none;
 }
 .sidebar-brand .icon-btn:hover {
-  background: color-mix(in srgb, var(--brass) 12%, transparent);
-  color: var(--sidebar-muted);
+  background: none;
+  color: var(--brass-hi);
 }
 .sidebar-brand .sidebar-collapse-btn {
   position: absolute;

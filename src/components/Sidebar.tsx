@@ -3785,9 +3785,11 @@ export const Sidebar = memo(function Sidebar({
         >
           <FilterIcon size={18} />
         </button>
-        <span className="brand-mark">
-          Thread<span className="brand-mark-accent">Knot</span>
-        </span>
+        <img
+          className="brand-wordmark"
+          src="/threadknot-wordmark.png"
+          alt="Threadknot"
+        />
         <button
           type="button"
           className="icon-btn sidebar-collapse-btn"
