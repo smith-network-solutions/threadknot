@@ -32,6 +32,15 @@
   --sidebar-w: 292px;
   --rail-w: 64px;
   --safe-b: env(safe-area-inset-bottom, 0px);
+  /* How much of the layout viewport the on-screen keyboard covers. Written by
+     installKeyboardInset() in lib/viewport.ts; 0 everywhere except a phone with
+     the keyboard up. Always read as max(--safe-b, --kb-inset): a raised
+     keyboard already covers the home indicator, so the two must not stack. */
+  --kb-inset: 0px;
+  /* The phone layout's outer margin: the composer card and the floating header
+     capsule are both inset by it, so their edges align. Only read inside the
+     max-width: 767px block. */
+  --phone-gutter: 20px;
 }
 
 /* Light family base (the cool "light" palette, and the shared base "solar"
@@ -2713,43 +2722,183 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 .ss-content .settings-url { user-select: all; }
 
-/* Phones / narrow windows: full screen, nav becomes horizontal chips. */
-@media (max-width: 720px) {
-  .settings-screen-backdrop {
-    align-items: stretch;
+/* ---- Phones (≤767px): Settings is a bottom sheet with a drill-down list ----
+
+   The breakpoint matches the rest of the app (the sidebar goes off-canvas at
+   767 too), so there is no band where the sidebar is mobile but Settings is
+   not. The mobile markup is a separate branch in SettingsScreen — a `sheet`
+   backdrop wrapping `.settings-sheet` — so none of the `.settings-screen`
+   dialog rules apply here and the two can't fight. The shared `.ss-*` inner
+   rules still do. */
+@media (max-width: 767px) {
+  .settings-screen-backdrop.sheet {
+    align-items: flex-end;
     justify-content: stretch;
+    padding: 0;
   }
-  .settings-screen {
-    width: 100vw;
-    height: 100%;
-    max-height: none;
-    border: none;
-    border-radius: 0;
+
+  .settings-sheet {
+    position: relative;
+    width: 100%;
+    height: 92dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* Flat, for the same reason as the desktop dialog: no corner glow. */
+    background: var(--bg-raise);
+    border: 1px solid var(--line-2);
+    border-bottom: none;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.42);
+    /* Two independent properties on purpose: the open keyframe owns
+       `transform`, the drag gesture owns `translate`, and they compose instead
+       of overwriting each other (a keyframe with `fill-mode: both` holds
+       `transform` forever, which would freeze a transform-based drag). */
+    translate: 0 var(--sheet-drag, 0px);
+    transition: translate 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+    animation: settings-sheet-in 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
-  .ss-body { flex-direction: column; }
-  .ss-nav {
-    width: auto;
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-right: none;
-    border-bottom: 1px solid var(--line);
-    padding: 8px 10px;
-    gap: 6px;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+  /* Following the finger has to be immediate; a transition here reads as lag. */
+  .settings-sheet.dragging { transition: none; }
+  /* Ordered after `.dragging` so a drag-dismiss animates out from wherever the
+     finger let go rather than snapping back to 0 first. */
+  .settings-sheet.closing {
+    translate: 0 100%;
+    /* Under the 220ms unmount timer in SettingsScreen. At 220ms the sheet was
+       still at ~85% of its travel when React pulled it, so the slide-out ended
+       in a visible pop. */
+    transition: translate 0.2s ease-in;
   }
-  .ss-nav::-webkit-scrollbar { display: none; }
-  .ss-nav-item {
+
+  @keyframes settings-sheet-in {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  /* The whole grab zone takes the drag, not just the 36px bar: on a phone the
+     grip is a target you aim at, and the header band is the forgiving version
+     of it. `touch-action: none` stops the browser claiming the gesture as a
+     scroll before the pointer handlers see it. */
+  .ss-sheet-grab {
     flex: none;
-    padding: 7px 13px;
-    border: 1px solid var(--line);
-    border-radius: 17px;
+    touch-action: none;
+    /* Belt and braces with the preventDefault in useSheetDrag: a text
+       selection starting under the finger cancels the pointer stream
+       mid-gesture, and the sheet stops following the drag. */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grab;
+  }
+  .ss-sheet-grab:active { cursor: grabbing; }
+
+  .ss-grip {
+    width: 36px;
+    height: 4px;
+    margin: 8px auto 2px;
+    border-radius: 99px;
+    background: var(--line-2);
+  }
+
+  .settings-sheet .ss-head {
+    min-height: 0;
+    gap: 8px;
+    padding: 6px 14px 12px;
+    background: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .ss-sheet-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    font-weight: 620;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .ss-nav-item.on { border-color: var(--brass); }
-  .ss-nav-sub { display: none; }
-  .ss-content { padding: 12px 14px calc(24px + var(--safe-b)); }
+  /* ChevronIcon points right by default; back is the same glyph, mirrored. */
+  .ss-back { flex: none; }
+  .ss-back svg { transform: rotate(180deg); }
+
+  /* Panes slide in from the side they conceptually come from: forward into a
+     section from the right, back to the list from the left. */
+  .ss-pane {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .ss-pane-fwd { animation: ss-pane-in-fwd 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .ss-pane-back { animation: ss-pane-in-back 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+  @keyframes ss-pane-in-fwd {
+    from { opacity: 0; transform: translateX(18px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes ss-pane-in-back {
+    from { opacity: 0; transform: translateX(-18px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* The section list. Every section shows its blurb — the old chip row hid
+     them, which is what made 12 abbreviated pills unnavigable. */
+  .ss-menu {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 10px calc(18px + var(--safe-b));
+  }
+  .ss-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    /* Comfortably past the 44px touch minimum. */
+    min-height: 56px;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 12px;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .ss-menu-item + .ss-menu-item { box-shadow: inset 0 1px 0 var(--line); }
+  .ss-menu-item:active {
+    background: var(--panel-3);
+    /* The row is the only affordance here, so it has to answer the tap. */
+    box-shadow: none;
+  }
+  .ss-menu-item:active + .ss-menu-item { box-shadow: none; }
+  .ss-menu-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ss-menu-label {
+    font-size: 15px;
+    font-weight: 560;
+    letter-spacing: -0.01em;
+  }
+  .ss-menu-sub {
+    font-size: 12px;
+    color: var(--dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ss-menu-item > svg {
+    flex: none;
+    color: var(--faint);
+  }
+
+  .settings-sheet .ss-content {
+    padding: 16px 15px calc(28px + var(--safe-b));
+  }
 }
 
 /* Workspace roots manager modal */
@@ -4001,6 +4150,30 @@ body.reordering { cursor: grabbing; user-select: none; }
     content: "project · ";
     color: var(--dim);
   }
+  /* Desktop keeps the directory in the header; the feed copy is phone-only. */
+  .feed-project-caption { display: none; }
+}
+
+/* The project directory on phones, riding at the top of the scrollport instead
+   of in the header — the header has no room to spare above the Dynamic Island,
+   and this scrolls away once you're reading. Exactly one of this and
+   .thread-project-path is ever displayed, so the directory is never announced
+   twice. Already elided in JS (elidePathMiddle) so that both the owner segment
+   and the project folder survive; CSS can only ellipsise one end. */
+.feed-project-caption {
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.feed-project-caption::before {
+  content: "project · ";
+  color: var(--dim);
 }
 .title-edit { opacity: 0; }
 .thread-title:hover .title-edit { opacity: 1; }
@@ -4774,6 +4947,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .msg-time-user { margin-right: 3px; }
 .msg-time-assistant { margin-left: 1px; }
+.msg-time-mobile { display: none; }
 
 /* inline copy buttons (assistant / diff / tool) */
 .copy-btn {
@@ -5024,6 +5198,30 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .tool-row { border-left: 2px solid color-mix(in srgb, var(--teal) 45%, var(--line)); }
 .diff-card { border-left: 2px solid color-mix(in srgb, var(--brass) 45%, var(--line)); }
 .subagent-row { border-left: 2px solid color-mix(in srgb, var(--blue) 45%, var(--line)); }
+
+/* A tool row is chrome, not content: drop the stroke and the teal spine and
+   give it the composer input's own fill, open or closed, so a run of them reads
+   as one quiet stack. The expanded body carries its own top borders and dark
+   output block, so it still delineates without a card edge. Errors keep the
+   card: a failed call stays findable by shape. */
+.tool-row:not(.is-error),
+.tool-row:not(.is-error):hover {
+  border: 1px solid transparent;
+  background: color-mix(in srgb, #ffffff 5%, var(--panel));
+}
+/* Light has no fill contrast to lean on — white row on a white feed — so the
+   composer's lift does the separating instead. Same blue-gray cast, scaled
+   down: the composer floats over the page, a row only sits on it. */
+:root[data-family="light"] .tool-row:not(.is-error),
+:root[data-family="light"] .tool-row:not(.is-error):hover {
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgba(35, 50, 90, 0.1), 0 2px 5px rgba(35, 50, 90, 0.06);
+}
+/* Desktop gives the pill room to breathe. Phones keep 31px: there the feed is
+   the whole screen and a taller row costs scrollback, not comfort. */
+@media (min-width: 768px) {
+  .tool-row .row-head { min-height: 40px; padding: 9px 12px; }
+}
 
 .row-head {
   display: flex;
@@ -8575,7 +8773,48 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
   .hamburger { display: inline-flex; }
 
-  .thread-head { padding: 10px 12px; }
+  /* The header floats over the conversation on phones rather than sitting on a
+     bar above it: the fill starts at 60% and fades to nothing, so messages
+     dissolve under it instead of stopping at a rule. Padding clears the Dynamic
+     Island — every Pro phone since the 14 has one, so this is the common case.
+     color-mix on --panel rather than a literal rgba() keeps one rule correct in
+     every palette. The !important is load-bearing: the solar and arcade
+     .thread-head overrides sit LATER in this file at higher specificity and
+     would otherwise win (.quick-thread-head carries !important for the same
+     reason). */
+  .thread-head {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 20;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) var(--phone-gutter) 10px;
+    border-bottom: 0 !important;
+    /* A scrim, not a surface: the colour MUST be --bg (what .feed-scroll is
+       painted with), so content genuinely dissolves into the page as it
+       scrolls up. --panel was the earlier mistake here — at #090909 against a
+       #0c0c0c feed it resolved to a 2/255 difference, i.e. invisible.
+       60% at the top fading to nothing, and deliberately opaque nowhere: the
+       controls carry their own backing in .head-cluster, so the scrim doesn't
+       have to double as a legibility mask and can stay as light as it looks. */
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg) 60%, transparent),
+      transparent
+    ) !important;
+    backdrop-filter: none !important;
+    /* The box now spans the pane and its lower half is fully transparent.
+       Without this it would swallow taps on the top of the feed. */
+    pointer-events: none;
+  }
+  .thread-head > * { pointer-events: auto; }
+  :root[data-theme="arcade"] .thread-head::after { display: none !important; }
+  /* Height is not a constant — a multi-lane header wraps to as many as four
+     rows, and the safe-area inset changes on rotation — so the feed reserves
+     the measured height that ThreadView publishes as --head-h. The fallback
+     covers first paint, before the ResizeObserver has fired. Quick threads are
+     excluded: they already float, on their own fixed metrics. */
+  .thread-pane:not(:has(> .quick-thread-head)) .feed-inner {
+    padding-top: calc(var(--head-h, 54px) + 12px);
+  }
   .thread-head.quick-thread-head {
     min-height: 92px;
     align-items: flex-start;
@@ -8584,21 +8823,15 @@ span.title-agent-mark { width: 16px; height: 16px; }
   .thread-pane:has(> .quick-thread-head) .feed-inner { padding-top: 108px; }
   .quick-mode-tabs { top: 9px; }
   .thread-head .ws-toggles { display: flex; flex: none; gap: 2px; }
-  /* Keep the project location readable on phones too. Ordinary threads keep
-     it inside the title column; multi-lane threads promote it to a full-width
-     line so the lane strip still gets its own row below. */
-  .thread-head.has-lanes .thread-project-path {
-    order: 2;
-    flex: 0 0 100%;
-  }
-  /* Two-row header on phones, ONLY for multi-lane threads: title + workspace
-     actions up top; the lane roster (agent chip, Parley lane chips, timing)
-     drops to its own horizontally scrolling strip so a full debate panel can
-     never crush the title or push the action icons off screen. Ordinary
-     threads keep the single-row header they've always had. */
+  /* No title, no directory on phones. The thread you are looking at is the one
+     on screen, and the header has no room to spare above the Dynamic Island —
+     so the whole title column goes, and the directory reappears as
+     .feed-project-caption at the top of the scrollport. Rename still lives in
+     the sidebar's thread context menu. */
+  .thread-head-main { display: none; }
+  /* Two-row header on phones, ONLY for multi-lane threads, so a full debate
+     roster can't push the action icons off screen. */
   .thread-head.has-lanes { flex-wrap: wrap; row-gap: 6px; }
-  .thread-head.has-lanes .thread-head-main { display: contents; }
-  .thread-head.has-lanes .thread-title { flex: 1 1 auto; min-width: 0; }
   .thread-head.has-lanes .ws-toggles { margin-left: auto; }
   .thread-head.has-lanes .thread-sub {
     order: 3;
@@ -8649,7 +8882,11 @@ span.title-agent-mark { width: 16px; height: 16px; }
   .review-agent-list .agent-option { padding: 9px 10px; }
   .persona-main .agent-off-built { display: none; }
 
-  .feed-inner { padding: 14px 12px 116px; } /* clear the floating composer */
+  /* Clear the floating composer. The card alone measures ~133px on a phone, so
+     116px left the last message tucked under it; this reserves the card plus a
+     visible gap, and tracks whatever the card is sitting on top of — the home
+     indicator, or the keyboard once it pushes the card up. */
+  .feed-inner { padding: 14px 12px calc(150px + max(var(--safe-b), var(--kb-inset))); }
   .msg-user { max-width: 88%; }
   .artifact-card { width: 100%; max-width: none; border-radius: 18px; }
   .artifact-inline-preview { min-height: 132px; max-height: 310px; }
@@ -8725,21 +8962,38 @@ span.title-agent-mark { width: 16px; height: 16px; }
     grid-column: 2;
     grid-row: 1;
   }
-  .msg-assistant:not(.streaming) > .msg-time {
-    grid-column: 1;
-    grid-row: 2;
+  .assistant-head > .msg-time-mobile {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 0 6px -1px;
+  }
+  .assistant-thought-stat + .msg-time-mobile::before {
+    content: "\00b7";
+    color: var(--faint);
+  }
+  .msg-assistant:not(.streaming) > .msg-time-assistant:not(.msg-time-mobile) {
+    display: none;
   }
 
   /* A phone is narrower than every width preset, so the cap never bit here
      anyway; dropping it outright keeps "full" honest and stops a future preset
      from squeezing the box in the one place it must span the screen. */
-  .composer { padding: 4px 8px calc(10px + var(--safe-b)); max-width: none; }
-  .composer-card { border-radius: 24px; padding: 12px 14px 10px; }
+  .composer {
+    /* --phone-gutter, not a literal: the header capsule is inset by the same
+       number, so the card's edge and the pill's edge line up down the screen.
+       Change one place or they drift apart. */
+    padding: 4px var(--phone-gutter) calc(20px + max(var(--safe-b), var(--kb-inset)));
+    max-width: none;
+  }
+  .composer-card { border-radius: 24px; padding: 14px 16px 12px; }
   .build-workspace-tray {
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
-    margin: -12px -14px 10px;
+    /* Negative margin must track .composer-card's padding so the tray still
+       bleeds to the card's edges. */
+    margin: -14px -16px 10px;
     padding: 18px 20px;
     border-radius: 23px 23px 12px 12px;
   }
@@ -8752,6 +9006,14 @@ span.title-agent-mark { width: 16px; height: 16px; }
      [+]  …  [ctx] [mic] [send]. */
   .composer-actions { align-items: center; gap: 6px; }
   .ctx-pop { max-width: calc(100vw - 20px); }
+
+  /* Mode / Access menus anchor to the left cluster, not to their own pill: a
+     236px menu opening from the Access pill's left edge runs off a phone's
+     right edge. Both now hang from the same edge as the plus button. Scoped to
+     .composer-left so the agent picker on the right keeps its own anchor. */
+  .composer-left { position: relative; }
+  .composer-left > .pill-picker { position: static; }
+  .composer-left > .pill-picker > .pill-menu { left: 0; }
 
   /* touch targets: always show row actions. Hover reveals nothing on a
      phone, so anything gated on :hover is simply unreachable there. */
@@ -12416,30 +12678,45 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   height: min(720px, 90vh);
   border: 1px solid var(--line-2);
   border-radius: 20px;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--panel-2) 86%, var(--brass) 14%), var(--bg-raise) 48%);
+  /* Flat surface on purpose — the brass-tinted gradient that used to sit here,
+     and the radial ::before over the top-left corner, read as a smudge on the
+     panel rather than as lighting. */
+  background: var(--bg-raise);
   box-shadow:
     0 34px 100px rgba(0, 0, 0, 0.42),
     0 10px 28px rgba(0, 0, 0, 0.16);
   animation: settings-window-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Closing needs its own keyframes, not `settings-window-in ... reverse`.
+   Re-using the opening animation's NAME means the browser sees the same,
+   already-finished animation and never restarts it — the dialog snapped
+   straight to the reversed end state (invisible) and then sat there until the
+   220ms unmount timer fired. Distinct names are what make it actually play. */
+@keyframes settings-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes settings-window-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.975);
+  }
+}
+
+/* Both finish inside the 220ms unmount timer in SettingsScreen, so the last
+   frame is the animation's, not a pop. */
 .settings-screen-backdrop.closing {
-  animation: popup-backdrop-in 0.2s ease-in reverse both;
+  animation: settings-backdrop-out 0.2s ease-in both;
 }
 
 .settings-screen.closing {
-  animation: settings-window-in 0.22s ease-in reverse both;
-}
-
-.settings-screen::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background: radial-gradient(520px 180px at 10% 0%, color-mix(in srgb, var(--brass) 10%, transparent), transparent 72%);
-  opacity: 0.8;
+  animation: settings-window-out 0.2s ease-in both;
 }
 
 .ss-head,
@@ -12484,23 +12761,18 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 
 .ss-content .settings-block { margin-bottom: 18px; }
 
-@media (max-width: 720px) {
-  .settings-screen-backdrop {
-    padding: 8px;
-    align-items: center;
-  }
+/* Below 767px Settings renders as `.settings-sheet`, not `.settings-screen`,
+   so the phone-width overrides for the dialog live with the sheet — see the
+   "Settings is a bottom sheet" block earlier in this file. Nothing to override
+   here: the dialog above is desktop-only now. */
 
+/* The tablet-ish band still gets the dialog, just without the fixed 960px
+   frame it can't fit. */
+@media (max-width: 900px) and (min-width: 768px) {
   .settings-screen {
-    width: 100%;
-    height: calc(100dvh - 16px);
-    max-height: none;
-    border: 1px solid var(--line-2);
-    border-radius: 16px;
+    width: 94vw;
+    height: min(720px, 92dvh);
   }
-
-  .ss-head { padding: 14px 16px; }
-  .ss-nav { padding: 9px 10px; }
-  .ss-content { padding: 16px 15px calc(24px + var(--safe-b)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -12533,9 +12805,24 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   .term-ctx,
   .toast,
   .settings-screen,
-  .settings-screen.closing,
-  .settings-screen-backdrop.closing,
+  .settings-screen-backdrop,
+  .settings-sheet,
+  .ss-pane,
   .ss-content {
     animation: none;
+  }
+  /* Drag still tracks the finger — that is direct manipulation, not
+     decoration — but the spring-back stops being animated. */
+  .settings-sheet { transition: none; }
+  /* The exit keeps a token duration rather than being removed outright.
+     Settings now unmounts on animationend/transitionend, and an animation that
+     never runs never fires one — the overlay would sit on screen until the
+     600ms backstop. 1ms is imperceptible and still emits the event. */
+  .settings-screen.closing,
+  .settings-screen-backdrop.closing {
+    animation-duration: 1ms;
+  }
+  .settings-sheet.closing {
+    transition: translate 1ms linear;
   }
 }

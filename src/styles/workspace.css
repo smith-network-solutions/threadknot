@@ -167,9 +167,46 @@
    breakpoint below. */
 .head-tab-pills { display: contents; }
 .head-tab-menu { display: none; }
+/* Desktop: the cluster is not a box at all, so the hamburger (hidden) and the
+   menu (hidden) leave no trace in the header's flex row. */
+.head-cluster { display: contents; }
+
 @media (max-width: 767px) {
   .head-tab-pills { display: none; }
   .head-tab-menu { display: inline-flex; }
+
+  /* One capsule holding the two controls the phone header keeps: open the
+     sidebar, and open everything else. The title is gone at this width, so
+     this cluster IS the header's left side. */
+  .head-cluster {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    /* Pushes .ws-toggles to the right edge now that .thread-head-main, which
+       used to be the flex:1 spacer, is hidden. */
+    margin-right: auto;
+    padding: 3px;
+    border-radius: 999px;
+    /* The capsule floats over live conversation, so it is fully opaque — the
+       header scrim above it is only 60% at its darkest, and anything less here
+       lets message text ghost straight through an icon. */
+    background: var(--panel-2);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent),
+      0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+  /* Both children become circles inside the capsule. The More button is
+     icon-only here, so it needs a square box to round off. */
+  .head-cluster .hamburger,
+  .head-cluster .head-pill {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    border-radius: 999px;
+    justify-content: center;
+  }
+  /* Review moved into the More menu on phones. */
+  .review-pill { display: none; }
 }
 
 @media (max-width: 1023px) {

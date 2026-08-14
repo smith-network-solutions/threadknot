@@ -95,6 +95,27 @@ export function formatTokens(n: number | undefined): string | null {
   return String(n);
 }
 
+/**
+ * Shorten a path for display while preserving BOTH ends. The leading segments
+ * identify the machine and the owner — a thread can be dispatched to another
+ * harness or another box, so `/home/spencer/…` is what answers "whose device is
+ * this running on" — and the final segment is the project. Only the middle,
+ * which carries neither, is elided.
+ *
+ *   /home/spencer/WebstormProjects/threadknot  ->  /home/spencer/…/threadknot
+ *
+ * Segment-count based rather than width-measured: deterministic, and it costs
+ * no layout read. Paths short enough to survive intact come back untouched.
+ */
+export function elidePathMiddle(path: string, keepHead = 2, keepTail = 1): string {
+  const lead = path.startsWith("/") ? "/" : "";
+  const parts = path.slice(lead.length).split("/").filter(Boolean);
+  if (parts.length <= keepHead + keepTail) return path;
+  const head = parts.slice(0, keepHead);
+  const tail = parts.slice(parts.length - keepTail);
+  return `${lead}${[...head, "…", ...tail].join("/")}`;
+}
+
 /** Copy text; falls back to execCommand for non-secure (http LAN) contexts. */
 export async function copyText(text: string): Promise<boolean> {
   try {

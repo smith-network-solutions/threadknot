@@ -724,15 +724,17 @@ function BriefDivider({ item }: { item: Extract<FeedItem, { type: "user" }> }) {
 function MessageTime({
   timestamp,
   side,
+  mobile = false,
 }: {
   timestamp?: string;
   side: "user" | "assistant";
+  mobile?: boolean;
 }) {
   if (!timestamp) return null;
   const full = formatFullDateTime(timestamp);
   return (
     <time
-      className={`msg-time msg-time-${side}`}
+      className={`msg-time msg-time-${side}${mobile ? " msg-time-mobile" : ""}`}
       dateTime={timestamp}
       title={full}
       aria-label={`Sent ${full}`}
@@ -913,6 +915,9 @@ export const FeedItemView = memo(function FeedItemView({
                 <BrainIcon size={12} />
                 Thought for {thoughtTime}
               </span>
+            )}
+            {!item.streaming && (
+              <MessageTime timestamp={item.timestamp} side="assistant" mobile />
             )}
           </div>
           <Markdown

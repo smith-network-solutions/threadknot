@@ -13,9 +13,11 @@ import {
   HERMES_HOME_PROJECT_ID,
   isQuickHomeProjectId,
   threadParticipants,
+  type Thread,
   type ThreadSettings,
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
+import { elidePathMiddle } from "../lib/format";
 import type { ReplyTarget } from "../lib/reply";
 import type { FeedItem } from "../state/feed";
 import {
@@ -29,7 +31,7 @@ import {
 } from "../state/store";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { FeedItemView, thoughtTimesForFeed, type FeedRenderContext } from "./FeedItems";
-import { ParleyRoundSplash, ReviewMenu } from "./ReviewMenu";
+import { ParleyRoundSplash, ReviewDialog, ReviewMenu, useReviewBlock } from "./ReviewMenu";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
 import { Composer } from "./Composer";
@@ -40,8 +42,10 @@ import {
   ChevronIcon,
   MenuIcon,
   MoreIcon,
+  PanelLeftIcon,
   PencilIcon,
   SearchIcon,
+  ShieldIcon,
   XIcon,
 } from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
@@ -192,19 +196,24 @@ function ChatFindBar({
 }
 
 /** The header's workspace panels (Files, Git, Artifacts, Browser, Terminal)
- *  collapsed behind one "more" button — used on phones, where the desktop pills
- *  would overflow. Opening a row toggles that panel; the button lights up while
- *  any panel is open. Portaled + click-outside/Escape to close. */
+ *  plus Review, collapsed behind one icon-only button — used on phones, where
+ *  the desktop pills would overflow. Opening a row toggles that panel; the
+ *  button lights up while any panel is open. Portaled + click-outside/Escape
+ *  to close. */
 function WorkspaceMenu({
   project,
   openTab,
   dispatch,
+  thread,
 }: {
   project: { id: string } | undefined;
   openTab: string | null;
   dispatch: ReturnType<typeof useStore>["dispatch"];
+  thread: Thread | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewBlocked = useReviewBlock(thread);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -261,8 +270,10 @@ function WorkspaceMenu({
         onClick={() => setOpen((v) => !v)}
       >
         <MoreIcon size={16} />
-        <span>More</span>
       </button>
+      {reviewOpen && thread && (
+        <ReviewDialog thread={thread} onClose={() => setReviewOpen(false)} />
+      )}
       {open && pos && project &&
         createPortal(
           <div
@@ -300,6 +311,24 @@ function WorkspaceMenu({
                 </button>
               );
             })}
+            {/* Review lives here on phones rather than as its own header pill —
+                the header only has room for the one cluster. `divided` sets it
+                off from the panel toggles above: it opens a dialog, it doesn't
+                toggle a panel. */}
+            <button
+              type="button"
+              role="menuitem"
+              className="thread-menu-item divided"
+              disabled={!!reviewBlocked}
+              title={reviewBlocked ?? "Review with another agent"}
+              onClick={() => {
+                setOpen(false);
+                setReviewOpen(true);
+              }}
+            >
+              <ShieldIcon size={16} />
+              <span>Review</span>
+            </button>
           </div>,
           document.body,
         )}
@@ -925,9 +954,33 @@ export function ThreadView() {
     observerRef.current = ro;
   }, [pinToEnd]);
 
+  // On phones the header floats over the feed (see the mobile .thread-head
+  // rules), so the feed has to reserve its height itself. That height is not a
+  // constant: a multi-lane thread wraps the header to as many as four rows, and
+  // the safe-area inset changes on rotation. Measure it and publish it as
+  // --head-h on .thread-pane, which the mobile .feed-inner padding reads.
+  //
+  // The write goes straight to the DOM rather than through state: this fires on
+  // every header reflow, and a re-render per reflow would show up in
+  // docs/RENDER-FORENSICS.md as the whole thread flashing.
+  const headObserverRef = useRef<ResizeObserver | null>(null);
+  const threadHeadRef = useCallback((node: HTMLElement | null) => {
+    headObserverRef.current?.disconnect();
+    headObserverRef.current = null;
+    if (!node) return;
+    const pane = node.parentElement;
+    if (!pane) return;
+    const ro = new ResizeObserver(() => {
+      pane.style.setProperty("--head-h", `${Math.round(node.getBoundingClientRect().height)}px`);
+    });
+    ro.observe(node);
+    headObserverRef.current = ro;
+  }, []);
+
   useEffect(
     () => () => {
       observerRef.current?.disconnect();
+      headObserverRef.current?.disconnect();
       if (pinRafRef.current !== null) window.cancelAnimationFrame(pinRafRef.current);
       if (scrollMetricsRafRef.current !== null) {
         window.cancelAnimationFrame(scrollMetricsRafRef.current);
@@ -1006,15 +1059,33 @@ export function ThreadView() {
   return (
     <section className="thread-pane">
       <header
+        ref={threadHeadRef}
         className={`thread-head${hasLanes ? " has-lanes" : ""}${quickHome ? " quick-thread-head" : ""}`}
       >
-        <button
-          className="icon-btn hamburger"
-          aria-label="Open sidebar"
-          onClick={() => dispatch({ type: "sidebar", open: true })}
-        >
-          <MenuIcon size={18} />
-        </button>
+        {/* The phone header's one control cluster: sidebar + More share a
+            single capsule. `display: contents` on desktop, where the hamburger
+            is hidden and the panels are pills instead. */}
+        <div className="head-cluster">
+          <button
+            className="icon-btn hamburger"
+            aria-label="Open sidebar"
+            onClick={() => dispatch({ type: "sidebar", open: true })}
+          >
+            {/* The same glyph the desktop sidebar collapse button uses — this
+                opens that panel, so it should not read as a generic menu. */}
+            <PanelLeftIcon size={18} />
+          </button>
+          {!hermesHome && !quickHome && (
+            <div className="head-tab-menu">
+              <WorkspaceMenu
+                project={project}
+                openTab={project ? state.workspace[project.id] ?? null : null}
+                dispatch={dispatch}
+                thread={thread}
+              />
+            </div>
+          )}
+        </div>
         <div className="thread-head-main">
           {thread && editing ? (
             <input
@@ -1147,14 +1218,6 @@ export function ThreadView() {
                   );
                 })}
               </div>
-              {/* Phones: the same panels collapsed into a dropdown. */}
-              <div className="head-tab-menu">
-                <WorkspaceMenu
-                  project={project}
-                  openTab={project ? state.workspace[project.id] ?? null : null}
-                  dispatch={dispatch}
-                />
-              </div>
             </>
           )}
         </div>
@@ -1273,6 +1336,20 @@ export function ThreadView() {
           </div>
         )}
         <div className="feed-inner" ref={feedInnerRef}>
+          {/* Phones only — the desktop header carries this instead. It rides in
+              the scrollport so it greets you on arrival and then scrolls away,
+              costing nothing at rest under the Dynamic Island. Suppressed while
+              the new-thread empty state is up: that state states the folder
+              itself, in a sentence, and two copies read as a mistake. */}
+          {project?.path && !hermesHome && !quickHome && !(feedLen === 0 && projectDraft) && (
+            <div
+              className="feed-project-caption"
+              title={project.path}
+              aria-label={`Project directory: ${project.path}`}
+            >
+              {elidePathMiddle(project.path)}
+            </div>
+          )}
           {state.feedLoading && <div className="feed-note note-status">loading log…</div>}
           {!state.feedLoading && feedLen === 0 && (
             <div className="feed-empty">

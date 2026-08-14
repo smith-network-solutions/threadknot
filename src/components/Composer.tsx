@@ -10,6 +10,7 @@ import type {
   ThreadSettings,
 } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
+import { useIsMobile } from "../lib/viewport";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { effortForModel, remoteMachineId, resolveProjectView, useFeedStore, useStore } from "../state/store";
 import type { FeedItem } from "../state/feed";
@@ -407,6 +408,8 @@ interface PickerOption<T extends string> {
   id: T;
   icon: ReactNode;
   title: string;
+  /** Trigger label on phone widths, where the bar has no room for the full one. */
+  shortTitle?: string;
   desc: string;
 }
 
@@ -430,6 +433,7 @@ function PillPicker<T extends string>({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!open) return;
@@ -448,6 +452,8 @@ function PillPicker<T extends string>({
   }, [open]);
 
   const current = options.find((o) => o.id === value) ?? options[0];
+  // The menu rows always spell the setting out; only the bar pill abbreviates.
+  const triggerLabel = (isMobile && current.shortTitle) || current.title;
 
   return (
     <div className="pill-picker" ref={ref}>
@@ -461,7 +467,7 @@ function PillPicker<T extends string>({
         onClick={() => setOpen((v) => !v)}
       >
         <span className="pill-trigger-icon">{current.icon}</span>
-        {showLabel && <span className="pill-trigger-label">{current.title}</span>}
+        {showLabel && <span className="pill-trigger-label">{triggerLabel}</span>}
       </button>
       {open && (
         <div className="pill-menu" role="menu" aria-label={ariaLabel}>
@@ -500,7 +506,13 @@ const MODE_OPTIONS: PickerOption<Mode>[] = [
 const ACCESS_OPTIONS: PickerOption<Access>[] = [
   { id: "read", icon: <EyeIcon size={19} />, title: "Read", desc: "Read-only — look, never touch" },
   { id: "edits", icon: <PencilIcon size={19} />, title: "Edit", desc: "Edit files; asks before running" },
-  { id: "full", icon: <ShieldAlertIcon size={19} />, title: "Full Acess", desc: "Full access — runs commands freely" },
+  {
+    id: "full",
+    icon: <ShieldAlertIcon size={19} />,
+    title: "Unrestricted",
+    shortTitle: "Full",
+    desc: "Full access — runs commands freely",
+  },
 ];
 
 /**
@@ -642,20 +654,6 @@ function AgentModelPicker({
       )}
     </div>
   );
-}
-
-/** True on phone-width viewports (matches the CSS composer breakpoint). */
-function useIsMobile(): boolean {
-  const [mobile, setMobile] = useState(
-    () => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const on = () => setMobile(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
-  return mobile;
 }
 
 /**

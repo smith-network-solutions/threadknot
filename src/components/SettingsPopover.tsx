@@ -21,6 +21,7 @@ import {
   DEVICE_CAPABILITY_LABELS,
 } from "../lib/protocol";
 import { copyText, timeAgo } from "../lib/format";
+import { useIsMobile } from "../lib/viewport";
 import { pickAvatarImage } from "../lib/sidebarImage";
 import { MachineAvatar, machineLook } from "./MachineAvatar";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
@@ -3600,23 +3601,168 @@ const SETTINGS_SECTIONS = [
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
 
 /**
- * Full-screen settings: left nav rail on desktop, horizontal chip tabs on
- * phones (≤720px), one section rendered at a time. Replaces the old
- * everything-in-one-scroll popover.
+ * The section panes. Desktop (nav rail) and mobile (sheet) render this same
+ * component, so a section only ever exists in one place.
+ */
+function SettingsSectionContent({
+  section,
+  isTauri,
+  isMaster,
+  onCloseSettings,
+  onUnlock,
+}: {
+  section: SettingsSection;
+  isTauri: boolean;
+  isMaster: boolean;
+  onCloseSettings: () => void;
+  onUnlock: () => void;
+}) {
+  switch (section) {
+    case "appearance":
+      return (
+        <>
+          <AppearanceStudio />
+          <SkinsSettings />
+          <SidebarSettings />
+          <ComposerSettings />
+        </>
+      );
+    case "terminal":
+      return <TerminalSettings />;
+    case "notifications":
+      return <NotifySettings isTauri={isTauri} />;
+    case "machines":
+      return <MachinesSettings />;
+    case "phone":
+      return <PhoneAccessSettings />;
+    case "agents":
+      return <AgentsSettings />;
+    case "voice":
+      return isMaster ? <VoiceSettings /> : null;
+    case "library":
+      return <LibrarySettings />;
+    case "browser":
+      return <BrowserProfileSettings />;
+    case "archives":
+      return <ArchivesSettings onClose={onCloseSettings} />;
+    case "updates":
+      return <UpdatesSettings />;
+    case "about":
+      return <AboutSettings onUnlock={onUnlock} />;
+  }
+}
+
+/** Downward pull, in px, past which releasing dismisses the mobile sheet. */
+const SHEET_DISMISS_PX = 96;
+/** Downward speed, in px/ms, that dismisses regardless of distance. */
+const SHEET_FLICK_SPEED = 0.5;
+
+/**
+ * Pull-down-to-dismiss for the mobile sheet.
+ *
+ * Deliberately bound to the grip and header only. If the whole sheet took the
+ * gesture, every upward scroll inside a long section (Machines, Library) would
+ * be ambiguous at the top of its scroll range, and the sheet would fight the
+ * content for it — the classic bottom-sheet bug. The grip is the handle in both
+ * senses.
+ *
+ * Drag offset rides on the CSS `translate` property, which composes with — and
+ * so never fights — the `transform` the open/close keyframes own.
+ */
+function useSheetDrag(sheetRef: React.RefObject<HTMLDivElement | null>, onDismiss: () => void) {
+  const start = useRef<{ y: number; t: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const setOffset = useCallback(
+    (px: number) => {
+      sheetRef.current?.style.setProperty("--sheet-drag", `${px}px`);
+    },
+    [sheetRef],
+  );
+
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // The close and back buttons live in the drag zone; let them be buttons.
+    if ((e.target as HTMLElement).closest("button")) return;
+    // Without this the header text starts a native selection-drag a few pixels
+    // in, which fires pointercancel and kills the gesture halfway down.
+    e.preventDefault();
+    start.current = { y: e.clientY, t: e.timeStamp };
+    setDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!start.current) return;
+      const dy = e.clientY - start.current.y;
+      // Upward pulls get rubber-banded rather than lifting the sheet out of
+      // its slot: there is nothing above it to reveal.
+      setOffset(dy > 0 ? dy : dy / 4);
+    },
+    [setOffset],
+  );
+
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const from = start.current;
+      if (!from) return;
+      start.current = null;
+      setDragging(false);
+      const dy = e.clientY - from.y;
+      const speed = dy / Math.max(1, e.timeStamp - from.t);
+      if (dy > SHEET_DISMISS_PX || (speed > SHEET_FLICK_SPEED && dy > 24)) {
+        // Leave the offset alone — the closing rule animates `translate` from
+        // wherever the finger let go, so the sheet keeps the gesture's momentum.
+        onDismiss();
+      } else {
+        setOffset(0);
+      }
+    },
+    [onDismiss, setOffset],
+  );
+
+  // A cancel is the system taking the pointer away (a call arrives, the OS
+  // claims the gesture). It carries no meaningful coordinates — reading
+  // clientY off one gives 0, which reads as a big *upward* drag — so it can
+  // never share the release path. Always put the sheet back.
+  const onPointerCancel = useCallback(() => {
+    if (!start.current) return;
+    start.current = null;
+    setDragging(false);
+    setOffset(0);
+  }, [setOffset]);
+
+  return {
+    dragging,
+    dragHandlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+  };
+}
+
+/**
+ * Settings: a centred dialog with a left nav rail on desktop, and on phones
+ * (≤767px) a bottom sheet whose sections are a drill-down list. The old mobile
+ * treatment squeezed the rail into a sideways-scrolling row of 12 unlabelled
+ * chips, which meant hunting for a section you couldn't see.
  */
 export function SettingsScreen({ onClose }: { onClose: () => void }) {
   const { state } = useStore();
+  const isMobile = useIsMobile();
   const visibleSections = SETTINGS_SECTIONS.filter(
     (item) => item.id !== "voice" || state.hello?.principal === "master",
   );
   // The pulsing gear is a pointer at this tab, so land on it when it is the
   // reason the user opened settings.
+  const landOnUpdates = Boolean(
+    state.update?.updateAvailable || state.update?.restartPending,
+  );
   const [section, setSection] = useState<SettingsSection>(
     // Same rule as the gear pulse: if it pulsed, land on what it was pulsing about.
-    state.update?.updateAvailable || state.update?.restartPending
-      ? "updates"
-      : "appearance",
+    landOnUpdates ? "updates" : "appearance",
   );
+  // Mobile only: the sheet opens on the section list, except when the gear was
+  // pulsing about an update — then it opens straight into that section, which
+  // is what the pulse promised.
+  const [drilled, setDrilled] = useState(landOnUpdates);
 
   // What the About section can raise. While it is up it owns the whole dialog
   // and the keyboard, including Escape (which leaves it, rather than closing
@@ -3628,93 +3774,210 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
     if (!closing) setClosing(true);
   }, [closing]);
 
+  // The surface currently on screen — the sheet on mobile, the dialog on
+  // desktop. Only one is mounted at a time, so they can share the ref.
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+
+  // Unmount when the exit animation actually ends, not on a timer guessing how
+  // long it took. A fixed 220ms was a race: the `.closing` class only lands on
+  // the next React render, so on a loaded machine the 200ms animation was still
+  // mid-flight when the timer fired and Settings vanished in a pop. The timeout
+  // survives only as a backstop for the case where no event ever arrives.
   useEffect(() => {
     if (!closing) return;
-    const timer = window.setTimeout(onClose, 220);
-    return () => window.clearTimeout(timer);
+    const node = surfaceRef.current;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      onClose();
+    };
+    // Both events bubble, so a transition on any descendant (a hover, a
+    // spinner) would otherwise cut the exit short.
+    const onEnd = (e: Event) => {
+      if (e.target === node) finish();
+    };
+    node?.addEventListener("animationend", onEnd);
+    node?.addEventListener("transitionend", onEnd);
+    const timer = window.setTimeout(finish, 600);
+    return () => {
+      node?.removeEventListener("animationend", onEnd);
+      node?.removeEventListener("transitionend", onEnd);
+      window.clearTimeout(timer);
+    };
   }, [closing, onClose]);
 
+  // On mobile Escape is two-stage — out of a section first, then out of
+  // Settings — so it agrees with the back arrow beside it.
   useEffect(() => {
     if (circuit || closing) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") requestClose();
+      if (e.key !== "Escape") return;
+      if (isMobile && drilled) setDrilled(false);
+      else requestClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [circuit, closing, requestClose]);
+  }, [circuit, closing, drilled, isMobile, requestClose]);
+
+  const { dragging, dragHandlers } = useSheetDrag(surfaceRef, requestClose);
+
+  const current = visibleSections.find((s) => s.id === section);
+  const paneContent = (
+    <SettingsSectionContent
+      section={section}
+      isTauri={state.isTauri}
+      isMaster={state.hello?.principal === "master"}
+      onCloseSettings={requestClose}
+      onUnlock={() => setCircuit(true)}
+    />
+  );
+
+  // Shared by both branches: the theme sync and the About easter egg, which
+  // takes over the whole surface when it is up.
+  const shell = (
+    <>
+      {/* Keeps the applied custom theme in sync with server records while
+          Settings is open (live edits, cross-window deletes). App.tsx should
+          mount its own <ThemeSync/> at the root for boot + settings-closed. */}
+      <ThemeSync />
+      {circuit && <LegacyCircuit onExit={() => setCircuit(false)} />}
+    </>
+  );
+
+  const mobileSheet = (
+    <div
+      ref={surfaceRef}
+      className={
+        `settings-sheet${circuit ? " ss-eclipsed" : ""}` +
+        `${closing ? " closing" : ""}${dragging ? " dragging" : ""}`
+      }
+      data-zoom-pane="settings"
+      role="dialog"
+      aria-label="Settings"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {shell}
+      {!circuit && (
+        <>
+          <div className="ss-sheet-grab" {...dragHandlers}>
+            <div className="ss-grip" aria-hidden="true" />
+            <header className="ss-head">
+              {drilled ? (
+                <button
+                  type="button"
+                  className="icon-btn ss-back"
+                  aria-label="Back to all settings"
+                  onClick={() => setDrilled(false)}
+                >
+                  <ChevronIcon size={16} />
+                </button>
+              ) : null}
+              <span className={drilled ? "ss-sheet-title" : "ss-title"}>
+                {drilled ? (current?.label ?? "Settings") : "SETTINGS"}
+              </span>
+              {!drilled && (
+                <span className="ss-head-sub">{state.hello?.friendlyName ?? ""}</span>
+              )}
+              <button
+                className="icon-btn ss-close"
+                aria-label="Close settings"
+                onClick={requestClose}
+              >
+                <XIcon size={15} />
+              </button>
+            </header>
+          </div>
+          {drilled ? (
+            <div className="ss-content ss-pane ss-pane-fwd" key={section}>
+              {paneContent}
+            </div>
+          ) : (
+            <nav className="ss-menu ss-pane ss-pane-back" aria-label="Settings sections">
+              {visibleSections.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="ss-menu-item"
+                  onClick={() => {
+                    setSection(s.id);
+                    setDrilled(true);
+                  }}
+                >
+                  <span className="ss-menu-text">
+                    <span className="ss-menu-label">{s.label}</span>
+                    <span className="ss-menu-sub">{s.blurb}</span>
+                  </span>
+                  <ChevronIcon size={14} />
+                </button>
+              ))}
+            </nav>
+          )}
+        </>
+      )}
+    </div>
+  );
+
+  const desktopDialog = (
+    <div
+      ref={surfaceRef}
+      // The cabinet portals itself to <body> and covers the window, so the
+      // dialog's own frame would only be an empty box glowing behind it.
+      className={`settings-screen${circuit ? " ss-eclipsed" : ""}${closing ? " closing" : ""}`}
+      data-zoom-pane="settings"
+      role="dialog"
+      aria-label="Settings"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {shell}
+      {!circuit && (
+        <>
+          <header className="ss-head">
+            <span className="ss-title">SETTINGS</span>
+            <span className="ss-head-sub">{state.hello?.friendlyName ?? ""}</span>
+            <button
+              className="icon-btn ss-close"
+              aria-label="Close settings"
+              onClick={requestClose}
+            >
+              <XIcon size={15} />
+            </button>
+          </header>
+          <div className="ss-body">
+            <nav className="ss-nav" aria-label="Settings sections">
+              {visibleSections.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`ss-nav-item${section === s.id ? " on" : ""}`}
+                  aria-current={section === s.id}
+                  onClick={() => setSection(s.id)}
+                >
+                  <span className="ss-nav-label">{s.label}</span>
+                  <span className="ss-nav-sub">{s.blurb}</span>
+                </button>
+              ))}
+            </nav>
+            <div className="ss-content" key={section}>
+              {paneContent}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 
   // Portaled to <body>: the opener lives inside the sidebar, whose mobile
   // off-canvas transform would otherwise drag this fixed overlay with it.
   return createPortal(
     <div
-      className={`settings-screen-backdrop${closing ? " closing" : ""}`}
+      className={
+        `settings-screen-backdrop${isMobile ? " sheet" : ""}` +
+        `${closing ? " closing" : ""}`
+      }
       onClick={circuit || closing ? undefined : requestClose}
     >
-      <div
-        // The cabinet portals itself to <body> and covers the window, so the
-        // dialog's own frame would only be an empty box glowing behind it.
-        className={`settings-screen${circuit ? " ss-eclipsed" : ""}${closing ? " closing" : ""}`}
-        data-zoom-pane="settings"
-        role="dialog"
-        aria-label="Settings"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Keeps the applied custom theme in sync with server records while
-            Settings is open (live edits, cross-window deletes). App.tsx should
-            mount its own <ThemeSync/> at the root for boot + settings-closed. */}
-        <ThemeSync />
-        {circuit && <LegacyCircuit onExit={() => setCircuit(false)} />}
-        {!circuit && (
-          <>
-        <header className="ss-head">
-          <span className="ss-title">SETTINGS</span>
-          <span className="ss-head-sub">
-            {state.hello?.friendlyName ?? ""}
-          </span>
-          <button className="icon-btn ss-close" aria-label="Close settings" onClick={requestClose}>
-            <XIcon size={15} />
-          </button>
-        </header>
-        <div className="ss-body">
-          <nav className="ss-nav" aria-label="Settings sections">
-            {visibleSections.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`ss-nav-item${section === s.id ? " on" : ""}`}
-                aria-current={section === s.id}
-                onClick={() => setSection(s.id)}
-              >
-                <span className="ss-nav-label">{s.label}</span>
-                <span className="ss-nav-sub">{s.blurb}</span>
-              </button>
-            ))}
-          </nav>
-          <div className="ss-content" key={section}>
-            {section === "appearance" && (
-              <>
-                <AppearanceStudio />
-                <SkinsSettings />
-                <SidebarSettings />
-                <ComposerSettings />
-              </>
-            )}
-            {section === "terminal" && <TerminalSettings />}
-            {section === "notifications" && <NotifySettings isTauri={state.isTauri} />}
-            {section === "machines" && <MachinesSettings />}
-            {section === "phone" && <PhoneAccessSettings />}
-            {section === "agents" && <AgentsSettings />}
-            {section === "voice" && state.hello?.principal === "master" && <VoiceSettings />}
-            {section === "library" && <LibrarySettings />}
-            {section === "browser" && <BrowserProfileSettings />}
-            {section === "archives" && <ArchivesSettings onClose={requestClose} />}
-            {section === "updates" && <UpdatesSettings />}
-            {section === "about" && <AboutSettings onUnlock={() => setCircuit(true)} />}
-          </div>
-        </div>
-          </>
-        )}
-      </div>
+      {isMobile ? mobileSheet : desktopDialog}
     </div>,
     document.body,
   );

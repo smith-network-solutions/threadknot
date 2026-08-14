@@ -61,31 +61,37 @@ function storeSettings(s: StoredParleySettings): void {
   }
 }
 
-export function ReviewMenu({ thread }: { thread: Thread }) {
+/**
+ * Why Review can't run yet, or null when it can. Shared by the desktop header
+ * pill and the phone More menu so the two never disagree about whether a
+ * review is possible, or about how to explain that it isn't.
+ */
+export function useReviewBlock(thread: Thread | null): string | null {
   const { state } = useFeedStore();
-  const [open, setOpen] = useState(false);
-
-  const busy = thread.status !== "idle" || !!thread.parley;
+  if (!thread) return "Nothing to review yet";
+  if (thread.parley) return "A debate is already running";
+  if (thread.status !== "idle") return "Wait for the current turn to finish";
   // Nothing to argue with until the thread has some history.
-  const empty = state.feedThreadId === thread.id && state.feed.length === 0;
+  if (state.feedThreadId === thread.id && state.feed.length === 0) {
+    return "Nothing to review yet";
+  }
+  return null;
+}
+
+export function ReviewMenu({ thread }: { thread: Thread }) {
+  const [open, setOpen] = useState(false);
+  const blocked = useReviewBlock(thread);
 
   return (
     <>
+      {/* Desktop only — phones reach Review through the header's More menu. */}
       <button
         type="button"
-        className="head-pill"
-        disabled={busy || empty}
+        className="head-pill review-pill"
+        disabled={!!blocked}
         aria-haspopup="dialog"
         aria-label="Review with another agent"
-        title={
-          thread.parley
-            ? "A debate is already running"
-            : busy
-              ? "Wait for the current turn to finish"
-              : empty
-                ? "Nothing to review yet"
-                : "Review with another agent"
-        }
+        title={blocked ?? "Review with another agent"}
         onClick={() => setOpen(true)}
       >
         <ShieldIcon size={15} />
@@ -111,7 +117,7 @@ function fallbackPersonas(agents: { id: Agent; name: string; available: boolean 
     }));
 }
 
-function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void }) {
+export function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () => void }) {
   const { state, actions } = useFeedStore();
   const agents = (state.hello?.agents ?? []).filter((a) => isAgentVisible(a.id));
   const lanes = threadParticipants(thread);
