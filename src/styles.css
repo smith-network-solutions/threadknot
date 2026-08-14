@@ -4123,6 +4123,22 @@ span.title-agent-mark { width: 16px; height: 16px; }
      light family keeps a soft diagonal wash, below. */
   background: var(--bg);
 }
+/* During a live gesture, decorative animation and deep shadows yield to text
+   movement. The class is added once at gesture start and removed after a short
+   idle window, so this does not create per-frame style churn. */
+.feed-scroll.is-user-scrolling .working-signal i,
+.feed-scroll.is-user-scrolling .working-sweep::after,
+.feed-scroll.is-user-scrolling .thinking-label.pulsing,
+.feed-scroll.is-user-scrolling .stream-caret,
+.feed-scroll.is-user-scrolling .tool-spin {
+  animation-play-state: paused !important;
+}
+.feed-scroll.is-user-scrolling .artifact-card,
+.feed-scroll.is-user-scrolling .approval-card,
+.feed-scroll.is-user-scrolling .question-card,
+.feed-scroll.is-user-scrolling .msg-user-image {
+  box-shadow: none !important;
+}
 /* Light mode keeps the near-white pane; only whisper the gradient over it. */
 :root[data-family="light"] .feed-scroll {
   background: linear-gradient(
@@ -4142,7 +4158,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
    column still fills the port and the 860px reading measure scales with the
    text, exactly as a browser zoom of the feed alone would. */
 .feed-inner {
-  zoom: var(--ui-zoom, 1);
   max-width: 860px;
   margin: 0 auto;
   /* Bottom room clears the composer, which now floats over the feed's foot. */
@@ -4151,17 +4166,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   flex-direction: column;
   gap: 10px;
 }
-
-/* A long conversation should not keep painting every historical code block
-   while the reader scrolls or a live message grows. The intrinsic size keeps
-   the scrollbar stable until a row approaches the viewport. Empty and message
-   rows stay outside paint containment: their menus and hover actions are
-   intentionally allowed to extend beyond the row's box. */
-.feed-inner > :not(.feed-empty):not(.msg-user-wrap):not(.msg-assistant),
-.feed-inner > .feed-find-item {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
-}
+:root[data-feed-zoomed] .feed-inner { zoom: var(--ui-zoom); }
 
 /* Contextual find — centered inside the conversation viewport. It is layered
    only over the feed, so the rest of the app stays untouched and the feed
@@ -6261,7 +6266,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .queued-message {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
   min-height: 25px;
@@ -6273,6 +6278,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .queued-message-copy {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 7px;
   min-width: 0;
@@ -6291,6 +6297,45 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.queued-message-attachments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  flex: none;
+  color: var(--brass);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.queued-message-attachments svg { flex: none; }
+.queued-message-attachment-count { margin-left: 2px; }
+.attachment-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  color: var(--brass);
+  background: var(--panel-3);
+}
+.attachment-thumb.compact {
+  width: 25px;
+  height: 20px;
+  border-radius: 5px;
+}
+.attachment-thumb.compact.image {
+  border-color: transparent;
+  background: transparent;
+}
+.attachment-thumb.compact img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent;
+  border-radius: 5px;
 }
 .queued-message-remove {
   flex: none;
@@ -6373,6 +6418,22 @@ span.title-agent-mark { width: 16px; height: 16px; }
   gap: 7px;
   min-width: 0;
   overflow: hidden;
+}
+.reply-context-image {
+  display: block;
+  flex: none;
+  width: 25px;
+  height: 25px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: #0b0e15;
+}
+.reply-context-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 .reply-context-label {
   flex: none;
@@ -7525,17 +7586,55 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .attach-chip {
   position: relative;
-  width: 56px; height: 56px;
-  border-radius: 10px;
+  width: 92px;
+  height: 78px;
+  padding: 3px;
+  border-radius: 11px;
   overflow: hidden;
   border: 1px solid var(--line-2);
   background: var(--panel-3);
   flex: none;
 }
-.attach-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach-chip:not(.attach-chip-file) {
+  width: 96px;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.attach-image-frame {
+  display: block;
+  width: 100%;
+  height: 68px;
+  overflow: hidden;
+  border-radius: 11px;
+  background: transparent;
+}
+.attach-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: 11px;
+}
+.attach-chip-name {
+  display: block;
+  overflow: hidden;
+  padding: 4px 2px 0;
+  text-align: center;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .attach-chip .attach-remove {
   position: absolute;
-  top: 2px; right: 2px;
+  top: -6px; right: -6px;
   width: 18px; height: 18px;
   border-radius: 50%;
   display: flex;
@@ -7544,6 +7643,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   background: rgba(8, 9, 13, 0.78);
   color: #fff;
   border: none;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.32);
 }
 .attach-chip .attach-remove:hover { background: rgba(8, 9, 13, 0.95); }
 /* Non-image files show a labelled pill instead of a thumbnail. */
@@ -7602,6 +7702,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
    against is itself inside the zoomed subtree. */
 .msg-user-attachments {
   display: grid;
+  margin-top: 6px;
   /* An auto track holds its item's max-content width and overflows a narrow
      bubble; minmax(0, auto) lets the single column shrink with the bubble. */
   grid-template-columns: minmax(0, auto);
@@ -7621,16 +7722,14 @@ span.title-agent-mark { width: 16px; height: 16px; }
   position: relative;
   display: block;
   overflow: hidden;
-  border-radius: 11px;
-  border: 1px solid var(--line-2);
-  background: #090c12;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
-  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+  border-radius: 18px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transition: transform 0.14s ease;
 }
 .msg-user-image:hover {
-  border-color: color-mix(in srgb, var(--brass) 65%, transparent);
   transform: translateY(-1px);
-  box-shadow: 0 11px 28px rgba(0, 0, 0, 0.34);
 }
 .msg-user-attachments.single img {
   width: auto;
@@ -7644,13 +7743,16 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .msg-user-attachments.gallery img {
   width: 100%;
   aspect-ratio: 4 / 3;
-  object-fit: cover;
+  object-fit: contain;
+  background: transparent;
   display: block;
 }
 .msg-user-image.failed {
   width: 300px;
   max-width: 100%;
   min-height: 76px;
+  border: 1px solid var(--line-2);
+  background: #090c12;
   color: var(--dim);
 }
 .msg-user-image-fallback {

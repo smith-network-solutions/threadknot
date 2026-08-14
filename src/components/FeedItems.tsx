@@ -17,6 +17,7 @@ import { claimJustSent } from "../lib/justSent";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
 import { parseReply, replyPreview, type ReplyTarget } from "../lib/reply";
+import { isImageAttachment } from "../lib/attachments";
 import {
   AgentMark,
   ArchiveIcon,
@@ -836,7 +837,7 @@ function UserMessage({
   render: FeedRenderContext;
 }) {
   const threadId = render.threadId;
-  const images = (item.attachments ?? []).filter((a) => a.mimeType.startsWith("image/"));
+  const images = (item.attachments ?? []).filter((a) => isImageAttachment(a.name, a.mimeType));
   const reply = parseReply(item.text);
   const messageText = reply?.body ?? item.text;
   const hasText = messageText.trim().length > 0;
@@ -855,22 +856,18 @@ function UserMessage({
           onOpenFile={render.onOpenFile}
         />
       )}
-      <div
-        className={`msg-user${images.length > 0 ? " has-attachments" : ""}${!hasText ? " image-only" : ""}`}
-      >
-        {hasText && <div className="msg-user-text">{messageText}</div>}
-        {render.http && threadId && images.length > 0 && (
-          <div className={`msg-user-attachments ${images.length === 1 ? "single" : "gallery"}`}>
-            {images.map((a) => {
-              const url = attachmentUrl(render.http!, threadId, a.id, {
-                machineId: render.machineId,
-              });
-              return <MessageImage key={a.id} url={url} name={a.name} />;
-            })}
-          </div>
-        )}
-      </div>
-      {hasText && (
+      {hasText && <div className="msg-user"><div className="msg-user-text">{messageText}</div></div>}
+      {render.http && threadId && images.length > 0 && (
+        <div className={`msg-user-attachments ${images.length === 1 ? "single" : "gallery"}`}>
+          {images.map((a) => {
+            const url = attachmentUrl(render.http!, threadId, a.id, {
+              machineId: render.machineId,
+            });
+            return <MessageImage key={a.id} url={url} name={a.name} />;
+          })}
+        </div>
+      )}
+      {(hasText || images.length > 0) && (
         <ReplyButton
           onClick={() =>
             render.onReply({
@@ -878,6 +875,7 @@ function UserMessage({
               kind: "user",
               author: "You",
               text: item.text,
+              attachments: images,
               timestamp: item.timestamp,
             })
           }

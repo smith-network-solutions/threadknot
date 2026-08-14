@@ -1679,11 +1679,17 @@ export default function App() {
       }
       if (thread.status !== "idle") continue;
 
-      const text = messages[0];
+      const message = messages[0];
       queuedSendRef.current.add(threadId);
       dispatch({ type: "clearQueuedMessage", threadId });
-      void actions.sendToThread(threadId, text).catch(() => {
-        dispatch({ type: "queueMessage", threadId, text, front: true });
+      void actions.sendToThread(threadId, message.text, message.attachments).catch(() => {
+        dispatch({
+          type: "queueMessage",
+          threadId,
+          text: message.text,
+          attachments: message.attachments,
+          front: true,
+        });
         queuedSendRef.current.delete(threadId);
       });
     }
@@ -1709,16 +1715,35 @@ export default function App() {
     const coalesce = coalesced(200);
     const pendingStreamEvents: AgentEventAction[] = [];
     let streamRaf: number | null = null;
-    const flushStreamEvents = () => {
+    let streamScrollTimer: number | null = null;
+    const flushStreamEvents = (force = false): void => {
       if (streamRaf !== null) window.cancelAnimationFrame(streamRaf);
       streamRaf = null;
+      // Conversation scrolling gets the frame budget. Token deltas can wait a
+      // fraction of a second without losing ordering; boundary events still
+      // force an immediate flush below.
+      if (!force && document.querySelector(".feed-scroll.is-user-scrolling")) {
+        if (streamScrollTimer === null) {
+          streamScrollTimer = window.setTimeout(() => {
+            streamScrollTimer = null;
+            flushStreamEvents();
+          }, 50);
+        }
+        return;
+      }
+      if (streamScrollTimer !== null) {
+        window.clearTimeout(streamScrollTimer);
+        streamScrollTimer = null;
+      }
       if (pendingStreamEvents.length === 0) return;
       const events = pendingStreamEvents.splice(0, pendingStreamEvents.length);
       dispatch({ type: "agentEvents", events });
     };
     const queueStreamEvent = (event: AgentEventAction) => {
       pendingStreamEvents.push(event);
-      if (streamRaf === null) streamRaf = window.requestAnimationFrame(flushStreamEvents);
+      if (streamRaf === null && streamScrollTimer === null) {
+        streamRaf = window.requestAnimationFrame(() => flushStreamEvents());
+      }
     };
 
     client.onStatus = (conn) => dispatch({ type: "conn", conn });
@@ -1742,7 +1767,7 @@ export default function App() {
         frame.event.kind === "tool_output_delta";
       if (highFrequency) queueStreamEvent(event);
       else {
-        flushStreamEvents();
+        flushStreamEvents(true);
         dispatch(event);
       }
       // An agent turn likely touched the tree — refresh the fleet view if the
@@ -1994,6 +2019,7 @@ export default function App() {
     return () => {
       cancelled = true;
       if (streamRaf !== null) window.cancelAnimationFrame(streamRaf);
+      if (streamScrollTimer !== null) window.clearTimeout(streamScrollTimer);
       pendingStreamEvents.length = 0;
       setNativeNavigationHandler(null);
       setNativeResumeHandler(null);

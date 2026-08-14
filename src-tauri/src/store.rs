@@ -1633,10 +1633,17 @@ impl Store {
 /// Map an image mime type to a file extension (defaults to `bin`).
 pub fn ext_for_mime(mime: &str) -> &'static str {
     match mime {
+        "image/avif" => "avif",
+        "image/bmp" => "bmp",
         "image/png" => "png",
-        "image/jpeg" => "jpg",
+        "image/jpg" | "image/jpeg" => "jpg",
         "image/gif" => "gif",
+        "image/heic" => "heic",
+        "image/heif" => "heif",
+        "image/svg" | "image/svg+xml" => "svg",
+        "image/tiff" => "tiff",
         "image/webp" => "webp",
+        "image/x-icon" | "image/vnd.microsoft.icon" => "ico",
         _ => "bin",
     }
 }
@@ -1644,10 +1651,17 @@ pub fn ext_for_mime(mime: &str) -> &'static str {
 /// Content type to serve for a stored attachment extension.
 pub fn mime_for_ext(ext: &str) -> &'static str {
     match ext {
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
+        "svg" => "image/svg+xml",
+        "tif" | "tiff" => "image/tiff",
         "webp" => "image/webp",
+        "ico" => "image/x-icon",
         _ => "application/octet-stream",
     }
 }

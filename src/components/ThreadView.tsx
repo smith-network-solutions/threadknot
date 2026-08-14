@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -51,6 +52,10 @@ const BOTTOM_SLACK = 90;
 /** Auto-follow only engages at the real end; a larger threshold makes manual
  * scrolling snap the final stretch and keeps tugging the reader back down. */
 const BOTTOM_STICK_EPSILON = 2;
+/** Keep the normal transcript DOM bounded. Older pages are prepended before the
+ * reader reaches the top, with the visible position restored in layout. */
+const INITIAL_FEED_ROWS = 160;
+const FEED_PAGE_ROWS = 80;
 
 function feedSearchText(item: FeedItem): string {
   switch (item.type) {
@@ -76,6 +81,48 @@ function feedSearchText(item: FeedItem): string {
       return "";
   }
 }
+
+/** High-frequency token frames replace only the final text item. Derived feed
+ * metadata is structural, so rescanning the entire transcript for those frames
+ * burns scroll time without changing the answer. */
+function isTailTextUpdate(previous: FeedItem[], next: FeedItem[]): boolean {
+  if (previous.length === 0 || previous.length !== next.length) return false;
+  const last = next.length - 1;
+  if (last > 0 && previous[last - 1] !== next[last - 1]) return false;
+  const before = previous[last];
+  const after = next[last];
+  return (
+    before !== after &&
+    before.id === after.id &&
+    before.type === after.type &&
+    (after.type === "assistant" || after.type === "thinking")
+  );
+}
+
+const FeedFindItem = memo(function FeedFindItem({
+  item,
+  matched,
+  current,
+  itemRef,
+  render,
+  thoughtTime,
+}: {
+  item: FeedItem;
+  matched: boolean;
+  current: boolean;
+  itemRef: (node: HTMLDivElement | null) => void;
+  render: FeedRenderContext;
+  thoughtTime?: string;
+}) {
+  return (
+    <div
+      ref={itemRef}
+      className={`feed-find-item${matched ? " is-match" : ""}${current ? " is-current" : ""}`}
+    >
+      <FeedItemView item={item} render={render} thoughtTime={thoughtTime} />
+    </div>
+  );
+});
 
 function ChatFindBar({
   inputRef,
@@ -506,10 +553,16 @@ export function ThreadView() {
   const [findIndex, setFindIndex] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const findItemRefCallbacks = useRef<
+    Record<string, (node: HTMLDivElement | null) => void>
+  >({});
   const findCloseTimerRef = useRef<number | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  // Upward intent is latched. Near-bottom geometry alone must never re-arm
+  // live-follow after the reader has started moving into history.
+  const manualAwayRef = useRef(false);
   const scrollTopRef = useRef(0);
   const scrollHeightRef = useRef(0);
   const clientHeightRef = useRef(0);
@@ -537,6 +590,24 @@ export function ThreadView() {
     ? Math.min(findIndex, findMatches.length - 1)
     : 0;
   const activeFindId = findMatches[activeFindIndex]?.id;
+  const findMatchIds = useMemo(
+    () => new Set(findMatches.map((item) => item.id)),
+    [findMatches],
+  );
+  const findItemRef = useCallback((id: string) => {
+    const existing = findItemRefCallbacks.current[id];
+    if (existing) return existing;
+    const callback = (node: HTMLDivElement | null) => {
+      findItemRefs.current[id] = node;
+    };
+    findItemRefCallbacks.current[id] = callback;
+    return callback;
+  }, []);
+
+  useEffect(() => {
+    findItemRefs.current = {};
+    findItemRefCallbacks.current = {};
+  }, [loadedFeedId]);
 
   const openFind = useCallback(() => {
     if (findCloseTimerRef.current !== null) {
@@ -612,15 +683,75 @@ export function ThreadView() {
   }, [activeFindId, findOpen, findQuery]);
   const observerRef = useRef<ResizeObserver | null>(null);
   const pinRafRef = useRef<number | null>(null);
+  const scrollMetricsRafRef = useRef<number | null>(null);
+  const scrollIdleTimerRef = useRef<number | null>(null);
+  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const [atPresent, setAtPresent] = useState(true);
   const feedLen = state.feed.length;
-  const subagents = useMemo(() => activeSubagents(state.feed), [state.feed]);
+  const [feedWindow, setFeedWindow] = useState<{ feedId: string | null; start: number }>({
+    feedId: null,
+    start: 0,
+  });
+  const initialFeedStart = Math.max(0, feedLen - INITIAL_FEED_ROWS);
+  const feedStart = findOpen
+    ? 0
+    : feedWindow.feedId === loadedFeedId
+      ? Math.min(feedWindow.start, initialFeedStart)
+      : initialFeedStart;
+
+  useEffect(() => {
+    prependAnchorRef.current = null;
+    setFeedWindow({ feedId: loadedFeedId, start: initialFeedStart });
+  }, [loadedFeedId]);
+
+  const prependOlderFeed = useCallback((el: HTMLDivElement) => {
+    if (!loadedFeedId || findOpen || feedStart <= 0 || prependAnchorRef.current) return;
+    prependAnchorRef.current = {
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+    };
+    setFeedWindow({
+      feedId: loadedFeedId,
+      start: Math.max(0, feedStart - FEED_PAGE_ROWS),
+    });
+  }, [feedStart, findOpen, loadedFeedId]);
+
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current;
+    const el = scrollRef.current;
+    if (!anchor || !el) return;
+    prependAnchorRef.current = null;
+    const nextTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
+    el.scrollTop = nextTop;
+    scrollTopRef.current = nextTop;
+  }, [feedStart]);
+  const feedDerivedRef = useRef<{
+    feed: FeedItem[];
+    subagents: ReturnType<typeof activeSubagents>;
+    thoughtTimes: Record<string, string>;
+  } | null>(null);
+  const feedDerived = useMemo(() => {
+    const previous = feedDerivedRef.current;
+    if (previous && isTailTextUpdate(previous.feed, state.feed)) {
+      const reused = { ...previous, feed: state.feed };
+      feedDerivedRef.current = reused;
+      return reused;
+    }
+    const next = {
+      feed: state.feed,
+      subagents: activeSubagents(state.feed),
+      thoughtTimes: thoughtTimesForFeed(state.feed),
+    };
+    feedDerivedRef.current = next;
+    return next;
+  }, [state.feed]);
+  const subagents = feedDerived.subagents;
   const runningSubagents = subagents.filter((subagent) => subagent.status === "running").length;
   const feedParticipants = useMemo(
     () => (thread ? threadParticipants(thread) : []),
     [thread?.participants, thread?.agent, thread?.settings],
   );
-  const thoughtTimes = useMemo(() => thoughtTimesForFeed(state.feed), [state.feed]);
+  const thoughtTimes = feedDerived.thoughtTimes;
   const selectReply = useCallback((target: ReplyTarget) => {
     setReplyTo(target);
   }, []);
@@ -666,6 +797,12 @@ export function ThreadView() {
       pinRafRef.current = null;
       const el = scrollRef.current;
       if (!el || !stickRef.current) return;
+      if (el.scrollTop < scrollTopRef.current - BOTTOM_STICK_EPSILON) {
+        manualAwayRef.current = true;
+        stickRef.current = false;
+        scrollTopRef.current = el.scrollTop;
+        return;
+      }
       const end = Math.max(0, el.scrollHeight - el.clientHeight);
       if (Math.abs(el.scrollTop - end) > 1) el.scrollTop = end;
       scrollTopRef.current = el.scrollTop;
@@ -683,12 +820,16 @@ export function ThreadView() {
     // scroll state left by the previous thread while the empty state is shown.
     if (feedLen === 0) {
       stickRef.current = true;
+      manualAwayRef.current = false;
+      scrollTopRef.current = 0;
       setAtPresent(true);
       return;
     }
     if (scrollFeedRef.current !== loadedFeedId) {
       scrollFeedRef.current = loadedFeedId;
       stickRef.current = true;
+      manualAwayRef.current = false;
+      scrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
       setAtPresent(true);
     }
     if (stickRef.current) pinToEnd();
@@ -696,6 +837,7 @@ export function ThreadView() {
 
   const jumpToPresent = useCallback(() => {
     const el = scrollRef.current;
+    manualAwayRef.current = false;
     if (!el) {
       stickRef.current = true;
       setAtPresent(true);
@@ -718,12 +860,47 @@ export function ThreadView() {
   }, [pinToEnd]);
 
   // Growing content and a resizing composer both dispatch scroll events even
-  // though the reader did not move the feed. Only an explicit gesture away
-  // from the end may turn live-follow off; onScroll itself is still allowed to
-  // turn it back on once a reader genuinely reaches the bottom.
+  // though the reader did not move the feed. Only explicit movement controls
+  // live-follow: away latches it off, toward the present permits it to re-arm
+  // once the real bottom is reached.
   const leavePresent = useCallback(() => {
+    manualAwayRef.current = true;
     stickRef.current = false;
+    // Feed/resize work may already have queued a bottom pin for this frame.
+    // Cancel it at gesture time so it cannot race the native wheel movement.
+    if (pinRafRef.current !== null) {
+      window.cancelAnimationFrame(pinRafRef.current);
+      pinRafRef.current = null;
+    }
   }, []);
+
+  const markUserScrolling = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.classList.add("is-user-scrolling");
+    if (scrollIdleTimerRef.current !== null) {
+      window.clearTimeout(scrollIdleTimerRef.current);
+    }
+    scrollIdleTimerRef.current = window.setTimeout(() => {
+      scrollIdleTimerRef.current = null;
+      el.classList.remove("is-user-scrolling");
+    }, 120);
+  }, []);
+
+  // Capture wheel intent directly on the scrollport. React's delegated wheel
+  // handler runs later in propagation; on a rapidly streaming feed that leaves
+  // a window for a queued resize pin to land before the synthetic callback.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      markUserScrolling();
+      if (event.deltaY < 0) leavePresent();
+      else if (event.deltaY > 0) manualAwayRef.current = false;
+    };
+    el.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    return () => el.removeEventListener("wheel", onWheel, true);
+  }, [leavePresent, loadedFeedId, markUserScrolling]);
 
   // The effect above only fires on a React render. Feed content also settles
   // outside of one: images and videos resolve, fonts swap, code blocks reflow,
@@ -752,6 +929,13 @@ export function ThreadView() {
     () => () => {
       observerRef.current?.disconnect();
       if (pinRafRef.current !== null) window.cancelAnimationFrame(pinRafRef.current);
+      if (scrollMetricsRafRef.current !== null) {
+        window.cancelAnimationFrame(scrollMetricsRafRef.current);
+      }
+      if (scrollIdleTimerRef.current !== null) {
+        window.clearTimeout(scrollIdleTimerRef.current);
+      }
+      scrollRef.current?.classList.remove("is-user-scrolling");
     },
     [],
   );
@@ -980,17 +1164,17 @@ export function ThreadView() {
         className="feed-scroll"
         data-zoom-pane="feed"
         ref={scrollRef}
-        onWheel={(e) => {
-          if (e.deltaY < 0) leavePresent();
-        }}
         onTouchStart={(e) => {
           touchYRef.current = e.touches[0]?.clientY ?? null;
         }}
         onTouchMove={(e) => {
+          markUserScrolling();
           const previousY = touchYRef.current;
           const nextY = e.touches[0]?.clientY;
           if (previousY != null && nextY != null && nextY > previousY) {
             leavePresent();
+          } else if (previousY != null && nextY != null && nextY < previousY) {
+            manualAwayRef.current = false;
           }
           touchYRef.current = nextY ?? null;
         }}
@@ -1001,47 +1185,68 @@ export function ThreadView() {
           touchYRef.current = null;
         }}
         onKeyDown={(e) => {
-          const scrollKeys = [
-            "ArrowUp",
-            "PageUp",
-            "Home",
-            "ArrowDown",
-            "PageDown",
-            "End",
-            " ",
-          ];
           if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") {
+            markUserScrolling();
             leavePresent();
+          } else if (
+            e.key === "ArrowDown" ||
+            e.key === "PageDown" ||
+            e.key === "End" ||
+            e.key === " "
+          ) {
+            markUserScrolling();
+            manualAwayRef.current = false;
           }
         }}
         onScroll={(e) => {
           if (!loadedFeedId) return;
           const el = e.currentTarget;
           const previousTop = scrollTopRef.current;
-          const geometryChanged =
-            scrollHeightRef.current !== el.scrollHeight ||
-            clientHeightRef.current !== el.clientHeight;
-          scrollTopRef.current = el.scrollTop;
-          scrollHeightRef.current = el.scrollHeight;
-          clientHeightRef.current = el.clientHeight;
-          const distanceFromEnd = Math.max(
-            0,
-            el.scrollHeight - el.scrollTop - el.clientHeight,
-          );
+          const nextTop = el.scrollTop;
+          scrollTopRef.current = nextTop;
+          if (manualAwayRef.current) markUserScrolling();
+          if (manualAwayRef.current && nextTop < el.clientHeight * 2.5) {
+            prependOlderFeed(el);
+          }
           // Browser-generated scroll events also fire when streaming content,
           // the composer, or the mobile viewport changes size. Those must not
           // cancel live-follow. Explicit wheel/touch/key gestures above turn it
           // off; reaching the real end here is the only implicit state change.
-          if (distanceFromEnd <= BOTTOM_STICK_EPSILON) {
-            stickRef.current = true;
-          } else if (!geometryChanged && el.scrollTop < previousTop - BOTTOM_STICK_EPSILON) {
-            // Covers dragging the desktop scrollbar, which does not reliably
-            // emit wheel or pointer events into the page. Treat it as a manual
-            // gesture too, so live-follow doesn't fight a scrollbar drag.
+          if (nextTop < previousTop - BOTTOM_STICK_EPSILON) {
+            // Covers scrollbar drags and upward wheel/touch scrolling even when
+            // streaming changed the feed geometry in the same frame. A real
+            // decrease in scrollTop is always reader intent; letting geometry
+            // changes exempt it leaves live-follow armed and pulls the reader
+            // back to the bottom.
             leavePresent();
           }
-          const present = distanceFromEnd < BOTTOM_SLACK;
-          setAtPresent((prev) => (prev === present ? prev : present));
+          // Reading scrollHeight/clientHeight here can force layout while the
+          // browser is trying to paint the current wheel frame. Coalesce the
+          // geometry read to one rAF so a burst of trackpad events does not
+          // repeatedly flush layout.
+          if (scrollMetricsRafRef.current === null) {
+            scrollMetricsRafRef.current = window.requestAnimationFrame(() => {
+              scrollMetricsRafRef.current = null;
+              const current = scrollRef.current;
+              if (!current || !loadedFeedId) return;
+              const scrollHeight = current.scrollHeight;
+              const clientHeight = current.clientHeight;
+              scrollHeightRef.current = scrollHeight;
+              clientHeightRef.current = clientHeight;
+              const distanceFromEnd = Math.max(
+                0,
+                scrollHeight - current.scrollTop - clientHeight,
+              );
+              if (
+                !manualAwayRef.current &&
+                distanceFromEnd <= BOTTOM_STICK_EPSILON
+              ) {
+                stickRef.current = true;
+              }
+              const present = distanceFromEnd < BOTTOM_SLACK;
+              setAtPresent((prev) => (prev === present ? prev : present));
+            });
+          }
         }}
       >
         {findPresent && (
@@ -1090,23 +1295,19 @@ export function ThreadView() {
               )}
             </div>
           )}
-          {state.feed.map((item) => {
-            const matched = findMatches.some((match) => match.id === item.id);
+          {state.feed.slice(feedStart).map((item) => {
+            const matched = findMatchIds.has(item.id);
             const current = activeFindId === item.id;
             return (
-              <div
+              <FeedFindItem
                 key={item.id}
-                ref={(node) => {
-                  findItemRefs.current[item.id] = node;
-                }}
-                className={`feed-find-item${matched ? " is-match" : ""}${current ? " is-current" : ""}`}
-              >
-                <FeedItemView
-                  item={item}
-                  render={feedRender}
-                  thoughtTime={thoughtTimes[item.id]}
-                />
-              </div>
+                item={item}
+                matched={matched}
+                current={current}
+                itemRef={findItemRef(item.id)}
+                render={feedRender}
+                thoughtTime={thoughtTimes[item.id]}
+              />
             );
           })}
           {busy && (

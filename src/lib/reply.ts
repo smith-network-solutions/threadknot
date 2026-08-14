@@ -1,3 +1,5 @@
+import type { AttachmentMeta } from "./protocol";
+
 /** A message selected as the context for the next human turn. Replies are
  * serialized into the outgoing text so the relationship survives replay and
  * is understandable to every agent/device on the thread. */
@@ -6,6 +8,7 @@ export interface ReplyTarget {
   kind: "user" | "assistant";
   author: string;
   text: string;
+  attachments?: AttachmentMeta[];
   timestamp?: string;
 }
 
@@ -30,7 +33,8 @@ export function quotedReplyText(text: string): string {
 }
 
 export function formatReply(target: ReplyTarget, body: string): string {
-  const quoted = quotedReplyText(target.text)
+  const source = target.text.trim() || (target.attachments?.length ? "[image attachment]" : "");
+  const quoted = quotedReplyText(source)
     .split("\n")
     .map((line) => `> ${line}`)
     .join("\n");

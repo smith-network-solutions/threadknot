@@ -11,7 +11,7 @@ import type {
 } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
-import { effortForModel, resolveProjectView, useFeedStore, useStore } from "../state/store";
+import { effortForModel, remoteMachineId, resolveProjectView, useFeedStore, useStore } from "../state/store";
 import type { FeedItem } from "../state/feed";
 import {
   AgentMark,
@@ -37,6 +37,8 @@ import {
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
 import { markJustSent } from "../lib/justSent";
 import { formatReply, replyPreview, type ReplyTarget } from "../lib/reply";
+import { isImageAttachment, normalizedAttachmentMime } from "../lib/attachments";
+import { attachmentUrl } from "../lib/discovery";
 import { ContextMeter, isRenderableUsage } from "./ContextMeter";
 import { hermesPresence } from "./HermesPresence";
 
@@ -53,16 +55,54 @@ const MAX_ATTACHMENT_TOTAL_BASE64 = 30 * 1024 * 1024;
 const MAX_ATTACHMENT_TOTAL_LABEL = `${Math.floor((MAX_ATTACHMENT_TOTAL_BASE64 * 3) / 4 / (1024 * 1024))} MB`;
 // Image types agents render inline (vision). Everything else is delivered as a
 // workspace file the agent reads with its own tools — so we accept any file.
-const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-const ACCEPT_ATTR = "*/*";
-
-function isImageType(mime: string): boolean {
-  return mime.startsWith("image/");
-}
+const IMAGE_TYPES = [
+  "image/avif",
+  "image/bmp",
+  "image/gif",
+  "image/heic",
+  "image/heif",
+  "image/jpeg",
+  "image/png",
+  "image/svg",
+  "image/svg+xml",
+  "image/tiff",
+  "image/webp",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+];
+// An explicit image filter is important for native WebKit file dialogs: a
+// generic */* is treated as a document filter by some platform pickers and
+// hides otherwise valid image files. Keep extension fallbacks for ICO and
+// image formats whose MIME is inconsistently reported by file managers.
+const ACCEPT_ATTR = "image/*,.ico,.svg,.avif,.heic,.heif,.tif,.tiff";
 
 /** Total wire cost of a draft's attachments (they travel as base64). */
 function attachmentWireBytes(attachments: DraftAttachment[]): number {
   return attachments.reduce((total, a) => total + a.data.length, 0);
+}
+
+function attachmentDataUrl(attachment: { mimeType: string; data: string }): string {
+  return `data:${attachment.mimeType};base64,${attachment.data}`;
+}
+
+function AttachmentThumb({
+  attachment,
+  compact = false,
+}: {
+  attachment: { name: string; mimeType: string; data: string };
+  compact?: boolean;
+}) {
+  const image = isImageAttachment(attachment.name, attachment.mimeType);
+  return (
+    <span className={`attachment-thumb${compact ? " compact" : ""}${image ? " image" : " file"}`}>
+      {image ? (
+        <img src={attachmentDataUrl(attachment)} alt="" />
+      ) : (
+        <PaperclipIcon size={compact ? 11 : 13} />
+      )}
+      {!compact && <span className="attachment-thumb-name" title={attachment.name}>{attachment.name}</span>}
+    </span>
+  );
 }
 
 interface DraftAttachment {
@@ -92,7 +132,7 @@ function fileToAttachment(file: File): Promise<DraftAttachment | { error: string
     reader.onload = () => {
       const result = String(reader.result ?? "");
       const comma = result.indexOf(",");
-      const mimeType = file.type || "application/octet-stream";
+      const mimeType = normalizedAttachmentMime(file.name, file.type);
       resolve({
         localId: `a${++attachSeq}`,
         name: file.name || `pasted-image.${mimeType.split("/")[1] ?? "png"}`,
@@ -948,12 +988,11 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   const canSend =
     (text.trim().length > 0 || attachments.length > 0) && state.conn === "online";
   // While a turn is live, the same primary control changes from Stop to Queue
-  // as soon as there is a text-only follow-up to store.
+  // as soon as there is a follow-up to store, including attachments.
   const canQueue =
     running &&
     !!thread &&
-    text.trim().length > 0 &&
-    attachments.length === 0 &&
+    (text.trim().length > 0 || attachments.length > 0) &&
     state.conn === "online";
   const queuedMessages = thread ? state.queuedMessages[thread.id] ?? [] : [];
 
@@ -1076,7 +1115,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
           ...images.slice(0, room).map((image) => ({
             localId: `a${++attachSeq}`,
             name: image.name,
-            mimeType: image.mimeType,
+            mimeType: normalizedAttachmentMime(image.name, image.mimeType),
             data: image.data,
           })),
         ];
@@ -1172,10 +1211,21 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   function queueMessage() {
     if (!thread || !canQueue) return;
     const note = stripBtw(text.trim());
-    if (!note) return;
     const outgoingNote = replyTo ? formatReply(replyTo, note) : note;
-    dispatch({ type: "queueMessage", threadId: thread.id, text: outgoingNote });
+    const outgoingAttachments: OutgoingAttachment[] = attachments.map((a) => ({
+      name: a.name,
+      mimeType: a.mimeType,
+      data: a.data,
+    }));
+    if (!outgoingNote && outgoingAttachments.length === 0) return;
+    dispatch({
+      type: "queueMessage",
+      threadId: thread.id,
+      text: outgoingNote,
+      attachments: outgoingAttachments,
+    });
     updateText("");
+    updateAttachments([]);
     setAttachError(null);
     onClearReply();
   }
@@ -1183,9 +1233,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   async function submit() {
     if (running && thread) {
       if (!canQueue) {
-        setAttachError(
-          "Queued messages are text-only — remove attachments or press Stop to interrupt.",
-        );
+        setAttachError("Finish the message before queueing it.");
         return;
       }
       queueMessage();
@@ -1434,7 +1482,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     key: "attach",
     icon: <PaperclipIcon size={16} />,
     label: "Attach files",
-    disabled: running || attachments.length >= MAX_ATTACHMENTS,
+    disabled: attachments.length >= MAX_ATTACHMENTS,
     hint: "Attach images or files (or paste into the box)",
     options: [],
     action: () => fileRef.current?.click(),
@@ -1496,11 +1544,29 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
         {queuedMessages.length > 0 && thread && (
           <div className="queued-messages" aria-label="Queued messages">
             {queuedMessages.map((message, index) => (
-              <div className="queued-message" key={`${index}:${message}`}>
+              <div
+                className="queued-message"
+                key={`${index}:${message.text}:${message.attachments?.map((a) => a.name).join(",") ?? ""}`}
+              >
                 <ClockIcon className="queued-message-mark" size={14} />
                 <span className="queued-message-copy">
                   <span className="queued-message-label">Queued</span>
-                  <span className="queued-message-text">{message}</span>
+                  <span className="queued-message-text">
+                    {message.text || "Attachment-only message"}
+                  </span>
+                  {message.attachments && message.attachments.length > 0 && (
+                    <span
+                      className="queued-message-attachments"
+                      title={message.attachments.map((a) => a.name).join(", ")}
+                    >
+                      {message.attachments.slice(0, 3).map((attachment) => (
+                        <AttachmentThumb key={attachment.name} attachment={attachment} compact />
+                      ))}
+                      <span className="queued-message-attachment-count">
+                        {message.attachments.length} file{message.attachments.length === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                  )}
                 </span>
                 <button
                   type="button"
@@ -1520,11 +1586,16 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
           <div className="composer-attachments">
             {attachments.map((a) => (
               <div
-                className={isImageType(a.mimeType) ? "attach-chip" : "attach-chip attach-chip-file"}
+                className={isImageAttachment(a.name, a.mimeType) ? "attach-chip" : "attach-chip attach-chip-file"}
                 key={a.localId}
               >
-                {isImageType(a.mimeType) ? (
-                  <img src={`data:${a.mimeType};base64,${a.data}`} alt={a.name} />
+                {isImageAttachment(a.name, a.mimeType) ? (
+                  <>
+                    <span className="attach-image-frame">
+                      <img src={attachmentDataUrl(a)} alt={a.name} />
+                    </span>
+                    <span className="attach-chip-name" title={a.name}>{a.name}</span>
+                  </>
                 ) : (
                   <span className="attach-file-info">
                     <PaperclipIcon size={13} />
@@ -1580,9 +1651,21 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
           )}
           {replyTo && (
             <div className="reply-context" role="status">
+              {replyTo.attachments && replyTo.attachments.length > 0 && state.http && thread && (
+                <span className="reply-context-image" aria-hidden="true">
+                  <img
+                    src={attachmentUrl(state.http, thread.id, replyTo.attachments[0].id, {
+                      machineId: remoteMachineId(state, thread.machineId),
+                    })}
+                    alt=""
+                  />
+                </span>
+              )}
               <div className="reply-context-copy">
                 <span className="reply-context-label">Replying to {replyTo.author}</span>
-                <span className="reply-context-text">{replyPreview(replyTo.text)}</span>
+                <span className="reply-context-text">
+                  {replyPreview(replyTo.text) || (replyTo.attachments?.length ? "Image attachment" : "Empty message")}
+                </span>
               </div>
               <button
                 type="button"
@@ -1606,6 +1689,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
             rows={1}
             value={text}
             placeholder={placeholder}
+            autoCorrect="on"
+            autoCapitalize="sentences"
+            spellCheck={true}
             onChange={(e) => {
               updateText(e.target.value);
               trackCursor(e.currentTarget);

@@ -388,14 +388,38 @@ async fn open_project_window(
         let _ = win.set_focus();
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+    let window = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
         .title(format!("{name} — Threadknot"))
         .inner_size(1100.0, 820.0)
         .min_inner_size(400.0, 500.0)
         .build()
         .map_err(|e| e.to_string())?;
+    enable_spell_checking(&window);
     Ok(())
 }
+
+/// WebKitGTK keeps spellchecking behind a native context setting. The
+/// textarea's `spellcheck` attribute is still set in the frontend, but it
+/// cannot turn this switch on by itself.
+#[cfg(target_os = "linux")]
+fn enable_spell_checking(window: &tauri::WebviewWindow) {
+    use webkit2gtk::{WebContextExt, WebViewExt};
+
+    if let Err(error) = window.with_webview(|webview| {
+        if let Some(context) = webview.inner().context() {
+            context.set_spell_checking_enabled(true);
+        }
+    }) {
+        tracing::warn!(%error, "could not enable WebKitGTK spellchecking");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn enable_spell_checking(_window: &tauri::WebviewWindow) {}
 
 /// Native desktop notification (the webview has no Notification API here).
 /// Fired by the frontend when a turn finishes / needs input while unfocused.
@@ -607,6 +631,13 @@ pub fn run() {
         .manage(info)
         .manage(clipboard_state)
         .setup(move |_app| {
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(window) = _app.get_webview_window("main") {
+                    enable_spell_checking(&window);
+                }
+            }
             tauri::async_runtime::spawn(async move {
                 server::run(state).await;
             });

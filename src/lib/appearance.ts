@@ -1062,7 +1062,13 @@ export function applyAppearance(
   }
   // --ui-zoom drives the message feed's `zoom` (see .feed-inner). Clamped here
   // too so a live preview passing an out-of-band value cannot escape the band.
-  root.style.setProperty("--ui-zoom", String(clamp(a.uiZoom, ZOOM_MIN, ZOOM_MAX)));
+  const appliedUiZoom = clamp(a.uiZoom, ZOOM_MIN, ZOOM_MAX);
+  root.style.setProperty("--ui-zoom", String(appliedUiZoom));
+  // Do not put the entire transcript in a CSS zoom formatting context at the
+  // default 100%. Some embedded webviews move zoomed overflow off their fast
+  // scrolling path even when the numerical scale is exactly 1.
+  if (Math.abs(appliedUiZoom - 1) < 0.001) delete root.dataset.feedZoomed;
+  else root.dataset.feedZoomed = "";
   // Every other pane's zoom mount (see hotwheel.ts + the per-pane `zoom:`
   // rules in styles). Absent entries render at 1.
   for (const kind of PANE_KINDS) {

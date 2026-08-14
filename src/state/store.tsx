@@ -12,6 +12,7 @@ import type {
   HelloData,
   HermesAgentInfo,
   HermesAgentStatus,
+  OutgoingAttachment,
   PeerInfo,
   PersistedEvent,
   Project,
@@ -98,6 +99,12 @@ export interface Notice {
   body: string;
 }
 
+/** A follow-up held until the current turn becomes idle. */
+export interface QueuedMessage {
+  text: string;
+  attachments?: OutgoingAttachment[];
+}
+
 export interface AppState {
   conn: ConnState;
   isTauri: boolean;
@@ -181,7 +188,7 @@ export interface AppState {
    *  client-side so refreshes do not lose the unread marker. */
   attention: Record<string, true>;
   /** Local follow-ups waiting for each thread to become idle. */
-  queuedMessages: Record<string, string[]>;
+  queuedMessages: Record<string, QueuedMessage[]>;
 }
 
 export const initialState: AppState = {
@@ -268,7 +275,13 @@ export type Action =
   | { type: "update"; update: import("../lib/protocol").UpdateStatus | null }
   | { type: "attentionSync"; attention: Record<string, true> }
   | { type: "attentionClear"; threadId: string }
-  | { type: "queueMessage"; threadId: string; text: string; front?: boolean }
+  | {
+      type: "queueMessage";
+      threadId: string;
+      text: string;
+      attachments?: OutgoingAttachment[];
+      front?: boolean;
+    }
   | { type: "clearQueuedMessage"; threadId: string; index?: number };
 
 export interface AgentEventAction {
@@ -552,7 +565,13 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "queueMessage": {
       const current = state.queuedMessages[action.threadId] ?? [];
-      const next = action.front ? [action.text, ...current] : [...current, action.text];
+      const message: QueuedMessage = {
+        text: action.text,
+        ...(action.attachments && action.attachments.length > 0
+          ? { attachments: action.attachments }
+          : {}),
+      };
+      const next = action.front ? [message, ...current] : [...current, message];
       return {
         ...state,
         queuedMessages: {

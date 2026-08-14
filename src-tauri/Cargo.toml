@@ -93,6 +93,11 @@ futures = "0.3"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The Linux WebKitGTK context keeps spellchecking disabled unless the native
+# setting is enabled; the HTML `spellcheck` attribute alone is not sufficient.
+webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }
+
 [profile.release]
 strip = true
 lto = true
