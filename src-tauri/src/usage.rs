@@ -1,10 +1,11 @@
 //! Per-provider subscription usage (the sidebar meter).
 //!
 //! - **Claude**: GET `https://api.anthropic.com/api/oauth/usage` with the OAuth
-//!   token Claude Code itself stores in `~/.claude/.credentials.json` — the same
-//!   endpoint the CLI's `/usage` command hits. NOTE (learned from Traycer): this
-//!   endpoint can 429 with a multi-minute penalty window, so refreshes are
-//!   floored (see `KICK_FLOOR`) and the poll interval is long.
+//!   token Claude Code itself stores — the login Keychain on macOS,
+//!   `~/.claude/.credentials.json` everywhere else (see `claude_oauth`) — which
+//!   is the same endpoint the CLI's `/usage` command hits. NOTE (learned from
+//!   Traycer): this endpoint can 429 with a multi-minute penalty window, so
+//!   refreshes are floored (see `KICK_FLOOR`) and the poll interval is long.
 //! - **Codex**: short-lived `codex app-server` probe speaking its JSON-RPC
 //!   (`account/rateLimits/read`). Live sessions also push
 //!   `account/rateLimits/updated`, which the codex driver feeds back into the
@@ -191,21 +192,105 @@ fn window_label(mins: Option<u64>) -> String {
 
 // ---- Claude -----------------------------------------------------------------
 
+/// Keychain service name Claude Code stores its credentials under on macOS.
+#[cfg(target_os = "macos")]
+const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+/// Ceiling on the Keychain read. It normally returns in milliseconds; the
+/// budget is for the case where macOS puts an unlock or allow-access dialog in
+/// front of it, which would otherwise stall this poll (and Codex's and Kimi's,
+/// which fetch in the same `join!`) for as long as the user ignores it.
+#[cfg(target_os = "macos")]
+const KEYCHAIN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Read the `claudeAiOauth` block for the signed-in subscription.
+///
+/// macOS moved this out of `~/.claude/.credentials.json` and into the login
+/// Keychain, leaving a file behind that holds only `mcpOAuth` — so a Mac with a
+/// perfectly good Max login reads as logged out if the file is all you look at.
+/// Both are checked, Keychain first. Agent turns were never affected: those
+/// spawn the `claude` CLI, which finds its own token either way.
+async fn claude_oauth() -> Result<Value, String> {
+    // Distinguishes "no credentials anywhere" (never logged in) from "found
+    // credentials, but no subscription token in them" (logged out, or a
+    // file that only carries MCP tokens).
+    let mut saw_credentials = false;
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(raw) = keychain_credentials().await {
+            saw_credentials = true;
+            if let Some(oauth) = oauth_block(&raw) {
+                return Ok(oauth);
+            }
+        }
+    }
+
+    let path = match dirs::home_dir() {
+        Some(h) => h.join(".claude/.credentials.json"),
+        None => return Err("no home directory".into()),
+    };
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        saw_credentials = true;
+        if let Some(oauth) = oauth_block(&raw) {
+            return Ok(oauth);
+        }
+    }
+
+    Err(if saw_credentials {
+        "not logged in (no Claude OAuth token)".into()
+    } else {
+        "not logged in (no Claude credentials)".into()
+    })
+}
+
+/// The `claudeAiOauth` object out of a credentials blob, only if it actually
+/// carries an access token.
+fn oauth_block(raw: &str) -> Option<Value> {
+    let creds: Value = serde_json::from_str(raw).ok()?;
+    let oauth = creds.get("claudeAiOauth")?;
+    oauth.get("accessToken")?.as_str()?;
+    Some(oauth.clone())
+}
+
+/// Claude Code's Keychain item, via `/usr/bin/security`.
+///
+/// Shelling out rather than calling Security.framework directly is deliberate:
+/// the item's ACL trusts the `security` binary, so this reads clean, whereas a
+/// call from inside this app is a different executable than the one that stored
+/// the item and raises the "wants to use your confidential information" prompt.
+#[cfg(target_os = "macos")]
+async fn keychain_credentials() -> Option<String> {
+    let mut cmd = tokio::process::Command::new("/usr/bin/security");
+    cmd.args([
+        "find-generic-password",
+        "-s",
+        CLAUDE_KEYCHAIN_SERVICE,
+        "-w",
+    ])
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    // A timed-out read leaves a dialog on screen; dropping the child dismisses it.
+    .kill_on_drop(true);
+    crate::agents::no_console(&mut cmd);
+
+    // Timeout: a prompt is waiting on the user. Error: no `security` binary.
+    let out = tokio::time::timeout(KEYCHAIN_TIMEOUT, cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !out.status.success() {
+        return None; // no such item — never logged in on this machine
+    }
+    Some(String::from_utf8(out.stdout).ok()?.trim().to_string())
+}
+
 async fn fetch_claude() -> ProviderUsage {
     let agent = Agent::Claude;
-    let creds_path = match dirs::home_dir() {
-        Some(h) => h.join(".claude/.credentials.json"),
-        None => return unavailable(agent, "no home directory"),
-    };
-    let raw = match std::fs::read_to_string(&creds_path) {
-        Ok(s) => s,
-        Err(_) => return unavailable(agent, "not logged in (no Claude credentials)"),
-    };
-    let creds: Value = match serde_json::from_str(&raw) {
+    let oauth = match claude_oauth().await {
         Ok(v) => v,
-        Err(_) => return unavailable(agent, "unreadable Claude credentials"),
+        Err(e) => return unavailable(agent, e),
     };
-    let oauth = &creds["claudeAiOauth"];
     let Some(token) = oauth["accessToken"].as_str() else {
         return unavailable(agent, "not logged in (no Claude OAuth token)");
     };
@@ -900,6 +985,31 @@ mod tests {
         assert_eq!(windows[2].label, "Fable");
         assert_eq!(windows[2].used_percent, 83.0);
         assert_eq!(windows[2].window_mins, Some(10080));
+    }
+
+    /// macOS leaves an MCP-only credentials file next to the Keychain item that
+    /// holds the real subscription token. Treating that file as a login is what
+    /// made a signed-in Max account report "not logged in".
+    #[test]
+    fn claude_mcp_only_credentials_are_not_a_login() {
+        let mcp_only = json!({
+            "mcpOAuth": { "plugin:vercel:vercel|abc": { "serverName": "vercel" } }
+        })
+        .to_string();
+        assert!(oauth_block(&mcp_only).is_none());
+
+        let logged_in = json!({
+            "mcpOAuth": {},
+            "claudeAiOauth": { "accessToken": "sk-test", "subscriptionType": "max" }
+        })
+        .to_string();
+        let oauth = oauth_block(&logged_in).expect("subscription token is a login");
+        assert_eq!(oauth["subscriptionType"], "max");
+
+        // A token-less block is a logged-out account, not a login.
+        let logged_out = json!({ "claudeAiOauth": { "subscriptionType": "max" } }).to_string();
+        assert!(oauth_block(&logged_out).is_none());
+        assert!(oauth_block("not json").is_none());
     }
 
     #[test]
