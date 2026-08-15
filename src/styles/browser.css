@@ -1140,3 +1140,45 @@
   .browser-connection-dot {
   box-shadow: 0 0 0 3px rgba(111, 213, 189, 0.14), 0 0 12px rgba(111, 213, 189, 0.85);
 }
+
+/* Right-click menu. Fixed to the viewport (positioned from the click's client
+   coordinates) so it clears the pane and works in fullscreen; z-index sits
+   above the dialog shade. */
+.browser-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 208px;
+  padding: 5px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 10px;
+  background: var(--panel, #10141d);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.52);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.browser-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+  background: transparent;
+  color: var(--text, #d8dde9);
+  font: 12.5px var(--font-ui, system-ui, sans-serif);
+  text-align: left;
+  cursor: default;
+}
+
+.browser-menu-item:hover,
+.browser-menu-item:focus-visible {
+  background: var(--panel-3, #1a2030);
+}
+
+.browser-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line, rgba(155, 170, 210, 0.09));
+}

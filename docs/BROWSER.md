@@ -23,8 +23,8 @@ the 2026-07-25 browser rebuild.
    phases, a visible pointer, a target outline, a current-action HUD, and a
    reconnect-safe activity trail.
 5. **Human takeover.** The canvas forwards hover, click, drag, wheel, keyboard
-   chords, navigation, tabs, and dialogs to the same pages. Agent controls do
-   not put a glass pane over the browser.
+   chords, navigation, tabs, dialogs, and a native-feeling right-click menu to
+   the same pages. Agent controls do not put a glass pane over the browser.
 6. **Durable while useful, disposable by design.** Changing workspace views or
    disconnecting a phone preserves the in-memory session. Explicit Restart,
    thread/server replacement, or a dead Chrome process replaces it. Browser
@@ -159,6 +159,33 @@ Four input details decide whether real flows work at all:
 
 Observation-only tools (`status`, `console`, `network`, `tabs`, `downloads`)
 never launch Chrome: asking whether a browser is open must not open one.
+
+## The viewer's right-click menu
+
+Chrome runs headless, so its own context menu is browser chrome that never
+reaches the JPEG screencast — a forwarded right-click would render nothing. The
+viewer therefore draws its own menu, and the items that depend on what sits
+under the cursor need a fact only the page's document holds. A `probe` control
+carries the click point and a nonce; the backend hit-tests the **main** document
+(`elementFromPoint` cannot see into cross-origin frames, and a signed-in profile
+keeps those isolated anyway) and answers with a `context` frame — selection
+text, a link href, an image src, whether the point is editable — tagged with the
+nonce so a co-viewer's menu never opens from someone else's click. The probe
+always answers (empty on failure) so the menu opens rather than hanging.
+
+The menu offers Back / Forward / Reload, link and image actions when either is
+under the cursor, and Copy / Cut / Paste / Select all. Two of those cross the
+process boundary the same way paste does: **Copy** (and Copy link/image address)
+writes to the *viewer's* clipboard, because Chrome's clipboard lives in a
+separate headless process the viewer cannot read; on an insecure LAN origin the
+write is denied and the item no-ops, exactly as paste falls back to its manual
+sheet. **Select all** is a Ctrl+A key chord to the page, needing no new
+primitive; **Cut** copies to the host then lets a Backspace clear the still-live
+selection in the field the right-click already focused. Password autofill —
+importing from the default browser or loading a manager extension like
+Bitwarden — is deliberately **not** part of this: it fights the isolated-profile
+and never-sees-a-secret model in "Signed-in profiles" below, and is deferred
+until that tradeoff is decided.
 
 ## Recorded walkthroughs
 

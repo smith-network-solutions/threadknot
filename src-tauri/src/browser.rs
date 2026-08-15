@@ -432,6 +432,11 @@ enum BrowserMsg {
     /// Current tab inventory. Popups, agent tab actions, and human tab actions
     /// all converge on this one shared active-page state.
     Tabs(Vec<BrowserTab>),
+    /// Answer to a viewer's right-click hit-test: what sits under the point
+    /// (selection text, a link, an image, an editable field), so the viewer can
+    /// build a native-feeling context menu. Carries the requesting viewer's
+    /// nonce so a co-viewer's menu doesn't open from someone else's click.
+    Context(Value),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1214,6 +1219,58 @@ impl BrowserSession {
     async fn evaluate(&self, expr: &str) -> Result<Value> {
         let res = self.page().evaluate(expr).await?;
         Ok(res.into_value().unwrap_or(Value::Null))
+    }
+
+    /// Hit-test the active document at `(x, y)` for the viewer's right-click
+    /// menu and broadcast the answer as a `context` frame. Runs only against
+    /// the main document — `elementFromPoint` cannot see into cross-origin
+    /// frames, and a signed-in profile keeps those isolated anyway — so a click
+    /// over an unreadable frame yields the generic menu, never an error. The
+    /// result is always emitted (empty on failure) so the viewer's menu opens
+    /// rather than hanging on a promise that never resolves.
+    async fn probe_context(&self, x: f64, y: f64, nonce: &str) -> Result<()> {
+        // `getSelection().toString()` is capped so a select-all on a huge page
+        // never ships the whole document back over the socket; the viewer only
+        // needs enough to know a selection exists and to copy a sane amount.
+        let js = format!(
+            r#"(function(){{
+  try {{
+    var el = document.elementFromPoint({x}, {y});
+    var out = {{ selection: "", editable: false }};
+    var sel = window.getSelection ? String(window.getSelection()) : "";
+    if (sel) out.selection = sel.slice(0, 100000);
+    var node = el;
+    while (node && node !== document.documentElement) {{
+      var tag = (node.tagName || "").toLowerCase();
+      if (!out.linkHref && tag === "a" && node.href) out.linkHref = node.href;
+      if (!out.imgSrc && tag === "img" && (node.currentSrc || node.src)) out.imgSrc = node.currentSrc || node.src;
+      node = node.parentElement;
+    }}
+    var isEditable = function(n) {{
+      if (!n) return false;
+      var t = (n.tagName || "").toLowerCase();
+      if (n.isContentEditable) return true;
+      if (t === "textarea") return true;
+      if (t === "input") {{
+        var ty = (n.getAttribute("type") || "text").toLowerCase();
+        return ["button","checkbox","radio","submit","reset","file","image","range","color","hidden"].indexOf(ty) === -1;
+      }}
+      return false;
+    }};
+    out.editable = isEditable(el) || isEditable(document.activeElement);
+    return out;
+  }} catch (e) {{ return {{ selection: "", editable: false }}; }}
+}})()"#
+        );
+        let info = self.evaluate(&js).await.unwrap_or(Value::Null);
+        let mut ctx = match info {
+            Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        ctx.insert("type".into(), json!("context"));
+        ctx.insert("nonce".into(), json!(nonce));
+        let _ = self.tx.send(BrowserMsg::Context(Value::Object(ctx)));
+        Ok(())
     }
 
     async fn screenshot_b64(&self) -> Result<String> {
@@ -3640,6 +3697,16 @@ enum Control {
         #[serde(default)]
         id: Option<String>,
     },
+    /// Right-click hit-test at a viewport point. Chrome is headless and its
+    /// context menu is browser chrome that never reaches the screencast, so the
+    /// viewer draws its own menu — but only the page's own document knows what
+    /// is under the point. The reply comes back as a `context` frame tagged
+    /// with `nonce`.
+    Probe {
+        x: f64,
+        y: f64,
+        nonce: String,
+    },
     Reset,
 }
 
@@ -3910,6 +3977,11 @@ async fn bridge(
                         break;
                     }
                 }
+                Ok(BrowserMsg::Context(ctx)) => {
+                    if sink.send(Message::Text(ctx.to_string().into())).await.is_err() {
+                        break;
+                    }
+                }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -4017,6 +4089,7 @@ async fn dispatch_control(session: &Arc<BrowserSession>, ctrl: Control) -> Resul
             session.activate_page(page).await
         }
         Control::CloseTab { id } => session.close_tab(id.as_deref()).await,
+        Control::Probe { x, y, nonce } => session.probe_context(x, y, &nonce).await,
         Control::Reset => Ok(()),
     }
 }
@@ -4877,6 +4950,24 @@ mod tests {
             panic!("paste control decoded as another variant");
         };
         assert_eq!(text, "first line\nsecond line 🧶");
+    }
+
+    /// The right-click hit-test the viewer sends before opening its context
+    /// menu: point plus a nonce that ties the `context` reply back to the
+    /// window that asked.
+    #[test]
+    fn probe_control_carries_point_and_nonce() {
+        let Control::Probe { x, y, nonce } = serde_json::from_value(json!({
+            "type": "probe",
+            "x": 12.5,
+            "y": 340.0,
+            "nonce": "p7",
+        }))
+        .expect("probe control should deserialize") else {
+            panic!("probe control decoded as another variant");
+        };
+        assert_eq!((x, y), (12.5, 340.0));
+        assert_eq!(nonce, "p7");
     }
 
     /// Old machine processes understand `Control::Key` but not the dedicated
