@@ -7,6 +7,29 @@
 const APP_ID: &str = "com.smithnetwork.threadknot";
 const LINUX_DESKTOP_ENTRY: &str = "threadknot";
 
+// `notify-rust`'s legacy macOS backend otherwise asks AppleScript for the id of
+// an application literally named `use_default`. When no such application
+// exists, macOS opens a "Where is use_default?" application picker instead of
+// delivering the notification. Set our real, bundled identity before the first
+// notification so the backend never enters that fallback. Keep this best-effort
+// for `cargo run` checkouts where no Threadknot.app has been registered yet;
+// even a failed call initializes the backend and prevents the bogus picker.
+#[cfg(target_os = "macos")]
+static MACOS_NOTIFICATION_IDENTITY: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn ensure_macos_notification_identity() {
+    MACOS_NOTIFICATION_IDENTITY.get_or_init(|| {
+        if let Err(error) = notify_rust::set_application(APP_ID) {
+            tracing::warn!(
+                %error,
+                app_id = APP_ID,
+                "could not register Threadknot as the macOS notification identity"
+            );
+        }
+    });
+}
+
 // GNOME 50 destroys an application's notification source when the D-Bus
 // sender vanishes. `notify-rust::NotificationHandle` intentionally owns that
 // connection, so keep one handle and update it for the lifetime of Threadknot.
@@ -31,6 +54,9 @@ pub struct NotificationReceipt {
 /// it. A successful return means the notification daemon accepted it; unlike
 /// the old detached thread, transport failures reach the frontend.
 pub fn send(title: &str, body: &str) -> Result<NotificationReceipt, String> {
+    #[cfg(target_os = "macos")]
+    ensure_macos_notification_identity();
+
     let mut notification = notify_rust::Notification::new();
     notification
         .appname("Threadknot")
