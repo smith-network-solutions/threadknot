@@ -1407,6 +1407,17 @@ export interface ThreadknotActions {
   /** Relaunch a machine into the binary already built on its disk. `force`
    *  overrides the guard that protects threads mid-turn. */
   restartUpdate: (machineId?: string, force?: boolean) => Promise<void>;
+  /** Download the newest published release onto a machine, install it over the
+   *  copy running there, and relaunch it. Resolves once the run is claimed;
+   *  progress arrives on the `updates` broadcast. `force` overrides the guard
+   *  that protects threads mid-turn. */
+  installUpdate: (machineId?: string, force?: boolean) => Promise<void>;
+  /** Which route a machine takes to a newer build: published releases, its own
+   *  checkout, or `auto` — derived from whether it has one (machine-local). */
+  setUpdateChannel: (
+    channel: "release" | "source" | "auto",
+    machineId?: string,
+  ) => Promise<void>;
   /** Point a machine at its Threadknot source checkout (machine-local setting). */
   setUpdateRepoPath: (path: string, machineId?: string) => Promise<void>;
 }

@@ -1621,6 +1621,27 @@ function makeActions(
       });
     },
 
+    /** The release-channel counterpart of `pullUpdate`'s chain: download the
+     *  published build, install it over this copy, relaunch. Resolves when the
+     *  run is claimed, not when it lands — the download alone outlives the
+     *  request timeout. `force` carries the same consent the restart button
+     *  asks for, since this ends by stopping the app. */
+    async installUpdate(machineId?: string, force?: boolean) {
+      await client.request("git.selfUpdateInstall", {
+        ...(machineId ? { machineId } : {}),
+        ...(force ? { force } : {}),
+      });
+      if (!machineId) void refreshUpdate().catch(() => undefined);
+    },
+
+    async setUpdateChannel(channel: "release" | "source" | "auto", machineId?: string) {
+      await client.request("git.selfUpdateSetChannel", {
+        channel,
+        ...(machineId ? { machineId } : {}),
+      });
+      if (!machineId) void refreshUpdate().catch(() => undefined);
+    },
+
     async setUpdateRepoPath(path: string, machineId?: string) {
       await client.request("git.selfUpdateSetRepoPath", {
         path,

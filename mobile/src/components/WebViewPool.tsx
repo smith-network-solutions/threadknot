@@ -349,6 +349,15 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
               domStorageEnabled
               allowsBackForwardNavigationGestures={false}
               keyboardDisplayRequiresUserAction={false}
+              // iOS form-assistant bar (< > Done). Hidden for a layout reason,
+              // not a taste one: WKWebView shrinks visualViewport.height by the
+              // keyboard AND that bar, and the web side reads the difference as
+              // --kb-inset to lift the composer — so with the bar up the
+              // composer floated ~44pt above the keyboard with dead space
+              // under it. Nothing in this app needs the bar: there is one text
+              // field per screen, so its < > have nothing to step between, and
+              // tapping the conversation dismisses the keyboard.
+              hideKeyboardAccessoryView
               allowsInlineMediaPlayback
               contentInsetAdjustmentBehavior="never"
               style={{ flex: 1, backgroundColor: '#0b0d12' }}

@@ -8,6 +8,13 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+## v0.1.93 · 2026-08-15
+
+- **Threadknot updates itself the way everything else does.** Settings → updates now watches the published releases page. When a new version ships, one click downloads the build for your platform, installs it over this copy and restarts into it — no checkout, no toolchain, no compiling. The card shows what is in the release before you take it, and the download keeps going if you close the window.
+- **Machines with a Threadknot source folder still build from master**, exactly as before; they say so on the card, and either machine can be switched to the other route from the same panel.
+- **A chat you leave running stays at the bottom.** Following a live thread no longer gives up on its own. Anything that made the transcript shorter — the working row going away at the end of a turn, a block collapsing after a tool call — moved the view down by itself, and Threadknot read that as you scrolling up and stopped following, leaving you to scroll back every time. The same went for the window changing size. Only your own scrolling stops the feed following now, and the Present button brings it back.
+- **Settings opens on Appearance again.** It used to jump to Updates for as long as an update was waiting, which took over every trip to Settings for something else. The gear still pulses when there is an update.
+
 ## v0.1.64 · 2026-08-11
 
 - **Updating is one click again, and Windows can finally do it.** Under Settings → updates, the button on a machine that can finish the job now reads **pull, build & restart**: it fast-forwards the checkout, rebuilds, and relaunches itself into the new build, showing each stage as it goes. The build keeps running if you close the window or the tab that started it. Windows machines could previously only pull, and had to be rebuilt and reopened by hand.

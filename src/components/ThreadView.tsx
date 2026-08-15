@@ -56,6 +56,18 @@ const BOTTOM_SLACK = 90;
 /** Auto-follow only engages at the real end; a larger threshold makes manual
  * scrolling snap the final stretch and keeps tugging the reader back down. */
 const BOTTOM_STICK_EPSILON = 2;
+/** How far from the end a drop in scrollTop must leave the reader before it
+ * counts as them scrolling up.
+ *
+ * A drop is not proof of intent. The browser drops scrollTop itself, by
+ * clamping, whenever the end moves up under a reader sitting on it — which is
+ * what every shrink of the composer dock does: an agent pill going away after a
+ * tool call, the composer closing around a sent image, the phone keyboard
+ * retracting. Those clamps land the reader exactly on the new end; a real
+ * gesture leaves them off it. So the distance afterwards is what separates the
+ * two, and it only has to clear rounding and sub-pixel geometry — well under
+ * the smallest deliberate scroll anyone makes. */
+const CLAMP_SLACK = 24;
 /** Keep the normal transcript DOM bounded. Older pages are prepended before the
  * reader reaches the top, with the visible position restored in layout. */
 const INITIAL_FEED_ROWS = 160;
@@ -571,6 +583,28 @@ export function ThreadView() {
     name: hermesGatewayName ?? hermesRec?.name ?? "hermes agent",
   });
 
+  // Which machine this chat actually runs on. The sidebar row can't say it on a
+  // phone (its machine chip costs more width than the title has), and the
+  // native server switcher names the server you dialled, not the mesh machine
+  // that owns the thread — those differ the moment a workspace spans two boxes.
+  // So the header carries it, next to the directory it belongs with. Named for
+  // local threads too: "which box is this path on" is the question, and
+  // answering it only for remote chats leaves the common case guessing.
+  const threadMachineId = thread?.machineId ?? draft?.machineId;
+  const localMachineId = state.hello?.machineId;
+  const deviceIsRemote =
+    !!threadMachineId && !!localMachineId && threadMachineId !== localMachineId;
+  const devicePeer = deviceIsRemote
+    ? state.peers.find((p) => p.machineId === threadMachineId)
+    : undefined;
+  const deviceName = deviceIsRemote
+    ? (devicePeer?.name ?? "remote machine")
+    : (state.hello?.friendlyName ?? state.hello?.serverName ?? "this machine");
+  const deviceColor = deviceIsRemote
+    ? (devicePeer?.colorOverride ?? devicePeer?.color)
+    : state.hello?.color;
+  const deviceOffline = deviceIsRemote && !devicePeer?.online;
+
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [quickMode, setQuickMode] = useState<"chat" | "build">("chat");
@@ -826,13 +860,22 @@ export function ThreadView() {
       pinRafRef.current = null;
       const el = scrollRef.current;
       if (!el || !stickRef.current) return;
-      if (el.scrollTop < scrollTopRef.current - BOTTOM_STICK_EPSILON) {
+      const end = Math.max(0, el.scrollHeight - el.clientHeight);
+      // Both halves are required. A drop alone is what the browser does when it
+      // clamps a reader who is on the end onto a new, higher end (see
+      // CLAMP_SLACK) — releasing live-follow there is what left the feed stuck
+      // mid-history after a pill vanished. Distance alone is what growing
+      // content does every time a token lands, which is the case this whole
+      // callback exists to follow.
+      if (
+        el.scrollTop < scrollTopRef.current - BOTTOM_STICK_EPSILON &&
+        end - el.scrollTop > CLAMP_SLACK
+      ) {
         manualAwayRef.current = true;
         stickRef.current = false;
         scrollTopRef.current = el.scrollTop;
         return;
       }
-      const end = Math.max(0, el.scrollHeight - el.clientHeight);
       if (Math.abs(el.scrollTop - end) > 1) el.scrollTop = end;
       scrollTopRef.current = el.scrollTop;
       scrollHeightRef.current = el.scrollHeight;
@@ -947,11 +990,31 @@ export function ThreadView() {
       pinToEnd();
     });
     ro.observe(node);
-    // The scrollport also changes height when a long prompt collapses out of
-    // the composer or the mobile keyboard moves. Keep following through those
-    // viewport changes just as we do when the feed content itself grows.
-    if (scrollRef.current) ro.observe(scrollRef.current);
     observerRef.current = ro;
+  }, [pinToEnd]);
+
+  // Where the end *is* depends on the scrollport's height as much as on the
+  // content's, and that height changes without the feed changing at all: the
+  // dock above the composer grows when an agent pill appears after a tool call
+  // and shrinks when it goes, the composer opens around a pasted image, the
+  // phone keyboard slides in. Every one of those moves the end out from under a
+  // reader who was following it, and none of them resizes the feed content, so
+  // the observer above never hears about them.
+  //
+  // This used to be one more `ro.observe()` inside the feed-inner ref callback,
+  // where it silently did nothing: React attaches a child's ref before its
+  // parent's, so `scrollRef.current` was still null every time that callback
+  // ran. A layout effect runs after every ref in the tree is set, which is the
+  // only place this can be wired from and be sure of what it is observing.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (!stickRef.current) return;
+      pinToEnd();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [pinToEnd]);
 
   // On phones the header floats over the feed (see the mobile .thread-head
@@ -1168,12 +1231,34 @@ export function ThreadView() {
             </h1>
           )}
           {project?.path && !hermesHome && !quickHome && (
-            <div
-              className="thread-project-path"
-              title={project.path}
-              aria-label={`Project directory: ${project.path}`}
-            >
-              {project.path}
+            /* A plain block on desktop, where the chip is hidden and this
+               renders exactly as the bare path always did; a flex row on
+               phones, where the chip leads and the path truncates after it. */
+            <div className="thread-head-meta">
+              <span
+                className={`device-chip${deviceOffline ? " off" : ""}`}
+                title={
+                  deviceIsRemote
+                    ? `Runs on ${deviceName}${deviceOffline ? " (offline)" : ""}`
+                    : `Runs on this machine (${deviceName})`
+                }
+              >
+                {deviceColor && (
+                  <span
+                    className="device-chip-dot"
+                    style={{ background: deviceColor }}
+                    aria-hidden
+                  />
+                )}
+                {deviceName}
+              </span>
+              <span
+                className="thread-project-path"
+                title={project.path}
+                aria-label={`Project directory: ${project.path}`}
+              >
+                {project.path}
+              </span>
             </div>
           )}
           {chipPreview.portal}
@@ -1307,11 +1392,18 @@ export function ThreadView() {
           // off; reaching the real end here is the only implicit state change.
           if (nextTop < previousTop - BOTTOM_STICK_EPSILON) {
             // Covers scrollbar drags and upward wheel/touch scrolling even when
-            // streaming changed the feed geometry in the same frame. A real
-            // decrease in scrollTop is always reader intent; letting geometry
-            // changes exempt it leaves live-follow armed and pulls the reader
-            // back to the bottom.
-            leavePresent();
+            // streaming changed the feed geometry in the same frame. A decrease
+            // is not by itself reader intent, though: the browser produces one
+            // by clamping whenever the end moves up under someone sitting on it
+            // (see CLAMP_SLACK). Only a decrease that leaves the reader off the
+            // end is a gesture.
+            //
+            // This is the one place that reads layout inside a scroll handler,
+            // and it is deliberately on this branch only: content growing under
+            // a follower never gets here, so the streaming path stays free of
+            // forced reflows.
+            const end = Math.max(0, el.scrollHeight - el.clientHeight);
+            if (end - nextTop > CLAMP_SLACK) leavePresent();
           }
           // Reading scrollHeight/clientHeight here can force layout while the
           // browser is trying to paint the current wheel frame. Coalesce the

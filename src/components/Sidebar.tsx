@@ -99,6 +99,7 @@ import {
   UndoIcon,
   XIcon,
 } from "./icons";
+import wordmarkUrl from "../assets/threadknot-wordmark.png";
 
 const THREAD_PAGE_SIZE = 5;
 /** Layouts that show one project at a time hand it the whole sidebar, so the
@@ -255,10 +256,19 @@ function useSettledSplit(
 /** The workers a thread has dispatched, as a collapsible tail under its row.
  *
  *  Collapsed by default: the point of nesting them is that asking for a build
- *  on three machines should cost one line of sidebar, not four. It opens
- *  itself when it has to — while searching, when one of the workers is the
- *  thread you are looking at, or when one wants attention — because a group
- *  that hides the row you selected is worse than no grouping at all.
+ *  on three machines should cost one line of sidebar, not four. Left alone it
+ *  opens itself when one of the workers is the thread you are looking at or
+ *  wants attention, because a group that hides the row you selected is worse
+ *  than no grouping at all.
+ *
+ *  But that rule may only ever *suggest*. It used to be OR'd over the toggle,
+ *  which meant the exact group you most wanted to fold away — the busy one —
+ *  was the one whose chevron did nothing: `setOpen(false)` while a worker was
+ *  active recomputed straight back to open, so the group appeared to ignore
+ *  the tap. A deliberate collapse now outranks the auto-open and survives
+ *  later attention; what the group would have opened for it says on its own
+ *  line instead (a dot for attention, a tint for "you are in here"), so
+ *  nothing is silently swallowed by the fold.
  *
  *  A flat sibling list rather than a wrapping container, like `SettledShelf`:
  *  `ThreadRow` returns a fragment whose menu portal is a deliberate sibling of
@@ -273,27 +283,35 @@ function DispatchWorkers({
   view: SidebarLayout["view"];
 }) {
   const { state } = useStore();
-  const [open, setOpen] = useState(false);
+  // null = never touched, so follow the auto rule. A boolean is a decision the
+  // user made, and it outranks it.
+  const [choice, setChoice] = useState<boolean | null>(null);
   if (workers.length === 0) return null;
-  const wanted = workers.some(
-    (w) => state.activeThreadId === w.id || threadNeedsAttention(state, w),
-  );
-  const showing = forceOpen || open || wanted;
+  const holdsActive = workers.some((w) => state.activeThreadId === w.id);
+  const wants = workers.some((w) => threadNeedsAttention(state, w));
+  const showing = forceOpen || (choice ?? (holdsActive || wants));
   // "3 running" is the number worth reading at a glance; the total is only
   // interesting once they have all stopped.
   const live = workers.filter((w) => w.status !== "idle").length;
+  const label = workers.length === 1 ? "1 worker" : `${workers.length} workers`;
   return (
     <>
       <button
         type="button"
-        className={`dispatch-shelf${showing ? " open" : ""}`}
+        className={`dispatch-shelf${showing ? " open" : ""}${
+          !showing && holdsActive ? " holds-active" : ""
+        }`}
         aria-expanded={showing}
-        onClick={() => setOpen((v) => !v)}
+        aria-label={`${showing ? "Hide" : "Show"} ${label}`}
+        // Toggle against what is actually on screen, not against a private
+        // flag: with the auto-open above it, `!choice` can be a no-op.
+        onClick={() => setChoice(!showing)}
       >
         <ChevronIcon size={11} open={showing} className="row-chevron" />
-        <span className="dispatch-shelf-label">
-          {workers.length === 1 ? "1 worker" : `${workers.length} workers`}
-        </span>
+        <span className="dispatch-shelf-label">{label}</span>
+        {!showing && wants && (
+          <span className="dispatch-shelf-dot" aria-hidden="true" />
+        )}
         {live > 0 && <span className="dispatch-shelf-live">{live} running</span>}
       </button>
       {showing &&
@@ -3882,13 +3900,24 @@ export const Sidebar = memo(function Sidebar({
         >
           <FilterIcon size={18} />
         </button>
-        <span className="brand-wordmark">ThreadKnot</span>
+        <img className="brand-wordmark" src={wordmarkUrl} alt="ThreadKnot" />
+        {/* Same intent either way — put the sidebar away — so it is one
+            button. On a phone the drawer is full width, which leaves no
+            backdrop to tap, so this is the ONLY way back out of it; do not
+            hide it there again. The glyph matches the header hamburger that
+            opened the drawer. */}
         <button
           type="button"
           className="icon-btn sidebar-collapse-btn"
-          aria-label="Collapse sidebar"
-          title="Collapse sidebar"
-          onClick={() => updateLayout({ collapsed: true })}
+          aria-label={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
+          title={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
+          onClick={() => {
+            if (window.matchMedia("(max-width: 767px)").matches) {
+              dispatch({ type: "sidebar", open: false });
+            } else {
+              updateLayout({ collapsed: true });
+            }
+          }}
         >
           <PanelLeftIcon size={18} />
         </button>

@@ -61,6 +61,39 @@ plain user language: what changed and where to find it. Internal work (CI,
 refactors, docs) does not get a bullet. The raw `git log` is also embedded
 (`app.changelog` → `entries`) but is not shown to users.
 
+## Shipping a release (`scripts/release.sh`)
+
+Installed copies update themselves from the GitHub Releases page — download the
+artifact for their platform, install it over themselves, relaunch. Cutting one
+is:
+
+```bash
+scripts/release.sh --dry-run   # what it would tag and dispatch
+scripts/release.sh             # tag master's tip, dispatch build.yml at it
+```
+
+**The tag is computed, never chosen.** It is `v0.1.<commit count of
+origin/master>` — the same number `build.rs` bakes into the binary, which is
+what makes "is this release newer than what I am running" a comparison of two
+comparable numbers. A hand-picked tag lower than the count is worse than no
+release: every installed copy reads it as older than itself and stops updating
+for good.
+
+Two things the workflow does that look like plumbing and are not:
+
+- **`fetch-depth: 0`** on the checkout. A shallow clone makes `rev-list --count`
+  return 1, so the whole matrix builds a binary that calls itself `0.1.1`.
+- **The version stamp step**, which rewrites `version` in `package.json` and
+  `tauri.conf.json` from the tag before bundling. Artifact *filenames* carry
+  that version and the architecture, and `update.rs` picks what to download by
+  reading them.
+
+`update.rs` is the client half: `docs/PROTOCOL.md` has the request shapes, and
+the module header explains why the release and source channels are separate.
+Development machines stay on the source channel automatically (they have a
+checkout); pin this one to `release` in Settings → Updates to see what a user
+actually gets.
+
 ## How to rebuild — READ THIS
 
 ### Desktop app (the release binary the launcher runs)
