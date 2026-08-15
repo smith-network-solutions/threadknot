@@ -51,6 +51,7 @@ fn settings(browser_profile_id: Option<&str>, claude_chrome: bool) -> ThreadSett
         access: Access::Read,
         mode: Mode::Build,
         browser_profile_id: browser_profile_id.map(String::from),
+        hermes_agent_id: None,
     }
 }
 

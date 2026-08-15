@@ -1616,6 +1616,7 @@ mod tests {
             access,
             mode,
             browser_profile_id: None,
+            hermes_agent_id: None,
         }
     }
 

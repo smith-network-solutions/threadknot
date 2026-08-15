@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   Access,
   Agent,
@@ -9,7 +17,7 @@ import type {
   Thread,
   ThreadSettings,
 } from "../lib/protocol";
-import { isAgentVisible } from "../lib/agentVisibility";
+import { isAgentVisible, showHermesAgents } from "../lib/agentVisibility";
 import { useIsMobile } from "../lib/viewport";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { effortForModel, remoteMachineId, resolveProjectView, useFeedStore, useStore } from "../state/store";
@@ -42,6 +50,8 @@ import { isImageAttachment, normalizedAttachmentMime } from "../lib/attachments"
 import { attachmentUrl } from "../lib/discovery";
 import { ContextMeter, isRenderableUsage } from "./ContextMeter";
 import { hermesPresence } from "./HermesPresence";
+import { hermesDormant, hermesGatewayId } from "../lib/hermesBinding";
+import { getSidebarView, subscribeSidebarView } from "../lib/sidebarView";
 
 // Attachment limits — 8 files, 10 MB each.
 const MAX_ATTACHMENTS = 8;
@@ -832,6 +842,28 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   // so they stay pinned to Hermes — the gateway picker below is the real choice.
   const hermesLocked =
     (thread ? thread.projectId : draft?.projectId) === HERMES_HOME_PROJECT_ID;
+  // Reaching a chat through the Hermes view is a statement about who should be
+  // working it. A workspace chat its agent has handed back to a local agent
+  // still sits under that agent there, greyed — and typing into it from there
+  // means "take this again", so the next turn goes back to the gateway. The
+  // same chat opened from its workspace folder means nothing of the sort,
+  // which is why the sidebar's view is the signal rather than the chat alone.
+  const sidebarView = useSyncExternalStore(subscribeSidebarView, getSidebarView);
+  // Matched to what the sidebar actually renders (`agentsView` there), not
+  // just to the stored value: solo windows are project-dedicated and never
+  // show the agents list, yet they share this window's localStorage — so a
+  // fleet window left in the Hermes view would otherwise make every solo
+  // window offer a hand-back the user is nowhere near asking for.
+  const inHermesView =
+    sidebarView === "agents" && showHermesAgents() && !state.solo;
+  const handBackGateway =
+    thread && inHermesView && hermesDormant(thread)
+      ? hermesGatewayId(thread)
+      : undefined;
+  const handBackName =
+    (handBackGateway &&
+      state.hermesAgents.find((a) => a.id === handBackGateway)?.name) ||
+    handBackGateway;
   const quickHome = isQuickHomeProjectId(
     thread ? thread.projectId : draft?.projectId,
   );
@@ -1235,10 +1267,22 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
         return;
       }
       queueMessage();
+      // Arm the hand-back next to the follow-up it belongs with: the server
+      // refuses a mid-turn switch, so `applyArmedHermesSwaps` performs it at
+      // the turn boundary — ahead of the queue flush, which is what puts the
+      // gateway in place for the turn the follow-up actually runs on.
+      if (handBackGateway) void actions.handToHermes(thread.id);
       return;
     }
     const body = stripBtw(text.trim());
     if (!body && attachments.length === 0) return;
+    // Idle: the switch has to land BEFORE the turn starts, or the message runs
+    // on the agent the user just took it away from. A refusal (a busy thread
+    // that raced us, a gateway that has since been removed) stops the send —
+    // `handToHermes` has already put the reason in the transcript.
+    if (thread && handBackGateway && !(await actions.handToHermes(thread.id))) {
+      return;
+    }
     const outgoing: OutgoingAttachment[] = attachments.map((a) => ({
       name: a.name,
       mimeType: a.mimeType,
@@ -1510,6 +1554,15 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     <div className="composer">
       {agentInfo && !agentInfo.available && agentInfo.authHint && (
         <div className="composer-warn">{agentInfo.authHint}</div>
+      )}
+      {/* Say what sending is about to do. The switch is a real change of who
+          works this chat, and it happens on send rather than on a control the
+          user pressed — so it is announced before, not discovered after. */}
+      {handBackName && (
+        <div className="composer-handback">
+          Sending hands this chat back to <strong>{handBackName}</strong>
+          {running ? " once the current turn finishes." : " for the next turn."}
+        </div>
       )}
       {attachError && <div className="attach-err">{attachError}</div>}
       <div

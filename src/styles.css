@@ -2606,6 +2606,36 @@ body.reordering { cursor: grabbing; user-select: none; }
 .thread-chip.off {
   opacity: 0.45;
 }
+/* "A Hermes agent is working this chat" — worn by a card that has stayed in
+   its workspace. Brass, like the other "you are here" chips, because it is an
+   ownership fact rather than a status. `.off` (the Hermes view's "handed back
+   to <agent>" chip) inherits the muted opacity above. */
+.hermes-chip {
+  border-color: color-mix(in srgb, var(--brass) 38%, transparent);
+  background: var(--brass-dim);
+  color: var(--brass-hi);
+  opacity: 1;
+  max-width: 96px;
+}
+.hermes-chip.off {
+  border-color: var(--line);
+  background: var(--panel-3);
+  color: var(--dim);
+  opacity: 0.7;
+}
+
+/* A chat still bound to a gateway that a local agent currently has. It keeps
+   its place in the agent's group — greyed, because the agent is not the one
+   holding the next turn. Attention and selection override this: a dormant chat
+   that finished a turn still has to be able to shout. */
+.thread-row.hermes-dormant {
+  opacity: 0.55;
+}
+.thread-row.hermes-dormant:hover,
+.thread-row.hermes-dormant.active,
+.thread-row.hermes-dormant.has-attention {
+  opacity: 1;
+}
 
 /* ---- Full-screen settings (replaces the old settings popover) ---- */
 
@@ -6571,6 +6601,16 @@ span.title-agent-mark { width: 16px; height: 16px; }
   outline: none;
 }
 
+/* Sending from the Hermes view hands the chat back to its agent. Said before
+   the send, since nothing the user pressed announces it. */
+.composer-handback {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--brass-hi);
+  padding: 0 6px 6px;
+}
+.composer-handback strong { font-weight: 600; }
+
 /* The composer floats as one soft, heavily-rounded card on the conversation
    background. Light themes drop the stroke entirely and let a deep shadow lift
    a white card off the page; dark themes have no shadow to show on near-black,
@@ -9070,7 +9110,10 @@ span.title-agent-mark { width: 16px; height: 16px; }
      up to 72px of a 260px row, which left about three characters of title.
      The coloured dot beside it already carries "runs elsewhere"; the name is
      still in the row's tooltip. */
-  .thread-row .thread-chip { display: none; }
+  /* The machine chip's label cost more of the row than the title had; its dot
+     carries the same fact. The Hermes chip stays — whose agent has a chat is
+     the one thing the row cannot say any other way at this width. */
+  .thread-row .thread-chip:not(.hermes-chip) { display: none; }
   .settled-shelf { min-height: 34px; font-size: 11px; }
   .thread-menu-item, .ctx-item { min-height: 44px; font-size: 13.5px; }
   .load-more-threads { min-height: 36px; }

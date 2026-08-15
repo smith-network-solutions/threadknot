@@ -41,6 +41,7 @@ import {
   quickHomeProjectId,
 } from "./lib/protocol";
 import { HERMES_ENABLED_EVENT, isAgentVisible } from "./lib/agentVisibility";
+import { hermesGatewayId } from "./lib/hermesBinding";
 import { ThreadknotClient } from "./lib/ws";
 import { bindTraceStore, traceDispatch } from "./lib/renderTrace";
 import {
@@ -341,6 +342,69 @@ function makeActions(
       timestamp: new Date().toISOString(),
       event: { kind: "error", message },
     });
+  };
+
+  /** Armed hand-backs whose round trip is still out. The arm is only cleared
+   *  when the switch lands, so without this the turn-boundary effect would
+   *  re-fire the same switch on every render until it did. */
+  const swapsInFlight = new Set<string>();
+
+  /** Point one thread's next turn at a different agent, optimistically then for
+   *  real. A local rather than a method because `handToHermes` and the armed
+   *  turn-boundary swap both need it and the actions object has no `this` to
+   *  reach itself through. Answers whether the thread ended up on `agent`.  */
+  const switchThreadAgent = async (
+    threadId: string,
+    agent: Agent,
+  ): Promise<boolean> => {
+    const s = getState();
+    if (!s.hello) return false;
+    const cur = findThread(s, threadId);
+    if (!cur) return false;
+    // Already there — reported as success, so a caller that switches before
+    // sending doesn't read a no-op as a refusal.
+    if (cur.agent === agent) return true;
+    const info = s.hello.agents.find((a) => a.id === agent);
+    // Handing a chat BACK to Hermes returns it to the gateway it already
+    // belongs to, not to the registry's first entry — a Hermes "model" IS the
+    // gateway, so re-defaulting it would silently reassign the chat to a
+    // different agent.
+    const bound = hermesGatewayId(cur);
+    const modelId =
+      (agent === "hermes" && bound && info?.models.some((m) => m.id === bound)
+        ? bound
+        : undefined) ??
+      info?.defaultModel ??
+      info?.models[0]?.id ??
+      "";
+    const model = info?.models.find((m) => m.id === modelId);
+    const settings = {
+      ...cur.settings,
+      model: modelId,
+      effort: effortForModel(model, undefined, agent === "claude"),
+      wideContext: undefined,
+      claudeChrome: undefined,
+      // Mirrors what the server will store, so the workspace badge and the
+      // Hermes view settle on the right answer before the round trip lands.
+      hermesAgentId: agent === "hermes" ? modelId : bound,
+    };
+    dispatch({ type: "threadUpserted", thread: { ...cur, agent, settings } });
+    try {
+      const machineId = routeFor(threadId);
+      const thread = await client.request("thread.setAgent", {
+        threadId,
+        agent,
+        settings,
+        ...(machineId ? { machineId } : {}),
+      });
+      dispatch({ type: "threadUpserted", thread });
+      rememberNewThreadSettings(thread.projectId, thread.agent, thread.settings);
+      return true;
+    } catch (e) {
+      dispatch({ type: "threadUpserted", thread: cur }); // roll back
+      noteError(threadId, e instanceof Error ? e.message : String(e));
+      return false;
+    }
   };
 
   return {
@@ -712,6 +776,7 @@ function makeActions(
           agent: "hermes",
           settings: {
             model: hermesAgentId,
+            hermesAgentId,
             effort: effortForModel(model),
             access: "full",
             mode: "build",
@@ -882,35 +947,51 @@ function makeActions(
       rememberNewThreadSettings(s.draft.projectId, agent, settings);
     },
 
-    async setThreadAgent(agent: Agent) {
+    async setThreadAgent(agent: Agent, threadId?: string) {
+      // `threadId` is for the armed hand-back, which fires from a turn-boundary
+      // effect rather than from the composer — by then the user may well have
+      // opened something else, and the switch still belongs to the chat that
+      // was armed.
+      const target = threadId ?? getState().activeThreadId;
+      return target ? switchThreadAgent(target, agent) : false;
+    },
+
+    async handToHermes(threadId: string) {
+      const cur = findThread(getState(), threadId);
+      if (!cur || cur.agent === "hermes") return true;
+      const gateway = hermesGatewayId(cur);
+      if (!gateway) return false;
+      // A turn is in flight: the server refuses a mid-turn switch, and the
+      // message being sent is a queued follow-up rather than a new turn. Arm
+      // it — `applyArmedHermesSwaps` performs the switch at the boundary, so
+      // the gateway is in place for the turn the follow-up runs on.
+      if (cur.status !== "idle") {
+        dispatch({ type: "armHermesSwap", threadId, hermesAgentId: gateway });
+        return true;
+      }
+      return switchThreadAgent(threadId, "hermes");
+    },
+
+    applyArmedHermesSwaps() {
       const s = getState();
-      if (!s.activeThreadId || !s.hello) return;
-      const cur = findThread(s, s.activeThreadId);
-      if (!cur || cur.agent === agent) return;
-      const info = s.hello.agents.find((a) => a.id === agent);
-      const modelId = info?.defaultModel ?? info?.models[0]?.id ?? "";
-      const model = info?.models.find((m) => m.id === modelId);
-      const settings = {
-        ...cur.settings,
-        model: modelId,
-        effort: effortForModel(model, undefined, agent === "claude"),
-        wideContext: undefined,
-        claudeChrome: undefined,
-      };
-      dispatch({ type: "threadUpserted", thread: { ...cur, agent, settings } });
-      try {
-        const machineId = routeFor(s.activeThreadId);
-        const thread = await client.request("thread.setAgent", {
-          threadId: s.activeThreadId,
-          agent,
-          settings,
-          ...(machineId ? { machineId } : {}),
+      for (const threadId of Object.keys(s.pendingHermes)) {
+        const thread = findThread(s, threadId);
+        // Gone, already back on Hermes, or handed somewhere else deliberately
+        // while the turn ran — in every case the arming is spent.
+        if (!thread || thread.agent === "hermes" || !hermesGatewayId(thread)) {
+          dispatch({ type: "clearHermesSwap", threadId });
+          continue;
+        }
+        if (thread.status !== "idle" || swapsInFlight.has(threadId)) continue;
+        swapsInFlight.add(threadId);
+        // Cleared only once the switch has actually landed. A queued follow-up
+        // for this thread is held back for exactly as long as the arm stands,
+        // and releasing it while the round trip was still out would run it on
+        // the agent being handed away from.
+        void switchThreadAgent(threadId, "hermes").finally(() => {
+          swapsInFlight.delete(threadId);
+          dispatch({ type: "clearHermesSwap", threadId });
         });
-        dispatch({ type: "threadUpserted", thread });
-        rememberNewThreadSettings(thread.projectId, thread.agent, thread.settings);
-      } catch (e) {
-        dispatch({ type: "threadUpserted", thread: cur }); // roll back
-        noteError(s.activeThreadId, e instanceof Error ? e.message : String(e));
       }
     },
 
@@ -1684,6 +1765,11 @@ export default function App() {
         continue;
       }
       if (thread.status !== "idle") continue;
+      // A hand-back to Hermes armed for this thread runs at the same boundary
+      // and has to land first: releasing the follow-up now would run it on the
+      // agent the user just took it away from. The arm clears once the switch
+      // is on the server, which brings this effect straight back.
+      if (state.pendingHermes[threadId]) continue;
 
       const message = messages[0];
       queuedSendRef.current.add(threadId);
@@ -1699,7 +1785,7 @@ export default function App() {
         queuedSendRef.current.delete(threadId);
       });
     }
-  }, [actions, state.queuedMessages, state.threads]);
+  }, [actions, state.queuedMessages, state.threads, state.pendingHermes]);
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key === LS_THREAD_ATTENTION) {
@@ -2079,6 +2165,17 @@ export default function App() {
     window.addEventListener(HERMES_ENABLED_EVENT, onHermesToggle);
     return () => window.removeEventListener(HERMES_ENABLED_EVENT, onHermesToggle);
   }, [state.hello]);
+
+  // Armed Hermes hand-backs land at the turn boundary. A message sent into a
+  // dormant chat from the Hermes view while a turn was running was queued as a
+  // follow-up; the switch it implied could not be made mid-turn, so it happens
+  // the moment the thread reports idle — in time for the turn that follow-up
+  // runs on. The guard keeps this free on the (overwhelmingly common) renders
+  // where nothing is armed, since thread status changes land constantly.
+  useEffect(() => {
+    if (Object.keys(state.pendingHermes).length === 0) return;
+    actions.applyArmedHermesSwaps();
+  }, [state.pendingHermes, state.threads, actions]);
 
   const store = useMemo(() => ({ state, dispatch, actions }), [state, actions]);
   // Keep the shell on a stable snapshot while only the transcript is changing.

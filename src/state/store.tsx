@@ -189,6 +189,20 @@ export interface AppState {
   attention: Record<string, true>;
   /** Local follow-ups waiting for each thread to become idle. */
   queuedMessages: Record<string, QueuedMessage[]>;
+  /** Threads waiting to be handed back to a Hermes gateway, keyed by threadId
+   *  with the gateway id as the value.
+   *
+   *  Sending into a dormant chat from the Hermes view means "your agent takes
+   *  this again", but the server refuses an agent switch mid-turn — and that
+   *  is exactly when the message is a queued follow-up rather than a new turn.
+   *  So the swap is armed here and applied the moment the thread goes idle,
+   *  which puts the gateway in place for the turn that follow-up will run.
+   *
+   *  Deliberately not persisted: an arm only has to outlive one running turn,
+   *  and a reload in that window is indistinguishable from the user changing
+   *  their mind. The chat stays greyed under its agent either way, so the
+   *  hand-back is one message away rather than lost. */
+  pendingHermes: Record<string, string>;
 }
 
 export const initialState: AppState = {
@@ -229,6 +243,7 @@ export const initialState: AppState = {
   update: null,
   attention: loadThreadAttention(),
   queuedMessages: {},
+  pendingHermes: {},
 };
 
 export type Action =
@@ -241,6 +256,8 @@ export type Action =
   | { type: "projects"; projects: Project[] }
   | { type: "workspaces"; workspaces: Workspace[] }
   | { type: "peers"; peers: PeerInfo[]; discovered: DiscoveredPeer[] }
+  | { type: "armHermesSwap"; threadId: string; hermesAgentId: string }
+  | { type: "clearHermesSwap"; threadId: string }
   | { type: "hermesAgents"; agents: HermesAgentInfo[] }
   | { type: "hermesStatuses"; revision: number; statuses: HermesAgentStatus[] }
   | { type: "customThemes"; themes: CustomTheme[] }
@@ -617,6 +634,20 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, peers: action.peers, discovered: action.discovered };
     case "hermesAgents":
       return { ...state, hermesAgents: action.agents };
+    case "armHermesSwap":
+      return {
+        ...state,
+        pendingHermes: {
+          ...state.pendingHermes,
+          [action.threadId]: action.hermesAgentId,
+        },
+      };
+    case "clearHermesSwap": {
+      if (!(action.threadId in state.pendingHermes)) return state;
+      const pendingHermes = { ...state.pendingHermes };
+      delete pendingHermes[action.threadId];
+      return { ...state, pendingHermes };
+    }
     case "customThemes":
       // The first list (even an empty one) marks the records as seeded, so
       // ThemeSync can distinguish "not loaded yet" from "genuinely deleted".
@@ -1092,8 +1123,18 @@ export interface ThreadknotActions {
   respondQuestion: (requestId: string, answers: Record<string, string[]>) => Promise<void>;
   setSettings: (settings: ThreadSettings) => Promise<void>;
   setDraftAgent: (agent: Agent) => void;
-  /** Mid-thread provider switch: next turn runs on `agent`, context carried over. */
-  setThreadAgent: (agent: Agent) => Promise<void>;
+  /** Mid-thread provider switch: next turn runs on `agent`, context carried
+   *  over. Defaults to the open chat; pass `threadId` to switch another one.
+   *  Resolves to whether the thread ended up on `agent`. */
+  setThreadAgent: (agent: Agent, threadId?: string) => Promise<boolean>;
+  /** Hand a chat back to the Hermes agent it is bound to, for its next turn —
+   *  what sending into a dormant chat from the Hermes view means. Immediate
+   *  when the chat is idle, armed for the turn boundary when it is busy (the
+   *  server refuses a mid-turn switch). False if the chat has no gateway. */
+  handToHermes: (threadId: string) => Promise<boolean>;
+  /** Perform any armed Hermes hand-backs whose thread has gone idle. Driven
+   *  off thread-status changes; a no-op when nothing is armed. */
+  applyArmedHermesSwaps: () => void;
   /** Throw an adversarial reviewer at the active thread for one turn
    *  (Parley). The reviewer reads the real transcript via the handoff seed and
    *  yields the floor back to the builder when it's done. `settings.access`

@@ -1728,6 +1728,28 @@ impl Hub {
         tx
     }
 
+    /// Which Hermes gateway a thread belongs to after a settings change.
+    ///
+    /// On Hermes the gateway IS `model`, so the binding simply tracks it. Off
+    /// Hermes `model` has been overwritten with the local agent's default, and
+    /// the last gateway is carried forward — from the incoming settings if the
+    /// client knows about the field, else from what was already stored. That
+    /// fallback is what keeps an old build (or a phone that round-trips a
+    /// settings blob it does not fully understand) from quietly unbinding a
+    /// chat from the agent that has been working it.
+    fn hermes_binding(
+        agent: Agent,
+        next: &ThreadSettings,
+        prev: &ThreadSettings,
+    ) -> Option<String> {
+        if agent == Agent::Hermes {
+            return Some(next.model.clone());
+        }
+        next.hermes_agent_id
+            .clone()
+            .or_else(|| prev.hermes_agent_id.clone())
+    }
+
     /// Point the thread's NEXT turn at a different provider (Traycer-style
     /// mid-chat switch). The live driver (if any) keeps running until the next
     /// turn routes away from it; context carries over via the handoff seed.
@@ -1735,7 +1757,7 @@ impl Hub {
         self: &Arc<Self>,
         thread_id: &str,
         agent: Agent,
-        settings: ThreadSettings,
+        mut settings: ThreadSettings,
     ) -> Result<Thread> {
         let thread = self
             .store
@@ -1745,6 +1767,7 @@ impl Hub {
             thread.status == ThreadStatus::Idle,
             "thread is busy (interrupt it first)"
         );
+        settings.hermes_agent_id = Self::hermes_binding(agent, &settings, &thread.settings);
         let thread = self.store.update_thread(thread_id, |t| {
             t.agent = agent;
             t.settings = settings.clone();
@@ -1765,11 +1788,16 @@ impl Hub {
     /// Persist thread settings and immediately forward them to the live driver.
     /// This matters for Claude: a stopped turn leaves its CLI process alive, so
     /// access/model changes must reach that process before the next prompt.
-    pub fn set_settings(&self, thread_id: &str, settings: ThreadSettings) -> Result<Thread> {
+    pub fn set_settings(&self, thread_id: &str, mut settings: ThreadSettings) -> Result<Thread> {
         let before = self
             .store
             .thread(thread_id)
             .ok_or_else(|| anyhow::anyhow!("unknown thread"))?;
+        // The gateway picker IS the model picker on Hermes, so re-derive the
+        // binding here too — otherwise moving a chat to a second gateway would
+        // leave it listed under the first one it ever used.
+        settings.hermes_agent_id =
+            Self::hermes_binding(before.agent, &settings, &before.settings);
         // A Claudex "model" is a profile: changing it swaps the endpoint, the
         // credentials and the CLI's config home, none of which a running child
         // can adopt over the control channel. Retire the driver so the next
@@ -2866,6 +2894,7 @@ mod tests {
             access: Access::Read,
             mode: Mode::Build,
             browser_profile_id: None,
+            hermes_agent_id: None,
         };
         (root, store, project, settings)
     }
@@ -3505,6 +3534,61 @@ mod tests {
 
     /// Validation happens before anyone is seated: no reviewers, an empty
     /// thread, and an already-running parley all fail without side effects.
+    /// Handing a chat to a local agent and back must land on the SAME Hermes
+    /// agent. `set_agent` overwrites `model` with the incoming agent's default,
+    /// so without a binding that survives the switch the chat would come back
+    /// bound to whichever gateway happened to be first in the registry — and,
+    /// in between, would have vanished from the Hermes view entirely rather
+    /// than sitting there greyed.
+    #[test]
+    fn the_hermes_binding_survives_a_round_trip_through_a_local_agent() {
+        let (root, store, project, mut settings) = test_store("hermes-binding");
+        settings.model = "gateway-b".into();
+        let thread = store
+            .create_thread(project.id, Agent::Hermes, settings.clone())
+            .unwrap();
+        assert_eq!(
+            thread.settings.hermes_agent_id.as_deref(),
+            Some("gateway-b"),
+            "born on Hermes: bound from the first turn"
+        );
+        let hub = Hub::new(Arc::clone(&store), 42800);
+
+        // Away: `model` becomes Claude's, the gateway is remembered. Sent with
+        // no `hermesAgentId` on purpose — an older client, or a phone echoing
+        // back a settings blob it does not know this field of, must not be
+        // able to unbind the chat.
+        let mut local = settings.clone();
+        local.model = "claude-fable-5".into();
+        local.hermes_agent_id = None;
+        let after = hub.set_agent(&thread.id, Agent::Claude, local).unwrap();
+        assert_eq!(after.agent, Agent::Claude);
+        assert_eq!(after.settings.model, "claude-fable-5");
+        assert_eq!(after.settings.hermes_agent_id.as_deref(), Some("gateway-b"));
+
+        // Back: the caller resolves the model from the binding, and the
+        // binding tracks it.
+        let mut back = after.settings.clone();
+        back.model = "gateway-b".into();
+        let again = hub.set_agent(&thread.id, Agent::Hermes, back).unwrap();
+        assert_eq!(again.agent, Agent::Hermes);
+        assert_eq!(again.settings.hermes_agent_id.as_deref(), Some("gateway-b"));
+
+        // Moving to another gateway re-binds rather than pinning the first one
+        // the chat ever used — the gateway picker IS the model picker here.
+        let mut moved = again.settings.clone();
+        moved.model = "gateway-c".into();
+        let elsewhere = hub.set_settings(&thread.id, moved).unwrap();
+        assert_eq!(
+            elsewhere.settings.hermes_agent_id.as_deref(),
+            Some("gateway-c")
+        );
+
+        drop(hub);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn start_parley_validates_before_seating_anyone() {
         let (root, store, project, settings) = test_store("parley-validate");

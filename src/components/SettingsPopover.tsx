@@ -28,7 +28,6 @@ import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { hermesPresence } from "./HermesPresence";
 import {
   getHermesEnabled,
-  hermesRegistered,
   isAgentVisible,
   setHermesEnabled,
 } from "../lib/agentVisibility";
@@ -2240,7 +2239,7 @@ function AgentsSettings() {
           ))}
         </div>
       )}
-      {hermesRegistered() && <HermesAgents />}
+      <HermesAgents />
       <ClaudexProfiles />
     </>
   );

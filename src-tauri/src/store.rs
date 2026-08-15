@@ -869,9 +869,16 @@ impl Store {
         &self,
         project_id: String,
         agent: Agent,
-        settings: ThreadSettings,
+        mut settings: ThreadSettings,
     ) -> Result<Thread> {
         anyhow::ensure!(self.project(&project_id).is_some(), "unknown project");
+        // A chat born on Hermes is bound to that gateway from its first turn,
+        // so switching it to a local agent later still leaves something to grey
+        // out under the agent in the Hermes view. On Hermes the gateway id IS
+        // the model (see `ThreadSettings::hermes_agent_id`).
+        if agent == Agent::Hermes {
+            settings.hermes_agent_id = Some(settings.model.clone());
+        }
         let now = now_iso();
         let id = new_id();
         if is_quick_home_project_id(&project_id) {
@@ -1955,6 +1962,7 @@ mod quick_home_tests {
             access: Access::Read,
             mode: Mode::Build,
             browser_profile_id: None,
+            hermes_agent_id: None,
         }
     }
 
@@ -2449,6 +2457,7 @@ mod thread_search_tests {
             access: Access::Full,
             mode: Mode::Build,
             browser_profile_id: None,
+            hermes_agent_id: None,
         }
     }
 

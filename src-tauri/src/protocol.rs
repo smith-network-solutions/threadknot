@@ -180,6 +180,18 @@ pub struct ThreadSettings {
     /// default) means a disposable browser with no stored session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_profile_id: Option<String>,
+    /// The Hermes gateway this chat belongs to, kept across agent switches.
+    ///
+    /// While the thread runs on Hermes this mirrors `model` (a Hermes "model"
+    /// IS the registry agent id). Switching to a local agent overwrites `model`
+    /// with that agent's default, which used to erase every trace of the
+    /// gateway; this field survives, so the chat keeps its badge in the
+    /// workspace and stays listed — greyed — under its agent in the Hermes
+    /// view, ready to be handed back. Set by [`Hub::set_agent`] rather than by
+    /// the client, so a phone or an older build cannot drop the binding by
+    /// sending settings that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes_agent_id: Option<String>,
 }
 
 /// Metadata for a chat attachment, persisted in the event log. The bytes live

@@ -69,6 +69,7 @@ fn harness() -> &'static Harness {
                     access: Access::Read,
                     mode: Mode::Build,
                     browser_profile_id: None,
+                    hermes_agent_id: None,
                 },
             )
             .unwrap();

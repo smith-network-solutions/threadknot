@@ -25,6 +25,13 @@ import { createPortal } from "react-dom";
 import type { Project, Thread, Workspace } from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { showHermesAgents } from "../lib/agentVisibility";
+import { hermesActive, hermesDormant, hermesGatewayId } from "../lib/hermesBinding";
+import {
+  getSidebarView,
+  setSidebarView,
+  subscribeSidebarView,
+  type SidebarView,
+} from "../lib/sidebarView";
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
@@ -311,6 +318,7 @@ function DispatchWorkers({
 function SettledShelf({
   threads,
   forceOpen,
+  inHermesView = false,
   view,
   folders = [],
   folderAssignments = {},
@@ -319,6 +327,9 @@ function SettledShelf({
 }: {
   threads: Thread[];
   forceOpen: boolean;
+  /** Set when this shelf hangs off a Hermes gateway group; forwarded so a
+   *  parked chat a local agent has taken back still greys correctly. */
+  inHermesView?: boolean;
   /** Sidebar presentation, forwarded to each shelf row. */
   view: SidebarLayout["view"];
   folders?: ChatFolder[];
@@ -352,6 +363,7 @@ function SettledShelf({
           key={t.id}
           thread={t}
           active={state.activeThreadId === t.id}
+          inHermesView={inHermesView}
           view={view}
           settled
           lit={forceOpen}
@@ -867,12 +879,6 @@ function ChatFolderDialog({
   );
 }
 
-/** Which list the sidebar shows: the workspace fleet, or a dedicated global
- *  destination. Startup intentionally begins in the fleet so it can open a
- *  fresh chat in the last project. */
-type SidebarView = "fleet" | "agents" | "quick";
-const LS_SIDEBAR_VIEW = "threadknot.sidebarView";
-
 function chooseSidebarImage(save: (image: string) => Promise<unknown>) {
   void pickSidebarImage()
     .then((image) => (image ? save(image) : undefined))
@@ -934,6 +940,7 @@ function ThreadRow({
   settled = false,
   lit = false,
   nested = false,
+  inHermesView = false,
   view,
   folders = [],
   folderId,
@@ -951,6 +958,11 @@ function ThreadRow({
   /** A dispatched worker, rendered indented under the thread that sent it.
    *  Presentation only — it is a real thread and opens like any other. */
   nested?: boolean;
+  /** Rendered inside a Hermes gateway's group rather than a workspace. The
+   *  gateway is already named by the group header, so the row drops its
+   *  gateway chip; in exchange it says which local agent has the chat when
+   *  Hermes is not the one holding the next turn. */
+  inHermesView?: boolean;
   /** Which sidebar presentation to render. Threaded down from the layout hook
    *  (a fresh useSidebarLayout() here would be a second, out-of-sync copy). */
   view: SidebarLayout["view"];
@@ -1010,16 +1022,29 @@ function ThreadRow({
     ? state.peers.find((p) => p.machineId === thread.machineId)
     : undefined;
   const peerColor = peer ? (peer.colorOverride ?? peer.color) : undefined;
-  // Hermes chats wear their gateway's profile photo instead of the brand mark.
-  const hermesRec =
-    thread.agent === "hermes"
-      ? state.hermesAgents.find((a) => a.id === thread.settings.model)
-      : undefined;
-  const hermesAvatar = hermesRec?.avatar ?? hermesRec?.image;
-  // Live presence of the thread's gateway (keyed by settings.model, the
-  // registry id). Only meaningful for a registered gateway; an orphaned thread
-  // has no record and shows the brand mark with no dot.
-  const hermesStatus = hermesRec ? state.hermesStatuses[thread.settings.model] : undefined;
+  // The gateway this chat belongs to — which outlives the switch away from it,
+  // so a chat a local agent has taken back still knows whose it was.
+  const gatewayId = hermesGatewayId(thread);
+  // Only a chat Hermes actually holds wears its gateway's photo in place of
+  // the brand mark; hand it to Claude and the mark goes back to telling you
+  // truthfully who runs the next turn.
+  const onHermes = hermesActive(thread);
+  const hermesRec = gatewayId
+    ? state.hermesAgents.find((a) => a.id === gatewayId)
+    : undefined;
+  const hermesAvatar = onHermes ? (hermesRec?.avatar ?? hermesRec?.image) : undefined;
+  // Live presence of the thread's gateway (keyed by the registry id). Only
+  // meaningful for a registered gateway; an orphaned thread has no record and
+  // shows the brand mark with no dot.
+  const hermesStatus = hermesRec && gatewayId ? state.hermesStatuses[gatewayId] : undefined;
+  const gatewayName = hermesRec?.name ?? gatewayId;
+  // Greyed in the Hermes view: the agent still owns this chat, but a local
+  // agent is driving it right now. Never greyed in the workspace — there the
+  // chat is simply live, badged or not.
+  const dormant = inHermesView && !onHermes && !!gatewayId;
+  // Same "appended modifier" trick as `nest`, so all four row variants pick it
+  // up without another wrapper element.
+  const dim = dormant ? " hermes-dormant" : "";
   const hermesPreview = useAvatarHoverPreview({
     image: hermesAvatar,
     name: hermesRec?.name ?? "hermes agent",
@@ -1324,6 +1349,23 @@ function ThreadRow({
     : `on ${peer?.name ?? "another machine"} (offline)`;
   const chipsEl = (
     <>
+      {/* Who is working this chat. In a workspace that is the gateway's name,
+          so a card in the folder still reads "your agent has this". In the
+          Hermes view the header already said the gateway, so the chip instead
+          names the local agent that has taken the chat back. */}
+      {!inHermesView && onHermes && gatewayName && (
+        <span
+          className="thread-chip hermes-chip"
+          title={`worked by ${gatewayName}${hermesStatus ? ` — ${hermesPresence(hermesStatus).label}` : ""}`}
+        >
+          {gatewayName}
+        </span>
+      )}
+      {dormant && (
+        <span className="thread-chip hermes-chip off" title={`handed back to ${thread.agent}`}>
+          on {thread.agent}
+        </span>
+      )}
       {isRemote && peerColor && (
         // Carries the machine's name on its own: the chip beside it is hidden
         // on phones, where its label cost more of the row than the title had.
@@ -1646,7 +1688,7 @@ function ThreadRow({
             active ? " active" : ""
           }${needsAttention ? " has-attention" : ""}${recede ? " recede" : ""}${
             settled ? " slim" : ""
-          }${settled && lit ? " lit" : ""}${isGenerating ? " is-generating" : ""}${nest}`}
+          }${settled && lit ? " lit" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1700,7 +1742,7 @@ function ThreadRow({
         <div
           className={`thread-row two-line long-press-menu${active ? " active" : ""}${
             needsAttention ? " has-attention" : ""
-          }${recede ? " recede" : ""}${isGenerating ? " is-generating" : ""}${nest}`}
+          }${recede ? " recede" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1736,7 +1778,7 @@ function ThreadRow({
           needsAttention ? " has-attention" : ""
         }${recede ? " recede" : ""}${settled ? " slim" : ""}${
           settled && lit ? " lit" : ""
-        }${isGenerating ? " is-generating" : ""}${nest}`}
+        }${isGenerating ? " is-generating" : ""}${nest}${dim}`}
         {...rowGestures}
         {...hover.hoverProps}
       >
@@ -2284,6 +2326,7 @@ function HermesGroup({
               key={t.id}
               thread={t}
               active={state.activeThreadId === t.id}
+              inHermesView
               view={view}
             />
           ))}
@@ -2300,7 +2343,12 @@ function HermesGroup({
               </span>
             </button>
           )}
-          <SettledShelf threads={settled} forceOpen={forceOpen} view={view} />
+          <SettledShelf
+            threads={settled}
+            forceOpen={forceOpen}
+            inHermesView
+            view={view}
+          />
         </div>
       )}
       {menu && (
@@ -2341,12 +2389,15 @@ function HermesGroup({
   );
 }
 
-/** The sidebar's dedicated agents view: one group per registry gateway
- *  holding every hermes-agent thread (matched by settings.model — the
- *  registry id), regardless of which project the thread was born in.
- *  Workspace sections exclude these threads, so each chat appears exactly
- *  once. Shown INSTEAD of the workspace list (see `SidebarView`) so agents
- *  and workspaces never compete for sidebar space. */
+/** The sidebar's dedicated agents view: one group per registry gateway holding
+ *  every chat BOUND to it, regardless of which project the chat was born in
+ *  and regardless of who is running its turns right now — lit while the
+ *  gateway has it, greyed once a local agent has taken it back.
+ *
+ *  A workspace chat therefore appears both here and in its folder. That is the
+ *  point, not a leak: the folder answers "what is this work part of" and this
+ *  answers "who is doing it", and the two views are shown one at a time (see
+ *  `SidebarView`), so no chat is ever drawn twice on screen. */
 function HermesSection({
   filter,
   contentMatches,
@@ -2376,7 +2427,11 @@ function HermesSection({
   const hermesThreads = useMemo(() => {
     const arr = Object.values(state.threads)
       .flat()
-      .filter((t) => t.agent === "hermes")
+      // Every chat BOUND to a gateway, not just the ones Hermes is holding
+      // right now: handing one back to a local agent greys its row here, it
+      // does not remove it. Losing the row would lose the only place the chat
+      // can be handed forward again.
+      .filter((t) => hermesActive(t) || hermesDormant(t))
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     // Favorites float first within each gateway group; the per-group filter
     // below preserves this order (stable sort).
@@ -2398,11 +2453,13 @@ function HermesSection({
       name: g.name,
       image: recById.get(g.id)?.avatar ?? recById.get(g.id)?.image ?? g.image,
       known: true,
-      threads: hermesThreads.filter((t) => t.settings.model === g.id),
+      // Grouped by the persisted binding, not by settings.model: a chat a
+      // local agent has taken back carries THAT agent's model id in `model`.
+      threads: hermesThreads.filter((t) => hermesGatewayId(t) === g.id),
     })),
   ];
   const orphaned = hermesThreads.filter(
-    (t) => !gateways.some((g) => g.id === t.settings.model),
+    (t) => !gateways.some((g) => g.id === hermesGatewayId(t)),
   );
   if (orphaned.length > 0) {
     groups.push({
@@ -3000,16 +3057,14 @@ export const Sidebar = memo(function Sidebar({
   const [filterOpen, setFilterOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
-  const [view, setView] = useState<SidebarView>("fleet");
+  const storedView = useSyncExternalStore(subscribeSidebarView, getSidebarView);
+  // A stored "agents" only takes effect once the Hermes surfaces are eligible;
+  // an install that has since removed its gateways falls back to the fleet
+  // without losing the stored preference.
+  const view: SidebarView =
+    storedView === "agents" && !showHermesAgents() ? "fleet" : storedView;
   const switchView = (v: SidebarView) => {
-    setView(v);
-    try {
-      localStorage.setItem(LS_SIDEBAR_VIEW, v);
-    } catch {
-      // Persistence is a convenience only.
-    }
-    // Keep whatever's on screen relevant to the view you just switched to, so a
-    // lingering workspace chat doesn't sit under the agents list (or vice-versa).
+    setSidebarView(v);
     // Keep the pane and destination list in agreement. Quick Threads and Hermes
     // are global homes, so neither should leave a workspace thread stranded
     // beneath its list (or vice versa).
@@ -3017,13 +3072,22 @@ export const Sidebar = memo(function Sidebar({
       ? findThread(state, state.activeThreadId)
       : null;
     const activeProjectId = active?.projectId ?? state.draft?.projectId;
-    const activeKind: SidebarView | null = !activeProjectId
-      ? null
+    // Which lists the open chat appears in — plural, because a workspace chat
+    // bound to a Hermes agent now legitimately appears in two. Closing it on
+    // the way into either one would take away the chat you switched views to
+    // work on. Only a chat that is in NEITHER list gets cleared.
+    const activeKinds: SidebarView[] = !activeProjectId
+      ? []
       : isQuickHomeProjectId(activeProjectId)
-        ? "quick"
-        : activeProjectId === HERMES_HOME_PROJECT_ID || active?.agent === "hermes"
-          ? "agents"
-          : "fleet";
+        ? ["quick"]
+        : activeProjectId === HERMES_HOME_PROJECT_ID
+          ? ["agents"]
+          : [
+              "fleet",
+              ...(active && (hermesActive(active) || hermesDormant(active))
+                ? (["agents"] as const)
+                : []),
+            ];
     if (v === "agents") {
       // Jump straight to a Hermes chat that wants attention; otherwise leave a
       // Hermes chat (or nothing) in place, and clear only a workspace one — we
@@ -3032,10 +3096,10 @@ export const Sidebar = memo(function Sidebar({
       if (needy.length > 0) {
         if (needy[0].id !== state.activeThreadId)
           void actions.selectThread(needy[0].id);
-      } else if (activeKind !== null && activeKind !== "agents") {
+      } else if (activeKinds.length > 0 && !activeKinds.includes("agents")) {
         dispatch({ type: "closeActive" });
       }
-    } else if (activeKind !== null && activeKind !== v) {
+    } else if (activeKinds.length > 0 && !activeKinds.includes(v)) {
       dispatch({ type: "closeActive" });
     }
   };
@@ -3174,18 +3238,20 @@ export const Sidebar = memo(function Sidebar({
   }, [actions, openProjectId, quickView, state.hello?.machineId]);
   useEffect(() => {
     if (soloId || !openProjectId) return;
-    const destinationView: SidebarView = isQuickHomeProjectId(openProjectId)
+    // The global homes pull the list over to match the pane. A workspace
+    // project no longer does so unconditionally: a Hermes-bound chat is listed
+    // under both its workspace and the agents view, so opening one from the
+    // agents view has to leave you there — the composer reads this view to know
+    // that sending means "hand it back to its agent".
+    const destinationView: SidebarView | null = isQuickHomeProjectId(openProjectId)
       ? "quick"
       : openProjectId === HERMES_HOME_PROJECT_ID
         ? "agents"
-        : "fleet";
-    if (view === destinationView) return;
-    setView(destinationView);
-    try {
-      localStorage.setItem(LS_SIDEBAR_VIEW, destinationView);
-    } catch {
-      // Navigation persistence is a convenience only.
-    }
+        : view === "agents"
+          ? null
+          : "fleet";
+    if (!destinationView || view === destinationView) return;
+    setSidebarView(destinationView);
   }, [openProjectId, soloId, view]);
   // Hermes chats asking to be looked at — badges the fleet-view button so a
   // finished turn / pending approval is visible without leaving the workspaces.
@@ -3291,10 +3357,14 @@ export const Sidebar = memo(function Sidebar({
         .filter((m) => m.isLocal)
         .map((m) => projectById.get(m.projectId))
         .filter((p): p is Project => !!p);
+      // Hermes chats are NOT filtered out. A chat handed to a Hermes agent is
+      // still this workspace's work — it keeps its card here (badged with the
+      // gateway, see ThreadRow) and appears a second time in the Hermes view.
+      // Deliberately two places, one chat: which folder it belongs to and who
+      // is working it are different questions. Only the folderless Hermes home
+      // is exclusive to that view, and its project never reaches `members`.
       const threads = members
         .flatMap((m) => state.threads[m.projectId] ?? [])
-        // Hermes chats live in the dedicated section above the workspaces.
-        .filter((t) => t.agent !== "hermes")
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
       // The workspace's true last activity is the max updatedAt across its
       // threads, computed BEFORE the favorite re-sort scrambles the order. An

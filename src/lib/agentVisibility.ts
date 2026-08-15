@@ -10,9 +10,14 @@ import type { Agent } from "./protocol";
  *    from a network probe, so an install with no gateways configured never
  *    surfaces a trace of the feature.
  * 2. The owner has flipped the enable toggle in Settings > agents. Off by
- *    default, per machine: registering a gateway makes the settings block
- *    (and the toggle) appear, but nothing else lights up until it is switched
- *    on deliberately.
+ *    default, per machine: registering a gateway makes the surfaces eligible,
+ *    but nothing lights up until it is switched on deliberately.
+ *
+ * Neither gate covers the Settings > agents block itself, which always renders.
+ * It holds both the toggle and the only form that registers a gateway, so
+ * gating it on `hermesConfigured` made the first gateway unaddable: you needed
+ * a registered gateway to reach the form that registers one. A fresh install
+ * could never get past it.
  */
 
 const H_KEY = "threadknot.hermesEnabled";
@@ -34,13 +39,6 @@ function readEnabled(): boolean {
 /** Fed by the store's hello reducer: the one place every hello lands. */
 export function setHermesConfigured(configured: boolean): void {
   hermesConfigured = configured;
-}
-
-/** Whether this machine has Hermes gateways registered at all. Gates only the
- *  Settings management block, which must stay reachable while the feature is
- *  toggled off (it is where the toggle lives). */
-export function hermesRegistered(): boolean {
-  return hermesConfigured;
 }
 
 export function getHermesEnabled(): boolean {

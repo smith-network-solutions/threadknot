@@ -145,6 +145,16 @@ export interface ThreadSettings {
    * disposable browser: no stored logins, no site restrictions.
    */
   browserProfileId?: string | null;
+  /**
+   * The Hermes gateway this chat belongs to, kept across agent switches.
+   *
+   * While the chat runs on Hermes this mirrors `model` (a Hermes "model" IS
+   * the registry agent id). Switching to a local agent overwrites `model`,
+   * but this survives — which is what lets the chat stay badged in its
+   * workspace and stay listed, greyed, under its agent in the Hermes view.
+   * The server owns the value (`Hub::set_agent`); clients only read it.
+   */
+  hermesAgentId?: string;
 }
 
 /**

@@ -2195,6 +2195,7 @@ mod tests {
             access,
             mode: Mode::Build,
             browser_profile_id: None,
+            hermes_agent_id: None,
         }
     }
 
