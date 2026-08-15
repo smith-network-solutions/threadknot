@@ -193,44 +193,42 @@ sheet. **Select all** is a Ctrl+A key chord to the page, needing no new
 primitive; **Cut** copies to the host then lets a Backspace clear the still-live
 selection in the field the right-click already focused.
 
-## Bitwarden
+## Password managers: why `--load-extension` is not the answer
 
-A **signed-in** profile launches Chrome with the Bitwarden extension loaded, and
-the menu grows an "Open Bitwarden vault" entry.
+Loading Bitwarden (or any manager) with `--load-extension` **does not work on
+modern Chrome**, and a build that passes the switch fails silently — Chrome
+starts normally, the extension is simply absent. Measured on Chrome 151:
 
-The extension is not downloaded: a store-installed Bitwarden is already unpacked
-on disk, so the user's own Chrome/Edge/Brave install is the source and the
-directory is only ever read (`--load-extension`, via chromiumoxide's
-`extension()` — which also suppresses the `--disable-extensions` it would
-otherwise add). `THREADKNOT_BITWARDEN_DIR` overrides the search. Chrome keeps
-the previous version directory after an update, so "newest" is decided
-numerically per component; sorted as strings, `2026.9.0_0` would beat
-`2026.10.0_0`.
+| Attempt | Bitwarden targets |
+|---|---|
+| `--headless=new --load-extension=<dir>` | none |
+| plus `--disable-features=DisableLoadExtensionCommandLineSwitch` | none |
+| plus `--disable-extensions-except` + `--enable-unsafe-extension-debugging` | none |
+| **headful** (no `--headless` at all) | none |
 
-Three things make this work where the obvious approach doesn't:
+Headful failing is the load-bearing result: this is the switch being gone
+(Chrome began disabling it around 137), not a headless limitation. The failure
+has no error — `chrome-extension://<id>/popup/index.html` opens as a target
+whose title is just the URL, which is what an error page looks like, and no
+extension service worker ever appears. Verify with
+`curl :<port>/json/list` and look for a `service_worker` in the extension's
+origin; do not take "the tab opened" as success.
 
-- **New headless supports extensions.** chromiumoxide's `extension()` doc says
-  otherwise; that predates `--headless=new` (Chrome 112+), which this launches
-  with.
-- **The popup is a page, not chrome.** Headless has no toolbar to hang the
-  extension button on, so the vault opens as an ordinary tab at
-  `chrome-extension://<id>/popup/index.html` and screencasts like anything else.
-  Its id is stable only because Bitwarden's manifest ships a `key` — without
-  one, an unpacked load hashes the directory path into a different id per
-  checkout.
-- **Filling is the extension's job.** Once unlocked, Bitwarden's own in-page
-  overlay is real page DOM: it appears in the screencast and takes clicks like
-  any other page content. The menu entry is the way in, not the fill.
+The supported replacements, none of them free:
 
-**Signed-in profiles only**, deliberately. A disposable profile is discarded
-with its session, so the vault would have to be logged into and unlocked every
-single thread — a master password typed repeatedly into an agent-driven browser
-is worse than not having the extension at all. Importing saved passwords out of
-the user's default browser remains **not** implemented: Chrome's App-Bound
-Encryption (127+) deliberately blocks other applications from decrypting that
-store, and seeding real credentials into an agent-reachable profile is the thing
-"Signed-in profiles" below is built to avoid. Threadknot still stores no
-credential itself — the vault belongs to Bitwarden.
+- **`ExtensionInstallForcelist` policy** — Google's documented replacement, but
+  it is machine/user-wide Chrome policy (a registry key on Windows), so it
+  reaches the user's ordinary Chrome too, not just Threadknot's.
+- **A Chromium/Chrome-for-Testing binary** via `THREADKNOT_CHROME`, if that
+  build still honours the switch.
+- **No extension at all** — drive the `bw` CLI and fill the fields through CDP.
+  This is the only option that keeps working regardless of Chrome policy, and
+  the only one where Threadknot itself handles the secret, which is a direct
+  trade against "no agent ever sees a secret being typed" below.
+
+Importing saved passwords out of the user's default browser is separately
+**not** implemented: Chrome's App-Bound Encryption (127+) deliberately blocks
+other applications from decrypting that store.
 
 ## Recorded walkthroughs
 

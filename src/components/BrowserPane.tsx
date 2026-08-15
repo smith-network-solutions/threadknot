@@ -162,9 +162,6 @@ export function BrowserPane({
   const [device, setDevice] = useState("fill");
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [supportsPasteControl, setSupportsPasteControl] = useState(false);
-  /** Bitwarden's popup URL, when this session's Chrome launched with the
-   *  extension. Null on a disposable profile or a machine with no install. */
-  const [bitwarden, setBitwarden] = useState<string | null>(null);
   const [activities, setActivities] = useState<BrowserActivity[]>([]);
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -422,7 +419,6 @@ export function BrowserPane({
           const message = JSON.parse(event.data) as Record<string, unknown>;
           if (message.type === "capabilities") {
             setSupportsPasteControl(message.paste === true);
-            setBitwarden(typeof message.bitwarden === "string" ? message.bitwarden : null);
           } else if (message.type === "nav" && typeof message.url === "string") {
             setUrl(message.url);
             if (!editingRef.current) setAddr(message.url);
@@ -805,13 +801,6 @@ export function BrowserPane({
       items.push({ label: "Paste", dividerBefore: !ctx.selection, onSelect: () => void pasteFromClipboard() });
     }
     items.push({ label: "Select all", dividerBefore: true, onSelect: selectAllInPage });
-    if (bitwarden) {
-      // Chrome puts Bitwarden behind a toolbar button; headless has no toolbar,
-      // so the vault opens as an ordinary tab in the extension's own origin.
-      // Once unlocked, Bitwarden's in-page overlay handles filling the fields
-      // directly — this entry is the way in, not the fill itself.
-      items.push({ label: "Open Bitwarden vault", dividerBefore: true, onSelect: () => send({ type: "newTab", url: bitwarden }) });
-    }
     return items;
   }
 
@@ -1062,6 +1051,17 @@ export function BrowserPane({
               event.currentTarget.focus();
               const point = toFrameCoords(event);
               const button = buttonName(event.button);
+              // Dismissing the right-click menu has to happen here. ContextMenu
+              // watches for an outside `mousedown`, and the preventDefault above
+              // suppresses the compatibility mouse events — the same reason the
+              // menu opens from pointerup rather than `contextmenu`. As in
+              // Chrome, the press that closes the menu is consumed by the
+              // dismissal and never reaches the page; a right press is the
+              // exception, since it re-opens the menu where you just clicked.
+              if (menu) {
+                setMenu(null);
+                if (button !== "right") return;
+              }
               pressedButton.current = button;
               send({ type: "mouse", event: "pressed", ...point, button, clickCount: event.detail || 1 });
             }}
