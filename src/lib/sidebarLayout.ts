@@ -36,6 +36,12 @@ export interface SidebarLayout {
    *  longer in state are ignored and pruned on the next reorder write. Excluded
    *  from the filter tint - a drag order is not a "filter". */
   workspaceOrder: string[];
+  /** Manual chat order by thread id, across every workspace (ids are unique,
+   *  and a drag only ever reorders within the list it happened in). Unlike
+   *  `workspaceOrder` this places chats into the slots activity already gave
+   *  them rather than floating them above everything unlisted — see
+   *  `applyThreadOrder`, and why a new chat still arrives at the top. */
+  threadOrder: string[];
   /** User-made chat groups inside workspaces. Like manual order, these are
    *  presentation preferences for this device rather than project metadata. */
   chatFolders: ChatFolder[];
@@ -59,6 +65,7 @@ const DEFAULTS: SidebarLayout = {
   width: SIDEBAR_WIDTH_DEFAULT,
   collapsed: false,
   workspaceOrder: [],
+  threadOrder: [],
   chatFolders: [],
   chatFolderAssignments: {},
 };
@@ -105,6 +112,9 @@ function loadLayout(): SidebarLayout {
       collapsed: parsed.collapsed === true,
       workspaceOrder: Array.isArray(parsed.workspaceOrder)
         ? parsed.workspaceOrder.filter((x): x is string => typeof x === "string")
+        : [],
+      threadOrder: Array.isArray(parsed.threadOrder)
+        ? parsed.threadOrder.filter((x): x is string => typeof x === "string")
         : [],
       chatFolders: Array.isArray(parsed.chatFolders)
         ? parsed.chatFolders.filter(

@@ -62,7 +62,7 @@ import {
 import { ContextMenu } from "./ContextMenu";
 import { DirPicker } from "./DirPicker";
 import { useLongPressMenu, type MenuPoint } from "../lib/longPress";
-import { applyProjectOrder, mergeProjectOrder } from "../lib/projectOrder";
+import { applyProjectOrder, applyThreadOrder, mergeProjectOrder } from "../lib/projectOrder";
 import { useReorderDrag, type ReorderHandleProps } from "../lib/reorder";
 import {
   useSidebarLayout,
@@ -945,6 +945,7 @@ function ThreadRow({
   folderId,
   onMoveToFolder,
   onAddFolder,
+  reorder,
 }: {
   thread: Thread;
   active: boolean;
@@ -971,6 +972,14 @@ function ThreadRow({
   folderId?: string;
   onMoveToFolder?: (threadId: string, folderId?: string) => void;
   onAddFolder?: (threadId: string) => void;
+  /** Drag-to-reorder wiring from the list this row belongs to. Absent on rows
+   *  whose list has no manual order: the settled shelf, dispatched workers,
+   *  Quick Threads and the Hermes view. */
+  reorder?: {
+    handle: ReorderHandleProps;
+    dragging: boolean;
+    drop?: "before" | "after";
+  };
 }) {
   const { state, dispatch, actions } = useStore();
   // One modifier appended to every variant's className, the same way `.slim`
@@ -1665,6 +1674,27 @@ function ThreadRow({
     tabIndex: 0,
     "aria-label": rowLabel,
     ...longPress,
+    // The row is its own drag handle — there is no grip, because a chat row is
+    // mostly title and a grip would cost more width than it earns. Both
+    // gestures get the press:
+    //
+    // - Mouse only. On touch the hold already belongs to the long-press menu,
+    //   and the reorder hook arms its own 300ms hold on the same press, so
+    //   attaching both would make one gesture mean two things. Touch keeps the
+    //   menu; reordering is a pointer gesture until the menu grows a "move"
+    //   entry of its own.
+    // - The click guard still has to run on every device: it is what stops the
+    //   click that ends a drag from also opening the chat.
+    "data-reorder-id": thread.id,
+    "data-drop": reorder?.drop,
+    onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
+      longPress.onPointerDown(e);
+      if (e.pointerType === "mouse") reorder?.handle.onPointerDown?.(e);
+    },
+    onClickCapture: (e: React.MouseEvent<HTMLElement>) => {
+      longPress.onClickCapture(e);
+      reorder?.handle.onClickCapture?.(e);
+    },
     onClick: () => void actions.selectThread(thread.id),
     onKeyDown: (e: React.KeyboardEvent) =>
       e.key === "Enter" && void actions.selectThread(thread.id),
@@ -1687,7 +1717,7 @@ function ThreadRow({
             active ? " active" : ""
           }${needsAttention ? " has-attention" : ""}${recede ? " recede" : ""}${
             settled ? " slim" : ""
-          }${settled && lit ? " lit" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}`}
+          }${settled && lit ? " lit" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}${reorder?.dragging ? " dragging" : ""}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1741,7 +1771,7 @@ function ThreadRow({
         <div
           className={`thread-row two-line long-press-menu${active ? " active" : ""}${
             needsAttention ? " has-attention" : ""
-          }${recede ? " recede" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}`}
+          }${recede ? " recede" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}${reorder?.dragging ? " dragging" : ""}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1777,7 +1807,7 @@ function ThreadRow({
           needsAttention ? " has-attention" : ""
         }${recede ? " recede" : ""}${settled ? " slim" : ""}${
           settled && lit ? " lit" : ""
-        }${isGenerating ? " is-generating" : ""}${nest}${dim}`}
+        }${isGenerating ? " is-generating" : ""}${nest}${dim}${reorder?.dragging ? " dragging" : ""}`}
         {...rowGestures}
         {...hover.hoverProps}
       >
@@ -1826,6 +1856,9 @@ function WorkspaceSection({
   chatFolderAssignments,
   onMoveChatToFolder,
   onAddChatFolder,
+  onReorderThreads,
+  threadOrder,
+  sidebarScrollRef,
 }: {
   workspace: Workspace;
   /** First locally-present member project — target for pop-out and removal.
@@ -1874,9 +1907,28 @@ function WorkspaceSection({
   chatFolderAssignments: Record<string, string>;
   onMoveChatToFolder: (threadId: string, folderId?: string) => void;
   onAddChatFolder: (threadId?: string) => void;
+  /** Commit a dragged chat order (the ids of this list, top to bottom). */
+  onReorderThreads: (ids: string[]) => void;
+  /** The stored manual chat order, applied to this list's active chats. */
+  threadOrder: string[];
+  /** The sidebar's scroller, so a drag that reaches the top or bottom edge
+   *  carries the list with it. The chat list itself does not scroll. */
+  sidebarScrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { state, dispatch, actions } = useStore();
   const [visibleThreadCount, setVisibleThreadCount] = useState(pageSize);
+  // Drag-to-reorder for the chats in this section. Scoped to this list's own
+  // container rather than the sidebar scroller, because the workspace sections
+  // run the same hook over that scroller and both look for [data-reorder-id] —
+  // one container per list is what keeps a chat drag from picking up a
+  // workspace, and vice versa.
+  const threadListRef = useRef<HTMLDivElement | null>(null);
+  const threadDrag = useReorderDrag({
+    containerRef: threadListRef,
+    scrollRef: sidebarScrollRef,
+    onCommit: onReorderThreads,
+    enabled: !renaming,
+  });
   // useState only reads its argument once, so switching layout in Settings
   // would otherwise leave a section paged at the old size until a reload —
   // a picker showing 5 chats with half a screen of blank space under a
@@ -1923,11 +1975,19 @@ function WorkspaceSection({
     [threads],
   );
   const { active, settled } = useSettledSplit(parents, autoSettleDays, now);
+  // Chats sit where they were dragged. Applied to the split's output because
+  // that is what actually reaches a row: the static creation-date sort inside
+  // it would otherwise overwrite any order imposed further up. The shelf keeps
+  // its own parked-at order — a settled chat is filed, not arranged.
+  const orderedActive = useMemo(
+    () => applyThreadOrder(active, threadOrder),
+    [active, threadOrder],
+  );
 
   const shown = forceOpen
-    ? active
+    ? orderedActive
     : pageActiveThreads(
-        active,
+        orderedActive,
         visibleThreadCount,
         (t) =>
           threadNeedsAttention(state, t) ||
@@ -2087,7 +2147,7 @@ function WorkspaceSection({
       </div>
       )}
       {(open || hideHeader) && (
-        <div className="project-threads">
+        <div className="project-threads" ref={threadListRef}>
           {shown.length === 0 && settled.length === 0 && (
             <div className="project-empty">
               {forceOpen ? "no matches" : "no threads yet"}
@@ -2102,6 +2162,11 @@ function WorkspaceSection({
                 folders={chatFolders}
                 onMoveToFolder={onMoveChatToFolder}
                 onAddFolder={(threadId) => onAddChatFolder(threadId)}
+                reorder={{
+                  handle: threadDrag.handleProps(t.id),
+                  dragging: threadDrag.draggingId === t.id,
+                  drop: threadDrag.dropId === t.id ? threadDrag.dropSide : undefined,
+                }}
               />
               <DispatchWorkers
                 workers={workersOf.get(t.id) ?? []}
@@ -3375,10 +3440,14 @@ export const Sidebar = memo(function Sidebar({
       // Float favorited threads first, preserving recency within each group
       // (Array.sort is stable). Cards view shares this same data.
       threads.sort((a, b) => (a.favorite ? 0 : 1) - (b.favorite ? 0 : 1));
+      // The manual drag order is NOT applied here: `useSettledSplit` re-sorts
+      // the active chats by creation date further down, so anything imposed at
+      // this level is discarded before it reaches a row. It is applied to that
+      // sort's output instead, in the section.
       map.set(w.id, { projects, members, threads, lastActivity });
     }
     return map;
-  }, [sections, soloId, projectById, state.threads, state.peers, state.hello]);
+  }, [sections, soloId, projectById, state.threads, state.peers, state.hello, layout.threadOrder]);
 
   // Projects sit where they were PUT. The base order used to be activity —
   // the workspace holding the newest thread floated to the top — which meant
@@ -3487,6 +3556,16 @@ export const Sidebar = memo(function Sidebar({
         workspaceOrder: mergeProjectOrder(ids, layout.workspaceOrder),
       }),
     [updateLayout, layout.workspaceOrder],
+  );
+  // Chats dragged within one workspace's list. Merged into the same flat order
+  // as every other workspace's: thread ids are unique, and a drag can only ever
+  // rearrange the list it happened in, so one list needs no per-workspace
+  // bookkeeping. Ids that have scrolled out of the page limit, or belong to a
+  // workspace that is not on screen, are preserved by the merge.
+  const commitThreadOrder = useCallback(
+    (ids: string[]) =>
+      updateLayout({ threadOrder: mergeProjectOrder(ids, layout.threadOrder) }),
+    [updateLayout, layout.threadOrder],
   );
   // Header-grip reordering for the layouts that stack every project down the
   // sidebar. The rail runs its own drag over its own scroller; the picker
@@ -4091,6 +4170,9 @@ export const Sidebar = memo(function Sidebar({
                 onNewThread={(e) =>
                   startNewThread(w.id, { x: e.clientX, y: e.clientY })
                 }
+                onReorderThreads={commitThreadOrder}
+                threadOrder={layout.threadOrder}
+                sidebarScrollRef={scrollRef}
               />
             );
           })}
