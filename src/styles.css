@@ -2121,32 +2121,66 @@ body.reordering { cursor: grabbing; user-select: none; }
 
 /* Sits directly beneath its parent row, so it reads as that row's tail rather
    than as another entry in the list: no top margin, and the same left inset
-   the workers themselves get. */
+   the workers themselves get.
+
+   Sized and inset to match `.thread-row` (same 8px side margin, same pill
+   radius) and one notch quieter than one. Full-bleed at row width it was the
+   widest, boldest thing in the list — a caption for two rows outshouting the
+   chats it groups. The chevron sits on the rail the worker rows hang off, so
+   the group reads as one column. */
 .dispatch-shelf {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  margin: 0 0 1px;
-  padding: 3px 8px 3px 24px;
+  width: calc(100% - 16px);
+  min-height: 28px;
+  margin: 0 8px 1px;
+  /* 8px margin + 8px padding puts the 11px chevron across x=18px, which is
+     exactly where `.thread-row.is-worker`'s rail runs. */
+  padding: 3px 10px 3px 8px;
   background: none;
   border: 0;
-  border-radius: 7px;
+  border-radius: 999px;
   cursor: pointer;
   color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: var(--sidebar-copy-size);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  font-size: calc(var(--sidebar-copy-size) - 2px);
+  -webkit-tap-highlight-color: transparent;
 }
-.dispatch-shelf:hover { background: rgba(155, 170, 210, 0.05); color: var(--dim); }
+/* Hover-gated: on a touchscreen `:hover` sticks after the tap, so the shelf
+   you just collapsed stays lit as though it were still under the finger. */
+@media (hover: hover) {
+  .dispatch-shelf:hover { background: rgba(155, 170, 210, 0.05); color: var(--dim); }
+}
+.dispatch-shelf:active { background: rgba(155, 170, 210, 0.09); }
+/* Collapsed over the thread you are reading. Without this the fold looks like
+   it lost your place — the sidebar would show nothing selected at all. */
+.dispatch-shelf.holds-active {
+  background: color-mix(in srgb, var(--brass) 9%, transparent);
+  color: var(--dim);
+}
 .dispatch-shelf-label { flex: 1; text-align: left; }
+/* A collapse now outranks attention, so the fold has to carry the news the
+   auto-open used to deliver by springing open. */
+.dispatch-shelf-dot {
+  flex: none;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px rgba(229, 181, 103, 0.72);
+}
 .dispatch-shelf-live {
+  flex: none;
   padding: 0 5px;
   border-radius: 999px;
   background: var(--teal-dim);
   color: var(--teal);
   font-size: 9.5px;
+}
+/* Thumb-sized on touch: at 28px this is the smallest target in the sidebar,
+   and it is the one that has to be hit precisely to fold a group away. */
+@media (any-pointer: coarse) {
+  .dispatch-shelf { min-height: 38px; }
 }
 
 /* The worker rows. Indent alone is ambiguous once the list scrolls and the
