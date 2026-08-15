@@ -26,7 +26,14 @@ jobs:
             name: linux
     runs-on: ${{ matrix.os }}
     steps:
+      # Full history, NOT the default shallow clone. `build.rs` derives
+      # THREADKNOT_VERSION from `git rev-list --count origin/master`, and the
+      # app's whole update story rests on that number: a depth-1 checkout
+      # produces "0.1.1", which every installed copy then reads as a version
+      # older than its own and never updates to.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -50,6 +57,29 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      # Bundle filenames carry this version, and the in-app updater picks the
+      # artifact for a machine by reading them — so on a tag it has to be the
+      # tag rather than the placeholder in the tree. Deliberately after `npm ci`
+      # (which refuses a package.json out of step with the lockfile) and before
+      # the bundle step that reads it. Cargo.toml is untouched: `--locked` would
+      # reject the lockfile it invalidates, and the running app takes its
+      # version from git, not from there.
+      - name: Stamp the release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const version = process.argv[1];
+            for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
+              const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+              doc.version = version;
+              fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+            }
+            console.log("bundling as " + version);
+          ' "${GITHUB_REF_NAME#v}"
 
       # The GUI app MUST be built via the Tauri CLI so the frontend is embedded.
       # A bare `cargo build` produces a binary that loads the dev server (devUrl)
@@ -115,6 +145,17 @@ jobs:
   # Tagging `vX.Y.Z` publishes the matrix's artifacts as a GitHub Release, so
   # people can run Threadknot without a Rust toolchain. CI artifacts alone
   # expire in 90 days and require a logged-in GitHub account to download.
+  #
+  # This release is also what the app's own updater installs, so two things
+  # about it are load-bearing and neither is cosmetic:
+  #
+  #  - **The tag is `v0.1.<commit count of master>`** — the same number
+  #    `build.rs` bakes into the binary. `scripts/release.sh` computes it; do
+  #    not hand-pick one. A tag lower than the count means every installed copy
+  #    concludes it is already newer and stops updating, permanently.
+  #  - **Artifact filenames carry the version and the architecture**, because
+  #    `update.rs` picks the one to download by reading them. A release with two
+  #    unlabelled builds for one platform installs on neither.
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')

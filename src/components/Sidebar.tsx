@@ -3640,8 +3640,14 @@ export const Sidebar = memo(function Sidebar({
   // draft for that workspace in the pane immediately. Prefer this machine's
   // root, then any reachable root; if the workspace only exists on an offline
   // peer, leave navigation alone until that peer can actually host the draft.
+  //
+  // Held until `state.restored`: the workspace list arrives well before the
+  // startup restore has reopened the remembered chat, and firing in that
+  // window drops a draft in whichever workspace happens to sort first — which
+  // is what a reload used to land on.
   useLayoutEffect(() => {
     if (
+      !state.restored ||
       quickView ||
       agentsView ||
       state.activeThreadId ||
@@ -3661,6 +3667,7 @@ export const Sidebar = memo(function Sidebar({
     shownWorkspaceId,
     state.activeThreadId,
     state.draft,
+    state.restored,
   ]);
 
   /** Tapping a project on the rail switches to it AND opens something in it.
@@ -3815,12 +3822,23 @@ export const Sidebar = memo(function Sidebar({
           <FilterIcon size={18} />
         </button>
         <img className="brand-wordmark" src={wordmarkUrl} alt="ThreadKnot" />
+        {/* Same intent either way — put the sidebar away — so it is one
+            button. On a phone the drawer is full width, which leaves no
+            backdrop to tap, so this is the ONLY way back out of it; do not
+            hide it there again. The glyph matches the header hamburger that
+            opened the drawer. */}
         <button
           type="button"
           className="icon-btn sidebar-collapse-btn"
-          aria-label="Collapse sidebar"
-          title="Collapse sidebar"
-          onClick={() => updateLayout({ collapsed: true })}
+          aria-label={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
+          title={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
+          onClick={() => {
+            if (window.matchMedia("(max-width: 767px)").matches) {
+              dispatch({ type: "sidebar", open: false });
+            } else {
+              updateLayout({ collapsed: true });
+            }
+          }}
         >
           <PanelLeftIcon size={18} />
         </button>

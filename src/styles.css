@@ -437,9 +437,16 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   transform: translateY(-50%);
   flex: none;
 }
-/* Collapse toggle is a desktop affordance; phones use the hamburger drawer. */
+/* On phones this button closes the full-width drawer — the only way out of it,
+   since a drawer that wide leaves no backdrop to tap. It used to be hidden
+   here, back when the drawer was 86vw and the exposed strip did that job. */
 @media (max-width: 767px) {
-  .sidebar-brand .sidebar-collapse-btn { display: none; }
+  .sidebar-brand .sidebar-collapse-btn {
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    right: 6px;
+  }
 }
 .sidebar-filter-btn { flex: none; }
 .sidebar-filter-btn.on { color: var(--sidebar-muted); background: none; }
@@ -1525,6 +1532,29 @@ body.reordering { cursor: grabbing; user-select: none; }
   font-size: 10px;
   margin-top: 7px;
   overflow-wrap: anywhere;
+}
+
+/* Release notes are prose in a panel of labels, so they get ordinary line
+   height and a paragraph rhythm rather than the caption treatment. */
+.update-release-notes p {
+  margin: 5px 0 6px;
+  white-space: pre-wrap;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.update-release-notes a, .update-note a { color: var(--brass-hi); }
+
+.update-channel { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+.update-channel-picker { display: flex; gap: 6px; }
+/* Inline in a sentence: reads as the link it behaves like, not a third button
+   competing with the two above it. */
+.update-channel-auto {
+  padding: 0;
+  min-height: 0;
+  border: none;
+  background: none;
+  color: var(--brass-hi);
+  text-decoration: underline;
 }
 .settings-toggle.primary { color: var(--brass-hi); border-color: color-mix(in srgb, var(--brass) 50%, transparent); background: var(--brass-dim); }
 .settings-toggle.danger { color: var(--red); border-color: rgba(224, 101, 95, 0.5); background: var(--red-dim); }
@@ -4241,6 +4271,12 @@ body.reordering { cursor: grabbing; user-select: none; }
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
+/* Which machine the chat runs on. Phone-only: the desktop header has the
+   sidebar's machine chips beside it and a window title bar naming the box, so
+   there the meta line stays the bare path it has always been and this row is a
+   plain block wrapping it. */
+.device-chip { display: none; }
+
 @media (min-width: 768px) {
   .thread-project-path {
     margin-top: 3px;
@@ -6890,7 +6926,11 @@ span.title-agent-mark { width: 16px; height: 16px; }
    a padding shorthand here would outrank the phone paddings and the dictation
    badge's padding-right, both of which live on lower-specificity selectors. */
 :root[data-composer-density="compact"] .composer {
-  padding-bottom: calc(10px + var(--safe-b));
+  /* max(--safe-b, --kb-inset), never --safe-b alone: this selector is 0,3,0 and
+     the phone block's `.composer { padding: ... }` is 0,1,0, so a bare
+     --safe-b here outranks it and silently drops the keyboard inset — parking
+     the composer behind the keyboard on any phone set to compact density. */
+  padding-bottom: max(8px, var(--safe-b), calc(8px + var(--kb-inset)));
 }
 :root[data-composer-density="compact"] .composer-card {
   padding-top: 8px;
@@ -8721,7 +8761,13 @@ span.title-agent-mark { width: 16px; height: 16px; }
     transform: translateX(-104%);
     transition: transform 0.22s ease;
     box-shadow: 18px 0 50px rgba(0, 0, 0, 0.5);
-    width: min(var(--sidebar-w), 86vw);
+    /* Full width on a phone. At 86vw the drawer left a dead 14% strip that was
+       only ever a "tap to close" target the backdrop already provides, and it
+       took that width straight out of the chat list — which, behind a 56px
+       rail, is the column that can least afford it. 100dvw rather than 100vw
+       so a landscape phone's home indicator inset doesn't push it wide. */
+    width: 100dvw;
+    max-width: 100dvw;
     min-width: 0;
   }
   .sidebar.open { transform: none; }
@@ -8740,47 +8786,20 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
   .hamburger { display: inline-flex; }
 
-  /* The header floats over the conversation on phones rather than sitting on a
-     bar above it: the fill starts at 60% and fades to nothing, so messages
-     dissolve under it instead of stopping at a rule. Padding clears the Dynamic
-     Island — every Pro phone since the 14 has one, so this is the common case.
-     color-mix on --panel rather than a literal rgba() keeps one rule correct in
-     every palette. The !important is load-bearing: the solar and arcade
-     .thread-head overrides sit LATER in this file at higher specificity and
-     would otherwise win (.quick-thread-head carries !important for the same
-     reason). */
+  /* A real header bar, in flow above the conversation — not the floating scrim
+     this used to be. The scrim bought a few pixels of feed and cost the two
+     facts the header exists to carry: which chat, and which machine it runs
+     on. Both are back, so the bar has to be a surface: opaque, ruled off at the
+     bottom, with the feed starting below it rather than sliding under it.
+
+     Only the top padding is phone-specific — it clears the Dynamic Island,
+     which every Pro phone since the 14 has, so it is the common case. The
+     background, blur and rule are the base .thread-head's, deliberately not
+     overridden here: the solar and arcade themes restyle that bar, and a real
+     bar should wear the theme's treatment rather than fight it. */
   .thread-head {
-    position: absolute;
-    inset: 0 0 auto;
-    z-index: 20;
-    padding: calc(10px + env(safe-area-inset-top, 0px)) var(--phone-gutter) 10px;
-    border-bottom: 0 !important;
-    /* A scrim, not a surface: the colour MUST be --bg (what .feed-scroll is
-       painted with), so content genuinely dissolves into the page as it
-       scrolls up. --panel was the earlier mistake here — at #090909 against a
-       #0c0c0c feed it resolved to a 2/255 difference, i.e. invisible.
-       60% at the top fading to nothing, and deliberately opaque nowhere: the
-       controls carry their own backing in .head-cluster, so the scrim doesn't
-       have to double as a legibility mask and can stay as light as it looks. */
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--bg) 60%, transparent),
-      transparent
-    ) !important;
-    backdrop-filter: none !important;
-    /* The box now spans the pane and its lower half is fully transparent.
-       Without this it would swallow taps on the top of the feed. */
-    pointer-events: none;
-  }
-  .thread-head > * { pointer-events: auto; }
-  :root[data-theme="arcade"] .thread-head::after { display: none !important; }
-  /* Height is not a constant — a multi-lane header wraps to as many as four
-     rows, and the safe-area inset changes on rotation — so the feed reserves
-     the measured height that ThreadView publishes as --head-h. The fallback
-     covers first paint, before the ResizeObserver has fired. Quick threads are
-     excluded: they already float, on their own fixed metrics. */
-  .thread-pane:not(:has(> .quick-thread-head)) .feed-inner {
-    padding-top: calc(var(--head-h, 54px) + 12px);
+    padding: calc(9px + env(safe-area-inset-top, 0px)) var(--phone-gutter) 9px;
+    gap: 10px;
   }
   .thread-head.quick-thread-head {
     min-height: 92px;
@@ -8790,12 +8809,70 @@ span.title-agent-mark { width: 16px; height: 16px; }
   .thread-pane:has(> .quick-thread-head) .feed-inner { padding-top: 108px; }
   .quick-mode-tabs { top: 9px; }
   .thread-head .ws-toggles { display: flex; flex: none; gap: 2px; }
-  /* No title, no directory on phones. The thread you are looking at is the one
-     on screen, and the header has no room to spare above the Dynamic Island —
-     so the whole title column goes, and the directory reappears as
-     .feed-project-caption at the top of the scrollport. Rename still lives in
-     the sidebar's thread context menu. */
-  .thread-head-main { display: none; }
+  /* The title column is the point of the bar: which chat, and under it which
+     machine and which directory. Dropping it to save room above the Dynamic
+     Island was the wrong trade — with the drawer shut nothing on screen said
+     either, and the sidebar row is truncated too hard to be the answer. */
+  .thread-head-main {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+  }
+  .thread-head .thread-title { font-size: 14.5px; gap: 5px; }
+  /* Rename is a real affordance here — it is otherwise only in the sidebar's
+     thread menu — so the pencil stays, at a size worth tapping, and never
+     shrinks into the title's ellipsis. */
+  .thread-head .title-edit {
+    flex: none;
+    width: 24px;
+    height: 24px;
+  }
+  .thread-head .title-input { font-size: 14.5px; }
+  /* Machine then directory, on one line that truncates from the path end. The
+     chip is flex:none and the path takes what is left: the machine name is
+     short and load-bearing, the path is long and already elided in the middle
+     by elidePathMiddle, so it is the one that should give. */
+  .thread-head-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    min-width: 0;
+  }
+  .thread-head-meta .thread-project-path { margin-top: 0; min-width: 0; }
+  .device-chip {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: 4px;
+    max-width: 42%;
+    padding: 1px 6px;
+    border-radius: 5px;
+    border: 1px solid color-mix(in srgb, var(--brass) 34%, transparent);
+    background: var(--brass-dim);
+    color: var(--brass-hi);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* A machine that is not reachable right now still owns the chat — say so by
+     dimming it rather than by dropping the name. */
+  .device-chip.off { opacity: 0.5; }
+  .device-chip-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  /* The header carries the directory again, so the scrollport copy would be a
+     duplicate. Exactly one of the two is ever displayed. */
+  .feed-project-caption { display: none; }
   /* Two-row header on phones, ONLY for multi-lane threads, so a full debate
      roster can't push the action icons off screen. */
   .thread-head.has-lanes { flex-wrap: wrap; row-gap: 6px; }
@@ -8852,17 +8929,23 @@ span.title-agent-mark { width: 16px; height: 16px; }
   /* Clear the floating composer. The card alone measures ~133px on a phone, so
      116px left the last message tucked under it; this reserves the card plus a
      visible gap, and tracks whatever the card is sitting on top of — the home
-     indicator, or the keyboard once it pushes the card up.
-     The measured --dock-h (see .feed-inner above) covers the case those
-     constants cannot: a card grown tall by a long prompt or attachments. Taken
-     as a max() rather than replacing the expression, so this never reserves
-     less room than it did before — the dock's own height already includes
-     --safe-b via the composer's padding, and double-counting it would leave a
-     visible dead band above the keyboard. */
+     indicator, or the keyboard once it pushes the card up. */
+  /* Bottom reserve = what the composer dock actually occupies, plus a gap.
+     It has to track .composer's offset or the last message floats: --safe-b is
+     gone from here for the same reason it is gone from there — the dock no
+     longer reserves the indicator's 34pt, so budgeting for it left that much
+     dead space above the newest message. 145 is the dock's resting height
+     (121 at this width) plus ~24 of breathing room.
+     The measured --dock-h (see .feed-inner above) covers the case the constant
+     cannot: a card grown tall by a long prompt or attachments. Taken as a max()
+     rather than replacing the expression, so this never reserves less room than
+     the resting dock needs — and --safe-b stays out of both arms, since the
+     dock no longer reserves the indicator and double-counting it is what left
+     the dead band above the keyboard. */
   .feed-inner {
     padding: 14px 12px max(
-      calc(150px + max(var(--safe-b), var(--kb-inset))),
-      calc(var(--dock-h, 150px) + 16px)
+      calc(145px + var(--kb-inset)),
+      calc(var(--dock-h, 145px) + 16px)
     );
   }
   .msg-user { max-width: 88%; }
@@ -8958,13 +9041,36 @@ span.title-agent-mark { width: 16px; height: 16px; }
      anyway; dropping it outright keeps "full" honest and stops a future preset
      from squeezing the box in the one place it must span the screen. */
   .composer {
-    /* --phone-gutter, not a literal: the header capsule is inset by the same
-       number, so the card's edge and the pill's edge line up down the screen.
-       Change one place or they drift apart. */
-    padding: 4px var(--phone-gutter) calc(20px + max(var(--safe-b), var(--kb-inset)));
+    /* Docked, not floating: 1% a side and nothing at all below, so the card
+       meets the bottom edge the way a native compose bar does. Deliberately
+       NOT --phone-gutter — that is still 20px and still the header's inset,
+       and the two no longer line up on purpose: the header is chrome sitting
+       in the page, this is a dock sitting on its edge.
+
+       8px, not 0: flush to the edge read as the card running off the screen,
+       and it put the card's corners under the home indicator. 8px is a hair of
+       background — enough that the card is sitting near the bottom rather than
+       falling out of it — and small enough that it is nothing like the 54px
+       band this started as.
+
+       --safe-b is deliberately absent. Reserving the indicator's full 34pt
+       here, at either level, is what created that band; 8px out plus the
+       card's own 12px puts the button row 20pt off the bottom, which already
+       clears the indicator bar itself (~13-18pt up). With the keyboard open
+       --kb-inset rides the card 8px above it. */
+    padding: 4px 1% calc(8px + var(--kb-inset));
     max-width: none;
   }
+  /* Rounded all the way round again: the card floats clear of the edge, so
+     square bottom corners would be answering a problem it no longer has. */
   .composer-card { border-radius: 24px; padding: 14px 16px 12px; }
+  /* Compact density sets .composer's padding-bottom at 0,3,0, which outranks
+     the phone block's shorthand at 0,1,0 — so the docked value has to be
+     restated here or it silently reverts to max(8px, --safe-b, …) and lifts
+     the card back off the bottom. */
+  :root[data-composer-density="compact"] .composer {
+    padding-bottom: calc(8px + var(--kb-inset));
+  }
   .build-workspace-tray {
     align-items: flex-start;
     flex-direction: column;
@@ -9000,12 +9106,24 @@ span.title-agent-mark { width: 16px; height: 16px; }
   .thread-row .thread-settle-btn,
   .msg-copy, .copy-btn.floating, .diff-head .copy-btn { opacity: 1; }
 
-  /* Touch has no hover to reveal them, so the check, star and more ride every
-     row permanently, and the clock steps aside (as it does on hover on desktop)
-     to make room. Overrides the two-line collapse/reveal rules above. */
+  /* Touch has no hover to reveal them, so anything the row keeps costs width
+     permanently — and three 36px buttons plus their gaps are 124px of a 233px
+     row, which left the title about three characters ("Sy…", "Se…", "A.."):
+     the one thing the row exists to say. Only the kebab rides the row now.
+     Settle and Favourite are both in the menu it opens, which is also the
+     row's long-press menu, so nothing became unreachable. The clock goes with
+     them, on every row rather than only the two-line ones (it merely stepped
+     aside on hover on desktop) — "which chat" is what a phone row is for, and
+     the shelf's rows were starved by the same arithmetic.
+
+     A favourited row keeps its star: that one is state, not an action, and it
+     is the only way the row can say so. Card view is exempt — its title has a
+     line to itself, so the buttons cost it nothing. */
   .thread-row .thread-kebab { display: inline-flex; }
-  .thread-row.two-line .thread-row-sub > .thread-settle-btn,
-  .thread-row.two-line .thread-row-sub > .thread-star,
+  .thread-row:not(.thread-card) .thread-settle-btn,
+  .thread-row:not(.thread-card) .thread-row-time,
+  .thread-row:not(.thread-card) .thread-star:not(.on) { display: none; }
+  .thread-row.two-line .thread-row-sub > .thread-star.on,
   .thread-row.two-line .thread-row-sub > .thread-kebab {
     width: 36px;
     min-width: 36px;
@@ -9013,11 +9131,10 @@ span.title-agent-mark { width: 16px; height: 16px; }
     margin-left: 0;
     pointer-events: auto;
   }
-  .thread-row.two-line .thread-row-sub > .thread-row-time {
-    max-width: 0;
-    opacity: 0;
-    margin-left: -8px;
-  }
+  /* The Hermes chip survives (whose agent has this chat is unsayable
+     otherwise) but not at its desktop 96-130px, which would spend the width
+     the buttons just gave back. */
+  .thread-row .thread-chip.hermes-chip { max-width: 64px; }
 
   /* Rows stay COMPACT. An earlier pass gave every row 44px of its own plus
      8px padding top and bottom, which made a phone row 62px — taller than
@@ -9041,8 +9158,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
      already sits in a 40px full-width row that is itself easy to hit. */
   .thread-row .icon-btn { width: 36px; height: 36px; }
   .thread-row .icon-btn svg { width: 16px; height: 16px; }
-  /* The relative-time column is the first thing to go: the row's job on a
-     phone is "which chat", and the title had been squeezed to nothing. */
+  /* Card view keeps its clock — it has a meta line to put it on. */
   .thread-row-time { font-size: 9.5px; }
   /* Same reasoning for the machine chip on a remote thread: its label costs
      up to 72px of a 260px row, which left about three characters of title.

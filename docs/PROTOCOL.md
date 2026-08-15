@@ -168,6 +168,35 @@ Server → client:
 | `git.checkoutMany` | `{ projectId, repoIds, branch }` | `{ results: GitOpResult[] }` — same branch across repos: switches where it exists, creates (`-b`) where it doesn't (`created` per repo) |
 | `git.pr` | `{ repoId, title?, body? }` | `{ url?, output }` — `gh pr create` (`--fill` without a title) using the installed gh CLI's auth |
 
+Threadknot updating **itself** rides in the same family, so it routes by
+`machineId` like the rest and the settings tab can ask the whole fleet the same
+questions. No `repoId`: these act on Threadknot's own install. Everything but
+the status read is master-principal only — a revocable phone credential must not
+be able to stop and relaunch a machine, nor talk a peer into doing it.
+
+A machine is on exactly one **channel**, derived from whether it has a Threadknot
+checkout and overridable per machine: `release` (download a published build,
+install it over itself, relaunch) or `source` (fast-forward the checkout,
+rebuild, relaunch). `UpdateStatus.updateAvailable` always means "the route this
+machine takes has something newer", which is what the pulsing gear follows.
+
+| Type | Payload | Result |
+| --- | --- | --- |
+| `git.selfUpdateStatus` | `{ fetch? }` | `UpdateStatus` — cached unless `fetch`, which forces a network re-read of both `origin/master` and the releases page |
+| `git.selfUpdateCheck` | `{}` | `{}` — kicks the poller; the answer arrives on the `updates` broadcast, because a fetch can outlive the request timeout |
+| `git.selfUpdateInstall` | `{ force? }` | `{ ok, operationId }` — release channel: download, install, relaunch. Returns once claimed. `force` overrides the mid-turn-threads guard |
+| `git.selfUpdatePull` | `{ chain?, force? }` | `{ ok, operationId? }` — source channel: fast-forward to master. `chain` goes on to rebuild and restart |
+| `git.selfUpdateRebuild` | `{}` | `{ ok, operationId }` — compiles in the background; a release build outlives the tab that started it |
+| `git.selfUpdateRestart` | `{ force? }` | `{ ok, restarting }` — relaunch into the newer binary already on disk |
+| `git.selfUpdateSetChannel` | `{ channel: "release" \| "source" \| "auto" }` | `{ ok }` — machine-local, never replicated |
+| `git.selfUpdateSetRepoPath` | `{ path }` | `{ ok }` — machine-local source-folder override, for a checkout that moved |
+
+Progress is server state, not a response: an `Operation` (`kind`, `stage`, `ok`,
+`error`, `logPath`) hangs off `UpdateStatus` and is broadcast on the `updates`
+scope, so a download or a compile survives the client that started it and shows
+its stage on every other one. One at a time per machine, enforced server-side —
+two `cargo build`s in one target directory is a corrupted build, not a slow one.
+
 Where a row above says **"master principal only"** it means the *owner* test, not
 the narrow one: this machine's master credential, or a peer link carrying that
 peer's own owner (the fleet view exists so that sitting at one machine can

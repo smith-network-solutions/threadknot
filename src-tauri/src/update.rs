@@ -1,8 +1,30 @@
-//! Self-update awareness: does a newer `origin/master` exist than the build
-//! that is currently running, and can this machine safely close the gap?
+//! Self-update: is a newer Threadknot available than the build that is running,
+//! and can this machine safely close the gap?
 //!
-//! Three different kinds of "out of date" exist and the UI must tell them
-//! apart, because each has a different fix:
+//! There are two routes to a newer build, and a machine takes exactly one:
+//!
+//! - **The release channel** — the published builds on the project's GitHub
+//!   Releases page. Threadknot downloads the artifact for this platform,
+//!   replaces itself with it, and relaunches. This is what an installed copy
+//!   does, and it is what "update" means in every other app.
+//! - **The source channel** — the machine has a Threadknot git checkout, so the
+//!   newer build is one it compiles itself: fast-forward to `origin/master`,
+//!   rebuild, restart. This is the development route, and it is also the only
+//!   route that can be a *commit* ahead rather than a release ahead.
+//!
+//! The route is derived, not asked: a machine with a checkout is a development
+//! machine and updates from source; one without updates from releases. The
+//! `git.selfUpdateSetChannel` request pins it either way, per machine, which is
+//! how a development box tests what its users will actually experience.
+//!
+//! Both channels compare the same number. `THREADKNOT_VERSION` is
+//! `0.1.<commit count of origin/master>` (see `build.rs`), and a release is
+//! tagged `v0.1.<that same count>` at the commit it was cut from (see
+//! `scripts/release.sh`), so "0.1.92" means the same build whether it was
+//! compiled here or downloaded. Comparing them is comparing the trailing count.
+//!
+//! On the source channel, three different kinds of "out of date" exist and the
+//! UI must tell them apart, because each has a different fix:
 //!
 //! - **Repo behind**: `origin/master` carries commits this checkout lacks.
 //!   Fix: pull.
@@ -15,11 +37,10 @@
 //!   on disk, but this process is still the old one. Fix: restart. Reporting
 //!   "up to date" here would be a lie the user could see through in the footer.
 //!
-//! The comparison is possible because `THREADKNOT_VERSION` is baked in at compile
-//! time from the commit count of `origin/master` (see `build.rs`), so the
-//! embedded number is a snapshot of "master as of my build" while a live
-//! `rev-list --count` gives master as of now. The delta between them is exactly
-//! the set of commits the running app is missing, regardless of where HEAD sits.
+//! That comparison is possible because the embedded number is a snapshot of
+//! "master as of my build" while a live `rev-list --count` gives master as of
+//! now. The delta between them is exactly the set of commits the running app is
+//! missing, regardless of where HEAD sits.
 //!
 //! Every request kind here starts with `git.` on purpose: `server::is_routable`
 //! routes the whole git family by `machineId`, so the same call answers for a
@@ -42,6 +63,18 @@ use tokio::sync::Notify;
 /// Background re-check cadence. A fetch is cheap but not free, and master does
 /// not move minute to minute.
 const POLL_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// Whose GitHub Releases are the published builds. Overridable by
+/// `THREADKNOT_RELEASE_REPO` so a fork updates from its own.
+const DEFAULT_RELEASE_REPO: &str = "smith-network-solutions/threadknot";
+/// Ceiling on how long the release check may take. Unauthenticated GitHub is
+/// usually instant; the poller must not wedge when it is not.
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Ceiling on downloading one release artifact. Installers are tens of
+/// megabytes and some connections are not.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Refuse anything larger. An artifact this big is a wrong asset match or a
+/// hostile response, not a Threadknot build.
+const MAX_ASSET_BYTES: u64 = 512 * 1024 * 1024;
 /// Collapse a burst of manual "check now" clicks.
 const KICK_DEBOUNCE: Duration = Duration::from_secs(2);
 /// Never list more than this many pending commits (the UI scrolls, but the
@@ -74,8 +107,11 @@ fn started_at() -> SystemTime {
 #[derive(Default)]
 pub struct UpdateState {
     data: Mutex<Option<UpdateStatus>>,
-    /// The one in-flight pull/rebuild/restart, if any. Doubles as the operation
-    /// lock: a new one is refused while this holds an unfinished entry.
+    /// Last answer from the releases API, kept across the cheap non-fetching
+    /// recomputes so a card is never blank between polls.
+    release: Mutex<Option<ReleaseInfo>>,
+    /// The one in-flight pull/rebuild/restart/install, if any. Doubles as the
+    /// operation lock: a new one is refused while this holds an unfinished entry.
     op: Mutex<Option<Operation>>,
     pub kick: Notify,
     force: AtomicBool,
@@ -88,6 +124,19 @@ impl UpdateState {
 
     fn store(&self, next: UpdateStatus) {
         *self.data.lock().unwrap() = Some(next);
+    }
+
+    fn release(&self) -> Option<ReleaseInfo> {
+        self.release.lock().unwrap().clone()
+    }
+
+    fn store_release(&self, next: Option<ReleaseInfo>) {
+        // A failed check keeps the last good answer rather than blanking the
+        // card: "we could not reach GitHub just now" is not "there is no
+        // release", and only one of those should change what the UI offers.
+        if next.is_some() {
+            *self.release.lock().unwrap() = next;
+        }
     }
 
     pub fn operation(&self) -> Option<Operation> {
@@ -163,7 +212,8 @@ impl UpdateState {
 #[serde(rename_all = "camelCase")]
 pub struct Operation {
     pub id: String,
-    /// "pull" | "rebuild" | "restart" | "update" (the three chained together).
+    /// "pull" | "rebuild" | "restart" | "update" (the three chained together)
+    /// | "install" (download a published release and relaunch into it).
     pub kind: String,
     pub stage: String,
     pub started_at: String,
@@ -183,9 +233,48 @@ pub struct Commit {
     pub subject: String,
 }
 
+/// The newest published release, and what this machine could do with it.
+///
+/// `asset_*` is already resolved to the one artifact this platform installs, so
+/// the UI never has to know that a release carries a `.dmg`, three Linux
+/// packages and an installer. When nothing here fits — a `.deb` install, which
+/// only the package manager may replace — `blocked` says so in words the card
+/// can show, and the download link stands in for the button.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseInfo {
+    /// Tag with the leading `v` removed: "0.1.92".
+    pub version: String,
+    pub tag: String,
+    pub name: String,
+    /// Release notes, truncated — this rides on every status broadcast.
+    pub notes: String,
+    pub published_at: String,
+    /// The release page, for the manual route.
+    pub url: String,
+    pub asset_name: Option<String>,
+    pub asset_url: Option<String>,
+    pub asset_size: u64,
+    /// Why this machine cannot install it in place, if it cannot.
+    pub blocked: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
+    /// Which route this machine updates by: "release" (published builds) or
+    /// "source" (its own checkout). Everything below about git is only the
+    /// user's business on the source channel.
+    pub channel: String,
+    /// True when the channel was pinned by hand rather than derived from
+    /// whether a checkout exists.
+    pub channel_pinned: bool,
+    /// Newest published release, once one has been read.
+    pub release: Option<ReleaseInfo>,
+    /// A published release is newer than the running build.
+    pub release_available: bool,
+    /// …and this machine can download and install it without help.
+    pub release_install_supported: bool,
     /// False when this build was made outside a git checkout, or the checkout
     /// has since moved or been deleted. Everything else is then meaningless and
     /// the UI hides the section.
@@ -248,7 +337,18 @@ impl UpdateStatus {
             Some((p, s)) => (p.display().to_string(), s),
             None => (String::new(), "none"),
         };
+        // A release install lands a newer binary at the path we run from, and
+        // the machine it lands on is exactly the one with no checkout — so this
+        // branch has to notice a pending restart too, or an install whose final
+        // relaunch did not take leaves no way back but the command line.
+        let target = restart_target(None);
         Self {
+            // Overwritten by `with_release` before this ever leaves the module.
+            channel: Channel::Source.as_str().to_string(),
+            channel_pinned: false,
+            release: None,
+            release_available: false,
+            release_install_supported: false,
             repo_available: repo_found,
             repo_path: path,
             repo_source: source.to_string(),
@@ -257,10 +357,10 @@ impl UpdateStatus {
             update_available: false,
             behind_by: 0,
             rebuild_pending: false,
-            restart_pending: false,
+            restart_pending: binary_is_newer(&target),
             restart_supported: SELF_SERVICE,
             rebuild_supported: SELF_SERVICE,
-            binary_path: restart_target(None).display().to_string(),
+            binary_path: target.display().to_string(),
             active_work: active_work(hub),
             branch: String::new(),
             head_behind: 0,
@@ -291,25 +391,101 @@ fn configured_path(hub: &Arc<Hub>) -> Option<String> {
     (!p.is_empty()).then_some(p)
 }
 
-fn set_configured_path(hub: &Arc<Hub>, path: Option<&str>) -> Result<()> {
+/// Read the whole machine-local override file, so a write to one field cannot
+/// silently drop the other.
+fn overrides(hub: &Arc<Hub>) -> Value {
+    std::fs::read_to_string(override_file(hub))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}))
+}
+
+fn write_override(hub: &Arc<Hub>, key: &str, value: Option<&str>) -> Result<()> {
     let file = override_file(hub);
-    match path {
-        Some(p) => {
-            let dir = PathBuf::from(p);
-            anyhow::ensure!(
-                dir.join(".git").exists(),
-                "{p} is not a git checkout (no .git directory there)."
-            );
-            std::fs::write(&file, serde_json::to_string_pretty(&json!({ "repoPath": p }))?)
-                .with_context(|| format!("could not save {}", file.display()))?;
+    let mut doc = overrides(hub);
+    let obj = doc.as_object_mut().expect("overrides() only returns objects");
+    match value {
+        Some(v) => {
+            obj.insert(key.to_string(), json!(v));
         }
-        // Clearing falls back to the next source down rather than disabling
-        // updates outright.
         None => {
-            let _ = std::fs::remove_file(&file);
+            obj.remove(key);
         }
     }
-    Ok(())
+    // An empty file is the same as no file, and leaving one behind means every
+    // later read parses a document that says nothing.
+    if obj.is_empty() {
+        let _ = std::fs::remove_file(&file);
+        return Ok(());
+    }
+    std::fs::write(&file, serde_json::to_string_pretty(&doc)?)
+        .with_context(|| format!("could not save {}", file.display()))
+}
+
+fn set_configured_path(hub: &Arc<Hub>, path: Option<&str>) -> Result<()> {
+    if let Some(p) = path {
+        anyhow::ensure!(
+            PathBuf::from(p).join(".git").exists(),
+            "{p} is not a git checkout (no .git directory there)."
+        );
+    }
+    // Clearing falls back to the next source down rather than disabling
+    // updates outright.
+    write_override(hub, "repoPath", path)
+}
+
+/// Which route a machine takes to a newer build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Channel {
+    /// Published builds from the Releases page: download, install, relaunch.
+    Release,
+    /// This machine's own checkout: pull, rebuild, relaunch.
+    Source,
+}
+
+impl Channel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Channel::Release => "release",
+            Channel::Source => "source",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "release" => Some(Channel::Release),
+            "source" => Some(Channel::Source),
+            _ => None,
+        }
+    }
+}
+
+/// The channel this machine uses, and whether that was a decision or a default.
+///
+/// Derived from whether a checkout exists, because that is what the two
+/// channels actually differ on: a machine that can compile master is a
+/// development machine and wants the commit it just pushed, not the release cut
+/// three weeks ago. Pinning exists so this box can sit on the release channel
+/// and see exactly what a user sees.
+fn resolve_channel(hub: &Arc<Hub>, repo_available: bool) -> (Channel, bool) {
+    if let Some(c) = std::env::var("THREADKNOT_UPDATE_CHANNEL")
+        .ok()
+        .and_then(|v| Channel::parse(v.trim()))
+    {
+        return (c, true);
+    }
+    if let Some(c) = overrides(hub)
+        .get("channel")
+        .and_then(Value::as_str)
+        .and_then(|s| Channel::parse(s.trim()))
+    {
+        return (c, true);
+    }
+    (
+        if repo_available { Channel::Source } else { Channel::Release },
+        false,
+    )
 }
 
 /// A checkout beside the running executable: `<repo>/src-tauri/target/<profile>/threadknot`.
@@ -394,11 +570,31 @@ fn current_exe_path() -> PathBuf {
     strip_deleted_marker(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("threadknot")))
 }
 
+/// The `.AppImage` this process was launched from, when it was launched from
+/// one.
+///
+/// Inside an AppImage `current_exe` points into the throwaway mount
+/// (`/tmp/.mount_Threadxxxxx/usr/bin/threadknot`), which is gone the moment the
+/// process ends — restarting *that* path relaunches nothing, and comparing its
+/// mtime says nothing about whether an update landed. The runtime exports
+/// `APPIMAGE` for exactly this reason: it is the real file on disk, the thing a
+/// release install replaces, and the thing a restart must exec.
+fn appimage_path() -> Option<PathBuf> {
+    std::env::var_os("APPIMAGE")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+}
+
 /// Executable a restart should launch: the freshly built release binary when
 /// the checkout has one, otherwise whatever is running now. Checking the build
 /// output rather than only `current_exe` is what lets a dev running the debug
 /// binary still be told a new release binary is waiting.
 fn restart_target(repo: Option<&Path>) -> PathBuf {
+    // An AppImage is never built from a checkout, so this settles it outright.
+    if let Some(p) = appimage_path() {
+        return p;
+    }
     let current = current_exe_path();
     let name = current.file_name().unwrap_or_default().to_owned();
     if let Some(repo) = repo {
@@ -473,31 +669,353 @@ fn log_tail(path: &Path) -> String {
     raw[cut..].trim().to_string()
 }
 
+// ---- published releases ---------------------------------------------------
+
+/// Where published builds come from. Overridable so a fork, or a private
+/// mirror, updates from its own releases rather than from ours.
+fn release_repo() -> String {
+    std::env::var("THREADKNOT_RELEASE_REPO")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_RELEASE_REPO.to_string())
+}
+
+/// A GitHub token for reading releases, when the repository is not public.
+///
+/// Read from its own variable rather than from an ambient `GITHUB_TOKEN`: this
+/// process inherits the environment of whatever launched it, and a token that
+/// happens to be lying around in a shell is not consent to send it to
+/// api.github.com. Unset in the shipping configuration, where the repository is
+/// public and no credential is involved in updating at all.
+fn release_token() -> Option<String> {
+    std::env::var("THREADKNOT_RELEASE_TOKEN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// A request to the releases API, with the headers GitHub requires — plus the
+/// token when one is configured. Shared by the check and the download so they
+/// cannot disagree about who is asking.
+fn release_request(client: &reqwest::Client, url: &str, accept: &str) -> reqwest::RequestBuilder {
+    let req = client
+        .get(url)
+        // GitHub rejects a request with no user agent outright.
+        .header("User-Agent", format!("threadknot/{}", env!("THREADKNOT_VERSION")))
+        .header("Accept", accept)
+        .header("X-GitHub-Api-Version", "2022-11-28");
+    match release_token() {
+        // reqwest drops this on a cross-host redirect, which is exactly right:
+        // an asset download ends up at a pre-signed storage URL that rejects a
+        // second set of credentials.
+        Some(t) => req.header("Authorization", format!("Bearer {t}")),
+        None => req,
+    }
+}
+
+/// How this copy of Threadknot was installed, which decides what "replace
+/// yourself" means — and whether it is possible at all.
+/// Every variant exists on every platform so the type, the matches and the
+/// tests stay one shape; only one of them is ever constructible on a given
+/// build, which is what the allow is for.
+#[allow(dead_code)]
+enum InstallShape {
+    /// A portable `.AppImage`: one file, replaced in place.
+    AppImage(PathBuf),
+    /// A macOS `.app` bundle, replaced wholesale from the disk image.
+    MacApp(PathBuf),
+    /// Windows: hand the job to the installer that ships in the release.
+    WindowsInstaller,
+}
+
+/// Work out the install shape, or explain why this copy cannot replace itself.
+///
+/// The refusals are deliberate rather than best-effort. A `.deb`/`.rpm` install
+/// puts Threadknot under `/usr`, owned by the package manager: writing there
+/// behind its back leaves the package database describing a file that no longer
+/// exists, and the next `apt upgrade` silently reverts the update. Root is not
+/// the missing piece — being the wrong tool for the job is.
+fn install_shape() -> Result<InstallShape, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // …/Threadknot.app/Contents/MacOS/Threadknot -> …/Threadknot.app
+        match current_exe_path()
+            .ancestors()
+            .find(|p| p.extension().is_some_and(|e| e == "app"))
+            .map(Path::to_path_buf)
+        {
+            Some(app) => Ok(InstallShape::MacApp(app)),
+            None => Err("This copy is running as a bare executable rather than from \
+                         Threadknot.app, so it cannot replace itself. Download the disk image \
+                         and drag Threadknot to Applications."
+                .into()),
+        }
+    }
+    #[cfg(windows)]
+    {
+        Ok(InstallShape::WindowsInstaller)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        match appimage_path() {
+            Some(p) => Ok(InstallShape::AppImage(p)),
+            None => Err("This copy was installed from a .deb or .rpm package, or built from \
+                         source, so its files belong to something else — a package manager, or \
+                         your checkout — and Threadknot will not write over them. Update it the \
+                         way you installed it, or switch to the portable AppImage."
+                .into()),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Err("Installing a published build is not wired up on this platform yet.".into())
+    }
+}
+
+/// Whether an asset filename is the artifact this install shape wants.
+///
+/// Matching is on shape first and CPU architecture second, and an asset that
+/// names *no* architecture is accepted only when it is the sole candidate:
+/// a release carrying both an arm64 and an x64 disk image must never install
+/// the wrong one just because the names drifted.
+fn asset_matches(shape: &InstallShape, name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    match shape {
+        InstallShape::AppImage(_) => lower.ends_with(".appimage"),
+        InstallShape::MacApp(_) => lower.ends_with(".dmg"),
+        // Tauri's NSIS bundle is `<name>_<version>_<arch>-setup.exe`. The bare
+        // `threadknot.exe` in the same release is the portable binary, which is
+        // not something to run as an installer.
+        InstallShape::WindowsInstaller => lower.ends_with("-setup.exe"),
+    }
+}
+
+/// Architecture tokens that identify a build for the CPU we are running on.
+fn arch_tokens() -> &'static [&'static str] {
+    match std::env::consts::ARCH {
+        // Every spelling the three bundlers use: cargo's triple, Tauri's NSIS
+        // suffix, and Debian's architecture name all differ for one CPU.
+        "x86_64" => &["x86_64", "x64", "amd64"],
+        "aarch64" => &["aarch64", "arm64"],
+        "arm" => &["armhf", "armv7"],
+        "x86" => &["i686", "i386", "x86"],
+        _ => &[],
+    }
+}
+
+/// Pick the one artifact this machine installs, from everything a release
+/// carries.
+fn pick_asset<'a>(
+    shape: &InstallShape,
+    assets: &'a [(String, String, u64)],
+) -> Result<&'a (String, String, u64), String> {
+    let candidates: Vec<&(String, String, u64)> =
+        assets.iter().filter(|(name, _, _)| asset_matches(shape, name)).collect();
+    if candidates.is_empty() {
+        return Err(format!(
+            "This release has no build for {} {}. Check the release page for one.",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+    }
+    let tokens = arch_tokens();
+    let for_us: Vec<&&(String, String, u64)> = candidates
+        .iter()
+        .filter(|(name, _, _)| {
+            let lower = name.to_ascii_lowercase();
+            tokens.iter().any(|t| lower.contains(t))
+        })
+        .collect();
+    match (for_us.len(), candidates.len()) {
+        (1, _) => Ok(for_us[0]),
+        // Nothing names an architecture, and there is only one thing it could
+        // be. Older releases predate the arch suffix.
+        (0, 1) => Ok(candidates[0]),
+        (0, _) => Err(format!(
+            "This release has {} builds for this platform but none marked {}, so Threadknot \
+             cannot tell which one is for this machine.",
+            candidates.len(),
+            std::env::consts::ARCH
+        )),
+        (n, _) => Err(format!(
+            "This release has {n} builds marked {}, so Threadknot cannot tell which one to \
+             install.",
+            std::env::consts::ARCH
+        )),
+    }
+}
+
+/// Ask GitHub for the newest published release and resolve it down to the one
+/// artifact this machine would install.
+///
+/// Unauthenticated in the shipping configuration: the releases of a public
+/// repository need no credential, and an updater that demands one is an updater
+/// most people never run. That caps us at 60 calls an hour per address, which a
+/// 30-minute poll spends 0.5 of.
+async fn fetch_latest_release() -> Result<ReleaseInfo> {
+    let repo = release_repo();
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let client = reqwest::Client::builder().timeout(RELEASE_TIMEOUT).build()?;
+    let body: Value = release_request(&client, &url, "application/vnd.github+json")
+        .send()
+        .await
+        .with_context(|| format!("could not reach {url}"))?
+        .error_for_status()
+        .with_context(|| {
+            format!(
+                "{repo} has no published releases, or GitHub refused (a private repository \
+                 answers 404 without a THREADKNOT_RELEASE_TOKEN)"
+            )
+        })?
+        .json()
+        .await
+        .context("the releases API returned something that is not JSON")?;
+
+    let tag = body
+        .get("tag_name")
+        .and_then(Value::as_str)
+        .context("the latest release has no tag")?
+        .to_string();
+    // The API's own asset URL, not `browser_download_url`: it redirects to the
+    // same storage either way, and it is the only one that works when the
+    // repository is private. Public downloads are unaffected.
+    let assets: Vec<(String, String, u64)> = body
+        .get("assets")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| {
+                    Some((
+                        v.get("name")?.as_str()?.to_string(),
+                        v.get("url")?.as_str()?.to_string(),
+                        v.get("size").and_then(Value::as_u64).unwrap_or(0),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Two independent reasons this machine may not be able to install: it is
+    // the wrong kind of install, or the release has nothing for it. Both end up
+    // in the same field, because the card treats them the same way — show the
+    // release, offer the download link, do not offer the button.
+    let (asset, blocked) = match install_shape() {
+        Err(why) => (None, Some(why)),
+        Ok(shape) => match pick_asset(&shape, &assets) {
+            Ok(a) => (Some(a.clone()), None),
+            Err(why) => (None, Some(why)),
+        },
+    };
+
+    let notes = body.get("body").and_then(Value::as_str).unwrap_or_default();
+    Ok(ReleaseInfo {
+        version: tag.trim_start_matches('v').to_string(),
+        tag: tag.clone(),
+        name: body
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&tag)
+            .to_string(),
+        // The notes ride on every `updates` broadcast to every connected
+        // client, phones included. The card links out for the full text.
+        notes: notes.chars().take(1_200).collect(),
+        published_at: body
+            .get("published_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        url: body
+            .get("html_url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        asset_name: asset.as_ref().map(|(n, _, _)| n.clone()),
+        asset_url: asset.as_ref().map(|(_, u, _)| u.clone()),
+        asset_size: asset.as_ref().map(|(_, _, s)| *s).unwrap_or(0),
+        blocked,
+    })
+}
+
+/// Re-read the releases page into the shared snapshot. Failure is not fatal and
+/// is not reported: the last good answer stays, and the git side of the status
+/// carries its own error field for the things a user can act on.
+async fn refresh_release(hub: &Arc<Hub>) {
+    match fetch_latest_release().await {
+        Ok(info) => hub.updates.store_release(Some(info)),
+        Err(e) => tracing::debug!("release check failed: {e:#}"),
+    }
+}
+
+/// Fold the release snapshot and the channel into a status built from the git
+/// side. Every `UpdateStatus` leaving this module goes through here, so the
+/// channel is never unset and `update_available` always means "the route this
+/// machine actually takes has something newer".
+fn with_release(hub: &Arc<Hub>, mut st: UpdateStatus) -> UpdateStatus {
+    let (channel, pinned) = resolve_channel(hub, st.repo_available);
+    let release = hub.updates.release();
+    let running = version_count(&st.running_version).unwrap_or(0);
+    // Strictly newer only. A machine building master is routinely *ahead* of
+    // the newest release, and offering it a downgrade would be worse than
+    // offering it nothing.
+    let newer = release
+        .as_ref()
+        .and_then(|r| version_count(&r.version))
+        .is_some_and(|n| n > running);
+
+    st.release_install_supported = release.as_ref().is_some_and(|r| r.asset_url.is_some());
+    st.release_available = newer;
+    st.channel = channel.as_str().to_string();
+    st.channel_pinned = pinned;
+    st.release = release;
+
+    if channel == Channel::Release {
+        st.update_available = newer;
+        // "No git checkout found here" is the normal, correct state of a
+        // machine that updates from published builds. Leaving it in the error
+        // field puts a red box on a card that has nothing wrong with it.
+        if !st.repo_available {
+            st.error = None;
+        }
+    }
+    st
+}
+
 // ---- status ---------------------------------------------------------------
 
 /// Read the repo's update situation. `fetch` performs a network fetch first;
 /// callers that only want to render cached refs pass false.
 pub async fn compute(hub: &Arc<Hub>, fetch: bool) -> UpdateStatus {
-    let Some((repo, source)) = resolve_repo(hub) else {
-        let tried = candidates(hub);
-        let detail = if tried.is_empty() {
-            "no candidate paths were available".to_string()
-        } else {
-            format!("looked in — {}", tried.join("; "))
-        };
-        return UpdateStatus::unavailable(
-            hub,
-            format!(
-                "No Threadknot git checkout found on this machine, so it cannot check for \
-                 updates ({detail}). Set the source folder below to fix this."
-            ),
-            false,
-        );
-    };
-    match compute_in(hub, &repo, source, fetch).await {
-        Ok(st) => st,
-        Err(e) => UpdateStatus::unavailable(hub, format!("{e:#}"), true),
+    // The releases page is checked on the same schedule as the git fetch, and
+    // for the same machines: a development box that is pinned to source still
+    // wants to know a release shipped, and the fleet list shows both.
+    if fetch {
+        refresh_release(hub).await;
     }
+    let base = match resolve_repo(hub) {
+        None => {
+            let tried = candidates(hub);
+            let detail = if tried.is_empty() {
+                "no candidate paths were available".to_string()
+            } else {
+                format!("looked in — {}", tried.join("; "))
+            };
+            UpdateStatus::unavailable(
+                hub,
+                format!(
+                    "No Threadknot git checkout found on this machine, so it cannot build \
+                     master ({detail}). Set the source folder below to fix this."
+                ),
+                false,
+            )
+        }
+        Some((repo, source)) => match compute_in(hub, &repo, source, fetch).await {
+            Ok(st) => st,
+            Err(e) => UpdateStatus::unavailable(hub, format!("{e:#}"), true),
+        },
+    };
+    with_release(hub, base)
 }
 
 async fn compute_in(
@@ -595,6 +1113,13 @@ async fn compute_in(
     let restart_pending = binary_is_newer(&target);
 
     Ok(UpdateStatus {
+        // All four are `with_release`'s to fill in; every path out of this
+        // module runs through it.
+        channel: Channel::Source.as_str().to_string(),
+        channel_pinned: false,
+        release: None,
+        release_available: false,
+        release_install_supported: false,
         repo_available: true,
         repo_path: repo.display().to_string(),
         repo_source: source.to_string(),
@@ -968,6 +1493,397 @@ async fn run_update(hub: Arc<Hub>, repo: PathBuf, source: &'static str, op_id: S
     }
 }
 
+// ---- installing a published release ---------------------------------------
+
+/// Publish a stage change without recomputing the git side.
+///
+/// `refresh` shells out to git several times, which is the right cost once per
+/// operation and the wrong one twenty times during a download. Clients read the
+/// live operation off `git.selfUpdateStatus` anyway, so the broadcast alone is
+/// enough to move a progress bar.
+fn announce(hub: &Arc<Hub>) {
+    hub.broadcast_state("updates", None);
+}
+
+/// Somewhere to put a downloaded artifact: machine-local, wiped before each
+/// use so a failed run cannot leave half an installer to be picked up later.
+fn download_dir(hub: &Arc<Hub>) -> PathBuf {
+    let dir = hub.store.dir().join("updates");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Stream one release artifact to disk, reporting progress as a stage.
+///
+/// Streamed rather than buffered because these are installers: holding a
+/// hundred megabytes in memory to write it straight back out is a cost paid for
+/// nothing, on the machines least able to pay it.
+async fn download_asset(
+    hub: &Arc<Hub>,
+    url: &str,
+    dest: &Path,
+    expected: u64,
+    op_id: &str,
+) -> Result<()> {
+    use futures_util::StreamExt;
+    use std::io::Write;
+
+    anyhow::ensure!(
+        expected <= MAX_ASSET_BYTES,
+        "{url} claims to be {expected} bytes, which is far larger than a Threadknot build. \
+         Refusing to download it."
+    );
+
+    let client = reqwest::Client::builder().timeout(DOWNLOAD_TIMEOUT).build()?;
+    // `octet-stream` is what turns the API's asset URL from a JSON description
+    // of the file into the file.
+    let resp = release_request(&client, url, "application/octet-stream")
+        .send()
+        .await
+        .with_context(|| format!("could not download {url}"))?
+        .error_for_status()
+        .with_context(|| format!("{url} refused the download"))?;
+
+    let total = resp.content_length().unwrap_or(expected);
+    let mut file = std::fs::File::create(dest)
+        .with_context(|| format!("cannot write {}", dest.display()))?;
+    let mut stream = resp.bytes_stream();
+    let mut done: u64 = 0;
+    let mut announced = 0u64;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("the download was cut short")?;
+        done += chunk.len() as u64;
+        anyhow::ensure!(
+            done <= MAX_ASSET_BYTES,
+            "the download exceeded {MAX_ASSET_BYTES} bytes and was stopped"
+        );
+        file.write_all(&chunk).context("writing the download to disk failed")?;
+        let pct = if total > 0 { done * 100 / total } else { 0 };
+        // Every chunk is a websocket frame to every connected client, phones
+        // included. Five points at a time is a moving bar and a quiet network.
+        if pct >= announced + 5 {
+            announced = pct;
+            hub.updates.stage(op_id, &format!("downloading {pct}%"));
+            announce(hub);
+        }
+    }
+    file.flush().context("writing the download to disk failed")?;
+    drop(file);
+
+    // The size GitHub reported is not a signature, but it is a free check that
+    // what landed is what was offered — and it catches the truncated download,
+    // which is the failure that would otherwise be discovered by installing it.
+    if expected > 0 {
+        let got = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+        anyhow::ensure!(
+            got == expected,
+            "the download is {got} bytes but the release says {expected}. \
+             It was truncated or altered in transit; nothing was installed."
+        );
+    }
+    Ok(())
+}
+
+/// Replace this install with the downloaded artifact, and return the executable
+/// a restart should launch.
+fn install_downloaded(shape: &InstallShape, downloaded: &Path) -> Result<PathBuf> {
+    match shape {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        InstallShape::AppImage(target) => {
+            install_appimage(downloaded, target)?;
+            Ok(target.clone())
+        }
+        #[cfg(target_os = "macos")]
+        InstallShape::MacApp(app) => {
+            install_dmg(downloaded, app)?;
+            // Exec the binary inside the bundle rather than `open`ing it: the
+            // restart helper below is one shared code path, and this keeps the
+            // relaunched app in the same session as everything else.
+            Ok(app.join("Contents").join("MacOS").join(
+                current_exe_path().file_name().unwrap_or_else(|| std::ffi::OsStr::new("Threadknot")),
+            ))
+        }
+        #[cfg(windows)]
+        InstallShape::WindowsInstaller => {
+            // Windows cannot overwrite a running image, so the installer runs
+            // after we are gone and relaunches us itself. Nothing is left for
+            // the ordinary restart path to do.
+            spawn_install_windows(downloaded)?;
+            Ok(current_exe_path())
+        }
+        // Every arm above is behind a cfg, so on any one platform the other
+        // variants are unconstructible — but the match still has to be total.
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("this install shape cannot replace itself on this platform"),
+    }
+}
+
+/// Swap in a new AppImage: stage it beside the old one, make it executable,
+/// then rename over the top.
+///
+/// Staged in the destination directory rather than moved from the download
+/// directory because those are routinely different filesystems, where a rename
+/// is not atomic but a failure. The rename itself is what makes the swap
+/// all-or-nothing: at no point is there a partially written file at the path
+/// the desktop entry launches.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn install_appimage(downloaded: &Path, target: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let staged = target.with_extension("appimage-new");
+    let _ = std::fs::remove_file(&staged);
+    std::fs::copy(downloaded, &staged).with_context(|| {
+        format!(
+            "cannot write {} — Threadknot needs write access to the folder it runs from",
+            staged.display()
+        )
+    })?;
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
+        .context("could not make the new AppImage executable")?;
+    std::fs::rename(&staged, target).with_context(|| {
+        format!("could not replace {} with the new build", target.display())
+    })?;
+    Ok(())
+}
+
+/// Run a helper program to completion, with its output folded into the error.
+#[cfg(target_os = "macos")]
+fn run_tool(program: &str, args: &[&std::ffi::OsStr]) -> Result<()> {
+    let out = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .with_context(|| format!("could not run {program}"))?;
+    anyhow::ensure!(
+        out.status.success(),
+        "{program} failed: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    Ok(())
+}
+
+/// Mount the disk image, stage the bundle it carries beside the installed one,
+/// then swap them.
+///
+/// `ditto` rather than a recursive copy: it is the only tool that reliably
+/// preserves the extended attributes and symlink layout a signed `.app`
+/// depends on, and a bundle copied without them fails Gatekeeper on launch —
+/// which looks exactly like a corrupt download.
+#[cfg(target_os = "macos")]
+fn install_dmg(dmg: &Path, app: &Path) -> Result<()> {
+    use std::ffi::OsStr;
+
+    let mount = std::env::temp_dir().join(format!("threadknot-dmg-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&mount).context("could not make a mount point")?;
+    run_tool(
+        "hdiutil",
+        &[
+            OsStr::new("attach"),
+            OsStr::new("-nobrowse"),
+            OsStr::new("-readonly"),
+            OsStr::new("-mountpoint"),
+            mount.as_os_str(),
+            dmg.as_os_str(),
+        ],
+    )
+    .context("could not open the downloaded disk image")?;
+
+    let swap = (|| -> Result<()> {
+        let src = std::fs::read_dir(&mount)
+            .context("could not read the disk image")?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|e| e == "app"))
+            .context("the disk image contains no application bundle")?;
+
+        let staged = app.with_extension("app.new");
+        let previous = app.with_extension("app.old");
+        let _ = std::fs::remove_dir_all(&staged);
+        let _ = std::fs::remove_dir_all(&previous);
+        run_tool("ditto", &[src.as_os_str(), staged.as_os_str()])
+            .context("could not copy the new build out of the disk image")?;
+
+        // From here the swap is two renames on one directory: fast, and with
+        // only one instant where the destination is absent. If the second one
+        // fails, put the old bundle back rather than leaving nothing installed.
+        std::fs::rename(app, &previous)
+            .with_context(|| format!("could not move {} aside", app.display()))?;
+        if let Err(e) = std::fs::rename(&staged, app) {
+            let _ = std::fs::rename(&previous, app);
+            return Err(e).with_context(|| format!("could not install the new {}", app.display()));
+        }
+        let _ = std::fs::remove_dir_all(&previous);
+        Ok(())
+    })();
+
+    let _ = run_tool("hdiutil", &[OsStr::new("detach"), mount.as_os_str(), OsStr::new("-force")]);
+    let _ = std::fs::remove_dir(&mount);
+    swap
+}
+
+/// Hand the release's own installer the job, from a detached helper that
+/// outlives us.
+///
+/// Windows holds a running executable open, so the installer cannot touch this
+/// process's files while it exists — and the installer is also the only thing
+/// that can keep the Start Menu shortcut, and with it the AppUserModelID that
+/// native toasts require, consistent with what is on disk. So the helper waits
+/// for us to go, runs it silently, and starts whatever it installed. It appends
+/// to the same log the restart helper uses, so one file tells the whole story
+/// when an update does not come back.
+#[cfg(windows)]
+fn spawn_install_windows(installer: &Path) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    const DETACHED: u32 = 0x0000_0008 | 0x0000_0200;
+
+    let current = current_exe_path();
+    let fallback = live_exe(&current);
+    let script = format!(
+        "$ErrorActionPreference = 'SilentlyContinue'\n\
+         $log = Join-Path $env:TEMP 'threadknot-restart.log'\n\
+         function Say($m) {{ \"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m\" | Add-Content $log }}\n\
+         Say '==================== release install begin ===================='\n\
+         $setup = {setup}\n\
+         $current = {current}\n\
+         $fallback = {fallback}\n\
+         try {{ Wait-Process -Id {pid} -Timeout 60 }} catch {{}}\n\
+         if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Say 'still running, forcing'; Stop-Process -Id {pid} -Force; Start-Sleep -Seconds 2 }}\n\
+         Say \"old pid gone: {pid}\"\n\
+         $p = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru\n\
+         Say \"installer exit: $($p.ExitCode)\"\n\
+         if ($p.ExitCode -ne 0) {{ Say 'FAIL: the installer reported an error'; Remove-Item $PSCommandPath -Force; exit 1 }}\n\
+         $exe = $null\n\
+         if (Test-Path $current) {{ $exe = $current }} elseif (Test-Path $fallback) {{ $exe = $fallback }}\n\
+         if ($exe) {{ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe); Say \"launched $exe\" }}\n\
+         else {{ Say 'installed, but could not find the executable to launch' }}\n\
+         Remove-Item $PSCommandPath -Force\n",
+        setup = ps_quote(&installer.display().to_string()),
+        current = ps_quote(&current.display().to_string()),
+        fallback = ps_quote(&fallback.display().to_string()),
+        pid = std::process::id(),
+    );
+    debug_assert!(script.is_ascii(), "the install helper must stay ASCII-only");
+
+    let path = std::env::temp_dir().join(format!("threadknot-install-{}.ps1", uuid::Uuid::new_v4()));
+    std::fs::write(&path, &script)
+        .with_context(|| format!("could not write the install helper to {}", path.display()))?;
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(DETACHED)
+        .spawn()
+        .context("could not start the install helper")?;
+    Ok(())
+}
+
+/// Download the published release, install it over this copy, and relaunch —
+/// the whole thing off one click, as an app that updates itself should.
+///
+/// Server-side for the same reasons the rebuild is: the download outlives the
+/// tab that started it, and every rule about whether this machine may replace
+/// itself has to run on the machine being replaced, not on the one that
+/// clicked.
+async fn run_install(hub: Arc<Hub>, release: ReleaseInfo, op_id: String, force: bool) {
+    let fail = |stage: &str, e: String| {
+        hub.updates.finish(&op_id, false, stage, Some(e));
+    };
+
+    let (Some(url), Some(name)) = (release.asset_url.clone(), release.asset_name.clone()) else {
+        fail(
+            "install failed",
+            release.blocked.clone().unwrap_or_else(|| {
+                "This release has nothing this machine can install.".to_string()
+            }),
+        );
+        refresh(&hub).await;
+        return;
+    };
+
+    hub.updates.stage(&op_id, "downloading");
+    announce(&hub);
+    let dest = download_dir(&hub).join(&name);
+    if let Err(e) = download_asset(&hub, &url, &dest, release.asset_size, &op_id).await {
+        fail("download failed", format!("{e:#}"));
+        refresh(&hub).await;
+        return;
+    }
+
+    // Checked here rather than at click time, exactly as the chained rebuild
+    // does: a download runs for minutes, and threads that were idle when the
+    // button was pressed are routinely mid-turn by the end of it. The new build
+    // is already on disk, so nothing is lost by stopping — the restart button
+    // finishes the job whenever the user is ready.
+    let busy = active_work(&hub);
+    if busy > 0 && !force {
+        hub.updates.finish(
+            &op_id,
+            true,
+            "downloaded, waiting to install",
+            Some(format!(
+                "{busy} thread(s) started working while this downloaded, so Threadknot left \
+                 itself alone. Run the update again once they finish."
+            )),
+        );
+        refresh(&hub).await;
+        return;
+    }
+
+    hub.updates.stage(&op_id, "installing");
+    announce(&hub);
+    let shape = match install_shape() {
+        Ok(s) => s,
+        Err(why) => {
+            fail("install failed", why);
+            refresh(&hub).await;
+            return;
+        }
+    };
+    let target = match install_downloaded(&shape, &dest) {
+        Ok(t) => t,
+        Err(e) => {
+            fail("install failed", format!("{e:#}"));
+            refresh(&hub).await;
+            return;
+        }
+    };
+    let _ = std::fs::remove_file(&dest);
+
+    // Windows' installer helper is already counting down to kill us and will
+    // relaunch on its own; signalling ourselves as well would race it.
+    if matches!(shape, InstallShape::WindowsInstaller) {
+        hub.updates.finish(&op_id, true, "installing and restarting", None);
+        announce(&hub);
+        stand_down();
+        return;
+    }
+
+    hub.updates.stage(&op_id, "restarting");
+    announce(&hub);
+    match spawn_restart(&target, None) {
+        Ok(()) => {
+            // Nothing after this is guaranteed to run.
+            hub.updates.finish(&op_id, true, "restarting", None);
+            stand_down();
+        }
+        Err(e) => {
+            hub.updates.finish(
+                &op_id,
+                false,
+                "restart failed",
+                Some(format!(
+                    "{e:#} — v{} is installed, so closing and reopening Threadknot loads it.",
+                    release.version
+                )),
+            );
+            refresh(&hub).await;
+        }
+    }
+}
+
 // ---- restart --------------------------------------------------------------
 
 /// Replace the running app with the executable on disk.
@@ -1182,7 +2098,9 @@ pub fn is_privileged(kind: &str) -> bool {
         "git.selfUpdatePull"
             | "git.selfUpdateRebuild"
             | "git.selfUpdateRestart"
+            | "git.selfUpdateInstall"
             | "git.selfUpdateSetRepoPath"
+            | "git.selfUpdateSetChannel"
     )
 }
 
@@ -1297,6 +2215,47 @@ pub async fn handle(hub: &Arc<Hub>, kind: &str, payload: &Value) -> Result<Value
                 }
             }
         }
+        // Download the newest published release, install it over this copy, and
+        // relaunch. Returns as soon as the run is claimed — the download and
+        // install outlive any request — so the answer arrives on the `updates`
+        // broadcast like the rebuild's does.
+        "git.selfUpdateInstall" => {
+            let release = hub
+                .updates
+                .release()
+                .context("no published release has been read yet. Use check now first.")?;
+            let running = version_count(env!("THREADKNOT_VERSION")).unwrap_or(0);
+            anyhow::ensure!(
+                version_count(&release.version).is_some_and(|n| n > running),
+                "v{} is not newer than the running build (v{}).",
+                release.version,
+                env!("THREADKNOT_VERSION")
+            );
+            if let Some(why) = &release.blocked {
+                anyhow::bail!("{why}");
+            }
+            let force = payload.get("force").and_then(Value::as_bool).unwrap_or(false);
+            let op = hub.updates.begin("install")?;
+            tokio::spawn(run_install(hub.clone(), release, op.id.clone(), force));
+            Ok(json!({ "ok": true, "operationId": op.id }))
+        }
+        // Which route this machine takes to a newer build. Machine-local: a
+        // development box and the laptop that only runs releases are different
+        // machines with different answers, and neither is the mesh's business.
+        "git.selfUpdateSetChannel" => {
+            let raw = payload.get("channel").and_then(Value::as_str).unwrap_or("auto").trim();
+            match raw {
+                // Back to being derived from whether a checkout exists.
+                "auto" | "" => write_override(hub, "channel", None)?,
+                other => {
+                    let c = Channel::parse(other)
+                        .with_context(|| format!("unknown update channel: {other}"))?;
+                    write_override(hub, "channel", Some(c.as_str()))?;
+                }
+            }
+            hub.updates.kick(true);
+            Ok(json!({ "ok": true }))
+        }
         // Machine-local repo path override, for a packaged build or a checkout
         // that moved. Never replicated to peers.
         "git.selfUpdateSetRepoPath" => {
@@ -1321,6 +2280,130 @@ mod tests {
         assert_eq!(version_count("0.1.56-dev4"), Some(56));
         assert_eq!(version_count("0.1.56-dev"), Some(56));
         assert_eq!(version_count("garbage"), None);
+    }
+
+    /// Version comparison is the whole release channel: the tag and the build
+    /// number are the same number by construction (`scripts/release.sh`), so a
+    /// release is an update exactly when its count is higher. A machine
+    /// building master is routinely ahead of the newest release and must never
+    /// be offered one.
+    #[test]
+    fn a_release_is_newer_only_when_its_commit_count_is_higher() {
+        let newer = |release: &str, running: &str| {
+            version_count(release).unwrap() > version_count(running).unwrap()
+        };
+        assert!(newer("0.1.92", "0.1.85"));
+        assert!(!newer("0.1.92", "0.1.92"));
+        assert!(!newer("0.1.85", "0.1.92"));
+        // A dev build carrying local commits is still "at" its master count, so
+        // a release cut past it is genuinely newer.
+        assert!(newer("0.1.92", "0.1.85-dev3"));
+        assert!(!newer("0.1.85", "0.1.85-dev3"));
+    }
+
+    #[test]
+    fn channel_names_round_trip_and_reject_anything_else() {
+        for c in [Channel::Release, Channel::Source] {
+            assert_eq!(Channel::parse(c.as_str()), Some(c));
+        }
+        assert_eq!(Channel::parse("auto"), None);
+        assert_eq!(Channel::parse(""), None);
+    }
+
+    /// Each install shape takes exactly one kind of artifact out of a release
+    /// that carries five. Matching a `.deb` as if it were an AppImage, or the
+    /// portable `threadknot.exe` as if it were the installer, would download
+    /// the wrong file and then run it.
+    #[test]
+    fn asset_matching_is_per_install_shape() {
+        let appimage = InstallShape::AppImage(PathBuf::from("/opt/Threadknot.AppImage"));
+        let mac = InstallShape::MacApp(PathBuf::from("/Applications/Threadknot.app"));
+        let win = InstallShape::WindowsInstaller;
+
+        assert!(asset_matches(&appimage, "Threadknot_0.1.92_amd64.AppImage"));
+        assert!(!asset_matches(&appimage, "Threadknot_0.1.92_amd64.deb"));
+        assert!(!asset_matches(&appimage, "threadknot-linux"));
+
+        assert!(asset_matches(&mac, "Threadknot_0.1.92_aarch64.dmg"));
+        assert!(!asset_matches(&mac, "Threadknot_0.1.92_amd64.AppImage"));
+
+        assert!(asset_matches(&win, "Threadknot_0.1.92_x64-setup.exe"));
+        // The portable binary shares the extension and is not an installer.
+        assert!(!asset_matches(&win, "threadknot.exe-windows"));
+        assert!(!asset_matches(&win, "threadknot.exe"));
+    }
+
+    #[test]
+    fn asset_picking_prefers_this_architecture_and_refuses_a_guess() {
+        let shape = InstallShape::MacApp(PathBuf::from("/Applications/Threadknot.app"));
+        let asset = |n: &str| (n.to_string(), format!("https://example/{n}"), 10u64);
+
+        // The real release shape: two disk images, one per architecture.
+        let both = [asset("Threadknot_0.1.92_aarch64.dmg"), asset("Threadknot_0.1.92_x64.dmg")];
+        let want = match std::env::consts::ARCH {
+            "aarch64" => "Threadknot_0.1.92_aarch64.dmg",
+            _ => "Threadknot_0.1.92_x64.dmg",
+        };
+        assert_eq!(pick_asset(&shape, &both).unwrap().0, want);
+
+        // One unlabelled image is unambiguous, so take it: releases predating
+        // the arch suffix are still installable.
+        let one = [asset("Threadknot.dmg")];
+        assert_eq!(pick_asset(&shape, &one).unwrap().0, "Threadknot.dmg");
+
+        // Two unlabelled images are a coin toss, and installing the wrong
+        // architecture produces an app that will not launch.
+        let ambiguous = [asset("Threadknot.dmg"), asset("Threadknot-beta.dmg")];
+        assert!(pick_asset(&shape, &ambiguous).is_err());
+
+        // Nothing for this platform at all is its own message.
+        let none = [asset("Threadknot_0.1.92_amd64.deb")];
+        let err = pick_asset(&shape, &none).unwrap_err();
+        assert!(err.contains("no build for"), "got: {err}");
+    }
+
+    /// The swap that a Linux release install comes down to. The staging file
+    /// has to land in the *destination* directory (the download lives on
+    /// another filesystem, where a rename is an error rather than an atomic
+    /// move), the result has to be executable (a downloaded file is 644, and a
+    /// non-executable AppImage is an app that will not start), and nothing may
+    /// be left behind for the next run to trip over.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn installing_an_appimage_replaces_it_atomically_and_keeps_it_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = Scratch::new("appimage");
+        let target = dir.0.join("Threadknot.AppImage");
+        std::fs::write(&target, "old build").unwrap();
+        let downloaded = dir.0.join("download").join("Threadknot_0.1.93_amd64.AppImage");
+        std::fs::create_dir_all(downloaded.parent().unwrap()).unwrap();
+        std::fs::write(&downloaded, "new build").unwrap();
+        // As it arrives from the network: readable, not runnable.
+        std::fs::set_permissions(&downloaded, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        install_appimage(&downloaded, &target).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new build");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert!(!target.with_extension("appimage-new").exists(), "staging file left behind");
+        // The download is left for the caller to clear, not consumed here.
+        assert!(downloaded.exists());
+    }
+
+    /// Every architecture Threadknot builds for has to be able to name itself,
+    /// or `pick_asset` silently falls back to the single-candidate path and
+    /// installs whatever happens to be first.
+    #[test]
+    fn this_architecture_has_tokens_to_match_on() {
+        assert!(
+            !arch_tokens().is_empty(),
+            "no asset-name tokens for {}",
+            std::env::consts::ARCH
+        );
     }
 
     #[test]

@@ -73,6 +73,12 @@ with a script. Real agent turns work headless.
   `setsid nohup bash scripts/restart.sh >/dev/null 2>&1 </dev/null & disown`.
   Confirm via `/tmp/threadknot-restart.log` + `ss -ltnp | grep :42800`.
   It launches **once** and only verifies — never wrap it in a relaunch loop.
+- **Cut a release**: `scripts/release.sh` (dry-run first). Installed copies
+  update themselves from it — download, install, relaunch — so the tag is
+  computed, never chosen: it is `v0.1.<commit count of origin/master>`, the same
+  number `build.rs` bakes into the binary. A lower tag is permanent: every
+  installed copy reads it as older than itself and stops updating. See
+  `update.rs`'s header and the release section of `docs/DEVELOPMENT.md`.
 - **Full dev guide + hard-won gotchas** (Wayland webkit flag, desktop-launch
   PATH, Tauri capabilities, per-driver wire facts): **`docs/DEVELOPMENT.md`** —
   read it before changing anything.

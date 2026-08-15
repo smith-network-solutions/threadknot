@@ -70,10 +70,57 @@ export function lastThreadKey(solo: string | null): string {
   return solo ? `${LS_LAST_THREAD}.${solo}` : LS_LAST_THREAD;
 }
 
-/** localStorage key for the last project destination. Startup restores a new
- *  draft here instead of reopening the last conversation. */
+/** localStorage key for the last project destination — the fallback startup
+ *  destination when the remembered chat is gone (or there never was one). */
 export function lastProjectKey(solo: string | null): string {
   return solo ? `${LS_LAST_PROJECT}.${solo}` : LS_LAST_PROJECT;
+}
+
+/** The chat this client was last reading, plus the machine that owns it: a
+ *  remote chat has to be reopened by route, and its owner's thread list may
+ *  not have landed yet when startup navigates. */
+export interface LastThread {
+  threadId: string;
+  machineId?: string;
+}
+
+export function loadLastThread(solo: string | null): LastThread | null {
+  try {
+    const raw = localStorage.getItem(lastThreadKey(solo));
+    if (!raw) return null;
+    // Installs that predate the machineId stored a bare thread id.
+    if (!raw.startsWith("{")) return { threadId: raw };
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const { threadId, machineId } = parsed as Record<string, unknown>;
+    if (typeof threadId !== "string" || !threadId) return null;
+    return { threadId, ...(typeof machineId === "string" ? { machineId } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+export function rememberLastThread(
+  solo: string | null,
+  threadId: string,
+  machineId?: string,
+): void {
+  try {
+    localStorage.setItem(
+      lastThreadKey(solo),
+      JSON.stringify({ threadId, ...(machineId ? { machineId } : {}) }),
+    );
+  } catch {
+    // Navigation persistence is a convenience only.
+  }
+}
+
+export function forgetLastThread(solo: string | null): void {
+  try {
+    localStorage.removeItem(lastThreadKey(solo));
+  } catch {
+    // ditto
+  }
 }
 
 /** New-thread choices are project-scoped and shared by fleet/solo windows. */
@@ -203,6 +250,12 @@ export interface AppState {
    *  their mind. The chat stays greyed under its agent either way, so the
    *  hand-back is one message away rather than lost. */
   pendingHermes: Record<string, string>;
+  /** False until the cold-start restore has had its turn — reopening the chat
+   *  this client was last reading, or deciding there isn't one. The sidebar's
+   *  "nothing is open, so open a draft in the first workspace" fallback waits
+   *  on this; without the gate it wins the race on every load and the restore
+   *  arrives to find a destination it never chose already on screen. */
+  restored: boolean;
 }
 
 export const initialState: AppState = {
@@ -244,6 +297,7 @@ export const initialState: AppState = {
   attention: loadThreadAttention(),
   queuedMessages: {},
   pendingHermes: {},
+  restored: false,
 };
 
 export type Action =
@@ -264,6 +318,7 @@ export type Action =
   | { type: "threads"; projectId: string; threads: Thread[] }
   | { type: "toggleProject"; projectId: string }
   | { type: "openThread"; threadId: string }
+  | { type: "restored" }
   | { type: "openDraft"; draft: DraftThread }
   | { type: "closeActive" }
   | { type: "feedLoaded"; threadId: string; thread: Thread; events: PersistedEvent[] }
@@ -694,6 +749,8 @@ export function reducer(state: AppState, action: Action): AppState {
         attention,
       };
     }
+    case "restored":
+      return state.restored ? state : { ...state, restored: true };
     case "openDraft":
       return {
         ...state,
@@ -1095,11 +1152,16 @@ export interface ThreadknotActions {
   /** Re-pull remote workspace members' threads (e.g. after a peer reconnects). */
   refreshRemoteThreads: () => Promise<void>;
   /** Open a thread normally, or refresh its transcript in place while keeping
-   *  mounted chat UI (scroll position, open HUD/popovers) intact. */
+   *  mounted chat UI (scroll position, open HUD/popovers) intact. Resolves
+   *  false when the thread is gone and nothing was put on screen. */
   selectThread: (
     threadId: string,
     options?: { preserveFeed?: boolean },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
+  /** Reopen a remembered chat at startup, routed by the machineId stored
+   *  alongside it: its owner's thread list may not have arrived yet, so the
+   *  route cannot be resolved from state the way `selectThread` does. */
+  restoreThread: (threadId: string, machineId?: string) => Promise<boolean>;
   /** Full text of a historical tool call whose replay copy was elided. */
   toolOutput: (threadId: string, callId: string) => Promise<string | null>;
   openDraft: (projectId: string, machineId?: string) => void;
@@ -1345,6 +1407,17 @@ export interface ThreadknotActions {
   /** Relaunch a machine into the binary already built on its disk. `force`
    *  overrides the guard that protects threads mid-turn. */
   restartUpdate: (machineId?: string, force?: boolean) => Promise<void>;
+  /** Download the newest published release onto a machine, install it over the
+   *  copy running there, and relaunch it. Resolves once the run is claimed;
+   *  progress arrives on the `updates` broadcast. `force` overrides the guard
+   *  that protects threads mid-turn. */
+  installUpdate: (machineId?: string, force?: boolean) => Promise<void>;
+  /** Which route a machine takes to a newer build: published releases, its own
+   *  checkout, or `auto` — derived from whether it has one (machine-local). */
+  setUpdateChannel: (
+    channel: "release" | "source" | "auto",
+    machineId?: string,
+  ) => Promise<void>;
   /** Point a machine at its Threadknot source checkout (machine-local setting). */
   setUpdateRepoPath: (path: string, machineId?: string) => Promise<void>;
 }

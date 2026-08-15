@@ -961,12 +961,33 @@ export interface UpdateCommit {
   subject: string;
 }
 
-/** One pull / rebuild / restart, from claim to completion. `ok` is null while
- *  it is still running, which is also how the UI knows to show a live stage.
- *  `update` is all three chained off a single click. */
+/** The newest published release, already resolved down to the one artifact
+ *  this machine would install. `blocked` says why it cannot install in place —
+ *  a .deb owned by the package manager, a release with no build for this
+ *  platform — in which case `url` is the manual route. */
+export interface ReleaseInfo {
+  /** The tag without its leading `v`: "0.1.92". */
+  version: string;
+  tag: string;
+  name: string;
+  /** Release notes, truncated server-side. */
+  notes: string;
+  publishedAt: string;
+  /** The release page. */
+  url: string;
+  assetName?: string | null;
+  assetUrl?: string | null;
+  assetSize: number;
+  blocked?: string | null;
+}
+
+/** One pull / rebuild / restart / install, from claim to completion. `ok` is
+ *  null while it is still running, which is also how the UI knows to show a
+ *  live stage. `update` is pull+rebuild+restart chained off a single click;
+ *  `install` is the release-channel equivalent. */
 export interface UpdateOperation {
   id: string;
-  kind: "pull" | "rebuild" | "restart" | "update";
+  kind: "pull" | "rebuild" | "restart" | "update" | "install";
   stage: string;
   startedAt: string;
   finishedAt?: string | null;
@@ -975,12 +996,30 @@ export interface UpdateOperation {
   logPath?: string | null;
 }
 
-/** Whether a newer origin/master exists than the build that is running.
- *  Three independent kinds of stale: the checkout is behind master (fix =
- *  pull), the checkout is current but the binary predates it (fix = rebuild),
- *  or a newer binary is already on disk (fix = restart). */
+/** Whether a newer Threadknot exists than the build that is running, by
+ *  whichever route this machine takes to one.
+ *
+ *  On the **release** channel that is a published build to download and install.
+ *  On the **source** channel it is master, with three independent kinds of
+ *  stale: the checkout is behind master (fix = pull), the checkout is current
+ *  but the binary predates it (fix = rebuild), or a newer binary is already on
+ *  disk (fix = restart). `updateAvailable` is always the signal for the channel
+ *  the machine is actually on, which is what the gear pulse follows. */
 export interface UpdateStatus {
-  /** False when this build came from outside a git checkout — hide the section. */
+  /** "release" | "source". Optional: a peer on an older Threadknot sends none,
+   *  and it only ever had the source channel. */
+  channel?: "release" | "source";
+  /** The channel was pinned by hand rather than derived from whether this
+   *  machine has a checkout. */
+  channelPinned?: boolean;
+  /** Newest published release, once one has been read. */
+  release?: ReleaseInfo | null;
+  /** A published release is newer than the running build. */
+  releaseAvailable?: boolean;
+  /** …and this machine can download and install it without help. */
+  releaseInstallSupported?: boolean;
+  /** False when this build came from outside a git checkout — which is the
+   *  ordinary state of a machine on the release channel, not a problem. */
   repoAvailable: boolean;
   repoPath: string;
   /** How repoPath was found, so a machine on the wrong checkout is diagnosable.
@@ -1822,6 +1861,21 @@ export interface RequestMap {
   "git.selfUpdateRestart": {
     payload: { machineId?: string; force?: boolean };
     data: { ok: boolean; restarting?: boolean };
+  };
+  /** Download the newest published release, install it over the machine's own
+   *  copy, and relaunch. Returns once the run is claimed — the download and
+   *  install outlive the request — so progress arrives on the `updates`
+   *  broadcast. `force` overrides the active-work guard. */
+  "git.selfUpdateInstall": {
+    payload: { machineId?: string; force?: boolean };
+    data: { ok: boolean; operationId: string };
+  };
+  /** Which route a machine takes to a newer build. `auto` goes back to being
+   *  derived from whether it has a checkout. Machine-local, like the source
+   *  folder below: never replicated to peers. */
+  "git.selfUpdateSetChannel": {
+    payload: { channel: "release" | "source" | "auto"; machineId?: string };
+    data: { ok: boolean };
   };
   /** Machine-local source-folder override; never replicated to peers. */
   "git.selfUpdateSetRepoPath": {

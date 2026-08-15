@@ -12,10 +12,14 @@ export const MOBILE_MAX_WIDTH = 767;
 const MOBILE_QUERY = `(max-width: ${MOBILE_MAX_WIDTH}px)`;
 
 /**
- * Below this, the gap between the two viewports is browser furniture (an iOS
- * accessory bar is ~45px, a collapsing toolbar less), not a keyboard.
+ * Below this, the gap between the two viewports is browser furniture, not a
+ * keyboard. It has to sit ABOVE the tallest piece of furniture, and the tallest
+ * is iOS's input accessory bar at ~45px — which the old value of 40 let
+ * through, so a focused field with no keyboard up still lifted the composer by
+ * the height of the bar. The smallest real phone keyboard (an SE in portrait)
+ * is ~216px, so anything in this range is furniture with room to spare.
  */
-const KEYBOARD_MIN_INSET = 40;
+const KEYBOARD_MIN_INSET = 120;
 
 /**
  * Publish how much of the layout viewport the on-screen keyboard covers as
@@ -46,7 +50,12 @@ export function installKeyboardInset(): () => void {
 
   function measure() {
     frame = null;
-    const overlap = window.innerHeight - vv!.height - vv!.offsetTop;
+    // offsetTop is clamped at 0 before subtracting: Safari panning the visual
+    // viewport down (positive) genuinely costs us room, but a NEGATIVE offset —
+    // which WebKit reports transiently while the keyboard animates and while
+    // the page rubber-bands — would be subtracted into extra inset and lift the
+    // composer above the keyboard by that much.
+    const overlap = window.innerHeight - vv!.height - Math.max(0, vv!.offsetTop);
     const inset = overlap > KEYBOARD_MIN_INSET ? Math.round(overlap) : 0;
     // The keyboard animates open, so this fires many times per gesture; writing
     // only on a change keeps it from restyling the feed on every frame.

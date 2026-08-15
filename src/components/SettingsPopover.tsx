@@ -2599,17 +2599,27 @@ function isRunning(u: UpdateStatus): boolean {
   return !!u.operation && !u.operation.finishedAt;
 }
 
-/** Short human read of where a machine sits relative to master. A running
- *  operation wins: showing "needs a rebuild" while the rebuild is compiling
- *  reads as if nothing happened. */
+/** Which route a machine takes to a newer build. A peer on a Threadknot older
+ *  than the release channel reports none, and only ever had the source one. */
+function updateChannel(u: UpdateStatus): "release" | "source" {
+  return u.channel ?? "source";
+}
+
+/** Short human read of where a machine sits relative to the newest build it
+ *  could be running. A running operation wins: showing "needs a rebuild" while
+ *  the rebuild is compiling reads as if nothing happened. */
 function updateSummary(u: UpdateStatus): string {
   if (isRunning(u)) return u.operation!.stage;
+  // A newer binary already on disk outranks everything on either channel: the
+  // version in the footer is genuinely not the newest one here yet.
+  if (u.restartPending) return "restart to finish updating";
+  if (updateChannel(u) === "release") {
+    if (!u.release) return "cannot reach the releases page";
+    return u.releaseAvailable ? `v${u.release.version} available` : "up to date";
+  }
   // No master version means the comparison never happened (no checkout, fetch
   // failed, no origin/master yet). Saying "up to date" there would be a lie.
   if (!u.repoAvailable || !u.masterVersion) return "cannot check";
-  // A built-but-not-loaded binary outranks everything: the version in the
-  // footer is genuinely not the newest one on this disk yet.
-  if (u.restartPending) return "restart to finish updating";
   if (!u.updateAvailable) return "up to date";
   // Whichever axis is further behind is the honest headline: the binary can be
   // current while the checkout still has commits to pull, and vice versa.
@@ -2623,22 +2633,31 @@ function updateSummary(u: UpdateStatus): string {
 /** What the card says between the click and the server's first progress
  *  broadcast. Without these the card sat unchanged for a second or two and the
  *  click read as a no-op. */
-const CLAIMING: Record<"pull" | "rebuild" | "restart", string> = {
+const CLAIMING: Record<"pull" | "rebuild" | "restart" | "install", string> = {
   pull: "asking this machine to pull…",
   rebuild: "starting the build…",
   restart: "restarting. this window reconnects on its own",
+  install: "starting the download…",
 };
 
 /** Which button owns a running server operation. The chained pull-build-restart
  *  reports under its own kind, but the button that started it is still the pull
  *  one, and it has to keep showing progress for the whole run rather than going
  *  idle the moment the pull stage ends. */
-const OP_ACTION: Record<string, "pull" | "rebuild" | "restart"> = {
+const OP_ACTION: Record<string, "pull" | "rebuild" | "restart" | "install"> = {
   pull: "pull",
   update: "pull",
   rebuild: "rebuild",
   restart: "restart",
+  install: "install",
 };
+
+/** Bytes as something a download line can say. */
+function fileSize(bytes: number): string {
+  if (!bytes) return "";
+  const mb = bytes / 1024 / 1024;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
 
 /** Version + pending-commit view for one machine, with the actions that machine
  *  can safely take. Local when `machineId` is undefined. */
@@ -2658,7 +2677,7 @@ function UpdateCard({
   onActed?: () => void;
 }) {
   const { state, actions } = useStore();
-  type Action = "pull" | "rebuild" | "restart";
+  type Action = "pull" | "rebuild" | "restart" | "install";
   const [busy, setBusy] = useState<Action | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Restart stops the running app, so it takes a second click to confirm. */
@@ -2668,6 +2687,14 @@ function UpdateCard({
   const look = machineLook(state, machineId);
   const running = isRunning(status);
   const op = status.operation;
+  const channel = updateChannel(status);
+  const release = status.release ?? null;
+  // The button only exists where the machine can finish the job by itself. A
+  // .deb install, or a release with no artifact for this platform, gets the
+  // release page instead — which is the honest answer, not a dead button.
+  const canInstall = Boolean(
+    channel === "release" && status.releaseAvailable && status.releaseInstallSupported,
+  );
   // What this machine is doing right now, whether this client started it or
   // another one did. Server state wins once it lands; `busy` only covers the
   // gap before the first broadcast. Without this the button sat disabled while
@@ -2715,6 +2742,7 @@ function UpdateCard({
     try {
       if (which === "pull") await actions.pullUpdate(machineId, canChain, force);
       else if (which === "rebuild") await actions.rebuildUpdate(machineId);
+      else if (which === "install") await actions.installUpdate(machineId, force);
       else await actions.restartUpdate(machineId, force);
       setArmed(null);
       onActed?.();
@@ -2756,14 +2784,22 @@ function UpdateCard({
           </div>
           <div className="update-card-sub">
             v{status.runningVersion}
-            {status.masterVersion && status.masterVersion !== status.runningVersion
-              ? ` → master v${status.masterVersion}`
-              : ""}
+            {channel === "release"
+              ? status.releaseAvailable && release
+                ? ` → v${release.version}`
+                : ""
+              : status.masterVersion && status.masterVersion !== status.runningVersion
+                ? ` → master v${status.masterVersion}`
+                : ""}
             {" · "}
             {updateSummary(status)}
           </div>
         </div>
-        {status.commits.length > 0 && (
+        {/* Commits are the source channel's unit of change. On the release
+            channel the notes on the card already say what is in the update, and
+            a list of what landed on master since is a different question the
+            user did not ask. */}
+        {channel === "source" && status.commits.length > 0 && (
           <button
             type="button"
             className="settings-toggle"
@@ -2777,7 +2813,7 @@ function UpdateCard({
 
       {status.error && <div className="update-note warn">{status.error}</div>}
 
-      {open && status.commits.length > 0 && (
+      {open && channel === "source" && status.commits.length > 0 && (
         <ul className="update-commits">
           {status.commits.map((c) => (
             <li key={c.hash} className="update-commit">
@@ -2815,7 +2851,107 @@ function UpdateCard({
         </div>
       )}
 
-      {status.repoAvailable && (
+      {channel === "release" && (
+        <>
+          {!release && !status.error && (
+            <div className="update-note">
+              Threadknot has not been able to read the releases page yet. Use{" "}
+              <strong>check now</strong> above.
+            </div>
+          )}
+          {/* The notes are what makes an update something you agree to rather
+              than something you accept. Shown only when there is one to take:
+              reciting the release you are already on is noise. */}
+          {status.releaseAvailable && release?.notes && (
+            <div className="update-note update-release-notes">
+              <strong>{release.name}</strong>
+              <p>{release.notes}</p>
+              <a href={release.url} target="_blank" rel="noreferrer noopener">
+                full notes on the release page
+              </a>
+            </div>
+          )}
+          {status.releaseAvailable && release?.blocked && (
+            <div className="update-note">
+              {release.blocked}{" "}
+              <a href={release.url} target="_blank" rel="noreferrer noopener">
+                Open the release page
+              </a>
+              .
+            </div>
+          )}
+          {canInstall && busyThreads > 0 && (
+            <div className="update-note">
+              {busyThreads} thread{busyThreads === 1 ? " is" : "s are"} still working or
+              waiting on approval. Installing restarts Threadknot and interrupts{" "}
+              {busyThreads === 1 ? "it" : "them"}.
+            </div>
+          )}
+          {status.restartPending && (
+            <div className="update-note">
+              A newer Threadknot is already installed at <code>{status.binaryPath}</code>.
+              This window is still running the old one until you restart.
+            </div>
+          )}
+
+          <div className="update-actions">
+            {canInstall &&
+              (busyThreads > 0 ? (
+                confirmable(
+                  "install",
+                  `update to v${release!.version}`,
+                  `yes, interrupt ${busyThreads} and update`,
+                  "updating…",
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="settings-toggle primary"
+                  disabled={busy !== null || running}
+                  onClick={() => void run("install")}
+                  title={`Downloads ${release!.assetName} and restarts into it. The download keeps going if you close this window.`}
+                >
+                  {activeAction === "install" && (
+                    <span className="update-spinner" aria-hidden="true" />
+                  )}
+                  {activeAction === "install"
+                    ? "updating…"
+                    : `update to v${release!.version}`}
+                </button>
+              ))}
+            {status.restartPending &&
+              status.restartSupported &&
+              confirmable(
+                "restart",
+                "restart now",
+                busyThreads > 0
+                  ? `yes, interrupt ${busyThreads} and restart`
+                  : "yes, restart Threadknot",
+                "restarting…",
+              )}
+            {release && !status.releaseAvailable && !status.restartPending && (
+              <span className="update-ok">latest release</span>
+            )}
+            {status.releaseAvailable && !status.releaseInstallSupported && (
+              <a
+                className="settings-toggle"
+                href={release!.url}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                download v{release!.version}
+              </a>
+            )}
+            {canInstall && release!.assetSize > 0 && (
+              <span className="update-blocked">
+                {release!.assetName} · {fileSize(release!.assetSize)}
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      {channel === "source" && status.repoAvailable && (
         <>
           {/* Only explain what is blocking a pull when there is one to do. */}
           {status.updateAvailable && status.headAhead > 0 && (
@@ -2946,6 +3082,84 @@ function UpdateCard({
         </>
       )}
 
+      {error && <div className="update-note warn">{error}</div>}
+    </div>
+  );
+}
+
+/**
+ * Where this machine gets a newer Threadknot from.
+ *
+ * Offered as a choice, not just reported, because the derived answer is right
+ * almost always and wrong in the one case that matters most: the machine the
+ * releases are cut on, where the only way to find out what an update actually
+ * does to a user is to take one. Machine-local, so pinning this box changes
+ * nothing about the rest of the fleet.
+ */
+function ChannelField({ status }: { status: UpdateStatus }) {
+  const { actions } = useStore();
+  const [saving, setSaving] = useState<"release" | "source" | "auto" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const channel = updateChannel(status);
+
+  async function pick(next: "release" | "source" | "auto") {
+    setSaving(next);
+    setError(null);
+    try {
+      await actions.setUpdateChannel(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <div className="update-channel">
+      <div className="settings-row">
+        <span className="settings-value dim">this machine updates from</span>
+        <div className="update-channel-picker">
+          <button
+            type="button"
+            className={`settings-toggle${channel === "release" ? " primary" : ""}`}
+            disabled={saving !== null}
+            onClick={() => void pick("release")}
+            title="Published builds from the releases page: downloaded, installed and restarted for you."
+          >
+            releases
+          </button>
+          <button
+            type="button"
+            className={`settings-toggle${channel === "source" ? " primary" : ""}`}
+            disabled={saving !== null}
+            onClick={() => void pick("source")}
+            title="This machine's own checkout: pull master, rebuild, restart."
+          >
+            source
+          </button>
+        </div>
+      </div>
+      <div className="settings-value dim">
+        {channel === "release"
+          ? "Threadknot downloads the published build for this platform, installs it over this copy, and restarts."
+          : "Threadknot fast-forwards this machine's checkout to master, rebuilds it, and restarts."}
+        {status.channelPinned ? (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="settings-toggle update-channel-auto"
+              disabled={saving !== null}
+              onClick={() => void pick("auto")}
+            >
+              choose automatically
+            </button>
+          </>
+        ) : (
+          " Chosen automatically, because this machine " +
+          (status.repoAvailable ? "has a source checkout." : "has no source checkout.")
+        )}
+      </div>
       {error && <div className="update-note warn">{error}</div>}
     </div>
   );
@@ -3127,11 +3341,12 @@ function UpdatesSettings() {
             />
             <div className="settings-value dim update-checked">
               last checked {timeAgo(local.checkedAt)}
-              {local.repoPath
+              {updateChannel(local) === "source" && local.repoPath
                 ? ` · ${local.repoPath}${local.repoSource ? ` (${local.repoSource})` : ""}`
                 : ""}
             </div>
-            <RepoPathField status={local} />
+            <ChannelField status={local} />
+            {updateChannel(local) === "source" && <RepoPathField status={local} />}
           </>
         ) : (
           <div className="settings-value dim">loading…</div>
@@ -3749,19 +3964,15 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
   const visibleSections = SETTINGS_SECTIONS.filter(
     (item) => item.id !== "voice" || state.hello?.principal === "master",
   );
-  // The pulsing gear is a pointer at this tab, so land on it when it is the
-  // reason the user opened settings.
-  const landOnUpdates = Boolean(
-    state.update?.updateAvailable || state.update?.restartPending,
-  );
-  const [section, setSection] = useState<SettingsSection>(
-    // Same rule as the gear pulse: if it pulsed, land on what it was pulsing about.
-    landOnUpdates ? "updates" : "appearance",
-  );
-  // Mobile only: the sheet opens on the section list, except when the gear was
-  // pulsing about an update — then it opens straight into that section, which
-  // is what the pulse promised.
-  const [drilled, setDrilled] = useState(landOnUpdates);
+  // Always the first section, whatever else is going on. Settings used to open
+  // on Updates whenever one was pending, which meant that for the whole life of
+  // an available update every trip here — to change a theme, to add a machine —
+  // landed somewhere nobody asked for. The pulsing gear already says an update
+  // is waiting; it does not need to also seize the wheel.
+  const [section, setSection] = useState<SettingsSection>("appearance");
+  // Mobile only: the sheet always opens on the section list, for the same
+  // reason.
+  const [drilled, setDrilled] = useState(false);
 
   // What the About section can raise. While it is up it owns the whole dialog
   // and the keyboard, including Escape (which leaves it, rather than closing
