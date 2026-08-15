@@ -75,7 +75,6 @@ import {
   AgentMark,
   ArchiveIcon,
   BellIcon,
-  BrainIcon,
   CheckIcon,
   ChevronIcon,
   ClockIcon,
@@ -3556,7 +3555,6 @@ export const Sidebar = memo(function Sidebar({
     workspaceId: string;
     moveThreadId?: string;
   } | null>(null);
-  const [organizingChats, setOrganizingChats] = useState(false);
   /** Where the rail's stash tile was clicked; non-null renders the bring-back
    *  menu. Portaled from here with the sidebar's other menus. */
   const [stashMenu, setStashMenu] = useState<MenuPoint | null>(null);
@@ -3740,63 +3738,6 @@ export const Sidebar = memo(function Sidebar({
     startNewThread(wsId, { x: r.left, y: r.bottom + 4 });
   }
 
-  async function organizeProjectChats() {
-    if (organizingChats) return;
-    const workspaces = sections
-      .map((workspace) => ({
-        id: workspace.id,
-        name: workspace.name,
-        chats: (sectionData.get(workspace.id)?.threads ?? [])
-          // Workers stay nested under the chat that dispatched them; filing
-          // them independently would split one unit of work across folders.
-          .filter((thread) => !thread.dispatch)
-          .map((thread) => ({
-            id: thread.id,
-            title: thread.title || "Untitled thread",
-          })),
-      }))
-      .filter((workspace) => workspace.chats.length > 0);
-    if (workspaces.length === 0) {
-      window.alert("There are no project chats to organize yet.");
-      return;
-    }
-
-    setOrganizingChats(true);
-    try {
-      const organized = await actions.organizeChats(workspaces);
-      const organizedWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
-      const organizedThreadIds = new Set(
-        workspaces.flatMap((workspace) => workspace.chats.map((chat) => chat.id)),
-      );
-      const retainedFolders = layout.chatFolders.filter(
-        (folder) => !organizedWorkspaceIds.has(folder.workspaceId),
-      );
-      const nextFolders: ChatFolder[] = [];
-      const nextAssignments = Object.fromEntries(
-        Object.entries(layout.chatFolderAssignments).filter(
-          ([threadId]) => !organizedThreadIds.has(threadId),
-        ),
-      );
-      for (const folder of organized) {
-        const id = `folder-${Date.now()}-${nextFolders.length}-${Math.random()
-          .toString(36)
-          .slice(2, 7)}`;
-        nextFolders.push({ id, workspaceId: folder.workspaceId, name: folder.name });
-        for (const threadId of folder.threadIds) nextAssignments[threadId] = id;
-      }
-      updateLayout({
-        chatFolders: [...retainedFolders, ...nextFolders],
-        chatFolderAssignments: nextAssignments,
-      });
-    } catch (error) {
-      window.alert(
-        `Could not organize chats: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    } finally {
-      setOrganizingChats(false);
-    }
-  }
-
   return (
     <>
     <aside
@@ -3912,16 +3853,6 @@ export const Sidebar = memo(function Sidebar({
             >
               <CompassIcon size={18} />
               <span>Quick threads</span>
-            </button>
-            <button
-              type="button"
-              className="sidebar-action ai-organize"
-              disabled={organizingChats}
-              title="Organize project chats with gpt-5.3-codex-spark (medium reasoning)"
-              onClick={() => void organizeProjectChats()}
-            >
-              <BrainIcon size={18} />
-              <span>{organizingChats ? "Organizing chats…" : "AI Organize Chats"}</span>
             </button>
           </>
         )}

@@ -408,7 +408,6 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   transition: color 0.12s;
 }
 .sidebar-action:hover svg { color: var(--sidebar-muted); opacity: 0.7; }
-.sidebar-action.ai-organize svg { color: var(--sidebar-muted); opacity: 0.7; }
 /* The label takes the middle so any trailing count/dot rides the right edge. */
 .sidebar-action > span:first-of-type {
   flex: 1;
