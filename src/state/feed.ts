@@ -220,6 +220,8 @@ export type FeedItem = FeedItemBase & (
   /** Provenance marker for a turn; renders as a handoff divider when `switched`. */
   | { type: "turn"; agent?: Agent; model?: string; switched: boolean }
   | { type: "note"; noteKind: "status" | "error" | "session"; text: string }
+  /** A structured fatal error: headline, cause, path at fault, next step. */
+  | { type: "failure"; title: string; message: string; path?: string; hint?: string }
 );
 
 function finalizeStreams(items: FeedItem[]): FeedItem[] {
@@ -652,7 +654,16 @@ function foldEvent(items: FeedItem[], ev: AgentEvent, timestamp?: string): FeedI
     case "error":
       return [
         ...finalizeStreams(items),
-        { id: iid(), type: "note", noteKind: "error", text: ev.message },
+        ev.title
+          ? {
+              id: iid(),
+              type: "failure",
+              title: ev.title,
+              message: ev.message,
+              path: ev.path,
+              hint: ev.hint,
+            }
+          : { id: iid(), type: "note", noteKind: "error", text: ev.message },
       ];
     default:
       return items;

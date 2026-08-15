@@ -88,6 +88,8 @@ function feedSearchText(item: FeedItem): string {
       return `${item.name}\n${item.relPath}\n${item.description ?? ""}`;
     case "approval":
       return `${item.title}\n${item.detail}`;
+    case "failure":
+      return `${item.title}\n${item.message}\n${item.path ?? ""}\n${item.hint ?? ""}`;
     case "question":
       return JSON.stringify(item.questions) + JSON.stringify(item.answers);
     case "turn":

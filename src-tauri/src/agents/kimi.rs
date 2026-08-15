@@ -213,8 +213,13 @@ fn spawn_reader(child: &mut Child, rpc: Arc<Rpc>, msg_tx: mpsc::UnboundedSender<
 fn spawn_kimi(
     cwd: &str,
 ) -> Result<(Child, Arc<Rpc>, mpsc::UnboundedReceiver<Incoming>)> {
-    let bin = super::resolve_bin("kimi")
-        .ok_or_else(|| anyhow::anyhow!("Kimi Code CLI not found — install it, then run `kimi login`"))?;
+    super::check_workspace(cwd)?;
+    let bin = super::resolve_bin("kimi").ok_or_else(|| super::SpawnFailure {
+        title: "Kimi Code is not installed".into(),
+        message: "The `kimi` CLI was not found on PATH on this machine.".into(),
+        path: None,
+        hint: Some("Install Kimi Code, then run `kimi login` in a terminal.".into()),
+    })?;
     let mut cmd = Command::new(bin);
     cmd.arg("acp")
         .env("PATH", super::agent_path())
@@ -226,7 +231,7 @@ fn spawn_kimi(
     super::no_console(&mut cmd);
     let mut child = cmd
         .spawn()
-        .context("failed to spawn `kimi acp` — is Kimi Code installed?")?;
+        .with_context(|| format!("failed to start `kimi acp` in {cwd}"))?;
 
     if let Some(stderr) = child.stderr.take() {
         tokio::spawn(async move {
@@ -417,9 +422,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                         )
                         .await
                         {
-                            ctx.emit(AgentEvent::Error {
-                                message: format!("{error:#}"),
-                            });
+                            ctx.emit(AgentEvent::error(format!("{error:#}")));
                         }
                     }
                     AgentCommand::Settings { settings } => {
@@ -455,9 +458,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                             )
                             .await
                             {
-                                ctx.emit(AgentEvent::Error {
-                                    message: format!("Kimi could not deliver the follow-up: {error:#}"),
-                                });
+                                ctx.emit(AgentEvent::error(format!("Kimi could not deliver the follow-up: {error:#}")));
                             }
                         }
                     }
@@ -547,9 +548,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                             )
                             .await
                             {
-                                ctx.emit(AgentEvent::Error {
-                                    message: format!("Kimi could not deliver the queued follow-up: {error:#}"),
-                                });
+                                ctx.emit(AgentEvent::error(format!("Kimi could not deliver the queued follow-up: {error:#}")));
                             }
                         }
                     }
@@ -757,7 +756,7 @@ fn finish_turn(
     finish_unresolved_subagents(ctx, st);
 
     match result {
-        Err(message) => ctx.emit(AgentEvent::Error { message }),
+        Err(message) => ctx.emit(AgentEvent::error(message)),
         Ok(value) => {
             let usage = usage_from_prompt_response(&value);
             if let Some(usage) = usage.clone() {
@@ -769,9 +768,7 @@ fn finish_turn(
                 .unwrap_or("end_turn")
             {
                 "cancelled" => ctx.emit(AgentEvent::TurnAborted),
-                "refusal" => ctx.emit(AgentEvent::Error {
-                    message: "Kimi refused the request".into(),
-                }),
+                "refusal" => ctx.emit(AgentEvent::error("Kimi refused the request")),
                 "max_tokens" => {
                     ctx.emit(AgentEvent::Status {
                         text: "Kimi reached its output-token limit".into(),

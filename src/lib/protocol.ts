@@ -755,7 +755,15 @@ export type AgentEvent =
     }
   | { kind: "subagent_progress"; taskId: string; activity: string; text: string }
   | { kind: "subagent_completed"; taskId: string; status: string; summary?: string }
-  | { kind: "error"; message: string };
+  | {
+      kind: "error";
+      message: string;
+      /** Optional structure (newer servers): headline, path at fault, and a
+       *  next step. Absent means render the legacy one-line error. */
+      title?: string;
+      path?: string;
+      hint?: string;
+    };
 
 /** Who is doing a dispatched job: which machine, which harness, and the thread
  *  to open to watch it. */

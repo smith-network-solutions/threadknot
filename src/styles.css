@@ -6611,6 +6611,43 @@ span.title-agent-mark { width: 16px; height: 16px; }
   padding: 8px 12px;
 }
 
+/* Structured fatal error: headline, cause, path at fault, next step. */
+.feed-failure {
+  max-width: 74ch;
+  background: var(--red-dim);
+  border: 1px solid rgba(224, 101, 95, 0.35);
+  border-left: 3px solid var(--red);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.feed-failure-title {
+  color: var(--red);
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.feed-failure-message {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.feed-failure-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--red);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  padding: 4px 8px;
+  align-self: flex-start;
+  word-break: break-all;
+}
+.feed-failure-hint {
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
 /* ================= composer ================= */
 
 /* --composer-max-w / --composer-font / data-composer-density come from the
@@ -9400,6 +9437,14 @@ span.title-agent-mark { width: 16px; height: 16px; }
   transition: border-color 0.12s;
 }
 .toast:hover { border-color: var(--brass); }
+.toast-error {
+  background: rgba(224, 101, 95, 0.12);
+  border-color: rgba(224, 101, 95, 0.35);
+  border-left-color: var(--red, #e0655f);
+}
+.toast-error:hover { border-color: var(--red, #e0655f); }
+.toast-error .toast-title { color: var(--red, #e0655f); }
+.toast-error .toast-body { color: var(--text); }
 .toast-title {
   font-size: 12px;
   font-weight: 600;

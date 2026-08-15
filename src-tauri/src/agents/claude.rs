@@ -722,8 +722,13 @@ fn spawn_claude(
     let profile = ctx.claudex.as_ref();
     let model = api_model_id(settings, profile);
     let model_context_window = context_window(&model, profile);
-    let bin = super::resolve_bin("claude")
-        .ok_or_else(|| anyhow::anyhow!("claude CLI not found on PATH"))?;
+    super::check_workspace(&ctx.cwd)?;
+    let bin = super::resolve_bin("claude").ok_or_else(|| super::SpawnFailure {
+        title: "Claude Code is not installed".into(),
+        message: "The `claude` CLI was not found on PATH on this machine.".into(),
+        path: None,
+        hint: Some("Install Claude Code, then run `claude login` in a terminal.".into()),
+    })?;
     // A bridged profile keeps its own CLAUDE_CONFIG_DIR: its transcripts,
     // session ids and (absent) login all live there, apart from ~/.claude.
     let config_dir = profile.map(|p| p.config_dir(ctx.hub.store.dir()));
@@ -786,7 +791,9 @@ fn spawn_claude(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .context("failed to spawn `claude` — is Claude Code installed and on PATH?")?;
+        // The binary was already resolved and the workspace already checked,
+        // so a failure here is something rarer; report it with the facts.
+        .with_context(|| format!("failed to start `claude` in {}", ctx.cwd))?;
 
     let stdout = child.stdout.take().expect("claude stdout");
     let (tx, rx) = mpsc::unbounded_channel();
@@ -1796,13 +1803,11 @@ async fn handle_message(ctx: &DriverCtx, session: &mut Session, v: Value) -> Res
                 session.pending_finalize = None;
                 session.burst.reset();
                 session.turn_active = false;
-                ctx.emit(AgentEvent::Error {
-                    message: if errors_text.is_empty() {
+                ctx.emit(AgentEvent::error(if errors_text.is_empty() {
                         format!("turn ended: {subtype}")
                     } else {
                         errors_text.to_string()
-                    },
-                });
+                    }));
             }
             // The direct control response is the same authoritative source as
             // Claude Code's own context UI. It corrects the event-based

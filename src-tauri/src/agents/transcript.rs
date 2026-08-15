@@ -157,7 +157,7 @@ pub fn render(
                     lines.join("\n")
                 ));
             }
-            AgentEvent::Error { message } => {
+            AgentEvent::Error { message, .. } => {
                 blocks.push(format!("[error] {}", trim(message, 300)));
             }
             // Thinking is provider-internal; deltas never persist; the rest is

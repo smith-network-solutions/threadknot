@@ -862,10 +862,32 @@ pub enum AgentEvent {
     },
     Error {
         message: String,
+        /// Short headline ("Workspace folder missing"). Optional so older
+        /// peers and transcripts keep parsing; when absent, clients render
+        /// the legacy one-line error.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// The filesystem path at fault, when the failure is about one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        /// What the user can do about it, in plain language.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hint: Option<String>,
     },
 }
 
 impl AgentEvent {
+    /// A plain one-line error with no structured detail, the shape every
+    /// pre-existing call site emits.
+    pub fn error(message: impl Into<String>) -> Self {
+        AgentEvent::Error {
+            message: message.into(),
+            title: None,
+            path: None,
+            hint: None,
+        }
+    }
+
     /// Deltas are streamed to clients but never persisted.
     pub fn is_transient(&self) -> bool {
         matches!(

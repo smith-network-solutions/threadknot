@@ -141,8 +141,13 @@ fn spawn_codex(
     mcp: Option<(&str, &str)>,
     library: &[crate::library::McpServer],
 ) -> Result<(Child, Arc<Rpc>, mpsc::UnboundedReceiver<Incoming>)> {
-    let bin = super::resolve_bin("codex")
-        .ok_or_else(|| anyhow::anyhow!("codex CLI not found on PATH"))?;
+    super::check_workspace(cwd)?;
+    let bin = super::resolve_bin("codex").ok_or_else(|| super::SpawnFailure {
+        title: "Codex is not installed".into(),
+        message: "The `codex` CLI was not found on PATH on this machine.".into(),
+        path: None,
+        hint: Some("Install Codex, then run `codex login` in a terminal.".into()),
+    })?;
     let mut cmd = Command::new(bin);
     cmd.env("PATH", super::agent_path());
     if let Some((endpoint, token)) = mcp {
@@ -183,7 +188,7 @@ fn spawn_codex(
     super::no_console(&mut cmd);
     let mut child = cmd
         .spawn()
-        .context("failed to spawn `codex app-server` — is codex installed and on PATH?")?;
+        .with_context(|| format!("failed to start `codex app-server` in {cwd}"))?;
     let rpc = Arc::new(Rpc {
         stdin: tokio::sync::Mutex::new(child.stdin.take().expect("codex stdin")),
         pending: Mutex::new(HashMap::new()),
@@ -293,7 +298,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                             start_turn(&ctx, &rpc, &mut st, &text, &settings, &attachments).await
                         };
                         if let Err(e) = result {
-                            ctx.emit(AgentEvent::Error { message: format!("{e:#}") });
+                            ctx.emit(AgentEvent::error(format!("{e:#}")));
                         }
                     }
                     // Codex policies are turn-level. The stored settings are
@@ -335,9 +340,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                             if let Err(error) =
                                 start_turn(&ctx, &rpc, &mut st, &text, &settings, &[]).await
                             {
-                                ctx.emit(AgentEvent::Error {
-                                    message: format!("Codex could not deliver the follow-up: {error:#}"),
-                                });
+                                ctx.emit(AgentEvent::error(format!("Codex could not deliver the follow-up: {error:#}")));
                             }
                         }
                     }
@@ -386,15 +389,11 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                                 if let Some(settings) = st.current_settings.clone() {
                                     if let Err(error) = start_compaction(&ctx, &rpc, &mut st, &settings).await {
                                         st.pending_compaction = false;
-                                        ctx.emit(AgentEvent::Error {
-                                            message: format!("Codex could not compact the context: {error:#}"),
-                                        });
+                                        ctx.emit(AgentEvent::error(format!("Codex could not compact the context: {error:#}")));
                                     }
                                 } else {
                                     st.pending_compaction = false;
-                                    ctx.emit(AgentEvent::Error {
-                                        message: "Codex could not compact the context: no active settings".into(),
-                                    });
+                                    ctx.emit(AgentEvent::error("Codex could not compact the context: no active settings"));
                                 }
                             } else if let (Some(text), Some(settings)) = (
                                 st.pending_followups.pop_front(),
@@ -404,9 +403,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                                 if let Err(error) =
                                     start_turn(&ctx, &rpc, &mut st, &text, &settings, &[]).await
                                 {
-                                    ctx.emit(AgentEvent::Error {
-                                        message: format!("Codex could not deliver the follow-up: {error:#}"),
-                                    });
+                                    ctx.emit(AgentEvent::error(format!("Codex could not deliver the follow-up: {error:#}")));
                                 }
                             }
                         }
@@ -525,14 +522,10 @@ async fn request_compaction(ctx: &DriverCtx, rpc: &Rpc, st: &mut SessionState) {
         });
     } else if let Some(settings) = st.current_settings.clone() {
         if let Err(error) = start_compaction(ctx, rpc, st, &settings).await {
-            ctx.emit(AgentEvent::Error {
-                message: format!("Codex could not compact the context: {error:#}"),
-            });
+            ctx.emit(AgentEvent::error(format!("Codex could not compact the context: {error:#}")));
         }
     } else {
-        ctx.emit(AgentEvent::Error {
-            message: "Codex could not compact the context: no active settings".into(),
-        });
+        ctx.emit(AgentEvent::error("Codex could not compact the context: no active settings"));
     }
 }
 
@@ -659,13 +652,11 @@ fn handle_notification(ctx: &DriverCtx, st: &mut SessionState, method: &str, par
                 .unwrap_or("completed");
             match status {
                 "interrupted" => ctx.emit(AgentEvent::TurnAborted),
-                "failed" => ctx.emit(AgentEvent::Error {
-                    message: params
+                "failed" => ctx.emit(AgentEvent::error(params
                         .pointer("/turn/error/message")
                         .and_then(|v| v.as_str())
                         .unwrap_or("turn failed")
-                        .to_string(),
-                }),
+                        .to_string())),
                 _ => ctx.emit(AgentEvent::TurnCompleted {
                     usage: st.last_usage.clone(),
                 }),
@@ -818,11 +809,9 @@ fn handle_notification(ctx: &DriverCtx, st: &mut SessionState, method: &str, par
                 "contextCompaction" => ctx.emit(AgentEvent::Status {
                     text: "Context compacted".into(),
                 }),
-                "error" => ctx.emit(AgentEvent::Error {
-                    message: item_field(item, "message")
+                "error" => ctx.emit(AgentEvent::error(item_field(item, "message")
                         .unwrap_or("agent error")
-                        .to_string(),
-                }),
+                        .to_string())),
                 _ => {}
             }
         }
@@ -881,7 +870,7 @@ fn handle_notification(ctx: &DriverCtx, st: &mut SessionState, method: &str, par
                     text: format!("Retrying: {message}"),
                 });
             } else {
-                ctx.emit(AgentEvent::Error { message });
+                ctx.emit(AgentEvent::error(message));
             }
         }
         _ => {}

@@ -979,6 +979,15 @@ export const FeedItemView = memo(function FeedItemView({
           {item.noteKind === "error" ? `⚠ ${item.text}` : item.text}
         </div>
       );
+    case "failure":
+      return (
+        <div className="feed-failure" role="alert">
+          <div className="feed-failure-title">⚠ {item.title}</div>
+          <div className="feed-failure-message">{item.message}</div>
+          {item.path && <code className="feed-failure-path">{item.path}</code>}
+          {item.hint && <div className="feed-failure-hint">{item.hint}</div>}
+        </div>
+      );
     default:
       return null;
   }

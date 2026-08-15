@@ -185,7 +185,7 @@ pub async fn fire_dispatch(state: &ServerState, schedule: &Schedule) -> Result<S
         // Nothing is out, so nothing will ever settle this thread. The Error
         // event both says why and returns it to Idle.
         let why = format!("no worker started — {}", failures.join("; "));
-        hub.emit(&thread_id, AgentEvent::Error { message: why.clone() });
+        hub.emit(&thread_id, AgentEvent::error(why.clone()));
         anyhow::bail!(why);
     }
     if !failures.is_empty() {

@@ -144,6 +144,8 @@ export interface Notice {
   threadId: string;
   title: string;
   body: string;
+  /** "error" renders the red variant; absent is the neutral toast. */
+  tone?: "error";
 }
 
 /** A follow-up held until the current turn becomes idle. */

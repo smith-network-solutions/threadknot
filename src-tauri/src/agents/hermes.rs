@@ -95,9 +95,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
             recover_remote_run(&ctx, &client, &mut st, &ev_tx, run_id).await
         {
             finish_turn(&ctx, &mut st);
-            ctx.emit(AgentEvent::Error {
-                message: format!("could not reattach Hermes run after restart: {error:#}"),
-            });
+            ctx.emit(AgentEvent::error(format!("could not reattach Hermes run after restart: {error:#}")));
         }
     }
 
@@ -113,7 +111,7 @@ pub async fn run(ctx: DriverCtx, mut cmd_rx: mpsc::UnboundedReceiver<AgentComman
                             });
                         }
                         if let Err(e) = start_turn(&ctx, &client, &mut st, &ev_tx, &text, &settings, &attachments).await {
-                            ctx.emit(AgentEvent::Error { message: format!("{e:#}") });
+                            ctx.emit(AgentEvent::error(format!("{e:#}")));
                         }
                     }
                     // Approvals and model routing are per-turn on the runs API;
@@ -551,9 +549,7 @@ async fn handle_stream_event(
                 Some(data) => handle_run_event(ctx, st, &data),
                 None => {
                     finish_turn(ctx, st);
-                    ctx.emit(AgentEvent::Error {
-                        message: "lost connection to the Hermes gateway mid-turn".into(),
-                    });
+                    ctx.emit(AgentEvent::error("lost connection to the Hermes gateway mid-turn"));
                 }
             }
         }
@@ -725,13 +721,11 @@ fn handle_run_event(ctx: &DriverCtx, st: &mut SessionState, data: &Value) {
         "run.failed" => {
             let message = text_field("error").to_string();
             finish_turn(ctx, st);
-            ctx.emit(AgentEvent::Error {
-                message: if message.is_empty() {
+            ctx.emit(AgentEvent::error(if message.is_empty() {
                     "Hermes run failed".into()
                 } else {
                     message
-                },
-            });
+                }));
         }
         _ => {}
     }

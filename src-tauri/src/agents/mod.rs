@@ -95,6 +95,64 @@ pub fn resolve_bin(name: &str) -> Option<PathBuf> {
     which::which_in(name, Some(agent_path()), cwd).ok()
 }
 
+/// A spawn-time failure the UI can present properly: a headline, a plain
+/// cause, the path at fault, and a next step. Drivers return this (inside
+/// anyhow) from their preflight; the driver-death handler downcasts it into a
+/// structured [`AgentEvent::Error`]. Anything that is not a `SpawnFailure`
+/// still falls back to the legacy one-line message.
+#[derive(Debug)]
+pub struct SpawnFailure {
+    pub title: String,
+    pub message: String,
+    pub path: Option<String>,
+    pub hint: Option<String>,
+}
+
+impl std::fmt::Display for SpawnFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The log line and any legacy client see headline plus cause.
+        write!(f, "{}: {}", self.title, self.message)
+    }
+}
+
+impl std::error::Error for SpawnFailure {}
+
+/// Fail fast, with the real story, when the folder a chat runs in is gone.
+///
+/// Every driver spawns its CLI with `current_dir(cwd)`. When that path is
+/// missing, the OS returns the same ENOENT as a missing binary, and the spawn
+/// context used to blame the CLI install ("is Claude Code installed and on
+/// PATH?") even though the binary was already resolved. Checking the folder
+/// before spawning turns that lie into an actionable message.
+pub fn check_workspace(cwd: &str) -> Result<()> {
+    let p = std::path::Path::new(cwd);
+    if p.is_dir() {
+        return Ok(());
+    }
+    let (title, message) = if p.exists() {
+        (
+            "Workspace path is not a folder".to_string(),
+            format!("This chat is set to run in {cwd}, but that path is a file, not a folder."),
+        )
+    } else {
+        (
+            "Workspace folder is missing".to_string(),
+            format!(
+                "This chat runs in {cwd}, but that folder no longer exists. It may have been moved, renamed, or deleted."
+            ),
+        )
+    };
+    Err(SpawnFailure {
+        title,
+        message,
+        path: Some(cwd.to_string()),
+        hint: Some(
+            "Re-create the folder, or start a new chat in a workspace that still exists.".into(),
+        ),
+    }
+    .into())
+}
+
 /// Stop Windows from popping a console window for each child process. A
 /// GUI-subsystem app shows a flashing empty `cmd`-like window for every console
 /// child (agent CLIs, curl) unless spawned with CREATE_NO_WINDOW. No-op elsewhere.
@@ -1110,11 +1168,9 @@ impl Hub {
                     ) {
                         self.emit(
                             &thread.id,
-                            AgentEvent::Error {
-                                message: format!(
+                            AgentEvent::error(format!(
                                     "could not automatically resume after restart: {error:#}"
-                                ),
-                            },
+                                )),
                         );
                     }
                 }
@@ -1126,10 +1182,7 @@ impl Hub {
                     let Some(project) = self.store.project(&thread.project_id) else {
                         self.emit(
                             &thread.id,
-                            AgentEvent::Error {
-                                message: "could not reattach after restart: project is missing"
-                                    .into(),
-                            },
+                            AgentEvent::error("could not reattach after restart: project is missing"),
                         );
                         continue;
                     };
@@ -1693,12 +1746,19 @@ impl Hub {
             };
             if let Err(e) = result {
                 tracing::error!("driver for {thread_id} died: {e:#}");
-                hub.emit(
-                    &thread_id,
-                    AgentEvent::Error {
-                        message: format!("{e:#}"),
+                // A preflight SpawnFailure carries structure the UI can act
+                // on (headline, path, next step); everything else keeps the
+                // legacy one-line message.
+                let event = match e.downcast_ref::<SpawnFailure>() {
+                    Some(f) => AgentEvent::Error {
+                        message: f.message.clone(),
+                        title: Some(f.title.clone()),
+                        path: f.path.clone(),
+                        hint: f.hint.clone(),
                     },
-                );
+                    None => AgentEvent::error(format!("{e:#}")),
+                };
+                hub.emit(&thread_id, event);
             }
             // Only clean up if the registered handle is still OURS — an agent
             // switch may already have replaced it with a live driver.
@@ -2877,6 +2937,30 @@ impl DriverCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The preflight must name the missing folder and carry a next step;
+    /// before it existed, a deleted workspace surfaced as "is Claude Code
+    /// installed and on PATH?" (the binary was fine, the cwd was gone).
+    #[test]
+    fn check_workspace_missing_dir_is_a_spawn_failure() {
+        let gone = std::env::temp_dir().join(format!("tk-gone-{}", uuid::Uuid::new_v4()));
+        let err = check_workspace(&gone.to_string_lossy()).unwrap_err();
+        let f = err
+            .downcast_ref::<SpawnFailure>()
+            .expect("missing workspace must be a SpawnFailure");
+        assert_eq!(f.title, "Workspace folder is missing");
+        assert_eq!(f.path.as_deref(), Some(&*gone.to_string_lossy()));
+        assert!(f.message.contains(&*gone.to_string_lossy()));
+        assert!(f.hint.is_some());
+    }
+
+    #[test]
+    fn check_workspace_existing_dir_is_fine() {
+        let dir = std::env::temp_dir().join(format!("tk-here-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(check_workspace(&dir.to_string_lossy()).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn test_store(label: &str) -> (PathBuf, Arc<Store>, Project, ThreadSettings) {
         let root = std::env::temp_dir().join(format!("threadknot-{label}-{}", uuid::Uuid::new_v4()));

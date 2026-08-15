@@ -1749,7 +1749,7 @@ fn event_contains(event: &AgentEvent, needle: &str) -> bool {
         AgentEvent::SubagentCompleted {
             status, summary, ..
         } => contains(status) || summary.as_deref().is_some_and(contains),
-        AgentEvent::Error { message } => contains(message),
+        AgentEvent::Error { message, .. } => contains(message),
         AgentEvent::ApprovalResolved { option_id, .. } => contains(option_id),
         AgentEvent::TurnCompleted { .. }
         | AgentEvent::TurnAborted

@@ -1746,7 +1746,13 @@ function maybeNotify(
       )
       .catch(() => undefined);
   }
-  if (focused && viewing) return;
+  // A fatal error breaks through the viewing-suppression: the turn is dead,
+  // and a quiet red line at the bottom of a long feed is easy to miss. It
+  // still stays in-app only while viewing (no chime/OS alert for a failure
+  // that is on screen).
+  const isError = frame.event.kind === "error";
+  const onScreen = focused && viewing;
+  if (onScreen && !isError) return;
 
   const thread = findThread(state, frame.threadId);
   const detailed = prefs.previews ? frame.notice : undefined;
@@ -1755,16 +1761,27 @@ function maybeNotify(
   // Inside the mobile shell the server pushes the same moment through Expo —
   // chime/vibrate/system-notify here would double up. Keep only the toast.
   const native = isNativeShell();
-  if (prefs.sound && !native) chime();
-  if (!native) vibrate();
-  if (!native) {
-    void showSystemNotification(title, body, {
-      isTauri: state.isTauri,
-      onClick: () => void actions.selectThread(frame.threadId),
-    });
+  if (!onScreen) {
+    if (prefs.sound && !native) chime();
+    if (!native) vibrate();
+    if (!native) {
+      void showSystemNotification(title, body, {
+        isTauri: state.isTauri,
+        onClick: () => void actions.selectThread(frame.threadId),
+      });
+    }
   }
   const id = noticeSeq++;
-  dispatch({ type: "noticeAdd", notice: { id, threadId: frame.threadId, title, body } });
+  dispatch({
+    type: "noticeAdd",
+    notice: {
+      id,
+      threadId: frame.threadId,
+      title,
+      body,
+      ...(isError ? { tone: "error" as const } : {}),
+    },
+  });
   setTimeout(() => dispatch({ type: "noticeDismiss", id }), 8000);
 }
 
@@ -2340,7 +2357,7 @@ export default function App() {
               <button
                 key={n.id}
                 type="button"
-                className="toast"
+                className={n.tone === "error" ? "toast toast-error" : "toast"}
                 onClick={() => {
                   dispatch({ type: "noticeDismiss", id: n.id });
                   void actions.selectThread(n.threadId);

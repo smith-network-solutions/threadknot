@@ -133,7 +133,11 @@ pub fn for_event(
             }
             ("Question", message)
         }
-        AgentEvent::Error { message } => ("Failed", message.clone()),
+        // A structured failure leads with its own headline ("Workspace folder
+        // missing") instead of a generic "Failed".
+        AgentEvent::Error { message, title, .. } => {
+            (title.as_deref().unwrap_or("Failed"), message.clone())
+        }
         _ => return None,
     };
 
@@ -308,9 +312,7 @@ mod tests {
             "Shop · Which payment provider? (+1 more)"
         );
 
-        let error = AgentEvent::Error {
-            message: "Migration 042 conflicts with an existing version.".into(),
-        };
+        let error = AgentEvent::error("Migration 042 conflicts with an existing version.".into());
         assert_eq!(
             for_event("Database", "API", &error, None).unwrap().body,
             "API · Migration 042 conflicts with an existing version."
@@ -323,9 +325,7 @@ mod tests {
         let notice = for_event(
             &long,
             "Project",
-            &AgentEvent::Error {
-                message: long.clone(),
-            },
+            &AgentEvent::error(long.clone()),
             None,
         )
         .unwrap();
