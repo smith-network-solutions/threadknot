@@ -44,3 +44,4 @@ __pycache__/
 
 # Local tauri build transcript (scripts pipe builds through it)
 build-log.txt
+.DS_Store

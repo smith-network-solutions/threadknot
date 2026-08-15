@@ -54,9 +54,14 @@ jobs:
       # The GUI app MUST be built via the Tauri CLI so the frontend is embedded.
       # A bare `cargo build` produces a binary that loads the dev server (devUrl)
       # and shows "localhost refused to connect".
-      - name: Build GUI app (Tauri, macOS)
+      # The .dmg is the one-click macOS download on the Releases page. Unsigned CI
+      # builds are ad-hoc signed; Gatekeeper will still warn on first open until
+      # Developer ID signing + notarization secrets are added (APPLE_CERTIFICATE,
+      # APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, APPLE_ID,
+      # APPLE_PASSWORD, APPLE_TEAM_ID) — Tauri picks them up automatically.
+      - name: Build GUI app + dmg (Tauri, macOS)
         if: matrix.name == 'macos'
-        run: npx tauri build --no-bundle -- --locked
+        run: npx tauri build --bundles app,dmg -- --locked
 
       # Windows toast notifications require an installed application whose
       # AppUserModelID is registered by the Start Menu shortcut. A portable
@@ -65,10 +70,11 @@ jobs:
         if: matrix.name == 'windows'
         run: npx tauri build --bundles nsis -- --locked
 
-      # Linux bundles the deb + rpm installers (tauri.conf bundle targets).
+      # Linux bundles deb + rpm installers plus a portable AppImage — the
+      # download-and-run option for every distro (Arch included).
       - name: Build GUI app + packages (Tauri, Linux)
         if: matrix.name == 'linux'
-        run: npx tauri build -- --locked
+        run: npx tauri build --bundles deb,rpm,appimage -- --locked
 
       - name: Build headless server
         working-directory: src-tauri
@@ -92,6 +98,7 @@ jobs:
           path: |
             src-tauri/target/release/threadknot
             src-tauri/target/release/threadknot-headless
+            src-tauri/target/release/bundle/dmg/*.dmg
 
       - name: Upload Linux binaries
         if: matrix.name == 'linux'
@@ -103,6 +110,7 @@ jobs:
             src-tauri/target/release/threadknot-headless
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
 
   # Tagging `vX.Y.Z` publishes the matrix's artifacts as a GitHub Release, so
   # people can run Threadknot without a Rust toolchain. CI artifacts alone
@@ -130,7 +138,7 @@ jobs:
             find "$d" -type f | while read -r f; do
               base="$(basename "$f")"
               case "$base" in
-                *.deb|*.rpm|*.exe)
+                *.deb|*.rpm|*.exe|*.dmg|*.AppImage)
                   # Installers already carry version/arch in their filename,
                   # except the NSIS stub — keep them as-is unless they clash.
                   if [ -e "out/$base" ]; then base="${base%.*}-$os.${base##*.}"; fi
