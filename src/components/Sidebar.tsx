@@ -3622,8 +3622,14 @@ export const Sidebar = memo(function Sidebar({
   // draft for that workspace in the pane immediately. Prefer this machine's
   // root, then any reachable root; if the workspace only exists on an offline
   // peer, leave navigation alone until that peer can actually host the draft.
+  //
+  // Held until `state.restored`: the workspace list arrives well before the
+  // startup restore has reopened the remembered chat, and firing in that
+  // window drops a draft in whichever workspace happens to sort first — which
+  // is what a reload used to land on.
   useLayoutEffect(() => {
     if (
+      !state.restored ||
       quickView ||
       agentsView ||
       state.activeThreadId ||
@@ -3643,6 +3649,7 @@ export const Sidebar = memo(function Sidebar({
     shownWorkspaceId,
     state.activeThreadId,
     state.draft,
+    state.restored,
   ]);
 
   /** Tapping a project on the rail switches to it AND opens something in it.

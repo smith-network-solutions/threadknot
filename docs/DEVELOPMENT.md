@@ -686,10 +686,27 @@ Mechanics:
 - Solo windows are ordinary extra `/ws` clients; state stays server-authoritative.
   `state.solo` filters the sidebar and hides add/remove/schedules.
 - localStorage is shared across windows: last-open-thread restore is keyed
-  `threadknot.lastThread.<projectId>` in solo (`store.tsx::lastThreadKey`), and solo
-  windows heartbeat `threadknot.soloWindow.<projectId>` so the fleet window
-  suppresses duplicate notifications for projects that have their own window
-  (`solo.ts::advertiseSoloWindow`/`hasSoloWindow`).
+  `threadknot.lastThread.<projectId>` in solo (`store.tsx::lastThreadKey`), and a
+  solo window only reopens a remembered chat that belongs to its own project.
+  Solo windows also heartbeat `threadknot.soloWindow.<projectId>` so the fleet
+  window suppresses duplicate notifications for projects that have their own
+  window (`solo.ts::advertiseSoloWindow`/`hasSoloWindow`).
+
+### Startup restore
+
+A cold load reopens the chat the client was last reading, then falls back to a
+fresh draft in the last workspace, then to the first project. Three pieces have
+to stay in step (`App.tsx::client.onOpen`):
+
+- `threadknot.lastThread` stores `{threadId, machineId}` — the route matters,
+  because a remote chat's owner may not have answered `thread.list` yet when
+  startup navigates, and resolving it as local fails with "unknown thread".
+- A restore that fails only because the owner is asleep must **not** clear the
+  key (the `restoring` flag on `selectThreadRouted`), or a phone that reloads
+  while the desktop is off loses its place permanently.
+- `state.restored` gates the sidebar's "nothing is open → open a draft in the
+  first workspace" fallback. The workspace list lands long before the restore
+  finishes; without the gate that fallback wins every reload.
 
 ## Scheduled runs
 

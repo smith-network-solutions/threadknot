@@ -48,15 +48,17 @@ import {
   defaultDraft,
   effortForModel,
   findThread,
+  forgetLastThread,
   forgetNewThreadSettings,
   initialState,
+  loadLastThread,
   loadThreadAttention,
   LS_THREAD_ATTENTION,
   persistThreadAttention,
   lastProjectKey,
-  lastThreadKey,
   projectOwner,
   remoteMachineId,
+  rememberLastThread,
   rememberNewThreadSettings,
   reducer,
   FeedStoreContext,
@@ -258,11 +260,14 @@ function makeActions(
   // Navigate to a thread using an explicit route rather than reading it back
   // out of state. restoreArchive relies on this because a remote restore's
   // thread list may not be committed to React state yet when it navigates.
+  // Answers whether a transcript ended up on screen, so startup's restore can
+  // fall back to a workspace draft when the remembered chat has been deleted.
   const selectThreadRouted = async (
     threadId: string,
     machineId?: string,
     preserveFeed = false,
-  ) => {
+    restoring = false,
+  ): Promise<boolean> => {
     // Reconnect/resync reads must not blank a transcript that is already on
     // screen. `openThread` intentionally clears the feed for real navigation;
     // doing that for a background refresh also resets every piece of mounted
@@ -270,8 +275,8 @@ function makeActions(
     // a visible full-pane blink.
     if (!preserveFeed) {
       dispatch({ type: "openThread", threadId });
-      localStorage.setItem(lastThreadKey(getState().solo), threadId);
       const known = findThread(getState(), threadId);
+      rememberLastThread(getState().solo, threadId, known?.machineId ?? machineId);
       if (known) rememberProject(known.projectId, known.machineId);
     }
     try {
@@ -281,24 +286,28 @@ function makeActions(
       );
       if (!isAgentVisible(thread.agent)) {
         if (!preserveFeed) {
-          localStorage.removeItem(lastThreadKey(getState().solo));
+          forgetLastThread(getState().solo);
           dispatch({ type: "closeActive" });
         }
-        return;
+        return false;
       }
       dispatch({ type: "feedLoaded", threadId, thread, events });
-      if (!preserveFeed) rememberProject(thread.projectId, thread.machineId);
+      if (!preserveFeed) {
+        rememberLastThread(getState().solo, threadId, thread.machineId);
+        rememberProject(thread.projectId, thread.machineId);
+      }
       // Repo summaries power the per-repo badges on chat diff cards — load
       // them once per project without waiting for the Git tab to be opened
       // (auto-routed to the owner for remote projects).
       if (!getState().git[thread.projectId]) {
         void refreshGitRepos(thread.projectId).catch(() => undefined);
       }
+      return true;
     } catch (err) {
       // An in-place refresh is opportunistic. Keep the transcript the user is
       // reading if its owner is still reconnecting; a later peer/open-socket
       // event will retry without replacing useful content with an error card.
-      if (preserveFeed) return;
+      if (preserveFeed) return true;
       const reason = err instanceof Error ? err.message : String(err);
       const known = findThread(getState(), threadId);
       // Only the owner saying "I don't have this" means the thread is really
@@ -306,9 +315,16 @@ function makeActions(
       // forgetting it — the old behaviour — closed the pane with no
       // explanation at all: the chat you clicked just didn't open.
       if (/unknown thread/i.test(reason) || !known) {
-        localStorage.removeItem(lastThreadKey(getState().solo));
+        // A startup restore reaches here for a chat on a machine that is
+        // merely asleep — its thread list never arrived, so `known` is null
+        // for a chat that exists. Forgetting it there would cost the phone its
+        // place permanently; only the owner's own "I don't have this" is
+        // proof. Either way the pane falls back to a workspace draft.
+        if (!restoring || /unknown thread/i.test(reason)) {
+          forgetLastThread(getState().solo);
+        }
         dispatch({ type: "closeActive" });
-        return;
+        return false;
       }
       dispatch({
         type: "feedLoaded",
@@ -322,6 +338,7 @@ function makeActions(
           },
         ],
       });
+      return true;
     }
   };
 
@@ -330,7 +347,7 @@ function makeActions(
     options?: { preserveFeed?: boolean },
   ) => {
     const thread = findThread(getState(), threadId);
-    if (thread && !isAgentVisible(thread.agent)) return Promise.resolve();
+    if (thread && !isAgentVisible(thread.agent)) return Promise.resolve(false);
     return selectThreadRouted(threadId, routeFor(threadId), options?.preserveFeed);
   };
 
@@ -414,6 +431,19 @@ function makeActions(
     refreshRemoteThreads,
     refreshThreads,
     selectThread,
+
+    restoreThread(threadId: string, machineId?: string) {
+      // Route by the stored owner first: a remote chat's machine may not have
+      // answered `thread.list` yet, so `routeFor` would resolve it as local
+      // and the reopen would fail with "unknown thread" — which also throws
+      // the remembered id away.
+      return selectThreadRouted(
+        threadId,
+        remoteMachineId(getState(), machineId) ?? routeFor(threadId),
+        false,
+        true,
+      );
+    },
 
     async toolOutput(threadId: string, callId: string) {
       const machineId = routeFor(threadId);
@@ -800,7 +830,7 @@ function makeActions(
         dispatch({ type: "threadUpserted", thread });
         dispatch({ type: "openThread", threadId: thread.id });
         dispatch({ type: "feedLoaded", threadId: thread.id, thread, events: [] });
-        localStorage.setItem(lastThreadKey(s.solo), thread.id);
+        rememberLastThread(s.solo, thread.id, thread.machineId);
         await client.request("turn.start", {
           threadId: thread.id,
           text,
@@ -1124,10 +1154,8 @@ function makeActions(
       await client
         .request("thread.delete", { threadId, ...(machineId ? { machineId } : {}) })
         .catch(() => undefined);
-      const key = lastThreadKey(getState().solo);
-      if (localStorage.getItem(key) === threadId) {
-        localStorage.removeItem(key);
-      }
+      const solo = getState().solo;
+      if (loadLastThread(solo)?.threadId === threadId) forgetLastThread(solo);
       dispatch({ type: "threadDeleted", threadId, projectId });
     },
 
@@ -1499,10 +1527,8 @@ function makeActions(
       await client
         .request("thread.archive", { threadId, ...(machineId ? { machineId } : {}) })
         .catch(() => undefined);
-      const lastKey = lastThreadKey(getState().solo);
-      if (localStorage.getItem(lastKey) === threadId) {
-        localStorage.removeItem(lastKey);
-      }
+      const solo = getState().solo;
+      if (loadLastThread(solo)?.threadId === threadId) forgetLastThread(solo);
       dispatch({ type: "threadDeleted", threadId, projectId });
       // The archive now lives on the thread's owning machine — refresh that
       // machine's list (machineId is already the routed owner, or undefined).
@@ -1993,10 +2019,32 @@ export default function App() {
             // pane and close mounted popovers while the socket catches up.
             await actionsRef.current.selectThread(openId, { preserveFeed: true });
           } else if (!isReconnect) {
-            // Restore the last project as a fresh draft. The old last-thread
-            // value is only a migration fallback for installs that predate
-            // project-level startup persistence; it is never reopened.
             const solo = stateRef.current.solo;
+            // Reopen the chat this client was last reading. A reload is not a
+            // request to go somewhere else — and on a phone it is barely even
+            // a choice: pull-to-refresh is the only way to unstick a wedged
+            // page (see PullToRefresh), so losing your place is the cost of
+            // every recovery.
+            const last = loadLastThread(solo);
+            const lastKnown = last ? findThread(stateRef.current, last.threadId) : null;
+            // A solo window is dedicated to one project and must not reopen a
+            // chat from another; if the remembered chat isn't in state yet
+            // there is no way to tell, so it stays closed.
+            const eligible =
+              last && (!solo || (lastKnown && lastKnown.projectId === solo));
+            // A push tap that landed during the connect already chose a
+            // destination — that is a deliberate navigation, this is a default.
+            const navigated = stateRef.current.activeThreadId != null;
+            const reopened =
+              !navigated && eligible && last
+                ? await actionsRef.current
+                    .restoreThread(last.threadId, last.machineId ?? lastKnown?.machineId)
+                    .catch(() => false)
+                : false;
+            if (navigated || reopened) return;
+
+            // Nothing to reopen: fall back to the last workspace, as a fresh
+            // draft rather than someone else's conversation.
             let destination: { projectId: string; machineId?: string } | null = null;
             try {
               const stored = JSON.parse(
@@ -2028,17 +2076,13 @@ export default function App() {
               localStorage.removeItem(lastProjectKey(solo));
               destination = null;
             }
-            if (!destination) {
-              const legacyThreadId = localStorage.getItem(lastThreadKey(solo));
-              const legacyThread = legacyThreadId
-                ? findThread(stateRef.current, legacyThreadId)
-                : null;
-              if (legacyThread) {
-                destination = {
-                  projectId: legacyThread.projectId,
-                  machineId: legacyThread.machineId,
-                };
-              }
+            // The remembered chat couldn't be opened, but it still names the
+            // workspace this client belongs in.
+            if (!destination && lastKnown) {
+              destination = {
+                projectId: lastKnown.projectId,
+                machineId: lastKnown.machineId,
+              };
             }
             if (!destination && stateRef.current.projects[0]) {
               destination = { projectId: stateRef.current.projects[0].id };
@@ -2049,6 +2093,11 @@ export default function App() {
           }
         } catch {
           // server will broadcast state.changed when it settles
+        } finally {
+          // Release the sidebar's own "put something in the pane" fallback,
+          // whichever way the restore went — including a connect that threw
+          // before it ran, or it would never open anything again.
+          dispatch({ type: "restored" });
         }
       })();
     };
