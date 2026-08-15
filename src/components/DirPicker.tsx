@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ListDirData } from "../lib/protocol";
 import { useStore } from "../state/store";
 import { FolderIcon, FolderPlusIcon, FolderUpIcon, XIcon } from "./icons";
@@ -12,6 +13,15 @@ import { FolderIcon, FolderPlusIcon, FolderUpIcon, XIcon } from "./icons";
  * path (used by the archive storage-location setting); `title` /
  * `confirmLabel` let that caller relabel the dialog. A "new folder" button
  * creates a directory inside the current one (fs.mkdir) and steps into it.
+ *
+ * Rendered through a portal, like every other modal here, because this one is
+ * opened from *inside* other modals ("Machines & folders…" → "on <machine>").
+ * The popup-surface skin animates `.modal` with `animation-fill-mode: both`, so
+ * the final keyframe's `transform: none` is retained as an identity matrix
+ * forever — and a retained transform makes that modal the containing block for
+ * `position: fixed` descendants. Rendered inline, this picker's backdrop was
+ * sized to the modal that opened it (measured: 458×149 instead of the
+ * viewport), which clipped the list and killed its scrolling.
  */
 export function DirPicker({
   onClose,
@@ -87,7 +97,7 @@ export function DirPicker({
     }
   }
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal dir-picker" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
@@ -173,6 +183,7 @@ export function DirPicker({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
