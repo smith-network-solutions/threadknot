@@ -5,7 +5,7 @@
 <p align="center"><strong>Every coding agent on one thread.</strong></p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue" alt="license: FSL-1.1-ALv2"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license: Apache-2.0"></a>
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey" alt="platforms">
   <img src="https://img.shields.io/badge/rust-stable-orange" alt="rust: stable">
 </p>
@@ -242,19 +242,9 @@ t3code is MIT-licensed, © 2026 T3 Tools Inc.; its notice is in
 
 ## License
 
-[**Functional Source License 1.1**](LICENSE), with an Apache-2.0 future grant
-(`FSL-1.1-ALv2`). In plain terms:
-
-- **Use it for anything** — personally, at work, on as many of your own machines
-  as you like. No account, no key, no seat count.
-- **Modify it, fork it, improve it.** Please do; the interesting parts are the
-  agent drivers and the mesh.
-- **Keep the copyright notice** if you redistribute it, modified or not.
-- **Don't sell it back to us.** You may not ship it — or a fork of it — as a
-  commercial product or service that competes with Threadknot. Everything else
-  is fair game.
-- **It becomes Apache-2.0 anyway.** Every release is irrevocably licensed under
-  Apache 2.0 two years after it ships. The restriction has a clock on it.
+[**Apache License 2.0**](LICENSE). Use it for anything — personally, at work,
+commercially — modify it, fork it, redistribute it. Keep the copyright notice
+and license text if you redistribute it, modified or not.
 
 The hosted relay that backs the optional paid tier is a separate service and is
 not in this repository. Nothing here needs it: the LAN server, the mesh, and the

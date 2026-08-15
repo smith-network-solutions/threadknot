@@ -2,7 +2,7 @@
   "name": "mobile",
   "main": "expo-router/entry",
   "version": "1.0.0",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "Apache-2.0",
   "dependencies": {
     "@expo/ui": "~57.0.7",
     "@react-native-async-storage/async-storage": "2.2.0",
