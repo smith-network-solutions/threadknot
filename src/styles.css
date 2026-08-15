@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Cinzel:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap");
 
 /* ================= Threadknot — fleet command console =================
    Deep navy graphite, hairline bulkheads, brass signal accents,
@@ -28,6 +28,24 @@
   --blue: #6fa8e8;
   --font-ui: "Archivo", "Avenir Next", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, "SF Mono", monospace;
+  /* The wordmark face, matching the website's `.display`. Cinzel draws its
+     lowercase as small caps, so "ThreadKnot" sets itself with the two capitals
+     standing proud — no text-transform needed. */
+  --font-display: "Cinzel", "Trajan Pro", Georgia, serif;
+  /* The website's `.gilt` fill, verbatim: a six-stop metallic rake that reads
+     as struck brass — cream highlight, gold, a deep shadow band at 62%, then
+     back up to cream. The stops are percentages of the element's box, so the
+     wordmark must keep `.display`'s 1.08 line-height or the bands land
+     somewhere other than across the glyphs and the metal effect flattens. */
+  --gilt: linear-gradient(
+    177deg,
+    #fff6da 2%,
+    #f5d489 22%,
+    #d3a13f 46%,
+    #8f6320 62%,
+    #e5bd63 78%,
+    #fff0c4 96%
+  );
   --radius: 10px;
   --sidebar-w: 292px;
   --rail-w: 64px;
@@ -288,24 +306,53 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
 }
 .brand-mark-accent { color: var(--brass); }
-/* Wordmark image in place of the "ThreadKnot" text in the sidebar header.
-   Height-locked; width follows the 3:1 aspect. Sits between the filter and
-   collapse buttons, which are absolutely positioned at the row edges. */
+/* The sidebar wordmark: "ThreadKnot" set in the display face with the brass
+   gradient off the website, in place of the logo image. Sits between the filter
+   and collapse buttons, which are absolutely positioned at the row edges.
+   Clipping the gradient to the glyphs needs `color: transparent`, so the
+   `background` shorthand and the clip must travel together in any override. */
 .brand-wordmark {
-  height: 40px;
-  width: auto;
   display: block;
-  object-fit: contain;
-  /* Keep clear of the edge buttons on a narrow sidebar. */
-  max-width: calc(100% - 88px);
+  /* `.display` off threadknot.ai, at the header's own 16.8px rounded to 17. */
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+  line-height: 1.08;
+  white-space: nowrap;
+  /* Keep clear of the edge buttons on a narrow sidebar. Cinzel sets far wider
+     than the UI face — "ThreadKnot" wants ~133px here, so the old 88px reserve
+     (sized for the logo image) clipped it to "ThreadK…". The buttons are 32px
+     and sit ~10px off each row edge; 60px covers one of them plus a gutter,
+     which is the binding side since the row's left padding is the fleet rail's. */
+  max-width: calc(100% - 60px);
+  /* Clip the inline axis only. `.display`'s 1.08 line-height is tighter than
+     Cinzel's own ascent+descent, so a plain `overflow: hidden` also clips the
+     block axis and shaves the caps. `clip` is what allows the cross axis to
+     stay `visible` — pairing `hidden` with `visible` computes the latter to
+     `auto` and makes this a scroll container. Ellipsis still engages. */
+  overflow-x: clip;
+  overflow-y: visible;
+  text-overflow: ellipsis;
   user-select: none;
-  -webkit-user-drag: none;
+  /* `.gilt`: the gradient is clipped to the glyphs and the fill is transparent,
+     so the shadow — painted from the same glyph geometry — is what gives the
+     letters their struck edge. */
+  background: var(--gilt);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 1px rgba(0, 0, 0, 0.55);
 }
-/* The wordmark art is pale gold — near-invisible on the light sidebar. Invert
-   lightness but keep the gold hue (invert + 180deg hue-rotate) so it lands as a
-   dark brass that reads on white. */
+/* The gilt is built for the site's near-black chrome: both cream stops and the
+   engraved shadow disappear against a white sidebar, leaving the wordmark
+   patchy. Fall back to a flat brass rake there. Re-declare the clip — the
+   `background` shorthand resets it. */
 :root[data-family="light"] .brand-wordmark {
-  filter: invert(1) hue-rotate(180deg) brightness(0.9);
+  background: linear-gradient(180deg, var(--brass), var(--brass-hi));
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-shadow: none;
 }
 
 .conn-pip {
