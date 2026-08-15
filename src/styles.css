@@ -4428,8 +4428,13 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .feed-inner {
   max-width: 860px;
   margin: 0 auto;
-  /* Bottom room clears the composer, which now floats over the feed's foot. */
-  padding: 22px 22px 132px;
+  /* Bottom room clears the composer, which floats over the feed's foot. Its
+     height is measured and published as --dock-h by ThreadView, because the
+     card grows with wrapped lines, attachments and queued follow-ups: a fixed
+     reserve is right at one composer size and hides the end of the thread at
+     every larger one. The fallback is the old constant, for the first paint
+     before the observer has measured. */
+  padding: 22px 22px calc(var(--dock-h, 132px) + 16px);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -8823,8 +8828,19 @@ span.title-agent-mark { width: 16px; height: 16px; }
   /* Clear the floating composer. The card alone measures ~133px on a phone, so
      116px left the last message tucked under it; this reserves the card plus a
      visible gap, and tracks whatever the card is sitting on top of — the home
-     indicator, or the keyboard once it pushes the card up. */
-  .feed-inner { padding: 14px 12px calc(150px + max(var(--safe-b), var(--kb-inset))); }
+     indicator, or the keyboard once it pushes the card up.
+     The measured --dock-h (see .feed-inner above) covers the case those
+     constants cannot: a card grown tall by a long prompt or attachments. Taken
+     as a max() rather than replacing the expression, so this never reserves
+     less room than it did before — the dock's own height already includes
+     --safe-b via the composer's padding, and double-counting it would leave a
+     visible dead band above the keyboard. */
+  .feed-inner {
+    padding: 14px 12px max(
+      calc(150px + max(var(--safe-b), var(--kb-inset))),
+      calc(var(--dock-h, 150px) + 16px)
+    );
+  }
   .msg-user { max-width: 88%; }
   .artifact-card { width: 100%; max-width: none; border-radius: 18px; }
   .artifact-inline-preview { min-height: 132px; max-height: 310px; }
