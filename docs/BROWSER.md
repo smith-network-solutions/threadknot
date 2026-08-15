@@ -164,8 +164,18 @@ never launch Chrome: asking whether a browser is open must not open one.
 
 Chrome runs headless, so its own context menu is browser chrome that never
 reaches the JPEG screencast — a forwarded right-click would render nothing. The
-viewer therefore draws its own menu, and the items that depend on what sits
-under the cursor need a fact only the page's document holds. A `probe` control
+viewer therefore draws its own menu, through the shared `ContextMenu` component
+(portalled to `document.body`, so it escapes the pane's CSS `zoom`).
+
+> **Gotcha:** the menu opens from the right-button **pointerup**, not from
+> `contextmenu`. The canvas's `pointerdown` handler must call `preventDefault()`
+> — otherwise the host starts a text selection or drag over the canvas — and
+> that suppresses the compatibility mouse events Blink derives `contextmenu`
+> from, so that event never fires here at all. The first cut of this menu bound
+> `onContextMenu` and silently never opened.
+
+The items that depend on what sits under the cursor need a fact only the page's
+document holds. A `probe` control
 carries the click point and a nonce; the backend hit-tests the **main** document
 (`elementFromPoint` cannot see into cross-origin frames, and a signed-in profile
 keeps those isolated anyway) and answers with a `context` frame — selection
@@ -181,11 +191,46 @@ separate headless process the viewer cannot read; on an insecure LAN origin the
 write is denied and the item no-ops, exactly as paste falls back to its manual
 sheet. **Select all** is a Ctrl+A key chord to the page, needing no new
 primitive; **Cut** copies to the host then lets a Backspace clear the still-live
-selection in the field the right-click already focused. Password autofill —
-importing from the default browser or loading a manager extension like
-Bitwarden — is deliberately **not** part of this: it fights the isolated-profile
-and never-sees-a-secret model in "Signed-in profiles" below, and is deferred
-until that tradeoff is decided.
+selection in the field the right-click already focused.
+
+## Bitwarden
+
+A **signed-in** profile launches Chrome with the Bitwarden extension loaded, and
+the menu grows an "Open Bitwarden vault" entry.
+
+The extension is not downloaded: a store-installed Bitwarden is already unpacked
+on disk, so the user's own Chrome/Edge/Brave install is the source and the
+directory is only ever read (`--load-extension`, via chromiumoxide's
+`extension()` — which also suppresses the `--disable-extensions` it would
+otherwise add). `THREADKNOT_BITWARDEN_DIR` overrides the search. Chrome keeps
+the previous version directory after an update, so "newest" is decided
+numerically per component; sorted as strings, `2026.9.0_0` would beat
+`2026.10.0_0`.
+
+Three things make this work where the obvious approach doesn't:
+
+- **New headless supports extensions.** chromiumoxide's `extension()` doc says
+  otherwise; that predates `--headless=new` (Chrome 112+), which this launches
+  with.
+- **The popup is a page, not chrome.** Headless has no toolbar to hang the
+  extension button on, so the vault opens as an ordinary tab at
+  `chrome-extension://<id>/popup/index.html` and screencasts like anything else.
+  Its id is stable only because Bitwarden's manifest ships a `key` — without
+  one, an unpacked load hashes the directory path into a different id per
+  checkout.
+- **Filling is the extension's job.** Once unlocked, Bitwarden's own in-page
+  overlay is real page DOM: it appears in the screencast and takes clicks like
+  any other page content. The menu entry is the way in, not the fill.
+
+**Signed-in profiles only**, deliberately. A disposable profile is discarded
+with its session, so the vault would have to be logged into and unlocked every
+single thread — a master password typed repeatedly into an agent-driven browser
+is worse than not having the extension at all. Importing saved passwords out of
+the user's default browser remains **not** implemented: Chrome's App-Bound
+Encryption (127+) deliberately blocks other applications from decrypting that
+store, and seeding real credentials into an agent-reachable profile is the thing
+"Signed-in profiles" below is built to avoid. Threadknot still stores no
+credential itself — the vault belongs to Bitwarden.
 
 ## Recorded walkthroughs
 

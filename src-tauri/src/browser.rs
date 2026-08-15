@@ -780,6 +780,10 @@ pub struct BrowserSession {
     /// no pointer of its own, so continuity between actions is ours to keep:
     /// without it every glide would have to start from an unknown place.
     cursor: Mutex<(f64, f64)>,
+    /// Whether this Chrome launched with the Bitwarden extension. Signed-in
+    /// profiles only, and only when one is installed to load — so the viewer
+    /// advertises the unlock entry point exactly when it will work.
+    bitwarden: bool,
 }
 
 impl Drop for BrowserSession {
@@ -3362,6 +3366,108 @@ impl BrowserRegistry {
     }
 }
 
+/// Bitwarden's Chrome Web Store id. Its manifest ships a `key`, so Chrome
+/// derives the same id when the directory is loaded *unpacked* instead of
+/// hashing the path — which is what makes the popup URL below deterministic.
+const BITWARDEN_EXTENSION_ID: &str = "nngceckbapebfimnlniiiahkandclblb";
+
+/// The extension's own unlock/search UI. It is an ordinary HTML page in the
+/// extension's origin, so it can be opened as a tab and screencast like any
+/// other page — the toolbar popup a normal Chrome shows it in is browser
+/// chrome that headless does not have.
+fn bitwarden_popup_url() -> String {
+    format!("chrome-extension://{BITWARDEN_EXTENSION_ID}/popup/index.html")
+}
+
+/// Chromium user-data directories a Bitwarden install might live in.
+fn chromium_user_data_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    let home = dirs_home();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from) {
+            dirs.push(local.join("Google/Chrome/User Data"));
+            dirs.push(local.join("Microsoft/Edge/User Data"));
+            dirs.push(local.join("BraveSoftware/Brave-Browser/User Data"));
+            dirs.push(local.join("Chromium/User Data"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let support = home.join("Library/Application Support");
+        dirs.push(support.join("Google/Chrome"));
+        dirs.push(support.join("Microsoft Edge"));
+        dirs.push(support.join("BraveSoftware/Brave-Browser"));
+        dirs.push(support.join("Chromium"));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let config = home.join(".config");
+        dirs.push(config.join("google-chrome"));
+        dirs.push(config.join("microsoft-edge"));
+        dirs.push(config.join("BraveSoftware/Brave-Browser"));
+        dirs.push(config.join("chromium"));
+    }
+    let _ = &home;
+    dirs
+}
+
+fn dirs_home() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default()
+}
+
+/// Locate an unpacked Bitwarden to hand Chrome via `--load-extension`.
+///
+/// Store-installed extensions are already unpacked on disk, so the user's own
+/// browser install *is* the source — no download, no CRX unpacking, and the
+/// directory is only ever read. Picks the newest version directory, since
+/// Chrome keeps the previous one around after an update.
+fn bitwarden_extension_dir() -> Option<std::path::PathBuf> {
+    if let Some(explicit) = std::env::var_os("THREADKNOT_BITWARDEN_DIR") {
+        let dir = std::path::PathBuf::from(explicit);
+        return dir.join("manifest.json").is_file().then_some(dir);
+    }
+    let mut best: Option<(String, std::path::PathBuf)> = None;
+    for base in chromium_user_data_dirs() {
+        let Ok(profiles) = std::fs::read_dir(&base) else {
+            continue;
+        };
+        for profile in profiles.flatten() {
+            let ext_root = profile.path().join("Extensions").join(BITWARDEN_EXTENSION_ID);
+            let Ok(versions) = std::fs::read_dir(&ext_root) else {
+                continue;
+            };
+            for version in versions.flatten() {
+                let dir = version.path();
+                if !dir.join("manifest.json").is_file() {
+                    continue;
+                }
+                let name = version.file_name().to_string_lossy().into_owned();
+                if best.as_ref().is_none_or(|(seen, _)| newer_version(&name, seen)) {
+                    best = Some((name, dir));
+                }
+            }
+        }
+    }
+    best.map(|(_, dir)| dir)
+}
+
+/// Compare Chrome extension version directory names ("2026.7.0_0"). Compared
+/// numerically per component so 2026.10.0 sorts above 2026.9.0, which a plain
+/// string comparison gets backwards.
+fn newer_version(candidate: &str, seen: &str) -> bool {
+    let parts = |raw: &str| -> Vec<u64> {
+        raw.split(|c: char| !c.is_ascii_digit())
+            .filter(|piece| !piece.is_empty())
+            .filter_map(|piece| piece.parse().ok())
+            .collect()
+    };
+    parts(candidate) > parts(seen)
+}
+
 /// Chrome deletes session-only cookies at startup unless the profile is set to
 /// restore the previous session ("continue where you left off",
 /// `session.restore_on_startup = 1`). Plenty of sites keep their login in a
@@ -3458,6 +3564,23 @@ async fn spawn_session(
             &["IsolateOrigins", "site-per-process"][..],
         ));
     }
+    // Bitwarden, for signed-in profiles only. A disposable profile is discarded
+    // with the session, so the vault would have to be logged into and unlocked
+    // again every single thread — the master password typed over and over into
+    // an agent-driven browser is worse than not having it. A durable profile
+    // keeps the extension's own storage, so it is unlocked like any other
+    // browser. (chromiumoxide's `extension()` doc predates new headless mode,
+    // which has supported extensions since Chrome 112; this launches with
+    // `--headless=new`. Passing any extension also suppresses the
+    // `--disable-extensions` chromiumoxide would otherwise add.)
+    let bitwarden = profile
+        .is_some()
+        .then(bitwarden_extension_dir)
+        .flatten();
+    if let Some(dir) = &bitwarden {
+        builder = builder.extension(dir.to_string_lossy().into_owned());
+    }
+
     if let Some(path) = chrome_path {
         builder = builder.chrome_executable(path);
     }
@@ -3546,6 +3669,7 @@ async fn spawn_session(
         profile,
         frames_tx: broadcast::channel::<Vec<u8>>(8).0,
         recording: AsyncMutex::new(None),
+        bitwarden: bitwarden.is_some(),
         // Start the pointer off-canvas so the first glide enters from an edge
         // instead of appearing to teleport out of the top-left corner.
         cursor: Mutex::new((-40.0, DEFAULT_HEIGHT as f64 * 0.6)),
@@ -3899,7 +4023,14 @@ async fn bridge(
     // or a newer peer viewing an older machine). Unknown controls are ignored
     // for forward compatibility, so advertise the efficient paste primitive;
     // viewers without this message fall back to the long-standing key control.
-    let capabilities = json!({ "type": "capabilities", "paste": true }).to_string();
+    let capabilities = json!({
+        "type": "capabilities",
+        "paste": true,
+        // Only sent when the extension actually loaded, so the viewer offers
+        // the entry point exactly when opening it would work.
+        "bitwarden": session.bitwarden.then(bitwarden_popup_url),
+    })
+    .to_string();
     if sink.send(Message::Text(capabilities.into())).await.is_err() {
         return;
     }
@@ -4950,6 +5081,28 @@ mod tests {
             panic!("paste control decoded as another variant");
         };
         assert_eq!(text, "first line\nsecond line 🧶");
+    }
+
+    /// Chrome keeps the previous version directory after an extension update,
+    /// so "newest" has to be decided numerically per component — sorted as
+    /// strings, "2026.9.0_0" beats "2026.10.0_0" and Bitwarden loads stale.
+    #[test]
+    fn picks_the_newest_extension_version_directory() {
+        assert!(newer_version("2026.10.0_0", "2026.9.0_0"));
+        assert!(!newer_version("2026.9.0_0", "2026.10.0_0"));
+        assert!(newer_version("2026.7.1_0", "2026.7.0_0"));
+        assert!(!newer_version("2026.7.0_0", "2026.7.0_0"));
+    }
+
+    /// The popup is a page in the extension's own origin, and the id is stable
+    /// because Bitwarden's manifest ships a `key` — without that, an unpacked
+    /// load would hash the directory path into a different id every checkout.
+    #[test]
+    fn bitwarden_popup_is_an_extension_origin_page() {
+        assert_eq!(
+            bitwarden_popup_url(),
+            "chrome-extension://nngceckbapebfimnlniiiahkandclblb/popup/index.html"
+        );
     }
 
     /// The right-click hit-test the viewer sends before opening its context

@@ -5,6 +5,7 @@ import { browserWsUrl } from "../lib/discovery";
 import { isNativeShell, readNativeClipboardText } from "../lib/native";
 import { APPEARANCE_EVENT, getPaneZoom } from "../lib/appearance";
 import { BROWSER_INTENT_EVENT, takeBrowserUrl } from "../lib/browserIntent";
+import { ContextMenu, type CtxItem } from "./ContextMenu";
 import "../styles/browser.css";
 
 /** Device-width presets. `null` = fill the pane (native viewport). */
@@ -161,6 +162,9 @@ export function BrowserPane({
   const [device, setDevice] = useState("fill");
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [supportsPasteControl, setSupportsPasteControl] = useState(false);
+  /** Bitwarden's popup URL, when this session's Chrome launched with the
+   *  extension. Null on a disposable profile or a machine with no install. */
+  const [bitwarden, setBitwarden] = useState<string | null>(null);
   const [activities, setActivities] = useState<BrowserActivity[]>([]);
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -221,26 +225,6 @@ export function BrowserPane({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [moreOpen]);
-
-  // The right-click menu dismisses on the same gestures a native browser menu
-  // does: a press elsewhere, Escape, or the pane scrolling/resizing under it.
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
-    };
-    document.addEventListener("pointerdown", close, true);
-    document.addEventListener("keydown", closeOnEscape, true);
-    window.addEventListener("blur", close);
-    window.addEventListener("resize", close);
-    return () => {
-      document.removeEventListener("pointerdown", close, true);
-      document.removeEventListener("keydown", closeOnEscape, true);
-      window.removeEventListener("blur", close);
-      window.removeEventListener("resize", close);
-    };
-  }, [menu]);
 
   const rescan = useCallback(async () => {
     setScanning(true);
@@ -438,6 +422,7 @@ export function BrowserPane({
           const message = JSON.parse(event.data) as Record<string, unknown>;
           if (message.type === "capabilities") {
             setSupportsPasteControl(message.paste === true);
+            setBitwarden(typeof message.bitwarden === "string" ? message.bitwarden : null);
           } else if (message.type === "nav" && typeof message.url === "string") {
             setUrl(message.url);
             if (!editingRef.current) setAddr(message.url);
@@ -585,6 +570,17 @@ export function BrowserPane({
     const point = toFrameCoords(event);
     send({ type: "mouse", event: "released", ...point, button, clickCount: event.detail || 1 });
     (event.currentTarget as HTMLCanvasElement).releasePointerCapture?.(event.pointerId);
+    // The right-click menu opens from pointerup, NOT from `contextmenu`: the
+    // pointerdown handler above calls preventDefault (it has to, or the host
+    // starts a text selection / drag over the canvas), and that suppresses the
+    // compatibility mouse events Blink derives `contextmenu` from — so that
+    // event never arrives here. This is also the moment the page itself has
+    // finished handling the right press, so the probe sees the field the click
+    // just focused.
+    if (button === "right" && event.type === "pointerup") {
+      const { clientX, clientY } = event;
+      void probeContext(point).then((ctx) => setMenu({ x: clientX, y: clientY, ...ctx }));
+    }
   }
 
   // Translate frame-native agent coordinates into the currently scaled canvas.
@@ -778,12 +774,46 @@ export function BrowserPane({
     canvasRef.current?.focus();
   };
 
-  /** Run a menu action and dismiss, so every item closes the menu the same
-   *  way. */
-  const runMenu = (fn: () => void) => {
-    setMenu(null);
-    fn();
-  };
+  /** The right-click menu for one hit-test result. Contextual entries appear
+   *  only when the point actually carries them, so a click on empty page gives
+   *  the short navigation-and-select menu rather than a wall of dead items. */
+  function menuItems(ctx: BrowserMenu): CtxItem[] {
+    const items: CtxItem[] = [
+      { label: "Back", onSelect: () => send({ type: "back" }) },
+      { label: "Forward", onSelect: () => send({ type: "forward" }) },
+      { label: "Reload", onSelect: () => send({ type: "reload" }) },
+    ];
+    if (ctx.linkHref) {
+      items.push(
+        { label: "Open link in new tab", dividerBefore: true, onSelect: () => send({ type: "newTab", url: ctx.linkHref }) },
+        { label: "Copy link address", onSelect: () => void writeHostClipboard(ctx.linkHref ?? "") },
+      );
+    }
+    if (ctx.imgSrc) {
+      items.push(
+        { label: "Open image in new tab", dividerBefore: true, onSelect: () => send({ type: "newTab", url: ctx.imgSrc }) },
+        { label: "Copy image address", onSelect: () => void writeHostClipboard(ctx.imgSrc ?? "") },
+      );
+    }
+    if (ctx.selection) {
+      items.push({ label: "Copy", dividerBefore: true, onSelect: () => void writeHostClipboard(ctx.selection ?? "") });
+    }
+    if (ctx.editable && ctx.selection) {
+      items.push({ label: "Cut", onSelect: () => void cutSelection(ctx.selection ?? "") });
+    }
+    if (ctx.editable) {
+      items.push({ label: "Paste", dividerBefore: !ctx.selection, onSelect: () => void pasteFromClipboard() });
+    }
+    items.push({ label: "Select all", dividerBefore: true, onSelect: selectAllInPage });
+    if (bitwarden) {
+      // Chrome puts Bitwarden behind a toolbar button; headless has no toolbar,
+      // so the vault opens as an ordinary tab in the extension's own origin.
+      // Once unlocked, Bitwarden's in-page overlay handles filling the fields
+      // directly — this entry is the way in, not the fill itself.
+      items.push({ label: "Open Bitwarden vault", dividerBefore: true, onSelect: () => send({ type: "newTab", url: bitwarden }) });
+    }
+    return items;
+  }
 
   const toggleFullscreen = async () => {
     try {
@@ -1041,18 +1071,10 @@ export function BrowserPane({
               if (!event.isPrimary) return;
               queuePointerMove(toFrameCoords(event));
             }}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              // The right press/release from onPointerDown has already focused
-              // whatever field was clicked, so the probe's `editable` answer and
-              // a later Paste both land on the right target.
-              const clientX = event.clientX;
-              const clientY = event.clientY;
-              const point = toFrameCoords(event);
-              void probeContext(point).then((ctx) =>
-                setMenu({ x: clientX, y: clientY, ...ctx }),
-              );
-            }}
+            // Kept only to suppress the host webview's own menu; the pane's menu
+            // is opened from the right-button pointerup (see releasePointer),
+            // because preventDefault on pointerdown stops this event firing.
+            onContextMenu={(event) => event.preventDefault()}
             onWheel={(event) => {
               // Ctrl/Cmd+wheel is pane zoom, not page scroll: let it bubble to
               // the window-level hotwheel handler untouched. (Mac pinch also
@@ -1223,72 +1245,6 @@ export function BrowserPane({
             </div>
           )}
 
-          {menu && (
-            <div
-              className="browser-context-menu"
-              role="menu"
-              style={{
-                left: Math.min(menu.x, window.innerWidth - 244),
-                top: Math.min(menu.y, window.innerHeight - 300),
-              }}
-              // The document-level dismiss handler fires on pointerdown capture;
-              // stop it here so pressing a menu item doesn't close the menu
-              // before the click lands.
-              onPointerDown={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.preventDefault()}
-            >
-              <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => send({ type: "back" }))}>
-                Back
-              </button>
-              <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => send({ type: "forward" }))}>
-                Forward
-              </button>
-              <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => send({ type: "reload" }))}>
-                Reload
-              </button>
-              <div className="browser-menu-sep" role="separator" />
-              {menu.linkHref && (
-                <>
-                  <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => send({ type: "newTab", url: menu.linkHref }))}>
-                    Open link in new tab
-                  </button>
-                  <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => void writeHostClipboard(menu.linkHref ?? ""))}>
-                    Copy link address
-                  </button>
-                </>
-              )}
-              {menu.imgSrc && (
-                <>
-                  <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => send({ type: "newTab", url: menu.imgSrc }))}>
-                    Open image in new tab
-                  </button>
-                  <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => void writeHostClipboard(menu.imgSrc ?? ""))}>
-                    Copy image address
-                  </button>
-                </>
-              )}
-              {(menu.linkHref || menu.imgSrc) && <div className="browser-menu-sep" role="separator" />}
-              {menu.selection && (
-                <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => void writeHostClipboard(menu.selection ?? ""))}>
-                  Copy
-                </button>
-              )}
-              {menu.editable && menu.selection && (
-                <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => void cutSelection(menu.selection ?? ""))}>
-                  Cut
-                </button>
-              )}
-              {menu.editable && (
-                <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(() => void pasteFromClipboard())}>
-                  Paste
-                </button>
-              )}
-              <button type="button" role="menuitem" className="browser-menu-item" onClick={() => runMenu(selectAllInPage)}>
-                Select all
-              </button>
-            </div>
-          )}
-
           {!url && (
             <div className="browser-empty">
               <div className="browser-empty-head">
@@ -1323,6 +1279,15 @@ export function BrowserPane({
           )}
         </div>
       </div>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems(menu)}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }
