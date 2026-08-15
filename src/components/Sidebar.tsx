@@ -99,6 +99,7 @@ import {
   UndoIcon,
   XIcon,
 } from "./icons";
+import wordmarkUrl from "../assets/threadknot-wordmark.png";
 
 const THREAD_PAGE_SIZE = 5;
 /** Layouts that show one project at a time hand it the whole sidebar, so the
@@ -3813,7 +3814,7 @@ export const Sidebar = memo(function Sidebar({
         >
           <FilterIcon size={18} />
         </button>
-        <span className="brand-wordmark">ThreadKnot</span>
+        <img className="brand-wordmark" src={wordmarkUrl} alt="ThreadKnot" />
         <button
           type="button"
           className="icon-btn sidebar-collapse-btn"

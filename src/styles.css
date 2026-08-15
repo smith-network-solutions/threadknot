@@ -306,53 +306,43 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
 }
 .brand-mark-accent { color: var(--brass); }
-/* The sidebar wordmark: "ThreadKnot" set in the display face with the brass
-   gradient off the website, in place of the logo image. Sits between the filter
-   and collapse buttons, which are absolutely positioned at the row edges.
-   Clipping the gradient to the glyphs needs `color: transparent`, so the
-   `background` shorthand and the clip must travel together in any override. */
+/* The sidebar wordmark: the engraved "ThreadKnot" logo art, rope-wrapped T and
+   all, in place of the type-set version this used to draw. Sits between the
+   filter and collapse buttons, which are absolutely positioned at the row edges.
+
+   The asset is trimmed to bare ink — no transparent padding — so this box is
+   the mark, which is what lets it be sized off one number. Its aspect is
+   4.558:1, and the caps occupy 47% of its height, so 136px wide gives ~14px of
+   cap height: a touch more presence than the 17px display type it replaces,
+   without growing the row.
+
+   Size on `width`, not `height`: hitting `max-width` then scales the mark down
+   instead of squashing it, which a fixed height would do.
+
+   The reserve is 72px and it is not the sum of the two buttons. Under
+   `.layout-rail` the row's left padding is the rail's 64px while the right
+   stays 16px, so the centre of this box sits well left of the centre of the
+   span the buttons leave clear — the binding edge is the 32px collapse button
+   at `right: 10px`, and the mark's own half-width has to clear it from that
+   offset centre. That works out to `content-width - 68px`; the symmetric
+   rail-off case lands on the same figure, so one reserve covers both layouts.
+   72px takes it with a ~10px gutter. Below a 288px sidebar the mark starts
+   scaling down, which is the intended behaviour, not a clip. */
 .brand-wordmark {
   display: block;
-  /* `.display` off threadknot.ai, at the header's own 16.8px rounded to 17. */
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 17px;
-  letter-spacing: 0.01em;
-  line-height: 1.08;
-  white-space: nowrap;
-  /* Keep clear of the edge buttons on a narrow sidebar. Cinzel sets far wider
-     than the UI face — "ThreadKnot" wants ~133px here, so the old 88px reserve
-     (sized for the logo image) clipped it to "ThreadK…". The buttons are 32px
-     and sit ~10px off each row edge; 60px covers one of them plus a gutter,
-     which is the binding side since the row's left padding is the fleet rail's. */
-  max-width: calc(100% - 60px);
-  /* Clip the inline axis only. `.display`'s 1.08 line-height is tighter than
-     Cinzel's own ascent+descent, so a plain `overflow: hidden` also clips the
-     block axis and shaves the caps. `clip` is what allows the cross axis to
-     stay `visible` — pairing `hidden` with `visible` computes the latter to
-     `auto` and makes this a scroll container. Ellipsis still engages. */
-  overflow-x: clip;
-  overflow-y: visible;
-  text-overflow: ellipsis;
+  width: 136px;
+  height: auto;
+  max-width: calc(100% - 72px);
   user-select: none;
-  /* `.gilt`: the gradient is clipped to the glyphs and the fill is transparent,
-     so the shadow — painted from the same glyph geometry — is what gives the
-     letters their struck edge. */
-  background: var(--gilt);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: 0 1px rgba(0, 0, 0, 0.55);
+  -webkit-user-drag: none;
 }
-/* The gilt is built for the site's near-black chrome: both cream stops and the
-   engraved shadow disappear against a white sidebar, leaving the wordmark
-   patchy. Fall back to a flat brass rake there. Re-declare the clip — the
-   `background` shorthand resets it. */
+/* The art is gold-on-transparent, drawn for the near-black chrome: on a white
+   sidebar the pale stops in the gilt wash out and the rope loses the dark
+   contours that read as twist. Darken and firm it up rather than ship a second
+   asset — the mark stays one file. */
 :root[data-family="light"] .brand-wordmark {
-  background: linear-gradient(180deg, var(--brass), var(--brass-hi));
-  -webkit-background-clip: text;
-  background-clip: text;
-  text-shadow: none;
+  filter: saturate(1.12) brightness(0.82) contrast(1.06)
+    drop-shadow(0 1px 0.5px rgba(60, 40, 0, 0.28));
 }
 
 .conn-pip {
