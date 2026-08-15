@@ -19,7 +19,10 @@ import { AgentMark } from "./icons";
 import { hermesPresence } from "./HermesPresence";
 
 const SHOW_DELAY_MS = 350;
-const CARD_WIDTH = 280;
+/** Wide enough for a wrapped title and a summary worth reading. The card is the
+ *  alternative to opening the chat, so it has to carry enough to answer "what
+ *  is in here" on its own. */
+const CARD_WIDTH = 330;
 const VIEW_MARGIN = 8;
 const ANCHOR_GAP = 12;
 
@@ -382,6 +385,18 @@ export function ThreadHoverCardBody({ thread }: { thread: Thread }) {
             );
           })()}
         {modelLine && <span className="hover-card-meta-line">{modelLine}</span>}
+        {/* The head's status dot is colour alone — fine as a glance cue on a
+            row, not enough on the card you opened to avoid opening the chat. */}
+        <span className="hover-card-meta-line">
+          {thread.status === "running"
+            ? "working now"
+            : thread.status === "waiting_approval"
+              ? "waiting for approval"
+              : thread.settledAt
+                ? "settled"
+                : "idle"}
+          {thread.favorite ? " · favorite" : ""}
+        </span>
         <span className="hover-card-meta-line">
           created {timeAgo(thread.createdAt)} · updated {timeAgo(thread.updatedAt)}
         </span>

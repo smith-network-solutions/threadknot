@@ -977,10 +977,40 @@ export function ThreadView() {
     headObserverRef.current = ro;
   }, []);
 
+  // The composer floats over the foot of the feed, so the feed reserves room
+  // for it — and that room is not a constant either. The card grows with every
+  // wrapped line of a long prompt, and with attachments, queued follow-ups and
+  // the reply strip on top of that. Reserved as a fixed 132px, anything taller
+  // simply covered the end of the conversation, which is the one part you are
+  // usually reading. Measured and published as --dock-h on .thread-pane, the
+  // same way (and for the same reason) as --head-h above.
+  //
+  // Written straight to the DOM rather than through state, for the same reason:
+  // this fires on every keystroke that wraps a line, and a re-render each time
+  // would show up in docs/RENDER-FORENSICS.md as the whole thread flashing.
+  const dockObserverRef = useRef<ResizeObserver | null>(null);
+  const composerDockRef = useCallback((node: HTMLDivElement | null) => {
+    dockObserverRef.current?.disconnect();
+    dockObserverRef.current = null;
+    if (!node) return;
+    const pane = node.parentElement;
+    if (!pane) return;
+    const ro = new ResizeObserver(() => {
+      pane.style.setProperty("--dock-h", `${Math.round(node.getBoundingClientRect().height)}px`);
+      // Growing the composer eats the scrollport from the bottom. Someone
+      // reading the newest message has to stay on it rather than watch it slide
+      // under the card they are typing into.
+      if (stickRef.current) pinToEnd();
+    });
+    ro.observe(node);
+    dockObserverRef.current = ro;
+  }, [pinToEnd]);
+
   useEffect(
     () => () => {
       observerRef.current?.disconnect();
       headObserverRef.current?.disconnect();
+      dockObserverRef.current?.disconnect();
       if (pinRafRef.current !== null) window.cancelAnimationFrame(pinRafRef.current);
       if (scrollMetricsRafRef.current !== null) {
         window.cancelAnimationFrame(scrollMetricsRafRef.current);
@@ -1410,7 +1440,7 @@ export function ThreadView() {
 
       {/* Pinned above the composer (outside the scroll container) so it stays
           put on every layout — desktop, the stacked mobile panes, and zoom. */}
-      <div className="composer-dock">
+      <div className="composer-dock" ref={composerDockRef}>
         {feedLen > 0 && !atPresent && (
           <button
             type="button"

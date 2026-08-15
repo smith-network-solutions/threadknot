@@ -1226,6 +1226,26 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 .project-section[data-drop="before"]::after { top: -3px; }
 .project-section[data-drop="after"]::after { bottom: -3px; }
 
+/* Chat rows reorder with the same gesture and the same marker as the sections
+   above. The row is its own handle, so the insertion line is the only thing
+   that says where the drop lands. */
+.thread-row.dragging { opacity: 0.4; }
+/* Only while a drop is pending, so an ordinary row's stacking is untouched. */
+.thread-row[data-drop] { position: relative; }
+.thread-row[data-drop]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brass-hi);
+  box-shadow: 0 0 6px rgba(229, 181, 103, 0.55);
+  pointer-events: none;
+}
+.thread-row[data-drop="before"]::after { top: -1px; }
+.thread-row[data-drop="after"]::after { bottom: -1px; }
+
 /* While a reorder is live the pointer owns the whole window: no text
    selection wherever it wanders, and a grabbing cursor even off the grip. */
 body.reordering { cursor: grabbing; user-select: none; }
@@ -4428,8 +4448,13 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .feed-inner {
   max-width: 860px;
   margin: 0 auto;
-  /* Bottom room clears the composer, which now floats over the feed's foot. */
-  padding: 22px 22px 132px;
+  /* Bottom room clears the composer, which floats over the feed's foot. Its
+     height is measured and published as --dock-h by ThreadView, because the
+     card grows with wrapped lines, attachments and queued follow-ups: a fixed
+     reserve is right at one composer size and hides the end of the thread at
+     every larger one. The fallback is the old constant, for the first paint
+     before the observer has measured. */
+  padding: 22px 22px calc(var(--dock-h, 132px) + 16px);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -8823,8 +8848,19 @@ span.title-agent-mark { width: 16px; height: 16px; }
   /* Clear the floating composer. The card alone measures ~133px on a phone, so
      116px left the last message tucked under it; this reserves the card plus a
      visible gap, and tracks whatever the card is sitting on top of — the home
-     indicator, or the keyboard once it pushes the card up. */
-  .feed-inner { padding: 14px 12px calc(150px + max(var(--safe-b), var(--kb-inset))); }
+     indicator, or the keyboard once it pushes the card up.
+     The measured --dock-h (see .feed-inner above) covers the case those
+     constants cannot: a card grown tall by a long prompt or attachments. Taken
+     as a max() rather than replacing the expression, so this never reserves
+     less room than it did before — the dock's own height already includes
+     --safe-b via the composer's padding, and double-counting it would leave a
+     visible dead band above the keyboard. */
+  .feed-inner {
+    padding: 14px 12px max(
+      calc(150px + max(var(--safe-b), var(--kb-inset))),
+      calc(var(--dock-h, 150px) + 16px)
+    );
+  }
   .msg-user { max-width: 88%; }
   .artifact-card { width: 100%; max-width: none; border-radius: 18px; }
   .artifact-inline-preview { min-height: 132px; max-height: 310px; }
@@ -9905,11 +9941,14 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 }
 .hover-card-head {
   display: flex;
-  align-items: center;
+  /* Top-aligned so the mark and status dot sit on the title's FIRST line; a
+     wrapped three-line title would otherwise centre them against its middle. */
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
 }
-.hover-card-mark { flex: none; opacity: 0.9; }
+.hover-card-mark { flex: none; opacity: 0.9; margin-top: 1px; }
+.hover-card-head .status-dot { margin-top: 5px; }
 .hover-card-avatar {
   flex: none;
   width: 16px;
@@ -9919,15 +9958,21 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   border: 1px solid var(--line-2);
 }
 .hover-card-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
+/* The title is the reason the card is open: it wraps to three lines rather
+   than ellipsing at one, because "Hoag Land Services SiteWork — phase 2 review"
+   truncated to "Hoag Land Services Si…" is the same non-answer as the row that
+   was hovered to escape. */
 .hover-card-title {
   flex: 1;
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 /* Workspace card: the name is the headline, so it may wrap to two lines. */
 .hover-card-title-lg {
@@ -9962,10 +10007,12 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   color: var(--dim);
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
-/* Assistant summary, quoted and clamped to ~4 lines. */
+/* Assistant summary, quoted. Clamped generously: this is the line that says
+   what the chat is actually about, and the whole point of the card is not
+   having to open the thread to find out. */
 .hover-card-quote {
   font-size: 12px;
   line-height: 1.45;
@@ -9974,7 +10021,7 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   padding-left: 8px;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 8;
   -webkit-box-orient: vertical;
 }
 .hover-card-dim { font-size: 11.5px; color: var(--faint); font-style: italic; }
