@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -272,7 +273,10 @@ interface SettingOption {
   onSelect: () => void;
 }
 
-/** One row of the consolidated composer settings menu. */
+/**
+ * One extra section of the AI menu — a per-session setting that belongs to the
+ * AI rather than to the message being written (context window, Chrome).
+ */
 interface SettingRow {
   key: string;
   icon: ReactNode;
@@ -280,138 +284,9 @@ interface SettingRow {
   valueLabel?: string;
   valueGlyph?: ReactNode;
   hint?: string;
-  disabled?: boolean; // shown, but not openable (single/locked value)
+  disabled?: boolean; // shown, but not changeable (locked value, or mid-turn)
   options: SettingOption[];
-  action?: () => void; // a plain command row (e.g. attach files) — no flyout
-  sectionBreak?: boolean; // visually separate a utility action from settings above it
-}
-
-/**
- * Every composer control folded into a single menu behind a plus button. Each
- * row shows the setting and its current value; hovering (desktop) or tapping
- * (touch) a row swings out a second-level flyout with that setting's choices.
- * One tidy surface in place of six naked <select>s.
- */
-function ComposerSettings({ rows, isMobile }: { rows: SettingRow[]; isMobile: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setActive(null);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setOpen(false);
-        setActive(null);
-      }
-    }
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  return (
-    <div className={`cset${isMobile ? " mobile" : ""}`} ref={ref}>
-      <button
-        type="button"
-        className={`cset-trigger${open ? " on" : ""}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Conversation settings"
-        title="Conversation settings"
-        onClick={() => {
-          setOpen((v) => !v);
-          setActive(null);
-        }}
-      >
-        <PlusIcon size={19} strokeWidth={2.2} />
-      </button>
-
-      {open && (
-        <div className="cset-menu" role="menu">
-          {rows.map((row) => {
-            const isActive = active === row.key;
-            const isAction = !!row.action;
-            return (
-              <div
-                key={row.key}
-                className={`cset-row${isActive ? " active" : ""}${row.disabled ? " disabled" : ""}${isAction ? " cset-action" : ""}${row.sectionBreak ? " section-break" : ""}`}
-                onMouseEnter={() => !isMobile && !row.disabled && !isAction && setActive(row.key)}
-              >
-                <button
-                  type="button"
-                  className="cset-row-btn"
-                  role="menuitem"
-                  aria-haspopup={row.disabled || isAction ? undefined : "menu"}
-                  aria-expanded={isAction ? undefined : isActive}
-                  disabled={row.disabled}
-                  title={row.hint}
-                  onClick={() => {
-                    if (row.disabled) return;
-                    if (isAction) {
-                      row.action!();
-                      setOpen(false);
-                      setActive(null);
-                      return;
-                    }
-                    setActive((k) => (k === row.key ? null : row.key));
-                  }}
-                >
-                  <span className="cset-row-icon">{row.icon}</span>
-                  <span className="cset-row-label">{row.label}</span>
-                  {row.valueLabel !== undefined && (
-                    <span className="cset-row-value">
-                      {row.valueGlyph}
-                      <span className="cset-row-value-text">{row.valueLabel}</span>
-                    </span>
-                  )}
-                  {!row.disabled && !isAction && (
-                    <ChevronIcon size={13} className="cset-row-caret" />
-                  )}
-                </button>
-
-                {isActive && !row.disabled && !isAction && (
-                  <div className="cset-sub" role="menu">
-                    {row.options.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={opt.selected}
-                        className={`cset-opt${opt.selected ? " on" : ""}`}
-                        onClick={() => {
-                          opt.onSelect();
-                          setOpen(false);
-                          setActive(null);
-                        }}
-                      >
-                        {opt.glyph && <span className="cset-opt-glyph">{opt.glyph}</span>}
-                        {opt.dot && (
-                          <span className={`hermes-presence-inline ${opt.dot}`} aria-hidden="true" />
-                        )}
-                        <span className="cset-opt-label">{opt.label}</span>
-                        {opt.tag && <em className="cset-opt-tag">{opt.tag}</em>}
-                        {opt.selected && <CheckIcon size={14} className="cset-opt-check" />}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
+  action?: () => void; // a plain command row (e.g. "Claude only") — no choices
 }
 
 interface PickerOption<T extends string> {
@@ -526,9 +401,11 @@ const ACCESS_OPTIONS: PickerOption<Access>[] = [
 ];
 
 /**
- * Right-side pill (a picture of the current AI) that opens one menu for both
- * switching the AI and picking a model within it. Reuses SettingOption arrays so
- * the model-switch side effects (effort/context reset) stay in one place.
+ * Right-side pill (a picture of the current AI) that opens one menu for every
+ * setting that belongs to the AI: which one, which model, how hard it thinks,
+ * how much context it gets, whether it drives Chrome. Reuses SettingOption
+ * arrays so the model-switch side effects (effort/context reset) stay in one
+ * place.
  */
 function AgentModelPicker({
   agent,
@@ -538,6 +415,7 @@ function AgentModelPicker({
   modelGroupLabel,
   modelOptions,
   effortOptions,
+  sections,
 }: {
   agent: Agent;
   showAgents: boolean;
@@ -546,6 +424,7 @@ function AgentModelPicker({
   modelGroupLabel: string;
   modelOptions: SettingOption[];
   effortOptions: SettingOption[];
+  sections: SettingRow[];
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -660,6 +539,55 @@ function AgentModelPicker({
               ))}
             </>
           )}
+          {sections.map((row) => (
+            <Fragment key={row.key}>
+              <div className="pill-menu-sep" />
+              <div className="pill-menu-label">{row.label}</div>
+              {row.options.length > 0 ? (
+                row.options.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={o.selected}
+                    disabled={row.disabled}
+                    className={`pill-opt compact${o.selected ? " on" : ""}`}
+                    title={row.hint}
+                    onClick={() => {
+                      o.onSelect();
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="pill-opt-icon">{row.icon}</span>
+                    <span className="pill-opt-text">
+                      <span className="pill-opt-title">{o.label}</span>
+                    </span>
+                    {o.selected && <CheckIcon size={15} className="pill-opt-check" />}
+                  </button>
+                ))
+              ) : (
+                // No choice to make: either the value is locked to the model
+                // (a fixed context window) or taking it means switching AI.
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!row.action || row.disabled}
+                  className="pill-opt compact"
+                  title={row.hint}
+                  onClick={() => {
+                    if (!row.action) return;
+                    row.action();
+                    setOpen(false);
+                  }}
+                >
+                  <span className="pill-opt-icon">{row.valueGlyph ?? row.icon}</span>
+                  <span className="pill-opt-text">
+                    <span className="pill-opt-title">{row.valueLabel}</span>
+                  </span>
+                </button>
+              )}
+            </Fragment>
+          ))}
         </div>
       )}
     </div>
@@ -895,7 +823,6 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   );
   const [attachError, setAttachError] = useState<string | null>(null);
   const [fileDragActive, setFileDragActive] = useState(false);
-  const isMobile = useIsMobile();
   const [mic, setMic] = useState<MicState>("idle");
   const [micSeconds, setMicSeconds] = useState(0);
   const [cursorPos, setCursorPos] = useState<number | null>(null);
@@ -1420,16 +1347,17 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     }
   }
 
-  // Everything else folds into one descriptor list; ComposerSettings renders it
-  // as a plus-button menu with hover-out flyouts.
-  const settingRows: SettingRow[] = [];
+  // Context window and Chrome are properties of the AI, not of the message being
+  // written, so they hang off the AI pill with the model and effort rather than
+  // off the plus button — which is now only ever "attach a file".
+  const aiSections: SettingRow[] = [];
 
   if (agent === "codex") {
-    settingRows.push({
+    aiSections.push({
       key: "ctx",
-      icon: <BracketsIcon size={16} />,
+      icon: <BracketsIcon size={15} />,
       label: "Context",
-      valueGlyph: <AgentMark agent="claude" size={14} />,
+      valueGlyph: <AgentMark agent="claude" size={15} />,
       valueLabel: "Claude only",
       disabled: running,
       hint: "Claude only — click to confirm switching this conversation to Claude",
@@ -1442,9 +1370,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     // Fixed-window models and 200K-only Claude models show the value but offer
     // no choice; only wide-context Claude gets a real toggle.
     const locked = !!fixedContextLabel || !supportsWideContext;
-    settingRows.push({
+    aiSections.push({
       key: "ctx",
-      icon: <BracketsIcon size={16} />,
+      icon: <BracketsIcon size={15} />,
       label: "Context",
       disabled: locked,
       valueLabel: fixedContextLabel
@@ -1477,11 +1405,10 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   }
 
   if (agent === "claude") {
-    settingRows.push({
+    aiSections.push({
       key: "chrome",
-      icon: <GlobeIcon size={16} />,
+      icon: <GlobeIcon size={15} />,
       label: "Chrome",
-      valueLabel: settings.claudeChrome ? "Enabled" : "Default",
       disabled: running,
       hint: "Launch this Claude Code session with --chrome so it can use the Claude in Chrome extension",
       options: [
@@ -1500,11 +1427,11 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
       ],
     });
   } else if (agent === "codex") {
-    settingRows.push({
+    aiSections.push({
       key: "chrome",
-      icon: <GlobeIcon size={16} />,
+      icon: <GlobeIcon size={15} />,
       label: "Chrome",
-      valueGlyph: <AgentMark agent="claude" size={14} />,
+      valueGlyph: <AgentMark agent="claude" size={15} />,
       valueLabel: "Claude only",
       disabled: running,
       hint: "Claude only — click to confirm switching this conversation to Claude",
@@ -1513,23 +1440,12 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     });
   }
 
-  // Access and Mode stay out on the bar itself (see the inline segmented
-  // controls below) rather than in the menu — they're the two settings changed
-  // often enough to want one click, not two. Remote Hermes agents govern their
-  // own approvals/plan mode server-side, so they get neither.
+  // Access and Mode stay out on the bar itself (see the pills below) rather than
+  // inside any menu — they're the two settings changed often enough to want one
+  // click, not two. Remote Hermes agents govern their own approvals/plan mode
+  // server-side, so they get neither.
 
-  // Attaching files is a one-shot command, not a setting, so it sits at the
-  // foot of the same menu as its own row rather than a stray button.
-  settingRows.push({
-    key: "attach",
-    icon: <PaperclipIcon size={16} />,
-    label: "Attach files",
-    disabled: attachments.length >= MAX_ATTACHMENTS,
-    hint: "Attach images or files (or paste into the box)",
-    options: [],
-    action: () => fileRef.current?.click(),
-    sectionBreak: true,
-  });
+  const attachFull = attachments.length >= MAX_ATTACHMENTS;
 
   // "Build with Opus 5…" / "Plan with Opus 5…", falling back to the mode word
   // alone when the model doesn't name itself.
@@ -1824,7 +1740,22 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
         />
         <div className="composer-strip">
           <div className="composer-left">
-            <ComposerSettings rows={settingRows} isMobile={isMobile} />
+            {/* One click, one thing: the plus attaches a file. Every setting
+                that used to hide behind it now lives on the AI pill instead. */}
+            <button
+              type="button"
+              className="cset-trigger"
+              disabled={attachFull}
+              aria-label="Attach files"
+              title={
+                attachFull
+                  ? `You can attach at most ${MAX_ATTACHMENTS} files`
+                  : "Attach images or files (or paste into the box)"
+              }
+              onClick={() => fileRef.current?.click()}
+            >
+              <PlusIcon size={19} strokeWidth={2.2} />
+            </button>
             {agent !== "hermes" && (
               <>
                 <PillPicker
@@ -1885,6 +1816,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               modelGroupLabel={modelGroupLabel}
               modelOptions={modelOptions}
               effortOptions={effortOptionList}
+              sections={aiSections}
             />
             {running && !canQueue ? (
               // With an empty composer the primary button remains Stop. Once
