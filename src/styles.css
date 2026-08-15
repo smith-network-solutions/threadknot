@@ -7019,12 +7019,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   padding-top: 8px;
 }
 
-/* ---- consolidated settings menu (plus button → flyout rows) ------------
-   Every former inline <select> now lives behind one plus button in the
-   bottom-left. The menu is a free-floating surface (absolute, high z-index) so
-   it reads as its own dropdown rather than something crammed into the card. */
-.cset { position: relative; }
-
 /* The bar's left cluster: the plus button plus the two settings kept out in the
    open (Mode, Access). margin-right:auto shoves the actions to the far edge. */
 .composer-left {
@@ -7137,6 +7131,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .pill-menu-sep { height: 1px; margin: 5px 6px; background: var(--line); }
 
+/* Composer plus button — one click, attaches a file. */
 .cset-trigger {
   flex: none;
   width: 36px;
@@ -7149,130 +7144,15 @@ span.title-agent-mark { width: 16px; height: 16px; }
   background: none;
   transition: color 0.14s, background 0.14s;
 }
-.cset-trigger svg { transition: transform 0.2s ease; }
-/* No resting background — only a faint ink wash on hover / while open. */
-.cset-trigger:hover,
-.cset-trigger.on {
+/* No resting background — only a faint ink wash on hover. */
+.cset-trigger:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--dim) 13%, transparent);
 }
-.cset-trigger.on { color: var(--brass); }
-.cset-trigger.on svg { transform: rotate(45deg); } /* plus pivots into a close × */
+.cset-trigger:disabled { opacity: 0.4; cursor: default; }
+.cset-trigger:disabled:hover { color: var(--dim); background: none; }
 
-.cset-menu {
-  position: absolute;
-  bottom: calc(100% + 12px);
-  left: 0;
-  min-width: 244px;
-  background: var(--panel-2);
-  border: 1px solid var(--line-2);
-  border-radius: 16px;
-  padding: 7px;
-  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.5);
-  z-index: 60;
-  animation: rise 0.15s ease-out;
-}
-
-.cset-row { position: relative; }
-.cset-row.section-break { margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--line); }
-.cset-row-btn {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  padding: 12px 12px;
-  border-radius: 12px;
-  text-align: left;
-  color: var(--text);
-  transition: background 0.12s;
-}
-.cset-row:not(.disabled) .cset-row-btn:hover,
-.cset-row.active .cset-row-btn { background: var(--panel-3); }
-.cset-row.disabled .cset-row-btn { cursor: default; opacity: 0.5; }
-
-.cset-row-icon {
-  flex: none;
-  width: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--dim);
-}
-.cset-row.active .cset-row-icon { color: var(--brass); }
-.cset-row-label {
-  flex: none;
-  font-size: 13.5px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-}
-.cset-row-value {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 130px;
-  font-size: 12.5px;
-  color: var(--dim);
-}
-.cset-row-value-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cset-row-caret {
-  flex: none;
-  color: var(--faint);
-  transition: transform 0.16s ease;
-}
-.cset-row.active .cset-row-caret { transform: rotate(90deg); color: var(--brass); }
-
-/* Second-level flyout: swings out to the right of the hovered row. */
-.cset-sub {
-  position: absolute;
-  left: calc(100% + 9px);
-  bottom: -7px;
-  min-width: 180px;
-  max-height: 320px;
-  overflow-y: auto;
-  background: var(--panel-2);
-  border: 1px solid var(--line-2);
-  border-radius: 14px;
-  padding: 7px;
-  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.5);
-  z-index: 61;
-  animation: rise-side 0.14s ease-out;
-}
-@keyframes rise-side {
-  from { opacity: 0; transform: translateX(-6px); }
-  to { opacity: 1; transform: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .cset-menu, .cset-sub { animation: none; }
-}
-
-.cset-opt {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  text-align: left;
-  font-size: 13px;
-  color: var(--text);
-  white-space: nowrap;
-  transition: background 0.12s;
-}
-.cset-opt:hover { background: var(--panel-3); }
-.cset-opt.on { background: var(--brass-dim); color: var(--brass-hi); }
-.cset-opt-glyph { flex: none; display: flex; align-items: center; }
-.cset-opt-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* Trailing note on a menu option ("offline"), shared with the AI pill menu. */
 .cset-opt-tag {
   flex: none;
   font-style: normal;
@@ -7282,34 +7162,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   text-transform: uppercase;
   color: var(--faint);
 }
-.cset-opt-check { flex: none; color: var(--brass); }
-
-/* Light family: pure-white menus (panel-2 has a faint blue tint), no outline,
-   a soft (not heavy) shadow instead. */
-:root[data-family="light"] .cset-menu,
-:root[data-family="light"] .cset-sub {
-  background: #ffffff;
-  border-color: transparent;
-  box-shadow: 0 10px 30px rgba(35, 50, 90, 0.13), 0 2px 8px rgba(35, 50, 90, 0.06);
-}
-
-/* Touch: the flyout can't sit beside the row, so rows expand inline instead. */
-.cset.mobile .cset-menu {
-  left: 0;
-  width: min(320px, calc(100vw - 44px));
-  min-width: 0;
-}
-.cset.mobile .cset-sub {
-  position: static;
-  max-height: none;
-  padding: 2px 0 4px 31px;
-  border: none;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-  animation: none;
-}
-.cset.mobile .cset-row.active .cset-row-caret { transform: rotate(90deg); }
 
 /* provider brand marks */
 
@@ -12636,8 +12488,7 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   animation: popup-backdrop-in 0.2s ease-out both;
 }
 
-/* Shared popup surfaces. The mobile cset sub-menu is deliberately excluded:
-   on touch it becomes an inline part of its parent menu, not a second card. */
+/* Shared popup surfaces. */
 .modal,
 .search-modal,
 .artifact-lightbox,
@@ -12650,8 +12501,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .theme-picker-pop,
 .font-menu,
 .pill-menu,
-.cset-menu,
-.cset:not(.mobile) .cset-sub,
 .agent-menu,
 .ctx-pop,
 .usage-pop,
@@ -12679,8 +12528,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .theme-picker-pop,
 .font-menu,
 .pill-menu,
-.cset-menu,
-.cset:not(.mobile) .cset-sub,
 .agent-menu,
 .usage-pop,
 .hover-card,
@@ -12695,8 +12542,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .search-scope-menu button,
 .font-option,
 .pill-opt,
-.cset-row-btn,
-.cset-opt,
 .agent-option {
   border-radius: 10px;
 }
@@ -12735,8 +12580,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 :root[data-family="light"] .theme-picker-pop,
 :root[data-family="light"] .font-menu,
 :root[data-family="light"] .pill-menu,
-:root[data-family="light"] .cset-menu,
-:root[data-family="light"] .cset:not(.mobile) .cset-sub,
 :root[data-family="light"] .agent-menu,
 :root[data-family="light"] .ctx-pop,
 :root[data-family="light"] .usage-pop,
@@ -12882,8 +12725,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   .theme-picker-pop,
   .font-menu,
   .pill-menu,
-  .cset-menu,
-  .cset:not(.mobile) .cset-sub,
   .agent-menu,
   .ctx-pop,
   .usage-pop,
