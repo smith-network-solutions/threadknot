@@ -44,9 +44,24 @@ DMG="$(ls -t "$BUNDLE_DIR"/dmg/Threadknot_*.dmg 2>/dev/null | head -1 || true)"
 
 # Same embed sanity-check as rebuild.sh: the fresh web bundle's hash must appear
 # in the shipped binary, or this is the broken dev build that dials localhost.
-HASH="$(grep -o 'assets/index-[^"]*\.js' dist/index.html | head -1 | sed 's#.*index-##; s#\.js##')"
-EMBEDDED="$(strings -n 6 "$BIN" | grep -Fc "$HASH" || true)"
-if [ -z "$HASH" ] || [ "$EMBEDDED" -eq 0 ]; then
+#
+# Match with `-e`: vite hashes routinely begin with a dash (index--ZNxb27G), and
+# grep reads a leading dash as options, so the bare form fails on roughly one
+# build in thirty — on a binary that is perfectly fine. `grep -a` over the binary
+# rather than `strings | grep` also means this no longer needs the Xcode command
+# line tools installed just to verify a build; `-m1` replaces `| head -1`, whose
+# SIGPIPE pipefail reports as a failure.
+#
+# Unlike rebuild.sh, a check that cannot run is fatal here: these are the
+# packages that go to users, and an unverified one must not ship.
+HASH="$(grep -m1 -o 'assets/index-[^"]*\.js' dist/index.html 2>/dev/null | sed 's#.*index-##; s#\.js##' || true)"
+if [ -z "$HASH" ]; then
+  echo "==> ERROR: no web bundle hash in dist/index.html — did the frontend build run?" >&2
+  exit 1
+fi
+EMBEDDED="$(grep -a -c -F -e "$HASH" "$BIN" 2>/dev/null || true)"
+[ -n "$EMBEDDED" ] || EMBEDDED=0
+if [ "$EMBEDDED" -eq 0 ]; then
   echo "==> ERROR: web UI is NOT embedded — this is the broken dev build." >&2
   exit 1
 fi

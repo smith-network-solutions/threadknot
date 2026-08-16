@@ -61,9 +61,24 @@ BUNDLE_DIR="src-tauri/target/release/bundle"
 
 # Same embed sanity-check as rebuild.sh: the fresh web bundle's hash must appear
 # in the shipped binary, or this is the broken dev build that dials localhost.
-HASH="$(grep -o 'assets/index-[^"]*\.js' dist/index.html | head -1 | sed 's#.*index-##; s#\.js##')"
-EMBEDDED="$(strings -n 6 "$BIN" | grep -Fc "$HASH" || true)"
-if [ -z "$HASH" ] || [ "$EMBEDDED" -eq 0 ]; then
+#
+# Match with `-e`: vite hashes routinely begin with a dash (index--ZNxb27G), and
+# grep reads a leading dash as options, so the bare form fails on roughly one
+# build in thirty — on a binary that is perfectly fine. `grep -a` over the binary
+# rather than `strings | grep` drops the binutils dependency and the SIGPIPE
+# false negative pipefail turns into a failure; `-m1` replaces `| head -1` for
+# that same reason.
+#
+# Unlike rebuild.sh, a check that cannot run is fatal here: these are the
+# packages that go to users, and an unverified one must not ship.
+HASH="$(grep -m1 -o 'assets/index-[^"]*\.js' dist/index.html 2>/dev/null | sed 's#.*index-##; s#\.js##' || true)"
+if [ -z "$HASH" ]; then
+  echo "==> ERROR: no web bundle hash in dist/index.html — did the frontend build run?" >&2
+  exit 1
+fi
+EMBEDDED="$(grep -a -c -F -e "$HASH" "$BIN" 2>/dev/null || true)"
+[ -n "$EMBEDDED" ] || EMBEDDED=0
+if [ "$EMBEDDED" -eq 0 ]; then
   echo "==> ERROR: web UI is NOT embedded — this is the broken dev build." >&2
   exit 1
 fi
