@@ -29,27 +29,90 @@ talk to each other directly.
 
 ## Install
 
-Grab a build from
+Prebuilt packages are on
 [Releases](https://github.com/smith-network-solutions/threadknot/releases) — no
-Rust, no Node, no toolchain:
+Rust, no Node, no toolchain. Take the one for your platform.
 
-| | |
-| --- | --- |
-| **macOS** (Apple Silicon) | `Threadknot_<version>_aarch64.dmg` — open it, drag to Applications |
-| **Windows** (x64) | `Threadknot_<version>_x64-setup.exe` |
-| **Debian/Ubuntu** | `Threadknot_<version>_amd64.deb` — `sudo apt install ./<file>.deb` |
-| **Fedora/RHEL** | `Threadknot-<version>-1.x86_64.rpm` — `sudo dnf install ./<file>.rpm` |
-| **Any distro, Arch included** | `Threadknot_<version>_amd64.AppImage` — `chmod +x` and run |
+**macOS** (Apple Silicon) — `Threadknot_<version>_aarch64.dmg`
 
-Each release also carries `threadknot-headless-<platform>`, the LAN server with
-no desktop window, which is what you want on a spare machine or a homelab box.
-Once installed, Threadknot updates itself: Settings → updates.
+Open the disk image and drag Threadknot to Applications. The build is ad-hoc
+signed rather than notarised, so the *first* launch needs **right-click →
+Open**; a plain double-click reports that the app "cannot be opened" and looks
+like a corrupt download. Once is enough. Or clear the quarantine flag outright:
 
-The macOS build is ad-hoc signed rather than notarised, so the first launch
-needs right-click → **Open** (once), or
-`xattr -dr com.apple.quarantine /Applications/Threadknot.app`.
+```bash
+xattr -dr com.apple.quarantine /Applications/Threadknot.app
+```
 
-Building from source instead — with Rust and Node 22+ present, that's:
+**Windows** (x64) — `Threadknot_<version>_x64-setup.exe`
+
+Run the installer. It is unsigned, so SmartScreen interrupts with "Windows
+protected your PC" — **More info → Run anyway**.
+
+**Debian / Ubuntu** — `Threadknot_<version>_amd64.deb`
+
+```bash
+sudo apt install ./Threadknot_<version>_amd64.deb
+```
+
+**Fedora / RHEL** — `Threadknot-<version>-1.x86_64.rpm`
+
+```bash
+sudo dnf install ./Threadknot-<version>-1.x86_64.rpm
+```
+
+**Any distro, Arch included** — `Threadknot_<version>_amd64.AppImage`
+
+```bash
+chmod +x Threadknot_<version>_amd64.AppImage
+./Threadknot_<version>_amd64.AppImage
+```
+
+There is no pacman package and there will not be one; the AppImage is the
+download-and-run answer for every distro without a native bundle.
+
+### You also need an agent CLI
+
+Threadknot drives the coding agents you already have — it does not replace them
+and it never handles their auth. Install at least one and **log in before first
+launch**: `claude`, `codex`, or `kimi`. Each runs against your own subscription,
+so everyone uses their own account. An agent you are not logged into simply
+shows as unavailable in the composer; nothing else breaks.
+
+### First run
+
+1. Launch Threadknot. It opens on an empty fleet.
+2. **Add workspace** in the sidebar, and point it at a project folder.
+3. **New chat**, pick an agent, and type.
+
+Settings is the gear at the foot of the sidebar: the LAN URL for
+[phone access](#phone-access), themes, and updates.
+
+### Run it headless
+
+Every release also carries `threadknot-headless-<platform>` — the same server
+without the desktop window, which is what you want on a spare machine or a
+homelab box:
+
+```bash
+chmod +x threadknot-headless-linux
+./threadknot-headless-linux        # prints the LAN URL and access token
+```
+
+Open that URL from any browser on your network and you get the same UI the
+desktop app shows. Real agent turns work with no desktop session at all.
+
+### Updating
+
+Installed copies update themselves: **Settings → updates → check now**, then one
+click downloads the new build, installs it over this one and relaunches. The
+download survives closing the window. A machine that has a Threadknot git
+checkout builds from `master` instead of downloading — it says so on the card,
+and either machine can be switched to the other route from the same panel.
+
+### Building from source instead
+
+With Rust and Node 22+ present:
 
 ```bash
 npm install
@@ -58,12 +121,10 @@ npx tauri build --no-bundle
 ```
 
 Or `./build-linux.sh`, `./build-mac.sh`, `.\build-windows.ps1` to produce the
-same installable packages the releases carry.
-
-You also need at least one agent CLI installed and already logged in, plus your
-platform's webview toolchain — both under [Prerequisites](#prerequisites). More
-build detail, including the one mistake that produces a binary with no UI, is
-under [Build & run](#build--run).
+same installable packages the releases carry. You will also need your platform's
+webview toolchain — see [Prerequisites](#prerequisites). More build detail,
+including the one mistake that produces a binary with no UI, is under
+[Build & run](#build--run).
 
 ## One phone, every machine
 
