@@ -41,6 +41,16 @@ if [ "${1:-}" = "--deb-only" ]; then
   BUNDLES="deb"
 fi
 
+# linuxdeploy is itself an AppImage, and it runs more AppImages (its gtk and
+# appimage plugins) as child processes. Mounting those needs FUSE, which is
+# absent or unusable often enough — containers, hosts without the module, a
+# kernel that only has fuse3 — that the failure is the norm rather than the
+# exception, and Tauri reports it only as `failed to run linuxdeploy`, which
+# names the symptom and not the cause. Extract-and-run skips mounting entirely:
+# each AppImage is unpacked to a temp dir and executed from there. Costs a
+# little disk and startup time on a step that already takes minutes.
+export APPIMAGE_EXTRACT_AND_RUN=1
+
 # cargo-env.sh strips the build variables cargo injects into shells spawned from
 # inside the running app, keeping the release cache warm — see that file.
 echo "==> Building Threadknot packages ($BUNDLES) — embeds UI via tauri build…"
