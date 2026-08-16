@@ -2,7 +2,7 @@
   <img src="docs/media/threadknot-wordmark.png" width="520" alt="Threadknot">
 </p>
 
-<p align="center"><strong>Every coding agent on one thread.</strong></p>
+<p align="center"><strong>All your work, machines and models, in one place.</strong></p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license: Apache-2.0"></a>
