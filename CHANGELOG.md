@@ -8,6 +8,14 @@ changed, and where to find it. No internal jargon, hashes, or refactor notes.
 Format (parsed by build.rs, keep it exact):
   "## v<version> · <YYYY-MM-DD>" starts a release, "- " lines are its bullets.
 
+Why the numbers below are not monotonic: the patch number is the commit count
+of origin/master, and a history rewrite in early August reset it. The abandoned
+line had already reached 0.1.176, so the numbering restarts partway down this
+file and 0.1.x numbers between 58 and 176 appear twice, against two different
+histories. Releases moved to 0.2.x afterwards so no number is ever issued
+twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
+to the old line.
+
 ## v0.1.108 · 2026-08-15
 
 - **Threadknot updates itself the way everything else does.** Settings → updates now watches the published releases page. When a new version ships, one click downloads the build for your platform, installs it over this copy and restarts into it — no checkout, no toolchain, no compiling. The card shows what is in the release before you take it, and the download keeps going if you close the window.

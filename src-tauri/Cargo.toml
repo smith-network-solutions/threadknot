@@ -1,6 +1,14 @@
 [package]
 name = "threadknot"
-version = "0.1.0"
+# Only the major.minor half is read: build.rs derives the running version as
+# "<major>.<minor>.<commit count of origin/master>", and scripts/release.sh
+# derives the tag from package.json the same way. The two MUST agree, or the
+# binary reports one version and the release is tagged another.
+#
+# 0.2 rather than 0.1 because a history rewrite reset that commit count. The
+# abandoned 0.1 line reached 176, so continuing on 0.1 would have re-issued
+# every number from 108 up to 176 a second time, against a different commit.
+version = "0.2.0"
 edition = "2021"
 description = "Threadknot — every coding agent on one thread"
 authors = ["Spencer Smith"]
