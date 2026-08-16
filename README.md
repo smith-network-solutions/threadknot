@@ -29,8 +29,27 @@ talk to each other directly.
 
 ## Install
 
-There are no prebuilt downloads yet. Build it — with Rust and Node 22+ present,
-that's two commands:
+Grab a build from
+[Releases](https://github.com/smith-network-solutions/threadknot/releases) — no
+Rust, no Node, no toolchain:
+
+| | |
+| --- | --- |
+| **macOS** (Apple Silicon) | `Threadknot_<version>_aarch64.dmg` — open it, drag to Applications |
+| **Windows** (x64) | `Threadknot_<version>_x64-setup.exe` |
+| **Debian/Ubuntu** | `Threadknot_<version>_amd64.deb` — `sudo apt install ./<file>.deb` |
+| **Fedora/RHEL** | `Threadknot-<version>-1.x86_64.rpm` — `sudo dnf install ./<file>.rpm` |
+| **Any distro, Arch included** | `Threadknot_<version>_amd64.AppImage` — `chmod +x` and run |
+
+Each release also carries `threadknot-headless-<platform>`, the LAN server with
+no desktop window, which is what you want on a spare machine or a homelab box.
+Once installed, Threadknot updates itself: Settings → updates.
+
+The macOS build is ad-hoc signed rather than notarised, so the first launch
+needs right-click → **Open** (once), or
+`xattr -dr com.apple.quarantine /Applications/Threadknot.app`.
+
+Building from source instead — with Rust and Node 22+ present, that's:
 
 ```bash
 npm install
@@ -38,17 +57,13 @@ npx tauri build --no-bundle
 ./src-tauri/target/release/threadknot
 ```
 
-The same build produces `threadknot-headless`, the LAN server with no desktop
-window, which is what you want on a spare machine or a homelab box.
+Or `./build-linux.sh`, `./build-mac.sh`, `.\build-windows.ps1` to produce the
+same installable packages the releases carry.
 
 You also need at least one agent CLI installed and already logged in, plus your
 platform's webview toolchain — both under [Prerequisites](#prerequisites). More
 build detail, including the one mistake that produces a binary with no UI, is
 under [Build & run](#build--run).
-
-Packaged `.deb`/`.rpm`/installer downloads will appear on
-[Releases](https://github.com/smith-network-solutions/threadknot/releases) once
-there's a tagged version; the workflow that builds them is in the repo.
 
 ## One phone, every machine
 
