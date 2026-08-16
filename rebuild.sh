@@ -27,15 +27,44 @@ else
   scripts/cargo-env.sh npm run tauri build -- --no-bundle "$@"
 fi
 
+# Cargo appends .exe on Windows. Git Bash would resolve the extensionless name
+# anyway (MSYS maps foo -> foo.exe), but only the real name is worth printing,
+# and a non-MSYS shell would not find it at all. Prefer .exe where it exists.
+#
+# Written as `if`, not `[ -f x ] && y`: under `set -e` a failing AND-list at the
+# top level exits the script, so the bare form would abort every unix build.
 BIN="src-tauri/target/release/threadknot"
+if [ -f "$BIN.exe" ]; then BIN="$BIN.exe"; fi
+HEADLESS="src-tauri/target/release/threadknot-headless"
+if [ -f "$HEADLESS.exe" ]; then HEADLESS="$HEADLESS.exe"; fi
 
 # Sanity-check that the freshly built web UI actually got embedded in the binary.
-# Use `grep -c` into a variable (not `grep -q` in a pipeline): under
-# `set -o pipefail`, `strings | grep -q` reports failure because grep closes the
-# pipe on first match and strings dies with SIGPIPE — a false negative.
-HASH="$(grep -o 'assets/index-[^"]*\.js' dist/index.html | head -1 | sed 's#.*index-##; s#\.js##')"
-EMBEDDED="$(strings -n 6 "$BIN" | grep -Fc "$HASH" || true)"
-if [ -n "$HASH" ] && [ "$EMBEDDED" -gt 0 ]; then
+# Search the binary directly with `grep -a` rather than piping `strings` into it:
+# strings ships with binutils and is absent from Git Bash on Windows, and the
+# pipeline form is a false negative anyway under `set -o pipefail` (grep closes
+# the pipe on the first match, strings dies with SIGPIPE).
+#
+# Match with `-e`, not a bare argument: vite hashes routinely begin with a dash
+# (index--ZNxb27G), which grep would otherwise read as options.
+#
+# `grep -m1` rather than `grep | head -1`: head closing the pipe early kills grep
+# with SIGPIPE, which `set -o pipefail` turns into a failed assignment. The
+# trailing `|| true` keeps a missing dist/index.html on the WARNING path below
+# instead of exiting here with nothing explained.
+HASH="$(grep -m1 -o 'assets/index-[^"]*\.js' dist/index.html 2>/dev/null | sed 's#.*index-##; s#\.js##' || true)"
+EMBEDDED="$(grep -a -c -F -e "$HASH" "$BIN" 2>/dev/null || true)"
+[ -n "$EMBEDDED" ] || EMBEDDED=0
+
+if [ ! -f "$BIN" ]; then
+  echo "==> ERROR: the build produced no binary at $BIN." >&2
+  exit 1
+elif [ -z "$HASH" ]; then
+  # The check itself could not run. Say so rather than condemning a build on the
+  # strength of a test that never happened - that is how a good build gets
+  # thrown away.
+  echo "==> WARNING: could not read the asset hash from dist/index.html;" >&2
+  echo "    skipped the embedded-UI check. Confirm the window is not blank." >&2
+elif [ "$EMBEDDED" -gt 0 ]; then
   echo "==> OK: web UI ($HASH) is embedded in $BIN"
 else
   echo "==> ERROR: web UI is NOT embedded — this is the broken dev build." >&2
@@ -44,4 +73,4 @@ else
 fi
 
 echo "==> Done. Desktop app:  $BIN"
-echo "==> Headless LAN server: src-tauri/target/release/threadknot-headless"
+echo "==> Headless LAN server: $HEADLESS"
