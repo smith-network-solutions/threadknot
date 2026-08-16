@@ -15,15 +15,15 @@ natively over their wire protocols — no terminal wrapping, no Node server — 
 serves the same UI to any browser on your LAN.
 
 Pair your machines and they become one mesh: launch a thread on your desktop
-from your laptop, watch three agents work on three different computers at once,
+from your laptop, watch three models work on three different computers at once,
 and drive the whole thing from your phone. No cloud, no account — your machines
 talk to each other directly.
 
 <p align="center">
   <img src="docs/media/hero-phone.gif" width="300"
-       alt="A live agent turn streaming into the Threadknot UI at phone width — tool calls arriving one by one, a working indicator, and a composer that can interrupt the run.">
+       alt="A live model turn streaming into the Threadknot UI at phone width — tool calls arriving one by one, a working indicator, and a composer that can interrupt the run.">
   <br>
-  <em>The same UI a phone gets, streaming a live agent turn over the LAN.<br>
+  <em>The same UI a phone gets, streaming a live model turn over the LAN.<br>
   (That's Threadknot working on Threadknot.)</em>
 </p>
 
@@ -83,7 +83,7 @@ shows as unavailable in the composer; nothing else breaks.
 
 1. Launch Threadknot. It opens on an empty fleet.
 2. **Add workspace** in the sidebar, and point it at a project folder.
-3. **New chat**, pick an agent, and type.
+3. **New chat**, pick a model, and type.
 
 Settings is the gear at the foot of the sidebar: the LAN URL for
 [phone access](#phone-access), themes, and updates.
@@ -100,7 +100,7 @@ chmod +x threadknot-headless-linux
 ```
 
 Open that URL from any browser on your network and you get the same UI the
-desktop app shows. Real agent turns work with no desktop session at all.
+desktop app shows. Real model turns work with no desktop session at all.
 
 ### Updating
 
@@ -162,7 +162,7 @@ Workspace "Storefront"
  └─ homelab   /srv/storefront              ← Kimi, on a long build
 ```
 
-Three agents, on three machines, working at once. Open a new thread on any of
+Three models, on three machines, working at once. Open a new thread on any of
 them, or interrupt a turn you don't like, from whichever device is in your hand.
 
 - **Discovery is mDNS plus explicit pairing.** Identity is the machine id, so a
@@ -179,12 +179,12 @@ threads. Details and the remaining work: [`docs/MULTI-MACHINE.md`](docs/MULTI-MA
 
 ## Make them argue
 
-Agents are confidently wrong in ways another model often catches immediately.
+Models are confidently wrong in ways another one often catches immediately.
 So point one at another one's work.
 
 **Review with…** throws one or more reviewers at a live thread. Claude planned
 a refactor; hand the plan to Codex and let it argue. Reviewers are read-only —
-they cannot touch a file, only make a case — and any agent can review, including
+they cannot touch a file, only make a case — and any model can review, including
 the one that did the work.
 
 ```
@@ -241,8 +241,8 @@ Design notes and the reasoning behind the roles: [`docs/PARLEY.md`](docs/PARLEY.
   `claude login` / `codex login` / `kimi login` credentials. No API keys for
   the local agents. (Claudex is the exception: it runs the same `claude`
   harness against a compatible gateway, so it takes a base URL and key.)
-- **Projects are folders**; each thread runs one agent in that folder with its
-  own model / effort / access / plan-build settings.
+- **Projects are folders**; each thread runs in that folder with its own
+  model / effort / access / plan-build settings.
 - **Everything is event-sourced**: normalized agent events are appended to
   `~/.threadknot/threads/<id>.jsonl` and broadcast to every connected client, so
   desktop and phone stay in sync and threads replay on reconnect.
