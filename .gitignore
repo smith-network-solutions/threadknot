@@ -24,6 +24,13 @@ CLAUDE.local.md
 # They are throwaway, and `git add -A` would publish them.
 /*.png
 
+# Before/after stills and walkthrough videos staged for a pull request body.
+# They are uploaded to GitHub and then spent, so they are scratch rather than
+# documentation. Same reasoning as the root PNGs above, with a sharper edge: a
+# screenshot of a live session can carry machine names, project names and the
+# LAN URL, and this repository is public.
+/docs/tmp-evidence/
+
 # The hosted relay and its console are a separate, private service. They are
 # ignored here rather than merely absent, because both directories still exist in
 # a working copy split from the old monorepo — and a single `git add -A` would put
