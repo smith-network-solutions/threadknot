@@ -1765,15 +1765,13 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                   onChange={(m) => patch({ mode: m })}
                   showLabel
                 />
-                {!quickHome && (
-                  <PillPicker
-                    ariaLabel="Access"
-                    value={settings.access}
-                    options={ACCESS_OPTIONS}
-                    onChange={(a) => patch({ access: a })}
-                    showLabel
-                  />
-                )}
+                <PillPicker
+                  ariaLabel="Access"
+                  value={settings.access}
+                  options={ACCESS_OPTIONS}
+                  onChange={(a) => patch({ access: a })}
+                  showLabel
+                />
               </>
             )}
           </div>
