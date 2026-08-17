@@ -269,6 +269,10 @@ The handling rules are the point, and each defends something specific:
   is a test rather than a convention.
 - **A listing carries usernames only.** The password is fetched per fill, so
   enumerating matches cannot spill a vault into a WebSocket frame.
+- **`BW_NOINTERACTION=true` on every call.** Without it, a `bw` that wants a
+  password blocks on its own prompt and the pane hangs on a child that will
+  never answer. With it, a logged-out vault reports back in about a second
+  (measured) instead.
 
 `bw login` is deliberately left to a terminal: it needs an email and usually a
 two-factor code, and reimplementing that flow here would buy nothing.
