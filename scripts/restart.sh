@@ -93,6 +93,48 @@ if [ -n "${OLDPID:-}" ]; then
 fi
 echo "relaunching: $BIN"
 
+# Refuse to relaunch a release binary that `tauri build` did not produce.
+#
+# On Linux there is no copy-to-live step: the binary this script execs is the
+# very file a rebuild overwrites, so a `cargo build --release` lands directly in
+# the path about to be launched. That build embeds the same Vite assets but
+# points its webview at devUrl (localhost:1430), so every window shows
+# ERR_CONNECTION_REFUSED while the Rust server behind it runs fine — and the
+# port check at the bottom of this script reports it as a healthy restart. That
+# is exactly what happened on 2026-08-16 (on Windows, which has since grown this
+# same guard).
+#
+# rebuild.sh stamps threadknot.build.json beside the release binary with its
+# SHA256; a later cargo build overwrites the binary and leaves the stamp, so the
+# hash stops matching. Checked BEFORE the running instance is killed, so a bad
+# build costs nothing.
+#
+# ONLY for the release binary. `BIN` is derived from the live process above, and
+# a dev instance legitimately runs target/debug/threadknot, which nothing stamps
+# — demanding one there would refuse every dev restart.
+if [ "$BIN" = "$RELEASE_BIN" ]; then
+  STAMP="$(dirname "$BIN")/threadknot.build.json"
+  if [ ! -f "$STAMP" ]; then
+    echo "FAIL: no threadknot.build.json beside $BIN — build it with ./rebuild.sh."
+    echo "      Not restarting; the running app is untouched."
+    exit 1
+  fi
+  # Read the two fields with plain text tools: this script must not depend on
+  # jq being installed to decide whether the app may restart.
+  WANT="$(sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]*\)".*/\1/p' "$STAMP" | head -1)"
+  KIND="$(sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$STAMP" | head -1)"
+  GOT="$(sha256sum "$BIN" | cut -d' ' -f1)"
+  if [ "$KIND" != "tauri-build" ] || [ -z "$WANT" ] || [ "$WANT" != "$GOT" ]; then
+    echo "FAIL: $BIN does not match its build stamp — it was rebuilt by something"
+    echo "      other than ./rebuild.sh (most likely cargo build --release)."
+    echo "      Not restarting; the running app is untouched."
+    exit 1
+  fi
+  echo "verified: tauri build stamp matches ($GOT)"
+else
+  echo "dev binary — skipping the tauri-build stamp check"
+fi
+
 # Snapshot the launcher env + cwd from the LIVE process before it dies.
 # NOTE: write with a redirect, never `cp` — /proc/<pid>/environ is mode 0400, so
 # `cp` stamps that onto ENVFILE and every LATER restart fails to overwrite it

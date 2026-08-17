@@ -95,6 +95,26 @@ if (-not (Select-String -Path $Bin -Pattern $Hash -SimpleMatch -Encoding utf8 -Q
 }
 Say "OK: web UI ($Hash) is embedded in $Bin"
 
+# Stamp it, exactly as rebuild.sh does. This script runs a real `tauri build`,
+# so its output is legitimate - but the promoters (scripts/restart-windows.ps1,
+# launch-threadknot.ps1) refuse any binary without a matching stamp, which would
+# make a sanctioned build path unpromotable. Fails closed, so the cost is
+# friction rather than a broken install, but it is friction with no purpose.
+$Stamp = Join-Path $ReleaseDir 'threadknot.build.json'
+$Sha = (Get-FileHash -Path $Bin -Algorithm SHA256).Hash.ToLower()
+$Commit = (git rev-parse --short HEAD 2>$null)
+if (-not $Commit) { $Commit = 'unknown' }
+[ordered]@{
+  kind      = 'tauri-build'
+  sha256    = $Sha
+  size      = (Get-Item $Bin).Length
+  assetHash = $Hash
+  commit    = $Commit
+  builtAt   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+  builtBy   = 'build-windows.ps1'
+} | ConvertTo-Json | Set-Content -Path $Stamp -Encoding utf8
+Say "Stamped $Stamp ($Sha)"
+
 Say "Done. Artifacts:"
 Get-ChildItem (Join-Path $ReleaseDir 'bundle\nsis') -Filter *.exe -ErrorAction SilentlyContinue |
   ForEach-Object { Write-Host ("    " + $_.FullName) }

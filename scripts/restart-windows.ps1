@@ -74,6 +74,35 @@ if ($meta.kind -ne 'tauri-build' -or (Get-FileHash -Path $New -Algorithm SHA256)
 }
 Say "verified: tauri build stamp matches (commit $($meta.commit), ui $($meta.assetHash), built $($meta.builtAt))"
 
+# Stage the verified bytes NOW, and promote the staged copy rather than $New.
+#
+# Verifying $New and then copying it ~30s later verifies nothing: the kill and
+# port wait below take that long, and a `cargo build --release` finishing inside
+# that window replaces $New with bytes nobody checked. The guard would pass and
+# the broken binary would still be installed - the exact incident this script
+# exists to prevent, just with a smaller window.
+#
+# So the hash that matters is taken from the staged file, which nothing else
+# writes to, and that same file becomes $Live. Staged beside $Live rather than
+# in the repo: same volume, so the promotion below is a rename, not a copy.
+$LiveDir = Split-Path -Parent $Live
+$null = New-Item -ItemType Directory -Force -Path $LiveDir -ErrorAction SilentlyContinue
+$Staged = "$Live.staged"
+try {
+    Copy-Item $New $Staged -Force -ErrorAction Stop
+} catch {
+    Say "FAIL: could not stage the new binary: $($_.Exception.Message). Not restarting."
+    Say '==================== done (FAIL) ===================='
+    exit 1
+}
+if ((Get-FileHash -Path $Staged -Algorithm SHA256).Hash -ne $meta.sha256) {
+    Say 'FAIL: the staged copy does not match the build stamp - the binary changed while this script was reading it (a build finishing underneath us?). Not restarting; the running app is untouched.'
+    Remove-Item $Staged -Force -ErrorAction SilentlyContinue
+    Say '==================== done (FAIL) ===================='
+    exit 1
+}
+Say 'staged the verified binary'
+
 # Let the launching shell return first (it may be a child of threadknot).
 Start-Sleep -Seconds 3
 
@@ -101,15 +130,39 @@ for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 500
 }
 
-# Swap the binary (retry briefly in case of trailing file lock).
-$null = New-Item -ItemType Directory -Force -Path (Split-Path $Live) -ErrorAction SilentlyContinue
+# Promote the staged copy (retry briefly in case of trailing file lock).
+# Move, not Copy: the bytes were hashed in place above, so renaming them into
+# position is the only step that cannot introduce different ones.
 $copied = $false
 for ($i = 0; $i -lt 10; $i++) {
-    try { Copy-Item $New $Live -Force -ErrorAction Stop; $copied = $true; break }
+    try { Move-Item $Staged $Live -Force -ErrorAction Stop; $copied = $true; break }
     catch { Start-Sleep -Milliseconds 700 }
 }
-Say "binary copy: $(if ($copied) {'ok'} else {'FAILED, still locked?'})"
-if (-not $copied) { Say '==================== done (FAIL) ===================='; exit 1 }
+Say "binary promote: $(if ($copied) {'ok'} else {'FAILED, still locked?'})"
+if (-not $copied) {
+    # The old instance is already dead at this point, so exiting here would
+    # leave the machine with NO app - the failure this script is meant to make
+    # impossible. The previous $Live binary is still on disk and still good;
+    # start it rather than stranding the user on nothing.
+    Remove-Item $Staged -Force -ErrorAction SilentlyContinue
+    if (Test-Path $Live) {
+        Say 'relaunching the PREVIOUS binary so the machine is not left without one'
+        Start-Process -FilePath $Live -WorkingDirectory $LiveDir
+    } else {
+        Say 'FAIL: no previous binary to fall back to'
+    }
+    Say '==================== done (FAIL) ===================='
+    exit 1
+}
+
+# Carry the stamp across, so the installed copy can say what it is. Without
+# this the live directory keeps whatever stamp it had, and an old one sitting
+# beside a new exe is a file that lies about the binary next to it.
+try {
+    Copy-Item $Stamp (Join-Path $LiveDir 'threadknot.build.json') -Force -ErrorAction Stop
+} catch {
+    Say "note: could not copy the build stamp to the live dir ($($_.Exception.Message))"
+}
 
 # Ship the web bundle alongside the binary. The server resolves the LAN/phone
 # UI from a dist folder near the exe or the working directory (resolve_dist in

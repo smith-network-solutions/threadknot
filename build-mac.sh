@@ -54,6 +54,15 @@ DMG="$(ls -t "$BUNDLE_DIR"/dmg/Threadknot_*.dmg 2>/dev/null | head -1 || true)"
 #
 # Unlike rebuild.sh, a check that cannot run is fatal here: these are the
 # packages that go to users, and an unverified one must not ship.
+#
+# A missing binary is checked FIRST and named as such. Without this the grep
+# below simply finds nothing, and the build reports "web UI is NOT embedded —
+# this is the broken dev build", sending the reader to diagnose an embedding
+# problem on a binary that was never produced.
+if [ ! -f "$BIN" ]; then
+  echo "==> ERROR: the build produced no binary at $BIN." >&2
+  exit 1
+fi
 HASH="$(grep -m1 -o 'assets/index-[^"]*\.js' dist/index.html 2>/dev/null | sed 's#.*index-##; s#\.js##' || true)"
 if [ -z "$HASH" ]; then
   echo "==> ERROR: no web bundle hash in dist/index.html — did the frontend build run?" >&2
