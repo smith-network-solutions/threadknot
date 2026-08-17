@@ -1221,6 +1221,100 @@ impl BrowserSession {
         Ok(res.into_value().unwrap_or(Value::Null))
     }
 
+    /// Tell the viewer where the vault stands, so its menu can offer "unlock"
+    /// or "fill" rather than discovering the difference after a click.
+    fn emit_vault_state(&self, error: Option<String>) {
+        let _ = self.tx.send(BrowserMsg::Context(json!({
+            "type": "bitwarden",
+            "state": vault().state(),
+            "error": error,
+        })));
+    }
+
+    /// Fill the page's login form with a vault entry.
+    ///
+    /// The secret is typed, never interpolated into a script: `focus_field`
+    /// below runs JS to put the caret in the right input, and the value then
+    /// goes in through `Input.insertText`. Building
+    /// `el.value = "<password>"` would put the credential into a CDP
+    /// `Runtime.evaluate` string, where it lands in any protocol trace and any
+    /// error message that quotes the failing expression.
+    ///
+    /// It also means the page sees ordinary input events, which is what makes
+    /// React and Angular login forms actually register the value — assigning
+    /// `.value` directly leaves their state untouched and the form submits
+    /// empty, the same class of bug `browser_type` exists to avoid.
+    async fn fill_login(&self, login: &crate::bitwarden::Login) -> Result<()> {
+        // Username first: filling the password field can trigger a submit on
+        // single-field flows, and the username has to be in place before that.
+        if !login.username.is_empty() && self.focus_field(false).await? {
+            self.insert_text(&login.username).await?;
+        }
+        if !self.focus_field(true).await? {
+            return Err(anyhow!(
+                "no password field on this page — open the sign-in form first"
+            ));
+        }
+        self.insert_text(&login.password).await?;
+        // Logged as the human's action, with no entry name, no username and
+        // obviously no password: this feed is visible to the agent driving the
+        // thread, and "which account the owner just used" is not its business.
+        self.emit_activity(BrowserActivity {
+            id: format!("bw-{}", Uuid::new_v4()),
+            actor: "user",
+            phase: "completed",
+            action: "fill".to_string(),
+            label: "Filled a login from Bitwarden".to_string(),
+            detail: None,
+            x: None,
+            y: None,
+            bounds: None,
+            ts: chrono::Utc::now().to_rfc3339(),
+        });
+        Ok(())
+    }
+
+    /// Focus the page's password input, or the username input that belongs with
+    /// it, and report whether one was found. Selecting any existing text so the
+    /// insert replaces rather than appends to a half-typed value.
+    async fn focus_field(&self, password: bool) -> Result<bool> {
+        // The username is found RELATIVE to the password field rather than by
+        // guessing at names: a login form's username is the last text-ish input
+        // before its password, which holds across `email`/`user`/`login`/`id`
+        // naming and the wrapper markup every framework invents.
+        let js = format!(
+            r#"(function(){{
+  try {{
+    var pw = null;
+    var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+    var visible = function(el) {{
+      if (el.disabled || el.readOnly) return false;
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }};
+    for (var i = 0; i < inputs.length; i++) {{
+      if ((inputs[i].type || '').toLowerCase() === 'password' && visible(inputs[i])) {{ pw = inputs[i]; break; }}
+    }}
+    var want = null;
+    if ({password}) {{
+      want = pw;
+    }} else if (pw) {{
+      var idx = inputs.indexOf(pw);
+      for (var j = idx - 1; j >= 0; j--) {{
+        var t = (inputs[j].type || 'text').toLowerCase();
+        if (['text','email','tel'].indexOf(t) !== -1 && visible(inputs[j])) {{ want = inputs[j]; break; }}
+      }}
+    }}
+    if (!want) return false;
+    want.focus();
+    try {{ want.setSelectionRange(0, (want.value || '').length); }} catch (e) {{ /* not all inputs support it */ }}
+    return true;
+  }} catch (e) {{ return false; }}
+}})()"#
+        );
+        Ok(self.evaluate(&js).await.unwrap_or(Value::Null) == Value::Bool(true))
+    }
+
     /// Hit-test the active document at `(x, y)` for the viewer's right-click
     /// menu and broadcast the answer as a `context` frame. Runs only against
     /// the main document — `elementFromPoint` cannot see into cross-origin
@@ -3707,6 +3801,25 @@ enum Control {
         y: f64,
         nonce: String,
     },
+    /// Where the vault stands: not installed / logged out / locked / unlocked.
+    /// Asked before the menu opens its Bitwarden entry, so the entry can say
+    /// what it will do rather than finding out after the click.
+    #[serde(rename = "bwState")]
+    BwState,
+    /// Master password on its way to `bw unlock`. Never logged, never echoed,
+    /// and never retained past the call — see bitwarden.rs.
+    #[serde(rename = "bwUnlock")]
+    BwUnlock { password: String },
+    /// Vault entries matching the page's current origin. Carries usernames but
+    /// never passwords: a listing must not be able to spill a vault.
+    #[serde(rename = "bwList")]
+    BwList,
+    /// Fill the page's login form from one entry.
+    #[serde(rename = "bwFill")]
+    BwFill { id: String },
+    /// Drop the session key now, without waiting for the 6h expiry.
+    #[serde(rename = "bwLock")]
+    BwLock,
     Reset,
 }
 
@@ -4090,8 +4203,51 @@ async fn dispatch_control(session: &Arc<BrowserSession>, ctrl: Control) -> Resul
         }
         Control::CloseTab { id } => session.close_tab(id.as_deref()).await,
         Control::Probe { x, y, nonce } => session.probe_context(x, y, &nonce).await,
+        Control::BwState => {
+            session.emit_vault_state(None);
+            Ok(())
+        }
+        Control::BwUnlock { password } => {
+            // The error is reported to the viewer, never logged: `bw`'s failure
+            // text is safe, but this is the one call whose input is a master
+            // password and the habit is worth keeping absolute.
+            let err = vault().unlock(&password).err().map(|e| e.to_string());
+            session.emit_vault_state(err);
+            Ok(())
+        }
+        Control::BwLock => {
+            vault().lock();
+            session.emit_vault_state(None);
+            Ok(())
+        }
+        Control::BwList => {
+            let origin = session.current_url();
+            let frame = match vault().logins_for(&origin) {
+                Ok(items) => json!({ "type": "bitwarden", "items": items }),
+                Err(e) => json!({ "type": "bitwarden", "error": e.to_string() }),
+            };
+            let _ = session.tx.send(BrowserMsg::Context(frame));
+            Ok(())
+        }
+        Control::BwFill { id } => {
+            let outcome = match vault().login(&id) {
+                Ok(login) => session.fill_login(&login).await.err().map(|e| e.to_string()),
+                Err(e) => Some(e.to_string()),
+            };
+            let frame = json!({ "type": "bitwarden", "filled": outcome.is_none(), "error": outcome });
+            let _ = session.tx.send(BrowserMsg::Context(frame));
+            Ok(())
+        }
         Control::Reset => Ok(()),
     }
+}
+
+/// The one vault for the process. A session key is machine-wide state, not
+/// per-thread: unlocking once should serve every browser pane, and holding a
+/// separate key per session would mean the master password for each.
+fn vault() -> &'static crate::bitwarden::Vault {
+    static VAULT: std::sync::OnceLock<crate::bitwarden::Vault> = std::sync::OnceLock::new();
+    VAULT.get_or_init(crate::bitwarden::Vault::default)
 }
 
 // ---- helpers shared by the MCP invoke() path ----
@@ -4950,6 +5106,38 @@ mod tests {
             panic!("paste control decoded as another variant");
         };
         assert_eq!(text, "first line\nsecond line 🧶");
+    }
+
+    /// The vault controls the viewer sends. Worth pinning because their names
+    /// are hand-written `rename`s rather than derived from the variant, so a
+    /// typo would silently drop the frame — `dispatch_control` never sees a
+    /// Control that failed to deserialize.
+    #[test]
+    fn bitwarden_controls_deserialize_under_their_wire_names() {
+        assert!(matches!(
+            serde_json::from_value::<Control>(json!({ "type": "bwState" })),
+            Ok(Control::BwState)
+        ));
+        assert!(matches!(
+            serde_json::from_value::<Control>(json!({ "type": "bwLock" })),
+            Ok(Control::BwLock)
+        ));
+        assert!(matches!(
+            serde_json::from_value::<Control>(json!({ "type": "bwList" })),
+            Ok(Control::BwList)
+        ));
+        let Ok(Control::BwFill { id }) =
+            serde_json::from_value::<Control>(json!({ "type": "bwFill", "id": "abc" }))
+        else {
+            panic!("bwFill did not decode");
+        };
+        assert_eq!(id, "abc");
+        let Ok(Control::BwUnlock { password }) =
+            serde_json::from_value::<Control>(json!({ "type": "bwUnlock", "password": "s3cret" }))
+        else {
+            panic!("bwUnlock did not decode");
+        };
+        assert_eq!(password, "s3cret");
     }
 
     /// The right-click hit-test the viewer sends before opening its context

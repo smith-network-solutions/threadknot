@@ -214,21 +214,64 @@ extension service worker ever appears. Verify with
 `curl :<port>/json/list` and look for a `service_worker` in the extension's
 origin; do not take "the tab opened" as success.
 
-The supported replacements, none of them free:
+There is a second, independent reason the extension cannot give the owner what
+they asked for — *right-click, fill this login*. **Threadknot draws its own
+context menu**, because a headless browser has no native menu that could reach
+the screencast. Bitwarden's "Bitwarden ▸" submenu comes from the
+`chrome.contextMenus` API, which only ever renders in Chrome's *native* menu.
+Even on a Chrome that still loaded extensions, that submenu could not appear
+here. The extension would give an in-page overlay to click, never a menu item.
 
-- **`ExtensionInstallForcelist` policy** — Google's documented replacement, but
-  it is machine/user-wide Chrome policy (a registry key on Windows), so it
-  reaches the user's ordinary Chrome too, not just Threadknot's.
-- **A Chromium/Chrome-for-Testing binary** via `THREADKNOT_CHROME`, if that
-  build still honours the switch.
-- **No extension at all** — drive the `bw` CLI and fill the fields through CDP.
-  This is the only option that keeps working regardless of Chrome policy, and
-  the only one where Threadknot itself handles the secret, which is a direct
-  trade against "no agent ever sees a secret being typed" below.
+So the vault is reached directly. See **Bitwarden** below.
 
-Importing saved passwords out of the user's default browser is separately
-**not** implemented: Chrome's App-Bound Encryption (127+) deliberately blocks
-other applications from decrypting that store.
+Importing saved passwords out of the user's default browser remains **not**
+implemented: Chrome's App-Bound Encryption (127+) deliberately blocks other
+applications from decrypting that store.
+
+## Bitwarden
+
+The browser's right-click menu offers **Fill login from Bitwarden…**, backed by
+`bitwarden.rs` driving the `bw` CLI. This is the one place Threadknot handles a
+credential rather than a session, and it was taken knowingly — see the trade in
+"Security boundary" below.
+
+The flow: the menu asks for vault state, and the sheet shows what that state
+allows — install instructions, `bw login` instructions, a master-password box,
+or the logins matching this page. Choosing one fills the form. Unlocking lasts
+**6 hours**, then the key is dropped.
+
+The handling rules are the point, and each defends something specific:
+
+- **The master password reaches `bw` on stdin, never as an argument.** Process
+  arguments are readable by any other process on the machine — including every
+  agent CLI Threadknot spawns. The same applies to the session key, which goes
+  in `BW_SESSION`.
+- **Nothing is written to disk.** The session key lives in one process-wide
+  `OnceLock` vault and is dropped on lock or expiry. Unlocking is machine-wide
+  rather than per-thread, so one unlock serves every pane instead of asking for
+  the master password per browser session.
+- **Secrets are typed, not interpolated.** The fill focuses the field with JS,
+  then sends the value through `Input.insertText`. Building
+  `el.value = "<password>"` would put the credential in a `Runtime.evaluate`
+  string, where it lands in protocol traces and in any error quoting the failing
+  expression. Typing is also what makes React/Angular forms register the value
+  at all — assigning `.value` leaves their state untouched and the form submits
+  empty.
+- **The username field is found relative to the password field**, not by
+  guessing names: it is the last visible text/email/tel input before it. That
+  holds across `email`/`user`/`login`/`id` naming and the wrapper markup
+  frameworks generate.
+- **The activity feed says "Filled a login from Bitwarden" and nothing else** —
+  no entry name, no username, no password. That feed is visible to the agent
+  driving the thread, and which account the owner just used is not its business.
+- **`Debug` is hand-written and redacted** on the types carrying secrets. A
+  derived one puts the password in any log line that formats the struct, which
+  is a test rather than a convention.
+- **A listing carries usernames only.** The password is fetched per fill, so
+  enumerating matches cannot spill a vault into a WebSocket frame.
+
+`bw login` is deliberately left to a terminal: it needs an email and usually a
+two-factor code, and reimplementing that flow here would buy nothing.
 
 ## Recorded walkthroughs
 
@@ -331,6 +374,11 @@ authority, and preserve human visibility for consequential actions.
 
 - Chrome never attaches to the user's normal browser profile or cookies; a
   signed-in profile is one Threadknot created and scoped, never the user's daily one.
+- **The Bitwarden fill is the deliberate exception** to "Threadknot stores the
+  session, never the credentials". It holds an unlocked vault session and types
+  real passwords into pages, at the owner's explicit request, under the handling
+  rules above. It is owner-driven only — there is no tool that lets an agent
+  ask for a fill, and the agent cannot see which entry was used.
 - Each thread gets a unique temporary profile, removed when its session drops,
   and profiles orphaned by a kill or crash are swept at startup (skipping any
   directory a live Chrome still holds). Startup also terminates headless Chromes

@@ -1141,3 +1141,40 @@
   box-shadow: 0 0 0 3px rgba(111, 213, 189, 0.14), 0 0 12px rgba(111, 213, 189, 0.85);
 }
 
+/* Bitwarden unlock / pick-a-login sheet. Same card as the dialog and paste
+   sheets it sits beside. */
+.browser-vault-card code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--brass-hi, #e5b567);
+}
+.browser-vault-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.browser-vault-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  border-radius: 8px;
+  background: var(--panel-3, #1a2030);
+  color: var(--text, #d8dde9);
+  text-align: left;
+}
+.browser-vault-item:hover,
+.browser-vault-item:focus-visible {
+  border-color: var(--brass, #c08b3e);
+  outline: none;
+}
+.browser-vault-name { font-size: 12.5px; font-weight: 600; }
+.browser-vault-user {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--dim, #8b93a9);
+}
+

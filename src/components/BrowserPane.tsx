@@ -69,6 +69,24 @@ interface BrowserMenu extends BrowserContext {
   y: number;
 }
 
+/** Where the Bitwarden vault stands, as reported by the backend. */
+type VaultState = "notInstalled" | "loggedOut" | "locked" | "unlocked";
+
+interface VaultEntry {
+  id: string;
+  name: string;
+  username: string;
+}
+
+/** The Bitwarden sheet: unlocking, or choosing which login to fill. Null when
+ *  nothing is open. */
+interface VaultSheet {
+  state: VaultState;
+  items: VaultEntry[];
+  error: string | null;
+  busy: boolean;
+}
+
 /** Prefix a bare host/path with http:// so navigation gets a real URL. */
 function normalizeUrl(raw: string): string {
   const value = raw.trim();
@@ -183,6 +201,8 @@ export function BrowserPane({
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [menu, setMenu] = useState<BrowserMenu | null>(null);
+  const [vault, setVault] = useState<VaultSheet | null>(null);
+  const [vaultPassword, setVaultPassword] = useState("");
 
   useEffect(() => {
     editingRef.current = editing;
@@ -446,6 +466,26 @@ export function BrowserPane({
                 imgSrc: typeof message.imgSrc === "string" ? message.imgSrc : undefined,
                 editable: message.editable === true,
               });
+            }
+          } else if (message.type === "bitwarden") {
+            // One frame type carries every vault answer: a state report, a
+            // list of matches, or the outcome of a fill. Each updates only the
+            // part it speaks to, so a fill's reply cannot blank the list
+            // behind it.
+            setVault((prev) => {
+              const base: VaultSheet = prev ?? { state: "locked", items: [], error: null, busy: false };
+              if (message.filled === true) return null; // done — close the sheet
+              return {
+                state: (message.state as VaultState) ?? base.state,
+                items: Array.isArray(message.items) ? (message.items as VaultEntry[]) : base.items,
+                error: typeof message.error === "string" ? message.error : null,
+                busy: false,
+              };
+            });
+            if (message.state === "unlocked" && !message.items) send({ type: "bwList" });
+            if (typeof message.error !== "string" && message.filled === true) {
+              setVaultPassword("");
+              canvasRef.current?.focus();
             }
           } else if (message.type === "engine" && message.state === "stopped") {
             setConnection("retrying");
@@ -801,6 +841,19 @@ export function BrowserPane({
       items.push({ label: "Paste", dividerBefore: !ctx.selection, onSelect: () => void pasteFromClipboard() });
     }
     items.push({ label: "Select all", dividerBefore: true, onSelect: selectAllInPage });
+    // Offered on every page rather than only over a password box: you reach for
+    // a password manager while looking at the form, not necessarily while
+    // pointing at the field, and the backend says so plainly if there is no
+    // login form to fill.
+    items.push({
+      label: "Fill login from Bitwarden…",
+      dividerBefore: true,
+      onSelect: () => {
+        setVault({ state: "locked", items: [], error: null, busy: true });
+        setVaultPassword("");
+        send({ type: "bwState" });
+      },
+    });
     return items;
   }
 
@@ -1240,6 +1293,114 @@ export function BrowserPane({
                   <button type="submit" className="primary" disabled={!pasteText}>
                     Paste into browser
                   </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {vault && (
+            <div className="browser-dialog-shade">
+              <form
+                className="browser-dialog-card browser-vault-card"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="browser-vault-title"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!vaultPassword || vault.busy) return;
+                  setVault({ ...vault, busy: true, error: null });
+                  send({ type: "bwUnlock", password: vaultPassword });
+                  // Dropped from this component the moment it is sent; it lives
+                  // only long enough to reach the backend.
+                  setVaultPassword("");
+                }}
+              >
+                <span className="browser-eyebrow">BITWARDEN</span>
+
+                {vault.state === "notInstalled" && (
+                  <p id="browser-vault-title">
+                    The Bitwarden CLI isn’t installed. Install it with{" "}
+                    <code>npm install -g @bitwarden/cli</code>, then try again.
+                  </p>
+                )}
+
+                {vault.state === "loggedOut" && (
+                  <p id="browser-vault-title">
+                    Not signed in to Bitwarden. Run <code>bw login</code> once in a terminal —
+                    it needs your email and two-factor code, so it isn’t done from here.
+                  </p>
+                )}
+
+                {vault.state === "locked" && (
+                  <>
+                    <label id="browser-vault-title" htmlFor={`browser-vault-${sessionId}`}>
+                      Master password
+                      <span>Unlocks the vault for 6 hours. Never written to disk.</span>
+                    </label>
+                    <input
+                      id={`browser-vault-${sessionId}`}
+                      type="password"
+                      autoFocus
+                      autoComplete="off"
+                      value={vaultPassword}
+                      disabled={vault.busy}
+                      onChange={(event) => setVaultPassword(event.currentTarget.value)}
+                    />
+                  </>
+                )}
+
+                {vault.state === "unlocked" && (
+                  <div id="browser-vault-title" className="browser-vault-list">
+                    {vault.busy && <p>Looking for matching logins…</p>}
+                    {!vault.busy && vault.items.length === 0 && (
+                      <p>No saved login matches this site.</p>
+                    )}
+                    {vault.items.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="browser-vault-item"
+                        onClick={() => {
+                          setVault({ ...vault, busy: true, error: null });
+                          send({ type: "bwFill", id: item.id });
+                        }}
+                      >
+                        <span className="browser-vault-name">{item.name}</span>
+                        <span className="browser-vault-user">{item.username || "no username"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {vault.error && <div className="modal-error">{vault.error}</div>}
+
+                <div className="browser-dialog-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVault(null);
+                      setVaultPassword("");
+                      canvasRef.current?.focus();
+                    }}
+                  >
+                    Close
+                  </button>
+                  {vault.state === "locked" && (
+                    <button type="submit" className="primary" disabled={!vaultPassword || vault.busy}>
+                      {vault.busy ? "Unlocking…" : "Unlock"}
+                    </button>
+                  )}
+                  {vault.state === "unlocked" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        send({ type: "bwLock" });
+                        setVault(null);
+                      }}
+                    >
+                      Lock vault
+                    </button>
+                  )}
                 </div>
               </form>
             </div>
