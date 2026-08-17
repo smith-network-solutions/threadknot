@@ -33,6 +33,47 @@ function Say($m) { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m" | Add-Content
 
 Say '==================== restart begin ===================='
 
+# Refuse to restart onto a binary that `tauri build` did not produce.
+#
+# This script used to copy $New over $Live with no check whatsoever, and then
+# "verify" the result by watching for a listener on 42800 - which a broken build
+# provides just as happily as a good one. On 2026-08-16 that is exactly what
+# happened: a `cargo build --release` binary was installed, the log said "OK:
+# threadknot is back up", and every window it opened showed
+# ERR_CONNECTION_REFUSED because the webview was pointed at devUrl
+# (localhost:1430) while the Rust server behind it ran fine.
+#
+# rebuild.sh stamps threadknot.build.json beside the exe with the SHA256 of what
+# it built; a later cargo build overwrites the exe and leaves the stamp, so the
+# hash stops matching. Checked BEFORE the running instance is stopped, so a bad
+# build costs nothing - the app the user has keeps running untouched.
+$Stamp = Join-Path (Split-Path -Parent $New) 'threadknot.build.json'
+if (-not (Test-Path $New)) {
+    Say "FAIL: no binary at $New - nothing to restart onto"
+    Say '==================== done (FAIL) ===================='
+    exit 1
+}
+if (-not (Test-Path $Stamp)) {
+    Say 'FAIL: no threadknot.build.json beside the new binary - build it with ./rebuild.sh. Not restarting; the running app is untouched.'
+    Say '==================== done (FAIL) ===================='
+    exit 1
+}
+try {
+    $meta = Get-Content $Stamp -Raw -ErrorAction Stop | ConvertFrom-Json
+} catch {
+    Say "FAIL: threadknot.build.json is unreadable: $($_.Exception.Message). Not restarting."
+    Say '==================== done (FAIL) ===================='
+    exit 1
+}
+# -ne on strings is case-insensitive here, which is what we want: sha256sum
+# writes lower case, Get-FileHash returns upper.
+if ($meta.kind -ne 'tauri-build' -or (Get-FileHash -Path $New -Algorithm SHA256).Hash -ne $meta.sha256) {
+    Say 'FAIL: the new binary does not match its build stamp - it was rebuilt by something other than ./rebuild.sh (most likely cargo build --release). Not restarting; the running app is untouched.'
+    Say '==================== done (FAIL) ===================='
+    exit 1
+}
+Say "verified: tauri build stamp matches (commit $($meta.commit), ui $($meta.assetHash), built $($meta.builtAt))"
+
 # Let the launching shell return first (it may be a child of threadknot).
 Start-Sleep -Seconds 3
 

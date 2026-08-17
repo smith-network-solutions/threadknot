@@ -72,5 +72,38 @@ else
   exit 1
 fi
 
+# Stamp the binary so the promoters can tell what produced it.
+#
+# The embedded-UI grep above is a useful sanity check but it is NOT a way to
+# tell a `tauri build` binary from a `cargo build --release` one, and the
+# promoters (launch-threadknot.ps1, scripts/restart-windows.ps1) used to treat
+# it as exactly that. It cannot be: cargo embeds the same Vite assets, it just
+# builds a webview that navigates to devUrl (localhost:1430) instead of loading
+# them. On 2026-08-16 a cargo build sailed through that check, replaced a
+# working install, and every window it opened showed ERR_CONNECTION_REFUSED
+# while the Rust server behind it was perfectly healthy.
+#
+# This script is the only one that shells out to `tauri build`, so the stamp it
+# writes is the honest signal. It binds to the exact bytes just produced: a
+# later `cargo build --release` overwrites the binary and leaves the stamp
+# untouched, the hash stops matching, and the swap is refused rather than
+# silently replacing a working app with a broken one.
+STAMP="$(dirname "$BIN")/threadknot.build.json"
+SHA="$(sha256sum "$BIN" | cut -d' ' -f1)"
+SIZE="$(wc -c < "$BIN" | tr -d '[:space:]')"
+COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+cat > "$STAMP" <<EOF
+{
+  "kind": "tauri-build",
+  "sha256": "$SHA",
+  "size": $SIZE,
+  "assetHash": "$HASH",
+  "commit": "$COMMIT",
+  "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "builtBy": "rebuild.sh"
+}
+EOF
+echo "==> Stamped $STAMP ($SHA)"
+
 echo "==> Done. Desktop app:  $BIN"
 echo "==> Headless LAN server: $HEADLESS"
