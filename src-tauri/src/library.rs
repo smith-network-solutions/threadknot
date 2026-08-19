@@ -589,7 +589,9 @@ impl SkillSource {
     /// Accepts what a user actually has in their clipboard: a GitHub tree URL,
     /// a plain repo URL, or the bare `owner/repo/sub/path` shorthand.
     pub fn parse(input: &str) -> Result<Self> {
-        let raw = input.trim().trim_end_matches('/');
+        // GitHub's "copy permalink" on a file appends a line anchor.
+        let raw = input.trim();
+        let raw = raw.split(['#', '?']).next().unwrap_or(raw).trim_end_matches('/');
         anyhow::ensure!(!raw.is_empty(), "paste a GitHub URL or owner/repo path");
         let rest = raw
             .strip_prefix("https://github.com/")
@@ -604,17 +606,29 @@ impl SkillSource {
         );
         let repo = format!("{}/{}", parts[0], parts[1]);
         // `.../tree/<ref>/<path>` is what GitHub's own "copy link" produces.
+        // `blob` is the same shape but always points at a *file* — usually the
+        // SKILL.md the user was reading — so it names the skill's parent folder.
         if parts.len() >= 4 && (parts[2] == "tree" || parts[2] == "blob") {
+            let mut path: Vec<&str> = parts[4..].to_vec();
+            if parts[2] == "blob" {
+                path.pop();
+            }
             return Ok(Self {
                 repo,
                 git_ref: parts[3].to_string(),
-                path: parts[4..].join("/"),
+                path: path.join("/"),
             });
+        }
+        // The bare shorthand has no marker saying which it is, so only the one
+        // filename a skill is guaranteed to have counts as pointing at a file.
+        let mut path: Vec<&str> = parts[2..].to_vec();
+        if path.last().is_some_and(|s| s.eq_ignore_ascii_case("SKILL.md")) {
+            path.pop();
         }
         Ok(Self {
             repo,
             git_ref: "HEAD".into(),
-            path: parts[2..].join("/"),
+            path: path.join("/"),
         })
     }
 }
@@ -1218,6 +1232,29 @@ mod tests {
         let root = SkillSource::parse("https://github.com/owner/repo.git").unwrap();
         assert_eq!(root.repo, "owner/repo");
         assert_eq!(root.path, "");
+
+        // Reading a skill on GitHub lands you on the SKILL.md itself, so that is
+        // the URL in the clipboard — it means the folder holding it.
+        let blob = SkillSource::parse(
+            "https://github.com/cursor/plugins/blob/main/pstack/skills/unslop/SKILL.md",
+        )
+        .unwrap();
+        assert_eq!(blob.repo, "cursor/plugins");
+        assert_eq!(blob.git_ref, "main");
+        assert_eq!(blob.path, "pstack/skills/unslop");
+
+        let anchored = SkillSource::parse(
+            "https://github.com/cursor/plugins/blob/main/pstack/skills/unslop/SKILL.md#L4-L12",
+        )
+        .unwrap();
+        assert_eq!(anchored.path, "pstack/skills/unslop");
+
+        let bare = SkillSource::parse("anthropics/skills/skills/mcp-builder/SKILL.md").unwrap();
+        assert_eq!(bare.path, "skills/mcp-builder");
+
+        // A blob at the repository root means the repository is the skill.
+        let flat = SkillSource::parse("https://github.com/owner/repo/blob/main/SKILL.md").unwrap();
+        assert_eq!(flat.path, "");
 
         assert!(SkillSource::parse("notarepo").is_err());
     }
