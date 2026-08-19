@@ -818,6 +818,15 @@ impl BrowserSession {
         }
         *current = url.clone();
         drop(current);
+        // Warm the Bitwarden listing for the new origin while the page is
+        // still loading, so a right-click finds its fill entries in memory
+        // instead of waiting ~1s on the CLI. `warm` is a no-op when the vault
+        // is locked or the cache is fresh; on a plain thread because this is
+        // called from sync contexts and must never block a navigation.
+        {
+            let for_origin = url.clone();
+            std::thread::spawn(move || vault().warm(&for_origin));
+        }
         let _ = self.tx.send(BrowserMsg::Nav(url));
     }
 
@@ -1222,11 +1231,17 @@ impl BrowserSession {
     }
 
     /// Tell the viewer where the vault stands, so its menu can offer "unlock"
-    /// or "fill" rather than discovering the difference after a click.
+    /// or "fill" rather than discovering the difference after a click. Carries
+    /// the current origin's cached entries too: after an unlock this is the
+    /// frame the sheet acts on, and a second list round-trip would put the
+    /// wait right back where it was removed.
     fn emit_vault_state(&self, error: Option<String>) {
         let _ = self.tx.send(BrowserMsg::Context(json!({
             "type": "bitwarden",
             "state": vault().state(),
+            "entries": vault().cached_logins_for(&self.current_url()),
+            "keyPresent": crate::security_key::key_present(),
+            "requireKey": vault().require_key(),
             "error": error,
         })));
     }
@@ -1363,6 +1378,20 @@ impl BrowserSession {
         };
         ctx.insert("type".into(), json!("context"));
         ctx.insert("nonce".into(), json!(nonce));
+        // Vault info rides along so the menu already knows what it can offer.
+        // Memory only — `state_cached` and the listing cache never spawn the
+        // CLI — because this reply is what the menu's open is waiting on.
+        // `entries` is absent (not empty) when nothing is cached, so the
+        // viewer can tell "no logins for this site" from "not looked yet".
+        ctx.insert(
+            "bitwarden".into(),
+            json!({
+                "state": vault().state_cached(),
+                "entries": vault().cached_logins_for(&self.current_url()),
+                "keyPresent": crate::security_key::key_present(),
+                "requireKey": vault().require_key(),
+            }),
+        );
         let _ = self.tx.send(BrowserMsg::Context(Value::Object(ctx)));
         Ok(())
     }
@@ -2800,6 +2829,19 @@ pub struct BrowserRegistry {
     profile_resolver: Mutex<Option<ProfileResolver>>,
 }
 
+impl BrowserRegistry {
+    /// Tell every live session's viewers where the vault stands now. Driven by
+    /// the security-key watcher, so a pulled key visibly locks every open pane
+    /// instead of each discovering it on its next right-click.
+    pub fn broadcast_vault_state(&self) {
+        let sessions: Vec<Arc<BrowserSession>> =
+            self.sessions.lock().unwrap().values().cloned().collect();
+        for session in sessions {
+            session.emit_vault_state(None);
+        }
+    }
+}
+
 /// Returns the profile a thread should use, or an error explaining why the
 /// attached profile cannot be opened.
 pub type ProfileResolver =
@@ -3820,6 +3862,11 @@ enum Control {
     /// Drop the session key now, without waiting for the 6h expiry.
     #[serde(rename = "bwLock")]
     BwLock,
+    /// Toggle the physical gate: unlocking requires the FIDO2 key inserted,
+    /// and pulling it locks the vault.
+    #[serde(rename = "bwRequireKey")]
+    #[serde(rename_all = "camelCase")]
+    BwRequireKey { on: bool },
     Reset,
 }
 
@@ -3948,6 +3995,14 @@ pub async fn ws_handler(
         if !url.is_empty() && session.current_url().is_empty() {
             let _ = session.navigate(url).await;
         }
+    }
+    // First viewer arms the security-key watcher (self-guarded against double
+    // start). Started here rather than at boot because the registry is what a
+    // removal has to notify, and this is the first point that has it with a
+    // viewer to care.
+    {
+        let watch_registry = Arc::clone(&registry);
+        crate::security_key::watch(move || watch_registry.broadcast_vault_state());
     }
     crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
         tokio::select! {
@@ -4212,12 +4267,23 @@ async fn dispatch_control(session: &Arc<BrowserSession>, ctrl: Control) -> Resul
             // text is safe, but this is the one call whose input is a master
             // password and the habit is worth keeping absolute.
             let err = vault().unlock(&password).err().map(|e| e.to_string());
+            if err.is_none() {
+                // Warm the current origin before answering, so the reply that
+                // says "unlocked" also carries the fill entries — the viewer
+                // auto-fills a single match or shows the list, no second wait.
+                vault().warm(&session.current_url());
+            }
             session.emit_vault_state(err);
             Ok(())
         }
         Control::BwLock => {
             vault().lock();
             session.emit_vault_state(None);
+            Ok(())
+        }
+        Control::BwRequireKey { on } => {
+            let err = vault().set_require_key(on).err().map(|e| e.to_string());
+            session.emit_vault_state(err);
             Ok(())
         }
         Control::BwList => {
@@ -4245,7 +4311,8 @@ async fn dispatch_control(session: &Arc<BrowserSession>, ctrl: Control) -> Resul
 /// The one vault for the process. A session key is machine-wide state, not
 /// per-thread: unlocking once should serve every browser pane, and holding a
 /// separate key per session would mean the master password for each.
-fn vault() -> &'static crate::bitwarden::Vault {
+/// `pub(crate)` so the security-key watcher can lock it on removal.
+pub(crate) fn vault() -> &'static crate::bitwarden::Vault {
     static VAULT: std::sync::OnceLock<crate::bitwarden::Vault> = std::sync::OnceLock::new();
     VAULT.get_or_init(crate::bitwarden::Vault::default)
 }

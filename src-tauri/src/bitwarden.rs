@@ -88,9 +88,21 @@ struct Unlocked {
     since: Instant,
 }
 
+/// How long a prefetched per-origin listing stays fresh. Short: the cache
+/// exists to make the right-click instant, not to avoid the CLI.
+const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+
 #[derive(Default)]
 pub struct Vault {
     session: Mutex<Option<Unlocked>>,
+    /// Per-host listings so the right-click menu can be populated from memory
+    /// instead of a ~1s CLI spawn. Usernames only — see [`Entry`] — and
+    /// cleared whenever the vault locks, so nothing here outlives the unlock.
+    cache: Mutex<std::collections::HashMap<String, (Instant, Vec<Entry>)>>,
+    /// Physical gate: when set, unlocking requires a FIDO2 security key to be
+    /// inserted, and removal locks the vault (see security_key.rs). A setting,
+    /// not a secret — persisted in bitwarden.json in the data dir.
+    require_key: Mutex<Option<bool>>,
 }
 
 impl std::fmt::Debug for Vault {
@@ -183,6 +195,18 @@ impl Vault {
         }
     }
 
+    /// The cheap answer for the right-click probe: reports from the held key
+    /// alone, no CLI spawn. `Locked` here means "we hold no session" — the
+    /// probe path must never block the menu on a process launch, and telling
+    /// Locked from LoggedOut is the full `state()`'s job when the sheet opens.
+    pub fn state_cached(&self) -> VaultState {
+        if self.key().is_some() {
+            VaultState::Unlocked
+        } else {
+            VaultState::Locked
+        }
+    }
+
     pub fn state(&self) -> VaultState {
         if cli_path().is_none() {
             return VaultState::NotInstalled;
@@ -208,6 +232,13 @@ impl Vault {
     /// Exchange the master password for a session key. The password is consumed
     /// here and never stored.
     pub fn unlock(&self, password: &str) -> Result<()> {
+        // The physical gate first: with "require key" on, an unlock with the
+        // key out of the machine must fail before the password goes anywhere.
+        if self.require_key() && !crate::security_key::key_present() {
+            return Err(anyhow!(
+                "your security key is not inserted — plug it in to unlock"
+            ));
+        }
         let key = run(&["unlock", "--raw"], Some(password), None).map_err(|e| {
             // `bw`'s own wording for a bad password is clear enough to pass on;
             // what must never happen is echoing the input back.
@@ -230,6 +261,85 @@ impl Vault {
         if let Ok(mut guard) = self.session.lock() {
             *guard = None;
         }
+        // The listings carry usernames; they must not outlive the unlock.
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+    }
+
+    /// The cached listing for `origin`'s host — memory only, never a CLI
+    /// spawn. `None` when locked, never fetched, or stale; the caller shows a
+    /// plain "Bitwarden" entry in that case rather than waiting.
+    pub fn cached_logins_for(&self, origin: &str) -> Option<Vec<Entry>> {
+        self.key()?;
+        let host = host_of(origin)?;
+        let cache = self.cache.lock().ok()?;
+        match cache.get(&host) {
+            Some((at, items)) if at.elapsed() < CACHE_TTL => Some(items.clone()),
+            _ => None,
+        }
+    }
+
+    /// Fetch and remember the listing for `origin`, so the next right-click is
+    /// answered from memory. No-op when locked or already fresh — this runs on
+    /// every navigation and must not stack CLI spawns behind fast browsing.
+    pub fn warm(&self, origin: &str) {
+        if self.key().is_none() {
+            return;
+        }
+        let Some(host) = host_of(origin) else { return };
+        if let Ok(cache) = self.cache.lock() {
+            if matches!(cache.get(&host), Some((at, _)) if at.elapsed() < CACHE_TTL) {
+                return;
+            }
+        }
+        if let Ok(items) = self.logins_for(origin) {
+            if let Ok(mut cache) = self.cache.lock() {
+                cache.insert(host, (Instant::now(), items));
+            }
+        }
+    }
+
+    /// Whether unlocking demands the security key. Lazily read from
+    /// bitwarden.json (settings only, never secrets) and cached.
+    pub fn require_key(&self) -> bool {
+        if let Ok(mut guard) = self.require_key.lock() {
+            if let Some(v) = *guard {
+                return v;
+            }
+            let v = std::fs::read_to_string(settings_path())
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|j| j.get("requireKey").and_then(|b| b.as_bool()))
+                .unwrap_or(false);
+            *guard = Some(v);
+            return v;
+        }
+        false
+    }
+
+    pub fn set_require_key(&self, on: bool) -> Result<()> {
+        let path = settings_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut json = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("requireKey".into(), serde_json::json!(on));
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&json)?)?;
+        if let Ok(mut guard) = self.require_key.lock() {
+            *guard = Some(on);
+        }
+        // Turning the gate on with the key already out locks immediately —
+        // the setting means "no key, no vault", starting now.
+        if on && !crate::security_key::key_present() {
+            self.lock();
+        }
+        Ok(())
     }
 
     /// Logins whose stored URI matches `origin`'s host, newest CLI order.
@@ -320,6 +430,32 @@ impl Vault {
     }
 }
 
+#[cfg(test)]
+impl Vault {
+    /// Pretend an unlock happened, without a CLI. Tests only.
+    fn unlock_for_tests(&self) {
+        *self.session.lock().unwrap() = Some(Unlocked {
+            key: "test-session".into(),
+            since: Instant::now(),
+        });
+    }
+
+    /// Plant a cache entry as if `warm` had run at `at`. Tests only.
+    fn seed_cache(&self, host: &str, items: Vec<Entry>, at: Instant) {
+        self.cache
+            .lock()
+            .unwrap()
+            .insert(host.to_string(), (at, items));
+    }
+}
+
+/// Where the non-secret settings live (`requireKey`). Deliberately NOT the
+/// wrapped-credential file Tier 2 will add — settings and ciphertext never
+/// share a file, so a settings write can never clobber an enrollment.
+fn settings_path() -> std::path::PathBuf {
+    crate::store::data_dir().join("bitwarden.json")
+}
+
 /// Host of a URL, lowercased. Accepts bare hosts too, since vault URIs are
 /// often stored without a scheme.
 fn host_of(raw: &str) -> Option<String> {
@@ -406,5 +542,44 @@ mod tests {
         let vault = Vault::default();
         assert!(vault.logins_for("https://example.com").is_err());
         assert!(vault.login("whatever").is_err());
+    }
+
+    fn entry(name: &str) -> Entry {
+        Entry {
+            id: format!("id-{name}"),
+            name: name.into(),
+            username: format!("{name}@example.com"),
+        }
+    }
+
+    /// The cache is what makes the right-click instant, and its three exits —
+    /// hit, stale, locked — are what keep it honest.
+    #[test]
+    fn the_listing_cache_answers_only_fresh_and_only_unlocked() {
+        let vault = Vault::default();
+        // Locked: even a planted entry is unreachable — the session gate runs
+        // before the map lookup.
+        vault.seed_cache("example.com", vec![entry("a")], Instant::now());
+        assert!(vault.cached_logins_for("https://example.com").is_none());
+
+        vault.unlock_for_tests();
+        let hit = vault
+            .cached_logins_for("https://accounts.example.com".replace("accounts.", "").as_str())
+            .expect("fresh entry while unlocked");
+        assert_eq!(hit.len(), 1);
+
+        // Stale: past the TTL the cache declines rather than serving old
+        // listings from a vault whose contents may have changed.
+        vault.seed_cache(
+            "stale.com",
+            vec![entry("b")],
+            Instant::now() - CACHE_TTL - Duration::from_secs(1),
+        );
+        assert!(vault.cached_logins_for("https://stale.com").is_none());
+
+        // Locking clears everything — usernames must not outlive the unlock.
+        vault.lock();
+        vault.unlock_for_tests();
+        assert!(vault.cached_logins_for("https://example.com").is_none());
     }
 }

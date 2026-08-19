@@ -60,6 +60,16 @@ interface BrowserContext {
   linkHref?: string;
   imgSrc?: string;
   editable?: boolean;
+  /** Vault info riding along with the probe (memory-only on the backend), so
+   *  the menu already knows whether it can offer direct fill entries. Absent
+   *  when the machine process predates it. `entries` absent means "not
+   *  prefetched yet", which is different from an empty list. */
+  bitwarden?: {
+    state: VaultState;
+    entries?: VaultEntry[];
+    keyPresent?: boolean;
+    requireKey?: boolean;
+  };
 }
 
 /** An open right-click menu: where to anchor it (viewport px) plus the page
@@ -85,7 +95,19 @@ interface VaultSheet {
   items: VaultEntry[];
   error: string | null;
   busy: boolean;
+  /** Physical-gate facts for the sheet's toggle row. */
+  keyPresent: boolean;
+  requireKey: boolean;
 }
+
+const EMPTY_SHEET: VaultSheet = {
+  state: "locked",
+  items: [],
+  error: null,
+  busy: false,
+  keyPresent: false,
+  requireKey: false,
+};
 
 /** Prefix a bare host/path with http:// so navigation gets a real URL. */
 function normalizeUrl(raw: string): string {
@@ -203,6 +225,10 @@ export function BrowserPane({
   const [menu, setMenu] = useState<BrowserMenu | null>(null);
   const [vault, setVault] = useState<VaultSheet | null>(null);
   const [vaultPassword, setVaultPassword] = useState("");
+  /** Armed when the user submits an unlock: the reply may auto-fill a single
+   *  matching login. A ref, not state — it must be readable inside the socket
+   *  handler without re-subscribing it. */
+  const autoFillRef = useRef(false);
 
   useEffect(() => {
     editingRef.current = editing;
@@ -460,30 +486,59 @@ export function BrowserPane({
             const resolve = probeWaiters.current.get(message.nonce);
             if (resolve) {
               probeWaiters.current.delete(message.nonce);
+              const bw = message.bitwarden as BrowserContext["bitwarden"] | undefined;
               resolve({
                 selection: typeof message.selection === "string" ? message.selection : undefined,
                 linkHref: typeof message.linkHref === "string" ? message.linkHref : undefined,
                 imgSrc: typeof message.imgSrc === "string" ? message.imgSrc : undefined,
                 editable: message.editable === true,
+                bitwarden: bw && typeof bw.state === "string" ? bw : undefined,
               });
             }
           } else if (message.type === "bitwarden") {
-            // One frame type carries every vault answer: a state report, a
-            // list of matches, or the outcome of a fill. Each updates only the
-            // part it speaks to, so a fill's reply cannot blank the list
-            // behind it.
+            // One frame type carries every vault answer: a state report (with
+            // the current origin's prefetched entries), a list, or a fill
+            // outcome. Each updates only the part it speaks to.
+            const entries = Array.isArray(message.entries)
+              ? (message.entries as VaultEntry[])
+              : Array.isArray(message.items)
+                ? (message.items as VaultEntry[])
+                : null;
+            const failedFill = message.filled === false && typeof message.error === "string";
+            // The one-click flow: an unlock the user just submitted, answered
+            // with exactly one login for this site, fills it without another
+            // decision — the choice a picker would offer has only one option.
+            if (
+              autoFillRef.current &&
+              message.state === "unlocked" &&
+              entries &&
+              typeof message.error !== "string"
+            ) {
+              autoFillRef.current = false;
+              if (entries.length === 1) {
+                send({ type: "bwFill", id: entries[0].id });
+                setVault((prev) => (prev ? { ...prev, state: "unlocked", items: entries, busy: true } : prev));
+                return;
+              }
+            }
             setVault((prev) => {
-              const base: VaultSheet = prev ?? { state: "locked", items: [], error: null, busy: false };
               if (message.filled === true) return null; // done — close the sheet
+              // A failed fill launched straight from the menu has no sheet on
+              // screen to carry its message; open one, or the click just
+              // silently does nothing.
+              const base: VaultSheet = prev ?? EMPTY_SHEET;
+              if (!prev && !failedFill) return prev; // background state push, nothing open
               return {
                 state: (message.state as VaultState) ?? base.state,
-                items: Array.isArray(message.items) ? (message.items as VaultEntry[]) : base.items,
+                items: entries ?? base.items,
                 error: typeof message.error === "string" ? message.error : null,
                 busy: false,
+                keyPresent: typeof message.keyPresent === "boolean" ? message.keyPresent : base.keyPresent,
+                requireKey: typeof message.requireKey === "boolean" ? message.requireKey : base.requireKey,
               };
             });
-            if (message.state === "unlocked" && !message.items) send({ type: "bwList" });
-            if (typeof message.error !== "string" && message.filled === true) {
+            if (message.state === "unlocked" && !entries) send({ type: "bwList" });
+            if (message.filled === true) {
               setVaultPassword("");
               canvasRef.current?.focus();
             }
@@ -841,19 +896,48 @@ export function BrowserPane({
       items.push({ label: "Paste", dividerBefore: !ctx.selection, onSelect: () => void pasteFromClipboard() });
     }
     items.push({ label: "Select all", dividerBefore: true, onSelect: selectAllInPage });
-    // Offered on every page rather than only over a password box: you reach for
-    // a password manager while looking at the form, not necessarily while
-    // pointing at the field, and the backend says so plainly if there is no
-    // login form to fill.
-    items.push({
-      label: "Fill login from Bitwarden…",
-      dividerBefore: true,
-      onSelect: () => {
-        setVault({ state: "locked", items: [], error: null, busy: true });
-        setVaultPassword("");
-        send({ type: "bwState" });
-      },
-    });
+    // Bitwarden, shaped by what the probe already knows — the whole point is
+    // that the common case (unlocked, logins prefetched for this site) is one
+    // click on a visible entry, not a sheet.
+    const openSheet = () => {
+      setVault({ ...EMPTY_SHEET, busy: true });
+      setVaultPassword("");
+      send({ type: "bwState" });
+    };
+    const bw = ctx.bitwarden;
+    if (bw?.state === "unlocked" && bw.entries && bw.entries.length > 0) {
+      // Every login saved for this site, directly in the menu. They are
+      // already origin-filtered, so even a big vault yields a handful; the
+      // shared ContextMenu clamps and scrolls if someone truly has dozens.
+      bw.entries.forEach((entry, index) => {
+        items.push({
+          label: `Fill · ${entry.name}${entry.username ? ` (${entry.username})` : ""}`,
+          dividerBefore: index === 0,
+          onSelect: () => send({ type: "bwFill", id: entry.id }),
+        });
+      });
+    } else if (bw?.state === "unlocked" && bw.entries && bw.entries.length === 0) {
+      items.push({
+        label: "Bitwarden: no login for this site",
+        dividerBefore: true,
+        onSelect: openSheet,
+      });
+    } else if (bw?.state === "locked") {
+      const blocked = bw.requireKey && bw.keyPresent === false;
+      items.push({
+        label: blocked ? "Bitwarden: insert your security key" : "Unlock Bitwarden…",
+        dividerBefore: true,
+        onSelect: openSheet,
+      });
+    } else {
+      // Not installed / logged out / an older machine process with no vault
+      // info in the probe: the sheet explains whichever it is.
+      items.push({
+        label: "Fill login from Bitwarden…",
+        dividerBefore: true,
+        onSelect: openSheet,
+      });
+    }
     return items;
   }
 
@@ -1309,6 +1393,9 @@ export function BrowserPane({
                   event.preventDefault();
                   if (!vaultPassword || vault.busy) return;
                   setVault({ ...vault, busy: true, error: null });
+                  // The reply carries this site's logins; exactly one means the
+                  // unlock IS the fill — no picker with a single option.
+                  autoFillRef.current = true;
                   send({ type: "bwUnlock", password: vaultPassword });
                   // Dropped from this component the moment it is sent; it lives
                   // only long enough to reach the backend.
@@ -1343,9 +1430,14 @@ export function BrowserPane({
                       autoFocus
                       autoComplete="off"
                       value={vaultPassword}
-                      disabled={vault.busy}
+                      disabled={vault.busy || (vault.requireKey && !vault.keyPresent)}
                       onChange={(event) => setVaultPassword(event.currentTarget.value)}
                     />
+                    {vault.requireKey && !vault.keyPresent && (
+                      <p className="browser-vault-keynote">
+                        Your security key is not inserted — the vault stays locked without it.
+                      </p>
+                    )}
                   </>
                 )}
 
@@ -1370,6 +1462,31 @@ export function BrowserPane({
                       </button>
                     ))}
                   </div>
+                )}
+
+                {(vault.state === "locked" || vault.state === "unlocked") && (
+                  // The physical gate. Shown with live key presence, so turning
+                  // it on with no key inserted (= locking yourself out until
+                  // you find it) is a visible choice, not an accident.
+                  <label className="browser-vault-keyrow">
+                    <input
+                      type="checkbox"
+                      checked={vault.requireKey}
+                      disabled={vault.busy || (!vault.requireKey && !vault.keyPresent)}
+                      onChange={(event) =>
+                        send({ type: "bwRequireKey", on: event.currentTarget.checked })
+                      }
+                    />
+                    <span>
+                      Require my security key
+                      <em>
+                        {vault.keyPresent
+                          ? "key inserted"
+                          : "no key detected — plug it in to enable"}
+                        {vault.requireKey ? " · removing it locks the vault" : ""}
+                      </em>
+                    </span>
+                  </label>
                 )}
 
                 {vault.error && <div className="modal-error">{vault.error}</div>}

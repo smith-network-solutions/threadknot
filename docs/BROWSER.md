@@ -235,10 +235,29 @@ The browser's right-click menu offers **Fill login from Bitwarden…**, backed b
 credential rather than a session, and it was taken knowingly — see the trade in
 "Security boundary" below.
 
-The flow: the menu asks for vault state, and the sheet shows what that state
-allows — install instructions, `bw login` instructions, a master-password box,
-or the logins matching this page. Choosing one fills the form. Unlocking lasts
-**6 hours**, then the key is dropped.
+The flow is one right-click, one click: navigation **prefetches** the vault's
+logins for the new origin (a background `warm` into a per-host cache, TTL 5
+minutes, usernames only), the right-click **probe carries them along** — memory
+reads only, never a CLI spawn on the menu's critical path — and the menu shows
+`Fill · <name> (<username>)` directly, one item per login saved for this site.
+Locked, the menu offers "Unlock Bitwarden…"; the unlock reply carries this
+origin's entries in the same frame, and exactly one match fills immediately —
+the picker a single option would offer is no choice at all. Unlocking lasts
+**6 hours**, then the key is dropped, and locking clears the listing cache with
+it.
+
+### The security key as a physical gate
+
+Settings in the sheet can require a **FIDO2 key** (e.g. a Thetis Pro-C): with
+"require my security key" on, unlocking refuses while no key is inserted, and
+pulling the key locks the vault within ~2 seconds and tells every open pane
+why its fill entries vanished. Detection is HID enumeration for usage page
+`0xF1D0` — unprivileged everywhere, vendor-agnostic, and all Tier 1 needs.
+The setting lives in `bitwarden.json` in the data dir (settings only, never
+secrets). Touch-to-unlock (the key's hmac-secret wrapping the master password)
+is designed but deliberately unshipped until a feasibility probe runs against
+the physical key: Windows only exposes CTAP through its WebAuthn API, and
+whether that returns the hmac-secret output depends on the OS build.
 
 The handling rules are the point, and each defends something specific:
 

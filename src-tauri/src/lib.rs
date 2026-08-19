@@ -39,6 +39,7 @@ pub mod personas;
 pub mod recorder;
 pub mod remote;
 pub mod schedules;
+pub mod security_key;
 pub mod server;
 pub mod sessions;
 pub mod store;
