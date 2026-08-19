@@ -1405,30 +1405,47 @@ export function BrowserPane({
                 <span className="browser-eyebrow">BITWARDEN</span>
 
                 {vault.state === "notInstalled" && (
-                  <p id="browser-vault-title">
-                    The Bitwarden CLI isn’t installed. Install it with{" "}
-                    <code>npm install -g @bitwarden/cli</code>, then try again.
-                  </p>
+                  <>
+                    <h3 id="browser-vault-title" className="browser-vault-heading">
+                      Bitwarden isn’t installed
+                    </h3>
+                    <p className="browser-vault-sub">
+                      Install the CLI with <code>npm install -g @bitwarden/cli</code>, then try
+                      again.
+                    </p>
+                  </>
                 )}
 
                 {vault.state === "loggedOut" && (
-                  <p id="browser-vault-title">
-                    Not signed in to Bitwarden. Run <code>bw login</code> once in a terminal —
-                    it needs your email and two-factor code, so it isn’t done from here.
-                  </p>
+                  <>
+                    <h3 id="browser-vault-title" className="browser-vault-heading">
+                      Sign in to Bitwarden first
+                    </h3>
+                    <p className="browser-vault-sub">
+                      Run <code>bw login</code> once in a terminal — it needs your email and
+                      two-factor code, so it isn’t done from here. After that, unlocking
+                      happens right here.
+                    </p>
+                  </>
                 )}
 
                 {vault.state === "locked" && (
                   <>
-                    <label id="browser-vault-title" htmlFor={`browser-vault-${sessionId}`}>
-                      Master password
-                      <span>Unlocks the vault for 6 hours. Never written to disk.</span>
-                    </label>
+                    <h3 id="browser-vault-title" className="browser-vault-heading">
+                      Unlock your vault
+                    </h3>
+                    <p className="browser-vault-sub">
+                      Stays unlocked for 12 hours on this machine. Your master password is
+                      never written to disk.
+                    </p>
                     <input
                       id={`browser-vault-${sessionId}`}
+                      className="browser-vault-pass"
                       type="password"
                       autoFocus
                       autoComplete="off"
+                      placeholder="Master password"
+                      aria-label="Master password"
                       value={vaultPassword}
                       disabled={vault.busy || (vault.requireKey && !vault.keyPresent)}
                       onChange={(event) => setVaultPassword(event.currentTarget.value)}
@@ -1442,43 +1459,48 @@ export function BrowserPane({
                 )}
 
                 {vault.state === "unlocked" && (
-                  <div id="browser-vault-title" className="browser-vault-list">
-                    {vault.busy && <p>Looking for matching logins…</p>}
-                    {!vault.busy && vault.items.length === 0 && (
-                      <p>No saved login matches this site.</p>
-                    )}
-                    {vault.items.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className="browser-vault-item"
-                        onClick={() => {
-                          setVault({ ...vault, busy: true, error: null });
-                          send({ type: "bwFill", id: item.id });
-                        }}
-                      >
-                        <span className="browser-vault-name">{item.name}</span>
-                        <span className="browser-vault-user">{item.username || "no username"}</span>
-                      </button>
-                    ))}
-                  </div>
+                  <>
+                    <h3 id="browser-vault-title" className="browser-vault-heading">
+                      {vault.busy
+                        ? "Looking for matching logins…"
+                        : vault.items.length === 0
+                          ? "No saved login for this site"
+                          : "Choose a login"}
+                    </h3>
+                    <div className="browser-vault-list">
+                      {vault.items.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="browser-vault-item"
+                          onClick={() => {
+                            setVault({ ...vault, busy: true, error: null });
+                            send({ type: "bwFill", id: item.id });
+                          }}
+                        >
+                          <span className="browser-vault-name">{item.name}</span>
+                          <span className="browser-vault-user">{item.username || "no username"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 )}
 
                 {(vault.state === "locked" || vault.state === "unlocked") && (
-                  // The physical gate. Shown with live key presence, so turning
-                  // it on with no key inserted (= locking yourself out until
-                  // you find it) is a visible choice, not an accident.
-                  <label className="browser-vault-keyrow">
-                    <input
-                      type="checkbox"
-                      checked={vault.requireKey}
-                      disabled={vault.busy || (!vault.requireKey && !vault.keyPresent)}
-                      onChange={(event) =>
-                        send({ type: "bwRequireKey", on: event.currentTarget.checked })
-                      }
-                    />
-                    <span>
-                      Require my security key
+                  // The physical gate, drawn as the thing it is: a USB security
+                  // key. The whole row toggles it. Shown with live presence, so
+                  // turning it on with no key inserted (= locking yourself out
+                  // until you find it) is a visible choice, not an accident.
+                  <button
+                    type="button"
+                    className={`browser-vault-keytoggle${vault.requireKey ? " on" : ""}${vault.keyPresent ? " present" : ""}`}
+                    aria-pressed={vault.requireKey}
+                    disabled={vault.busy || (!vault.requireKey && !vault.keyPresent)}
+                    onClick={() => send({ type: "bwRequireKey", on: !vault.requireKey })}
+                  >
+                    <UsbKeyIcon />
+                    <span className="browser-vault-keycopy">
+                      <strong>Require my security key</strong>
                       <em>
                         {vault.keyPresent
                           ? "key inserted"
@@ -1486,7 +1508,8 @@ export function BrowserPane({
                         {vault.requireKey ? " · removing it locks the vault" : ""}
                       </em>
                     </span>
-                  </label>
+                    <span className="browser-vault-keystate">{vault.requireKey ? "ON" : "OFF"}</span>
+                  </button>
                 )}
 
                 {vault.error && <div className="modal-error">{vault.error}</div>}
@@ -1583,6 +1606,32 @@ const svgProps = {
   strokeLinejoin: "round" as const,
   "aria-hidden": true,
 };
+
+/** A USB-A security key, drawn on its side: connector (with its two contact
+ *  slots), body, touch disc, and the keyring hole every Thetis/YubiKey has.
+ *  Sized by CSS on the vault sheet's toggle row. */
+const UsbKeyIcon = () => (
+  <svg
+    {...svgProps}
+    width={40}
+    height={40}
+    viewBox="0 0 48 24"
+    strokeWidth={1.6}
+    className="browser-vault-keyicon"
+  >
+    {/* connector shell */}
+    <rect x="2" y="7" width="10" height="10" rx="1" />
+    {/* contact slots */}
+    <path d="M5 10h4M5 14h4" />
+    {/* body */}
+    <rect x="12" y="4.5" width="28" height="15" rx="3.5" />
+    {/* touch disc */}
+    <circle cx="27" cy="12" r="4" />
+    <circle cx="27" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    {/* keyring hole */}
+    <circle cx="36.5" cy="12" r="1.8" />
+  </svg>
+);
 
 const BackIcon = () => (
   <svg {...svgProps}>

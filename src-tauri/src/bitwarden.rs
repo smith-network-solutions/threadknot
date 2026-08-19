@@ -36,10 +36,10 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// How long an unlocked vault stays usable. Chosen by the owner (6h): long
-/// enough to cover a working day's sittings, short enough that a machine left
-/// alone overnight is locked by morning.
-const LOCK_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
+/// How long an unlocked vault stays usable. Chosen by the owner (12h): one
+/// unlock covers a full working day, and a machine left alone overnight is
+/// still locked by morning.
+const LOCK_AFTER: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// What the viewer needs to know to decide which UI to show.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]

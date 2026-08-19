@@ -243,7 +243,7 @@ reads only, never a CLI spawn on the menu's critical path — and the menu shows
 Locked, the menu offers "Unlock Bitwarden…"; the unlock reply carries this
 origin's entries in the same frame, and exactly one match fills immediately —
 the picker a single option would offer is no choice at all. Unlocking lasts
-**6 hours**, then the key is dropped, and locking clears the listing cache with
+**12 hours**, then the key is dropped, and locking clears the listing cache with
 it.
 
 ### The security key as a physical gate

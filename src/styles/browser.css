@@ -1171,28 +1171,120 @@
   border-color: var(--brass, #c08b3e);
   outline: none;
 }
-.browser-vault-name { font-size: 12.5px; font-weight: 600; }
+.browser-vault-name { font-size: 13px; font-weight: 600; }
+
+/* The sheet reads top to bottom: eyebrow, a real heading, one quiet line of
+   explanation, then the thing to act on. The first cut crammed all three into
+   one label line, which is exactly what it looked like. */
+.browser-vault-card {
+  width: min(400px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.browser-vault-heading {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text, #d8dde9);
+  letter-spacing: 0.01em;
+}
+.browser-vault-sub {
+  margin: -4px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--dim, #8b93a9);
+}
+.browser-vault-pass {
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 9px;
+  outline: none;
+  background: var(--bg-raise, #0e111a);
+  color: var(--text, #d8dde9);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+}
+.browser-vault-pass:focus {
+  border-color: var(--brass, #c08b3e);
+}
+.browser-vault-pass::placeholder { letter-spacing: normal; color: var(--faint, #5c6478); }
 .browser-vault-keynote {
-  margin: 6px 0 0;
-  font-size: 11.5px;
+  margin: -2px 0 0;
+  font-size: 12px;
   color: var(--amber, #d9a441);
 }
-.browser-vault-keyrow {
+
+/* The security-key toggle, drawn as the key itself. Grey and unlit with no key
+   inserted; the key art and border warm up when one is, and the whole row goes
+   brass when the gate is on. */
+.browser-vault-keytoggle {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line, rgba(155, 170, 210, 0.09));
-  font-size: 12px;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  border-radius: 11px;
+  background: var(--panel-3, #1a2030);
   color: var(--text, #d8dde9);
+  text-align: left;
+  cursor: pointer;
 }
-.browser-vault-keyrow input { margin-top: 2px; }
-.browser-vault-keyrow em {
-  display: block;
+.browser-vault-keytoggle:disabled { cursor: default; opacity: 0.75; }
+.browser-vault-keyicon {
+  flex: none;
+  color: var(--faint, #5c6478);
+}
+.browser-vault-keytoggle.present .browser-vault-keyicon {
+  color: var(--brass, #c08b3e);
+}
+.browser-vault-keytoggle.on {
+  border-color: var(--brass, #c08b3e);
+  background: color-mix(in srgb, var(--brass, #c08b3e) 9%, var(--panel-3, #1a2030));
+}
+.browser-vault-keytoggle.on .browser-vault-keyicon {
+  color: var(--brass-hi, #e5b567);
+}
+.browser-vault-keytoggle:not(:disabled):hover {
+  border-color: var(--brass, #c08b3e);
+}
+.browser-vault-keycopy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.browser-vault-keycopy strong { font-size: 13.5px; font-weight: 600; }
+.browser-vault-keycopy em {
   font-style: normal;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--dim, #8b93a9);
+}
+.browser-vault-keystate {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 999px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--dim, #8b93a9);
+}
+.browser-vault-keytoggle.on .browser-vault-keystate {
+  border-color: var(--brass, #c08b3e);
+  color: var(--brass-hi, #e5b567);
+}
+
+/* Buttons a hand can actually aim at. */
+.browser-vault-card .browser-dialog-actions button {
+  min-height: 40px;
+  padding: 9px 20px;
+  font-size: 13.5px;
+  border-radius: 9px;
 }
 .browser-vault-user {
   font-family: var(--font-mono, ui-monospace, monospace);
