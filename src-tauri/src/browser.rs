@@ -76,8 +76,16 @@ use uuid::Uuid;
 const DEFAULT_WIDTH: i64 = 1280;
 const DEFAULT_HEIGHT: i64 = 800;
 /// Cap frames so phone/LAN clients aren't flooded; Chrome downscales to fit.
-const MAX_FRAME_WIDTH: i64 = 1600;
-const MAX_FRAME_HEIGHT: i64 = 1200;
+///
+/// Sized for a full-width pane on a large desktop monitor. The viewer's canvas
+/// deliberately never upscales (upscaling is what made pages blurry), so a
+/// viewport clamped below the pane's real size doesn't shrink gracefully — it
+/// parks at the cap, letterboxed, on exactly the monitors with the most room.
+/// 1600 × 1200 did that to every pane wider than 1600 CSS px. The cost of the
+/// larger ceiling is paid only when a viewport is actually that big: the
+/// screencast encodes the viewport's size, not the cap.
+const MAX_FRAME_WIDTH: i64 = 2560;
+const MAX_FRAME_HEIGHT: i64 = 1600;
 const ACTIVITY_HISTORY_LIMIT: usize = 40;
 const CONSOLE_HISTORY_LIMIT: usize = 200;
 const NETWORK_HISTORY_LIMIT: usize = 300;
