@@ -12091,6 +12091,14 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   color: var(--faint);
 }
 
+.bl-form-intro {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--dim);
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
 /* Locked gate: key art + copy, centered, when the panel is protected. */
 .bl-lock {
   display: flex;

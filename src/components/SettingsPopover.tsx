@@ -3523,33 +3523,32 @@ function BrowserProfileSettings() {
           <div className="bl-step">
             <span className="bl-step-num">1</span>
             <div>
-              <div className="bl-step-title">Create a login</div>
+              <div className="bl-step-title">Sign in somewhere</div>
               <div className="bl-step-text">
-                Name it after the account it will hold — “Wave”, “GitHub”, or
-                just your own name. A login belongs to one machine’s browser;
-                pick the machine below.
+                Open the Browser tab in any chat and log into a site the way
+                you always do. You type the password — never the agent.
               </div>
             </div>
           </div>
           <div className="bl-step">
             <span className="bl-step-num">2</span>
             <div>
-              <div className="bl-step-title">Attach it to a chat</div>
+              <div className="bl-step-title">Click “Save login” when offered</div>
               <div className="bl-step-text">
-                Open the Browser tab in a chat on that machine and pick the
-                login from the dropdown in its toolbar.
+                The moment you sign in, a banner asks if you want to keep the
+                session. One click saves it here — named and scoped to that
+                site automatically. That’s the whole flow.
               </div>
             </div>
           </div>
           <div className="bl-step">
             <span className="bl-step-num">3</span>
             <div>
-              <div className="bl-step-title">Sign in once, in the pane</div>
+              <div className="bl-step-title">Use it from any chat</div>
               <div className="bl-step-text">
-                You type the password, not the agent — Threadknot keeps the
-                signed-in session, never your credentials. A chat on another
-                machine shows that machine’s browser right here, so you can
-                sign it in without walking over to it.
+                A saved login shows up in every chat’s Browser tab dropdown on
+                its machine — attach it and that browser opens already signed
+                in. Threadknot keeps the session, never your password.
               </div>
             </div>
           </div>
@@ -3713,14 +3712,19 @@ function BrowserProfileSettings() {
 
       <div className="settings-block">
         <div className="settings-label">
-          {isLocal ? "add a login here" : `add a login on ${machineName}`}
+          {isLocal ? "or start one by hand" : `or start one by hand on ${machineName}`}
         </div>
         <div className="bl-form">
+          <div className="bl-form-intro">
+            You usually don’t need this — signing in and clicking “Save login”
+            does it for you. Use it to prepare an empty login you’ll sign into
+            later.
+          </div>
           <label className="bl-field">
-            <span className="bl-field-label">Name</span>
+            <span className="bl-field-label">What account is this?</span>
             <input
               className="bl-input"
-              placeholder="e.g. Wave"
+              placeholder="e.g. Gmail — oscar, or Wave"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
@@ -3730,11 +3734,11 @@ function BrowserProfileSettings() {
           </label>
           <label className="bl-field">
             <span className="bl-field-label">
-              Sites it can visit <em>optional</em>
+              Which sites may it open? <em>optional</em>
             </span>
             <input
               className="bl-input mono"
-              placeholder="Leave blank to allow any site"
+              placeholder="e.g. gmail.com — blank allows any site"
               value={sites}
               onChange={(e) => setSites(e.target.value)}
               onKeyDown={(e) => {
@@ -3742,9 +3746,9 @@ function BrowserProfileSettings() {
               }}
             />
             <span className="bl-field-hint">
-              To fence this browser in, list sites like{" "}
-              <code>wave.com</code> or <code>*.example.com</code>. Blank means
-              it can go anywhere on the web.
+              A safety fence: a browser signed in as this account can only
+              visit what you list, like <code>gmail.com</code> or{" "}
+              <code>*.example.com</code>. Blank means anywhere.
             </span>
           </label>
           <button
@@ -3753,9 +3757,13 @@ function BrowserProfileSettings() {
             disabled={busy || !name.trim()}
             onClick={() => void create()}
           >
-            {busy ? "Creating…" : "Create login"}
+            {busy ? "Creating…" : "Create empty login"}
           </button>
           {error && <div className="settings-value settings-error">{error}</div>}
+          <div className="bl-field-hint">
+            Then open a chat’s Browser tab, pick it from the dropdown, and sign
+            in once. The session stays.
+          </div>
         </div>
       </div>
     </>
