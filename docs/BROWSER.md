@@ -338,6 +338,32 @@ action running, so a viewer reads the instruction before watching it happen.
 > Captions mask the bug because every step sets its own; the pointer just
 > silently disappears for the rest of the recording.
 
+## Saving a login as you make it
+
+Signing into a site in a **disposable** browser raises a quiet banner in the
+pane: "Signed in to *host*? Keep this session in your browser logins." A
+script injected alongside the overlay watches for login-form submits (classic
+`submit` events and the SPA click-with-filled-password case) and signals
+through a CDP binding — not a sentinel console line, because the console
+listener drops background tabs and a login in a popup would be lost. Only the
+HOST crosses; no field value ever does. Saving **promotes** the live temp
+profile into a durable saved login: the session is marked promoted (so its
+Drop skips the disposable-dir erase), Chrome is closed and awaited via
+`EngineStopped` (so the cookie jar is flushed, not raced), and the directory
+moves under `browser/profiles/` — rename, with a copy fallback for the
+cross-filesystem temp-dir case. The chat reopens attached to the saved login;
+open tabs reset, the session survives.
+
+The Settings panel can require a **FIDO2 security key** to use saved logins
+(off by default): with it on, opening any saved login refuses while the key is
+out, and pulling the key closes every signed-in browser within ~2 seconds.
+The Browser-logins panel itself is gated too — key inserted, or (with no key
+enrolled) an explicit reveal click — and with the key gate active and the key
+absent, `browser.profile.list` returns the flags with an **empty profiles
+array**, so names and sites never cross the wire to a viewer that shouldn't
+see them. One disclosure in the panel: login cards fetch each site's favicon
+(a per-host favicon lookup); everything else stays local.
+
 ## Signed-in profiles
 
 By default every thread gets a **disposable** browser: a fresh temporary
