@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// FIDO's HID usage page. A CTAP device advertises this regardless of vendor,
 /// which is what makes detection model-agnostic (Thetis, YubiKey, whatever).
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 const FIDO_USAGE_PAGE: u16 = 0xF1D0;
 
 /// Is a FIDO2 key inserted right now?
@@ -26,7 +26,7 @@ const FIDO_USAGE_PAGE: u16 = 0xF1D0;
 /// long-lived instance would keep answering from a stale snapshot and never
 /// notice the key being pulled. Enumeration costs single-digit milliseconds,
 /// which the 2s watcher cadence and the occasional unlock check absorb easily.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub fn key_present() -> bool {
     match hidapi::HidApi::new() {
         Ok(api) => api
@@ -34,6 +34,83 @@ pub fn key_present() -> bool {
             .any(|dev| dev.usage_page() == FIDO_USAGE_PAGE),
         Err(_) => false,
     }
+}
+
+/// Windows: hidapi cannot see FIDO keys at all. Windows blocks unprivileged
+/// processes from opening FIDO HID devices, and hidapi needs that open to read
+/// a device's capabilities — so the key simply never appears in its list
+/// (measured with a Thetis inserted: thirty HID devices enumerated, none of
+/// them the key). The device's PnP metadata is readable without touching the
+/// device, and a FIDO collection's hardware IDs carry the vendor-independent
+/// `HID_DEVICE_UP:F1D0_U:0001`. So: list PRESENT devices on the HID enumerator
+/// via cfgmgr32 and match the usage-page hardware id. The PRESENT filter is
+/// what makes pulling the key visible — an unplugged device drops out of the
+/// list, not merely into a "disabled" state.
+#[cfg(windows)]
+pub fn key_present() -> bool {
+    use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
+        CM_Get_DevNode_Registry_PropertyW, CM_Get_Device_ID_ListW,
+        CM_Get_Device_ID_List_SizeW, CM_Locate_DevNodeW, CM_GETIDLIST_FILTER_ENUMERATOR,
+        CM_GETIDLIST_FILTER_PRESENT, CM_LOCATE_DEVNODE_NORMAL, CR_SUCCESS,
+        CM_DRP_HARDWAREID,
+    };
+    let filter: Vec<u16> = "HID\0".encode_utf16().collect();
+    let flags = CM_GETIDLIST_FILTER_ENUMERATOR | CM_GETIDLIST_FILTER_PRESENT;
+    unsafe {
+        let mut len: u32 = 0;
+        if CM_Get_Device_ID_List_SizeW(&mut len, filter.as_ptr(), flags) != CR_SUCCESS
+            || len == 0
+        {
+            return false;
+        }
+        let mut ids = vec![0u16; len as usize];
+        if CM_Get_Device_ID_ListW(filter.as_ptr(), ids.as_mut_ptr(), len, flags) != CR_SUCCESS {
+            return false;
+        }
+        for id in ids.split(|c| *c == 0).filter(|s| !s.is_empty()) {
+            let mut id_z: Vec<u16> = id.iter().copied().chain(std::iter::once(0)).collect();
+            let mut devinst = 0;
+            if CM_Locate_DevNodeW(&mut devinst, id_z.as_mut_ptr(), CM_LOCATE_DEVNODE_NORMAL)
+                != CR_SUCCESS
+            {
+                continue;
+            }
+            // Two-call pattern: sizes first (this call "fails" by design), then
+            // the REG_MULTI_SZ hardware-id list itself.
+            let mut bytes: u32 = 0;
+            let mut regtype: u32 = 0;
+            let _ = CM_Get_DevNode_Registry_PropertyW(
+                devinst,
+                CM_DRP_HARDWAREID,
+                &mut regtype,
+                std::ptr::null_mut(),
+                &mut bytes,
+                0,
+            );
+            if bytes == 0 {
+                continue;
+            }
+            let mut prop = vec![0u16; bytes as usize / 2 + 1];
+            if CM_Get_DevNode_Registry_PropertyW(
+                devinst,
+                CM_DRP_HARDWAREID,
+                &mut regtype,
+                prop.as_mut_ptr().cast(),
+                &mut bytes,
+                0,
+            ) != CR_SUCCESS
+            {
+                continue;
+            }
+            if String::from_utf16_lossy(&prop)
+                .to_ascii_uppercase()
+                .contains("UP:F1D0")
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Linux: no hidapi — its build compiles C against libudev headers, a system

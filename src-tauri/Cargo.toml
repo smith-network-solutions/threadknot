@@ -106,12 +106,19 @@ libc = "0.2"
 # setting is enabled; the HTML `spellcheck` attribute alone is not sufficient.
 webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }
 
-# FIDO2 key presence: hidapi everywhere EXCEPT Linux, where its build compiles
-# C against libudev headers — a root-installed system package this repo must
-# not demand for a feature this small. Linux reads the FIDO usage page straight
-# out of sysfs report descriptors instead (see security_key.rs).
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+# FIDO2 key presence is per-platform all the way down (see security_key.rs):
+# Windows hides FIDO HID devices from unprivileged HID enumeration entirely, so
+# presence is read from PnP hardware IDs via cfgmgr32; Linux reads the usage
+# page out of sysfs report descriptors (hidapi there would compile C against
+# root-installed libudev headers); only macOS actually uses hidapi.
+[target.'cfg(target_os = "macos")'.dependencies]
 hidapi = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Devices_DeviceAndDriverInstallation",
+] }
 
 [profile.release]
 strip = true
