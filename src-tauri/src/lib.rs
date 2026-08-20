@@ -503,6 +503,14 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
             };
             match thread.settings.browser_profile_id.as_deref() {
                 Some(id) if !id.is_empty() => {
+                    // The physical gate on USING saved logins: with the setting
+                    // on and the key out, a signed-in session refuses to open,
+                    // exactly like a profile owned by another machine does.
+                    if profiles.require_key() && !security_key::key_present() {
+                        anyhow::bail!(
+                            "your security key is not inserted — saved logins are locked without it"
+                        );
+                    }
                     let spec = profiles.spec(id)?;
                     profiles.touch(id);
                     Ok(Some(spec))
@@ -510,6 +518,32 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
                 _ => Ok(None),
             }
         }));
+    }
+
+    // The FIDO removal watcher lives here, not in the browser WS handler, so it
+    // can reach BOTH the Bitwarden vault and the profile store / registry: on
+    // key removal it locks the vault (as before) and, when saved logins are
+    // gated, closes every signed-in browser and re-broadcasts state so open
+    // panels re-lock. One watcher for the whole process.
+    {
+        let profiles = Arc::clone(&browser_profiles);
+        let registry = Arc::clone(&browsers);
+        let notify = Arc::clone(&hub);
+        security_key::watch(move || {
+            // Bitwarden vault: its own require_key gate (unchanged behavior,
+            // moved here out of the watcher so there is one callback).
+            if browser::vault().require_key() {
+                browser::vault().lock();
+            }
+            // Saved browser logins: close them if that gate is on.
+            if profiles.require_key() {
+                registry.close_signed_in_sessions();
+            }
+            // Repaint open surfaces either way: the vault sheet's key status,
+            // and the Browser-logins panel's lock state.
+            registry.broadcast_vault_state();
+            notify.broadcast_state("browserProfiles", None);
+        });
     }
 
     let state = server::ServerState {

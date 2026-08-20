@@ -20,7 +20,7 @@ import {
   DEFAULT_DEVICE_CAPABILITIES,
   DEVICE_CAPABILITY_LABELS,
 } from "../lib/protocol";
-import { copyText, timeAgo } from "../lib/format";
+import { copyText, formatFullDateTime, timeAgo } from "../lib/format";
 import { useIsMobile } from "../lib/viewport";
 import { pickAvatarImage } from "../lib/sidebarImage";
 import { MachineAvatar, machineLook } from "./MachineAvatar";
@@ -85,9 +85,11 @@ import {
   ChevronIcon,
   CopyIcon,
   CheckIcon,
+  GlobeIcon,
   MoreIcon,
   PencilIcon,
   TrashIcon,
+  UsbKeyIcon,
   XIcon,
 } from "./icons";
 import type {
@@ -3396,6 +3398,16 @@ function UpdatesSettings() {
  * profile is limited to the sites it was made for, and the browser itself
  * refuses to load anything else.
  */
+/** Favicon for a login card. The first real (non-`*`) origin gets a fetched
+ *  favicon; an unscoped login gets a generic globe. The favicon lookup is the
+ *  one thing here that leaves the machine — noted in the panel copy. */
+function loginFavicon(origins: string[]): string | null {
+  const host = origins.find((o) => o && o !== "*");
+  if (!host) return null;
+  const clean = host.replace(/^https?:\/\//, "").replace(/^\*\./, "").split("/")[0];
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(clean)}&sz=32`;
+}
+
 function BrowserProfileSettings() {
   const { state, actions } = useStore();
   const [profiles, setProfiles] = useState<BrowserProfileInfo[] | null>(null);
@@ -3407,6 +3419,13 @@ function BrowserProfileSettings() {
   /** Whose logins are being managed: undefined = this machine, else a peer. */
   const [machine, setMachine] = useState<string | undefined>(undefined);
   const [loadError, setLoadError] = useState("");
+  /** Security gate state from the list response. */
+  const [keyPresent, setKeyPresent] = useState(false);
+  const [requireKey, setRequireKey] = useState(false);
+  /** Fallback reveal when no key is enrolled: armed → confirmed. */
+  const [reveal, setReveal] = useState(false);
+  /** Which card is expanded to its full detail. */
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const localId = state.hello?.machineId;
   const localName = state.hello?.friendlyName ?? "this machine";
@@ -3420,7 +3439,11 @@ function BrowserProfileSettings() {
     setLoadError("");
     void actions
       .listBrowserProfiles(machine)
-      .then(setProfiles)
+      .then((res) => {
+        setProfiles(res.profiles);
+        setKeyPresent(res.keyPresent);
+        setRequireKey(res.requireKey);
+      })
       .catch((e) => {
         setProfiles([]);
         setLoadError(e instanceof Error ? e.message : String(e));
@@ -3428,6 +3451,21 @@ function BrowserProfileSettings() {
   }, [actions, machine]);
 
   useEffect(reload, [reload]);
+
+  // While gated on the key, re-poll so plugging it in unlocks the view without
+  // reopening Settings. The server also broadcasts on removal, but polling
+  // covers insertion cleanly and stops once unlocked.
+  const gatedByKey = requireKey && !keyPresent;
+  useEffect(() => {
+    if (!gatedByKey) return;
+    const t = window.setInterval(reload, 2000);
+    return () => window.clearInterval(t);
+  }, [gatedByKey, reload]);
+
+  // The panel is locked when the key gate is active and the key is out, or —
+  // when no key is enrolled — until the owner clicks Reveal.
+  const noKeyEnrolled = !requireKey && !keyPresent;
+  const locked = gatedByKey || (noKeyEnrolled && !reveal);
 
   const create = async () => {
     setBusy(true);
@@ -3447,6 +3485,35 @@ function BrowserProfileSettings() {
       setBusy(false);
     }
   };
+
+  if (locked) {
+    return (
+      <div className="settings-block">
+        <div className="bl-lock">
+          <UsbKeyIcon size={52} className={`bl-lock-key${keyPresent ? " present" : ""}`} />
+          {gatedByKey ? (
+            <>
+              <div className="bl-lock-title">Insert your security key</div>
+              <div className="bl-lock-text">
+                Saved logins are locked without it. Plug your key in to view them —
+                this unlocks the moment it’s detected.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="bl-lock-title">Saved logins are protected</div>
+              <div className="bl-lock-text">
+                These are live signed-in sessions. Reveal them to view or manage.
+              </div>
+              <button type="button" className="bl-create-btn" onClick={() => setReveal(true)}>
+                Reveal saved logins
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -3521,6 +3588,34 @@ function BrowserProfileSettings() {
         </div>
       </div>
 
+      {isLocal && (
+        <div className="settings-block">
+          <div className="settings-label">security</div>
+          <button
+            type="button"
+            className={`browser-vault-keytoggle${requireKey ? " on" : ""}${keyPresent ? " present" : ""}`}
+            aria-pressed={requireKey}
+            disabled={!requireKey && !keyPresent}
+            onClick={() =>
+              void actions
+                .setBrowserLoginSecurity(!requireKey, machine)
+                .then(() => setRequireKey(!requireKey))
+                .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+            }
+          >
+            <UsbKeyIcon className="browser-vault-keyicon" />
+            <span className="browser-vault-keycopy">
+              <strong>Require my security key to open saved logins</strong>
+              <em>
+                {keyPresent ? "key inserted" : "no key detected — plug it in to enable"}
+                {requireKey ? " · removing it locks this panel and your logins" : ""}
+              </em>
+            </span>
+            <span className="browser-vault-keystate">{requireKey ? "ON" : "OFF"}</span>
+          </button>
+        </div>
+      )}
+
       <div className="settings-block">
         <div className="settings-label">
           {isLocal ? "logins on this machine" : `logins on ${machineName}`}
@@ -3532,47 +3627,88 @@ function BrowserProfileSettings() {
             Create one below, then attach it from a chat’s Browser tab.
           </div>
         )}
-        {(profiles ?? []).map((profile) => (
-          <div key={profile.id} className="bl-card">
-            <div className="bl-card-main">
-              <div className="bl-card-name">{profile.name}</div>
-              <div className="bl-card-meta">
-                {profile.origins.includes("*") ? (
-                  <span className="bl-scope any">any site</span>
-                ) : (
-                  <span className="bl-scope">{profile.origins.join(", ")}</span>
-                )}
-                {profile.lastUsedAt && (
-                  <span className="bl-used">
-                    last used {profile.lastUsedAt.slice(0, 10)}
+        {(profiles ?? []).map((profile) => {
+          const isOpen = expanded === profile.id;
+          const live = (profile.liveOn?.length ?? 0) > 0;
+          const favicon = loginFavicon(profile.origins);
+          return (
+            <div key={profile.id} className={`bl-card${isOpen ? " open" : ""}`}>
+              <button
+                type="button"
+                className="bl-card-head"
+                aria-expanded={isOpen}
+                onClick={() => setExpanded(isOpen ? null : profile.id)}
+              >
+                <span className="bl-fav">
+                  {favicon ? (
+                    <img src={favicon} alt="" width={18} height={18} />
+                  ) : (
+                    <GlobeIcon size={16} />
+                  )}
+                </span>
+                <span className="bl-card-name">{profile.name}</span>
+                {live && (
+                  <span className="bl-live" title={`open in ${profile.liveOn?.length} chat(s) now`}>
+                    <span className="status-dot st-running" />
+                    open now
                   </span>
                 )}
-              </div>
+                <span className="bl-card-used">
+                  {profile.lastUsedAt ? timeAgo(profile.lastUsedAt) : "never used"}
+                </span>
+                <ChevronIcon size={14} open={isOpen} className="bl-chevron" />
+              </button>
+              {isOpen && (
+                <div className="bl-card-detail">
+                  <div className="bl-detail-row">
+                    <span className="bl-detail-k">Sites</span>
+                    <span className="bl-detail-v">
+                      {profile.origins.includes("*") ? (
+                        <span className="bl-scope any">any site</span>
+                      ) : (
+                        profile.origins.join(", ")
+                      )}
+                    </span>
+                  </div>
+                  <div className="bl-detail-row">
+                    <span className="bl-detail-k">Created</span>
+                    <span className="bl-detail-v">{formatFullDateTime(profile.createdAt)}</span>
+                  </div>
+                  <div className="bl-detail-row">
+                    <span className="bl-detail-k">Last used</span>
+                    <span className="bl-detail-v">
+                      {profile.lastUsedAt ? formatFullDateTime(profile.lastUsedAt) : "never"}
+                    </span>
+                  </div>
+                  <div className="bl-detail-row">
+                    <span className="bl-detail-k">Machine</span>
+                    <span className="bl-detail-v bl-detail-machine">
+                      <MachineAvatar {...machineLook(state, profile.machineId)} size={16} preview={false} />
+                      {machineName}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`bl-remove${confirmDelete === profile.id ? " confirm" : ""}`}
+                    onClick={() => {
+                      if (confirmDelete !== profile.id) {
+                        setConfirmDelete(profile.id);
+                        return;
+                      }
+                      setConfirmDelete(null);
+                      void actions
+                        .deleteBrowserProfile(profile.id, machine)
+                        .then(reload)
+                        .catch(() => undefined);
+                    }}
+                  >
+                    {confirmDelete === profile.id ? "Really sign out?" : "Sign out & forget"}
+                  </button>
+                </div>
+              )}
             </div>
-            <button
-              type="button"
-              className={`bl-remove${confirmDelete === profile.id ? " confirm" : ""}`}
-              title={
-                confirmDelete === profile.id
-                  ? "Click again to sign out and erase this stored session"
-                  : "Sign out everywhere and erase this stored session"
-              }
-              onClick={() => {
-                if (confirmDelete !== profile.id) {
-                  setConfirmDelete(profile.id);
-                  return;
-                }
-                setConfirmDelete(null);
-                void actions
-                  .deleteBrowserProfile(profile.id, machine)
-                  .then(reload)
-                  .catch(() => undefined);
-              }}
-            >
-              {confirmDelete === profile.id ? "Really sign out?" : "Sign out & forget"}
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="settings-block">

@@ -58,8 +58,8 @@ use chromiumoxide::cdp::browser_protocol::page::{
 };
 use chromiumoxide::cdp::browser_protocol::target::{EventTargetCreated, EventTargetDestroyed};
 use chromiumoxide::cdp::js_protocol::runtime::{
-    CallArgument, CallFunctionOnParams, EnableParams as EnableRuntimeParams, EventConsoleApiCalled,
-    EventExceptionThrown,
+    AddBindingParams, CallArgument, CallFunctionOnParams, EnableParams as EnableRuntimeParams,
+    EventBindingCalled, EventConsoleApiCalled, EventExceptionThrown,
 };
 use chromiumoxide::page::ScreenshotParams;
 use chromiumoxide::Page;
@@ -105,6 +105,12 @@ const PROFILE_PREFIX: &str = "threadknot-chrome-";
 /// Injected into every document so a recording can draw a pointer that headless
 /// Chrome would otherwise never render.
 const OVERLAY_SOURCE: &str = include_str!("browser_overlay.js");
+/// Injected into disposable sessions to notice a human signing in, so the pane
+/// can offer to keep the session. See the file header for why it uses a CDP
+/// binding rather than the console.
+const LOGIN_WATCH_SOURCE: &str = include_str!("login_watch.js");
+/// The binding name the script above calls. Runtime.bindingCalled carries it.
+const LOGIN_BINDING: &str = "__tkLoginSubmitted";
 
 /// How often the driver dispatches a real CDP mouse move while gliding. The
 /// overlay animates the visible pointer locally at display rate; these events
@@ -788,6 +794,15 @@ pub struct BrowserSession {
     /// no pointer of its own, so continuity between actions is ours to keep:
     /// without it every glide would have to start from an unknown place.
     cursor: Mutex<(f64, f64)>,
+    /// Hosts this disposable session has already flagged a login for, so a
+    /// login page that resubmits (wrong password, then right) prompts once,
+    /// not on every attempt.
+    login_flagged: Mutex<HashSet<String>>,
+    /// Set when this disposable session's directory has been claimed by a
+    /// promotion (saved as a durable login). Its `Drop` then leaves the
+    /// directory alone — normally it erases every disposable dir, which would
+    /// destroy the very session being saved.
+    promoted: std::sync::atomic::AtomicBool,
 }
 
 impl Drop for BrowserSession {
@@ -799,8 +814,12 @@ impl Drop for BrowserSession {
         }
         // Disposable profiles are scratch space and go with the session. A
         // signed-in profile's directory IS the stored session — deleting it
-        // here would silently sign the user out.
-        if self.profile.is_none() {
+        // here would silently sign the user out. And a disposable dir claimed
+        // by a promotion has become a saved login: erasing it would delete the
+        // session the user just chose to keep.
+        if self.profile.is_none()
+            && !self.promoted.load(std::sync::atomic::Ordering::SeqCst)
+        {
             let _ = std::fs::remove_dir_all(&self.profile_dir);
         }
     }
@@ -881,6 +900,29 @@ impl BrowserSession {
 
     pub fn profile_id(&self) -> Option<String> {
         self.profile.as_ref().map(|profile| profile.id.clone())
+    }
+
+    /// This session's on-disk directory, and whether it is a disposable one
+    /// (the only kind a promotion can adopt — a signed-in session is already a
+    /// saved login).
+    fn disposable_dir(&self) -> Option<&std::path::Path> {
+        self.profile.is_none().then_some(self.profile_dir.as_path())
+    }
+
+    /// Wait for Chrome to actually stop, so a promotion moves a flushed cookie
+    /// jar rather than racing the shutdown. The handler pump sends
+    /// `EngineStopped` when the CDP connection closes; bounded so a wedged
+    /// browser can't hang the promotion forever.
+    async fn await_engine_stop(&self) {
+        let mut rx = self.tx.subscribe();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while let Ok(msg) = rx.recv().await {
+                if matches!(msg, BrowserMsg::EngineStopped) {
+                    break;
+                }
+            }
+        })
+        .await;
     }
 
     pub fn profile_name(&self) -> Option<String> {
@@ -1236,6 +1278,29 @@ impl BrowserSession {
     async fn evaluate(&self, expr: &str) -> Result<Value> {
         let res = self.page().evaluate(expr).await?;
         Ok(res.into_value().unwrap_or(Value::Null))
+    }
+
+    /// A login form was just submitted on `host`. Tell viewers once per host,
+    /// so a page that resubmits (wrong password, then right) prompts a single
+    /// time. The host is all that crosses — whether you logged in, never what
+    /// you typed. Sessions running a saved profile never call this (the script
+    /// is not injected there), so this is always a disposable session the user
+    /// might want to keep.
+    fn flag_login(&self, host: &str) {
+        let host = host.trim().to_ascii_lowercase();
+        if host.is_empty() {
+            return;
+        }
+        {
+            let mut seen = self.login_flagged.lock().unwrap();
+            if !seen.insert(host.clone()) {
+                return;
+            }
+        }
+        let _ = self.tx.send(BrowserMsg::Context(json!({
+            "type": "loginDetected",
+            "host": host,
+        })));
     }
 
     /// Tell the viewer where the vault stands, so its menu can offer "unlock"
@@ -2354,6 +2419,34 @@ impl BrowserSession {
         // so seed the one already open.
         let _ = page.evaluate(OVERLAY_SOURCE).await;
 
+        // Login detection, disposable sessions only: a signed-in session is
+        // already saved, so there is nothing to offer. The binding is a real
+        // window function whose calls arrive as Runtime.bindingCalled; the
+        // script (registered for future documents, seeded for the current one)
+        // calls it on a login-form submit.
+        if self.profile.is_none() {
+            let _ = page.execute(AddBindingParams::new(LOGIN_BINDING)).await;
+            let _ = page
+                .execute(AddScriptToEvaluateOnNewDocumentParams::new(
+                    LOGIN_WATCH_SOURCE.to_string(),
+                ))
+                .await;
+            let _ = page.evaluate(LOGIN_WATCH_SOURCE).await;
+            if let Ok(mut events) = page.event_listener::<EventBindingCalled>().await {
+                let weak = Arc::downgrade(self);
+                let task = tokio::spawn(async move {
+                    while let Some(ev) = events.next().await {
+                        if ev.name != LOGIN_BINDING {
+                            continue;
+                        }
+                        let Some(session) = weak.upgrade() else { break };
+                        session.flag_login(&ev.payload);
+                    }
+                });
+                self.tasks.lock().unwrap().push(task);
+            }
+        }
+
         self.wire_origin_guard(&page).await?;
 
         // Decode/ack every active screencast frame. Background tabs normally
@@ -3005,6 +3098,71 @@ impl BrowserRegistry {
         for session in sessions {
             session.shutdown().await;
         }
+    }
+
+    /// The session keys currently holding `profile_id` — the "open in a chat
+    /// now" signal for the Browser-logins panel.
+    pub fn sessions_using(&self, profile_id: &str) -> Vec<String> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.profile_id().as_deref() == Some(profile_id))
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    /// Close every SIGNED-IN session — used when the security key is pulled and
+    /// saved logins are gated on it. Disposable browsing is untouched.
+    pub fn close_signed_in_sessions(&self) {
+        let keys: Vec<String> = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .iter()
+                .filter(|(_, session)| session.profile_id().is_some())
+                .map(|(key, _)| key.clone())
+                .collect()
+        };
+        for key in keys {
+            self.remove(&key);
+        }
+    }
+
+    /// Save a live disposable session as a durable login.
+    ///
+    /// The order is load-bearing: mark the session promoted so its `Drop`
+    /// leaves the directory alone, take it out of the map, ask Chrome to close
+    /// and WAIT for it to actually stop (so the cookie jar is flushed), then
+    /// move the now-quiet directory under the store. Racing the flush would
+    /// save a login that isn't signed in.
+    pub async fn promote(
+        &self,
+        key: &str,
+        name: &str,
+        origins: &[String],
+        store: &crate::browser_profiles::BrowserProfileStore,
+    ) -> Result<crate::browser_profiles::BrowserProfile> {
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .remove(key)
+            .ok_or_else(|| anyhow!("no live browser session to save (session {key})"))?;
+        let dir = session
+            .disposable_dir()
+            .ok_or_else(|| anyhow!("this browser is already a saved login"))?
+            .to_path_buf();
+        // Claim the directory before shutdown, so whichever drops the last Arc
+        // finds the flag set and skips the erase.
+        session
+            .promoted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        session.shutdown().await;
+        session.await_engine_stop().await;
+        // The session Arc is dropped here; with `promoted` set, its Drop leaves
+        // `dir` in place for adopt to move.
+        drop(session);
+        store.adopt(&dir, name, origins)
     }
 
     /// Close every session running on a profile — used when its scope changes
@@ -3693,6 +3851,8 @@ async fn spawn_session(
         // Start the pointer off-canvas so the first glide enters from an edge
         // instead of appearing to teleport out of the top-left corner.
         cursor: Mutex::new((-40.0, DEFAULT_HEIGHT as f64 * 0.6)),
+        login_flagged: Mutex::new(HashSet::new()),
+        promoted: std::sync::atomic::AtomicBool::new(false),
     });
     session.wire_downloads().await;
 
@@ -4004,14 +4164,8 @@ pub async fn ws_handler(
             let _ = session.navigate(url).await;
         }
     }
-    // First viewer arms the security-key watcher (self-guarded against double
-    // start). Started here rather than at boot because the registry is what a
-    // removal has to notify, and this is the first point that has it with a
-    // viewer to care.
-    {
-        let watch_registry = Arc::clone(&registry);
-        crate::security_key::watch(move || watch_registry.broadcast_vault_state());
-    }
+    // The security-key watcher is started once at server construction
+    // (lib.rs), where it can reach both the vault and the profile store.
     crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
         tokio::select! {
             _ = bridge(socket, registry, key, session) => {}

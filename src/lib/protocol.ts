@@ -170,6 +170,9 @@ export interface BrowserProfileInfo {
   machineId: string;
   createdAt: string;
   lastUsedAt?: string;
+  /** Session/thread keys currently holding this login open — the "open in a
+   *  chat now" signal. Empty/absent when idle. */
+  liveOn?: string[];
 }
 
 /* ---------------------------------------------------------------------------
@@ -1392,7 +1395,7 @@ export interface RequestMap {
    *  means this one). All but `list` require that machine's master token. */
   "browser.profile.list": {
     payload: { machineId?: string };
-    data: { profiles: BrowserProfileInfo[] };
+    data: { profiles: BrowserProfileInfo[]; keyPresent: boolean; requireKey: boolean };
   };
   "browser.profile.create": {
     payload: { name: string; origins: string[]; machineId?: string };
@@ -1405,6 +1408,21 @@ export interface RequestMap {
   "browser.profile.delete": {
     payload: { profileId: string; machineId?: string };
     data: Record<string, never>;
+  };
+  /** Save a live disposable session as a durable login. Owner-only, routes. */
+  "browser.profile.promote": {
+    payload: { sessionKey: string; name: string; origins?: string[]; machineId?: string };
+    data: BrowserProfileInfo;
+  };
+  /** Toggle the FIDO gate on using saved logins. Owner-only, routes. */
+  "browser.profile.security": {
+    payload: { requireKey: boolean; machineId?: string };
+    data: { requireKey: boolean };
+  };
+  /** Security-key status for a machine (owner-only, routes). */
+  "security.status": {
+    payload: { machineId?: string };
+    data: { keyPresent: boolean; requireKey: boolean };
   };
   /** The Library. Like browser profiles these are per-machine and all route on
    *  `machineId`; everything but `list` needs that machine's master token,

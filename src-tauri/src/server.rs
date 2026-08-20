@@ -2257,6 +2257,9 @@ const ROUTABLE: &[&str] = &[
     "browser.profile.create",
     "browser.profile.update",
     "browser.profile.delete",
+    "browser.profile.promote",
+    "browser.profile.security",
+    "security.status",
     // The Library is per-machine: skills live in that machine's CLI folders and
     // an MCP server is launched by that machine's Threadknot. Routing lets the
     // fleet view show and manage another machine's shelf; the master-only guard
@@ -2502,6 +2505,14 @@ pub async fn handle_request(
         anyhow::ensure!(
             principal.is_owner(),
             "managing signed-in browser profiles requires this machine's master token"
+        );
+    }
+    // Security-key status is owner-only: whether a machine's vault gate is
+    // armed, and whether its key is inserted, is the owner's business.
+    if req.kind == "security.status" {
+        anyhow::ensure!(
+            principal.is_owner(),
+            "reading security-key status requires this machine's master token"
         );
     }
 
@@ -4076,13 +4087,65 @@ pub async fn handle_request(
         // ThreadSettings. Answered as "you have none" rather than as a refusal:
         // a device without the grant cannot select one anyway, and the picker
         // that asks for this list on open should render empty, not error.
-        "browser.profile.list" => Ok(json!({
-            "profiles": if principal.can(Capability::SignedBrowser) {
-                state.browser_profiles.list()
+        "browser.profile.list" => {
+            let key_present = crate::security_key::key_present();
+            let require_key = state.browser_profiles.require_key();
+            // The gate: with "require key" on and no key inserted, saved-login
+            // names and sites do not cross the wire at all — the panel shows a
+            // locked state from the flags, not an empty list it could reveal.
+            let locked = require_key && !key_present;
+            let profiles = if principal.can(Capability::SignedBrowser) && !locked {
+                state
+                    .browser_profiles
+                    .list()
+                    .into_iter()
+                    .map(|profile| {
+                        let live_on = state.browsers.sessions_using(&profile.id);
+                        let mut v = serde_json::to_value(&profile).unwrap_or(json!({}));
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("liveOn".into(), json!(live_on));
+                        }
+                        v
+                    })
+                    .collect()
             } else {
                 Vec::new()
-            }
+            };
+            Ok(json!({
+                "profiles": profiles,
+                "keyPresent": key_present,
+                "requireKey": require_key,
+            }))
+        }
+        "security.status" => Ok(json!({
+            "keyPresent": crate::security_key::key_present(),
+            "requireKey": state.browser_profiles.require_key(),
         })),
+        "browser.profile.security" => {
+            let on = p.get("requireKey").and_then(Value::as_bool).unwrap_or(false);
+            state.browser_profiles.set_require_key(on)?;
+            // Turning the gate on with the key out locks the saved browsers now.
+            if on && !crate::security_key::key_present() {
+                state.browsers.close_signed_in_sessions();
+            }
+            hub.broadcast_state("browserProfiles", None);
+            Ok(json!({ "requireKey": on }))
+        }
+        "browser.profile.promote" => {
+            let session_key = field(&p, "sessionKey")?.to_string();
+            let name = field(&p, "name")?.to_string();
+            let origins = if p.get("origins").is_some() {
+                string_list(&p, "origins")
+            } else {
+                Vec::new()
+            };
+            let profile = state
+                .browsers
+                .promote(&session_key, &name, &origins, &state.browser_profiles)
+                .await?;
+            hub.broadcast_state("browserProfiles", None);
+            Ok(serde_json::to_value(profile)?)
+        }
         "browser.profile.create" => {
             let profile = state
                 .browser_profiles

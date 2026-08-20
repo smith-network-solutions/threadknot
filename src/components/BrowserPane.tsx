@@ -6,6 +6,7 @@ import { isNativeShell, readNativeClipboardText } from "../lib/native";
 import { APPEARANCE_EVENT, getPaneZoom } from "../lib/appearance";
 import { BROWSER_INTENT_EVENT, takeBrowserUrl } from "../lib/browserIntent";
 import { ContextMenu, type CtxItem } from "./ContextMenu";
+import { UsbKeyIcon } from "./icons";
 import "../styles/browser.css";
 
 /** Device-width presets. `null` = fill the pane (native viewport). */
@@ -230,6 +231,12 @@ export function BrowserPane({
   const [menu, setMenu] = useState<BrowserMenu | null>(null);
   const [vault, setVault] = useState<VaultSheet | null>(null);
   const [vaultPassword, setVaultPassword] = useState("");
+  /** "You just signed in — keep this session?" prompt, per detected host. */
+  const [loginPrompt, setLoginPrompt] = useState<{
+    host: string;
+    saving: boolean;
+    error: string | null;
+  } | null>(null);
   /** Armed when the user submits an unlock: the reply may auto-fill a single
    *  matching login. A ref, not state — it must be readable inside the socket
    *  handler without re-subscribing it. */
@@ -526,6 +533,11 @@ export function BrowserPane({
                 bitwarden: bw && typeof bw.state === "string" ? bw : undefined,
               });
             }
+          } else if (message.type === "loginDetected" && typeof message.host === "string") {
+            // The backend saw a login submit in this disposable browser. Offer
+            // to keep the session — once per host, and never over an existing
+            // banner the user hasn't dismissed.
+            setLoginPrompt((prev) => prev ?? { host: message.host as string, saving: false, error: null });
           } else if (message.type === "bitwarden") {
             // One frame type carries every vault answer: a state report (with
             // the current origin's prefetched entries), a list, or a fill
@@ -756,9 +768,9 @@ export function BrowserPane({
     let cancelled = false;
     void actions
       .listBrowserProfiles(machineId)
-      .then((list) => {
+      .then((res) => {
         if (cancelled) return;
-        setProfiles(list);
+        setProfiles(res.profiles);
         setProfilesLoaded(true);
       })
       .catch(() => undefined);
@@ -1418,6 +1430,51 @@ export function BrowserPane({
             </div>
           )}
 
+          {loginPrompt && (
+            <div className="browser-login-save" role="dialog" aria-label="Save this login">
+              <div className="browser-login-save-copy">
+                <strong>Signed in to {loginPrompt.host}?</strong>
+                <span>Keep this session in your browser logins so you stay signed in.</span>
+                {loginPrompt.error && <em className="browser-login-save-err">{loginPrompt.error}</em>}
+              </div>
+              <div className="browser-login-save-actions">
+                <button
+                  type="button"
+                  className="browser-login-save-no"
+                  disabled={loginPrompt.saving}
+                  onClick={() => setLoginPrompt(null)}
+                >
+                  Not now
+                </button>
+                <button
+                  type="button"
+                  className="browser-login-save-yes"
+                  disabled={loginPrompt.saving}
+                  onClick={() => {
+                    const host = loginPrompt.host;
+                    setLoginPrompt({ host, saving: true, error: null });
+                    void actions
+                      .promoteBrowserLogin(sessionId, host, [host], machineId)
+                      .then(() => {
+                        // The pane's session restarts attached to the saved
+                        // login (tabs reset, cookies survive via restore pref).
+                        setLoginPrompt(null);
+                      })
+                      .catch((e: unknown) =>
+                        setLoginPrompt({
+                          host,
+                          saving: false,
+                          error: e instanceof Error ? e.message : String(e),
+                        }),
+                      );
+                  }}
+                >
+                  {loginPrompt.saving ? "Saving…" : "Save login"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {vault && (
             <div className="browser-dialog-shade">
               <form
@@ -1534,7 +1591,7 @@ export function BrowserPane({
                     disabled={vault.busy || (!vault.requireKey && !vault.keyPresent)}
                     onClick={() => send({ type: "bwRequireKey", on: !vault.requireKey })}
                   >
-                    <UsbKeyIcon />
+                    <UsbKeyIcon className="browser-vault-keyicon" />
                     <span className="browser-vault-keycopy">
                       <strong>Require my security key</strong>
                       <em>
@@ -1643,31 +1700,7 @@ const svgProps = {
   "aria-hidden": true,
 };
 
-/** A USB-A security key, drawn on its side: connector (with its two contact
- *  slots), body, touch disc, and the keyring hole every Thetis/YubiKey has.
- *  Sized by CSS on the vault sheet's toggle row. */
-const UsbKeyIcon = () => (
-  <svg
-    {...svgProps}
-    width={40}
-    height={40}
-    viewBox="0 0 48 24"
-    strokeWidth={1.6}
-    className="browser-vault-keyicon"
-  >
-    {/* connector shell */}
-    <rect x="2" y="7" width="10" height="10" rx="1" />
-    {/* contact slots */}
-    <path d="M5 10h4M5 14h4" />
-    {/* body */}
-    <rect x="12" y="4.5" width="28" height="15" rx="3.5" />
-    {/* touch disc */}
-    <circle cx="27" cy="12" r="4" />
-    <circle cx="27" cy="12" r="1.2" fill="currentColor" stroke="none" />
-    {/* keyring hole */}
-    <circle cx="36.5" cy="12" r="1.8" />
-  </svg>
-);
+// UsbKeyIcon lives in ./icons now (shared with the Browser-logins gate).
 
 const BackIcon = () => (
   <svg {...svgProps}>

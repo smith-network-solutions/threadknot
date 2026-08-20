@@ -31,6 +31,31 @@ function svg(
 
 export const PlusIcon = (p: IconProps) => svg(<path d="M12 5v14M5 12h14" />, p);
 
+/** A USB-A security key on its side: connector + contact slots, body, touch
+ *  disc, keyring hole. Shared by the Bitwarden vault sheet and the Browser-
+ *  logins gate, so the key art reads identically in both. */
+export const UsbKeyIcon = ({ size = 40, className }: IconProps) => (
+  <svg
+    width={size}
+    height={size * 0.5}
+    viewBox="0 0 48 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.6}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <rect x="2" y="7" width="10" height="10" rx="1" />
+    <path d="M5 10h4M5 14h4" />
+    <rect x="12" y="4.5" width="28" height="15" rx="3.5" />
+    <circle cx="27" cy="12" r="4" />
+    <circle cx="27" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="36.5" cy="12" r="1.8" />
+  </svg>
+);
+
 /** Notebook with a pen nib — "start a new chat / write". */
 export const NotebookPenIcon = (p: IconProps) =>
   svg(

@@ -1006,9 +1006,11 @@ export function reducer(state: AppState, action: Action): AppState {
 export interface ThreadknotActions {
   /** All four take the machine whose logins are being managed; omitted means
    *  this one. */
-  listBrowserProfiles: (
-    machineId?: string,
-  ) => Promise<import("../lib/protocol").BrowserProfileInfo[]>;
+  listBrowserProfiles: (machineId?: string) => Promise<{
+    profiles: import("../lib/protocol").BrowserProfileInfo[];
+    keyPresent: boolean;
+    requireKey: boolean;
+  }>;
   createBrowserProfile: (
     name: string,
     origins: string[],
@@ -1020,6 +1022,16 @@ export interface ThreadknotActions {
     machineId?: string,
   ) => Promise<import("../lib/protocol").BrowserProfileInfo>;
   deleteBrowserProfile: (profileId: string, machineId?: string) => Promise<void>;
+  promoteBrowserLogin: (
+    sessionKey: string,
+    name: string,
+    origins: string[],
+    machineId?: string,
+  ) => Promise<import("../lib/protocol").BrowserProfileInfo>;
+  setBrowserLoginSecurity: (
+    requireKey: boolean,
+    machineId?: string,
+  ) => Promise<{ requireKey: boolean }>;
   listMobileDevices: () => Promise<import("../lib/protocol").MobileDeviceInfo[]>;
   revokeMobileDevice: (deviceId: string) => Promise<void>;
   /** Replace a paired device's grants. Narrowing them also closes whatever

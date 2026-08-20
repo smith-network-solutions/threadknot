@@ -1141,6 +1141,50 @@
   box-shadow: 0 0 0 3px rgba(111, 213, 189, 0.14), 0 0 12px rgba(111, 213, 189, 0.85);
 }
 
+/* "You just signed in — keep this session?" prompt. A quiet card pinned to the
+   top of the stage, not a modal: it never blocks the page it is about. */
+.browser-login-save {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(560px, 92%);
+  padding: 12px 14px;
+  border: 1px solid var(--brass, #c08b3e);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--brass, #c08b3e) 12%, var(--panel, #10141d));
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  animation: fadeIn 0.16s ease-out;
+}
+.browser-login-save-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.browser-login-save-copy strong { font-size: 13px; font-weight: 600; color: var(--text, #d8dde9); }
+.browser-login-save-copy span { font-size: 12px; color: var(--dim, #8b93a9); }
+.browser-login-save-err { font-style: normal; font-size: 11.5px; color: var(--amber, #d9a441); }
+.browser-login-save-actions { display: flex; gap: 8px; flex: none; }
+.browser-login-save-actions button {
+  min-height: 34px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.browser-login-save-no {
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  background: transparent;
+  color: var(--dim, #8b93a9);
+}
+.browser-login-save-yes {
+  border: 1px solid color-mix(in srgb, var(--brass, #c08b3e) 55%, transparent);
+  background: var(--brass-dim, #3a2c14);
+  color: var(--brass-hi, #e5b567);
+  font-weight: 600;
+}
+.browser-login-save-yes:disabled,
+.browser-login-save-no:disabled { opacity: 0.5; }
+
 /* Bitwarden unlock / pick-a-login sheet. Same card as the dialog and paste
    sheets it sits beside. */
 .browser-vault-card code {

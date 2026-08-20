@@ -12091,18 +12091,82 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   color: var(--faint);
 }
 
-.bl-card {
+/* Locked gate: key art + copy, centered, when the panel is protected. */
+.bl-lock {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  padding: 34px 20px;
+  text-align: center;
+}
+.bl-lock-key { color: var(--faint); }
+.bl-lock-key.present { color: var(--brass); }
+.bl-lock-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.bl-lock-text { font-size: 12.5px; line-height: 1.55; color: var(--dim); max-width: 46ch; }
+.bl-lock .bl-create-btn { margin-top: 6px; }
+
+/* A login card. Collapsed = one clickable header row; expanded = a detail
+   block beneath it, revealed with a height/opacity fade. */
+.bl-card {
   margin-top: 8px;
-  padding: 13px 15px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 120ms ease;
 }
+.bl-card.open { border-color: var(--line-2); }
+.bl-card-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 12px 14px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.bl-card-head:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.bl-fav {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--panel-3, #1a2030);
+  color: var(--dim);
+}
+.bl-fav img { display: block; border-radius: 4px; }
+.bl-live {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--teal, #6fd5bd);
+}
+.bl-card-used { flex: none; margin-left: auto; font-size: 11.5px; color: var(--faint); }
+.bl-live + .bl-card-used { margin-left: auto; }
+.bl-chevron { flex: none; color: var(--faint); }
+.bl-card-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 14px 14px;
+  animation: fadeIn 0.16s ease-out;
+}
+.bl-detail-row { display: flex; gap: 12px; font-size: 12.5px; align-items: baseline; }
+.bl-detail-k { flex: none; width: 74px; color: var(--faint); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.08em; padding-top: 1px; }
+.bl-detail-v { color: var(--text); overflow-wrap: anywhere; min-width: 0; }
+.bl-detail-machine { display: inline-flex; align-items: center; gap: 7px; }
+.bl-card-detail .bl-remove { align-self: flex-start; margin-top: 4px; }
+
 .bl-card-main { flex: 1 1 auto; min-width: 0; }
-.bl-card-name { font-size: 14.5px; font-weight: 600; color: var(--text); }
+.bl-card-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .bl-card-meta {
   display: flex;
   flex-wrap: wrap;

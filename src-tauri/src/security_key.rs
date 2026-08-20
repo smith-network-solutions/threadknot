@@ -146,7 +146,13 @@ fn descriptor_is_fido(desc: &[u8]) -> bool {
 /// A plain thread rather than a tokio task: the vault is process-wide state
 /// with no async in its API, and this must run regardless of which runtime —
 /// desktop, headless — is hosting the process.
-pub fn watch(on_lock: impl Fn() + Send + 'static) {
+/// Start the removal watcher, once. Polls every 2s; on the key going from
+/// present to absent it calls `on_removed`, which decides what to lock — the
+/// two gates it serves (the Bitwarden vault and saved browser logins) are
+/// independent settings, so this fires on EVERY removal and the callback checks
+/// each. Installed from lib.rs, where both the vault and the browser registry
+/// are in scope.
+pub fn watch(on_removed: impl Fn() + Send + 'static) {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -158,9 +164,8 @@ pub fn watch(on_lock: impl Fn() + Send + 'static) {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 let present = key_present();
-                if was_present && !present && crate::browser::vault().require_key() {
-                    crate::browser::vault().lock();
-                    on_lock();
+                if was_present && !present {
+                    on_removed();
                 }
                 was_present = present;
             }

@@ -552,8 +552,34 @@ function makeActions(
     // Browser logins belong to the machine whose Chrome holds the session, so
     // every one of these takes the machine it applies to; omitted means here.
     async listBrowserProfiles(machineId?: string) {
-      const { profiles } = await client.request("browser.profile.list", { machineId });
-      return profiles;
+      // The response now also carries the security-key gate flags; the panel
+      // reads them to decide whether to show its locked state.
+      return client.request("browser.profile.list", { machineId }) as Promise<{
+        profiles: import("./lib/protocol").BrowserProfileInfo[];
+        keyPresent: boolean;
+        requireKey: boolean;
+      }>;
+    },
+
+    /** Save a live disposable browser session as a durable login (the "keep
+     *  this session?" prompt). Returns the created profile. */
+    async promoteBrowserLogin(
+      sessionKey: string,
+      name: string,
+      origins: string[],
+      machineId?: string,
+    ) {
+      return client.request("browser.profile.promote", {
+        sessionKey,
+        name,
+        origins,
+        machineId,
+      });
+    },
+
+    /** Turn the FIDO gate on saved logins on or off. */
+    async setBrowserLoginSecurity(requireKey: boolean, machineId?: string) {
+      return client.request("browser.profile.security", { requireKey, machineId });
     },
 
     async createBrowserProfile(name: string, origins: string[], machineId?: string) {
