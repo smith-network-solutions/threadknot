@@ -194,6 +194,11 @@ export function BrowserPane({
    *  the menu opens with what's actually under the cursor. */
   const probeWaiters = useRef(new Map<string, (ctx: BrowserContext) => void>());
   const probeSeq = useRef(0);
+  /** Mirrors the `active` prop for the socket's paint path, which must read it
+   *  without re-subscribing; `pendingFrame` holds the newest frame that
+   *  arrived while another workspace tab was on screen. */
+  const activeRef = useRef(active);
+  const pendingFrame = useRef<ArrayBuffer | null>(null);
 
   const [enabled, setEnabled] = useState(active);
   const [url, setUrl] = useState("");
@@ -323,6 +328,14 @@ export function BrowserPane({
   }, [project.id, navigate, connection]);
 
   const paint = useCallback((buffer: ArrayBuffer) => {
+    // Another workspace tab is on screen: the canvas is hidden, so decoding
+    // this frame buys nothing. Hold only the NEWEST frame and decode it when
+    // the tab comes back — a screencast only sends frames on repaint, so
+    // returning to a quiet page would otherwise show whatever was last drawn.
+    if (!activeRef.current) {
+      pendingFrame.current = buffer;
+      return;
+    }
     const blob = new Blob([buffer], { type: "image/jpeg" });
     createImageBitmap(blob)
       .then((bitmap) => {
@@ -332,18 +345,36 @@ export function BrowserPane({
           return;
         }
         frameSize.current = { w: bitmap.width, h: bitmap.height };
+        // Re-render React ONLY when the frame's dimensions change (a resize,
+        // a device-preset switch). This used to fire on every frame, which
+        // re-rendered the whole pane — toolbar, tab strip, activity trail,
+        // plus two forced-layout rect reads — at screencast rate. That, not
+        // the video path itself, was the pane feeling "laggy and slow":
+        // drawImage on a canvas costs microseconds, a React render of this
+        // tree at 30–60Hz costs the main thread.
         if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
           canvas.width = bitmap.width;
           canvas.height = bitmap.height;
+          setLayoutRevision((value) => value + 1);
         }
         canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
         bitmap.close();
-        setLayoutRevision((value) => value + 1);
       })
       .catch(() => {
         /* Drop malformed or superseded frames. */
       });
   }, []);
+
+  // Coming back to the Browser tab paints the frame that arrived while it was
+  // hidden, so a quiet page shows its current state rather than its last one.
+  useEffect(() => {
+    activeRef.current = active;
+    if (active && pendingFrame.current) {
+      const buffered = pendingFrame.current;
+      pendingFrame.current = null;
+      paint(buffered);
+    }
+  }, [active, paint]);
 
   // The on-canvas target box and agent cursor are anchored in PAGE coordinates,
   // so they stop describing anything real the moment the document changes — and
@@ -608,23 +639,28 @@ export function BrowserPane({
     const preset = DEVICES.find((item) => item.id === device) ?? DEVICES[0];
     if (preset.width && preset.height) {
       send({ type: "resize", width: preset.width, height: preset.height });
-    } else if (fullscreen && stageRef.current) {
-      // In fullscreen, "Fill" should be a real fullscreen viewport instead
-      // of a fixed 1280 × 800 frame scaled up by the canvas. The stage's rect
-      // is in visual pixels, so undo pane zoom before giving CDP its CSS size.
-      const rect = stageRef.current.getBoundingClientRect();
+      return;
+    }
+    // "Fill" means the stage's REAL size, not a fixed 1280 × 800. The fixed
+    // frame left a big pane letterboxed around a page that never reflowed to
+    // it, then upscaled the pixels to fit — dead space and blur at once. The
+    // stage's rect is in visual pixels, so undo pane zoom before giving CDP
+    // its CSS size; the backend clamps to its own frame ceiling (1600 × 1200).
+    //
+    // Trailing debounce, because this re-fires for every ResizeObserver tick
+    // while the split divider is being dragged — and each resize is a real
+    // Chrome reflow plus a screencast restart. One reflow when the drag
+    // settles, not sixty during it.
+    const timer = window.setTimeout(() => {
+      const rect = stageRef.current?.getBoundingClientRect();
+      if (!rect || rect.width < 50 || rect.height < 50) return;
       send({
         type: "resize",
         width: Math.max(1, Math.round(rect.width / browserZoom)),
         height: Math.max(1, Math.round(rect.height / browserZoom)),
       });
-    } else {
-      send({
-        type: "resize",
-        width: Math.round(1280 / browserZoom),
-        height: Math.round(800 / browserZoom),
-      });
-    }
+    }, 160);
+    return () => window.clearTimeout(timer);
   }, [connection, device, send, browserZoom, fullscreen, stageRevision]);
 
   function toFrameCoords(
