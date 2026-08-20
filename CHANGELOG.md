@@ -16,6 +16,15 @@ histories. Releases moved to 0.2.x afterwards so no number is ever issued
 twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
 to the old line.
 
+## v0.2.126 · 2026-08-19
+
+- **Several people can share one Threadknot without sharing one sidebar.** Add them under Settings → People, then point each paired browser or phone at whoever is holding it under Phone & access. A row of faces appears at the top of the sidebar: yours is selected, click a teammate's to see what they have running, click it again for everyone. Chats stay visible to all of you — this is tidiness, not privacy, and anyone who can open a terminal here can still read anything.
+- **You stop stepping on each other.** Starred and stashed projects, starred chats and the settled shelf are now per person. Filing something away no longer files it away for the whole team.
+- **Each person can use their own Claude subscription.** Turn on “own Claude login” for someone and Threadknot gives them their own config directory, then shows the one command they run to sign in. Three people sharing one login is one seat between them, which is what runs you all into the same rate limit.
+- **Your desktop can work on a shared machine without merging sidebars.** Settings → Servers connects this app to a Threadknot somebody else runs: paste its address and a pairing code, and its projects show up in your sidebar next to yours, labelled with its name, with chats that run over there. Adding a *machine* under Machines still does the old thing and merges both sides' project lists in each direction — that is right for your own fleet and wrong for a team box, which is why these are two different lists.
+- **The guest link only goes one way.** Your projects are never sent, none of theirs are written to this machine, and disconnecting removes every trace. What you hold over there is an ordinary device credential: they choose what it may do, assign it to you by name so your chats are stamped as you, and can revoke it without asking.
+- **Nothing changes until you add a second person.** An installation with one person on it — which is almost all of them — keeps exactly the sidebar, the stars and the shelf it already had.
+
 ## v0.1.108 · 2026-08-15
 
 - **Threadknot updates itself the way everything else does.** Settings → updates now watches the published releases page. When a new version ships, one click downloads the build for your platform, installs it over this copy and restarts into it — no checkout, no toolchain, no compiling. The card shows what is in the release before you take it, and the download keeps going if you close the window.

@@ -24,6 +24,11 @@ pub struct ServerState {
     pub config: ServerConfig,
     pub device: Arc<crate::device::Device>,
     pub peernet: Arc<crate::peernet::PeerNet>,
+    /// Remote Threadknots this machine is a **guest** on (`servers.rs`). Held
+    /// beside `peernet` rather than inside it because the two links are
+    /// different relationships: a peer is another machine of yours and the link
+    /// is symmetric, a server is somebody else's and this side only ever dials.
+    pub servernet: Arc<crate::servers::ServerNet>,
     pub lan_url: String,
     pub agents_cache: Arc<RwLock<Option<Vec<AgentInfo>>>>,
     pub terms: Arc<crate::term::TermRegistry>,
@@ -322,6 +327,10 @@ pub async fn run(state: ServerState) {
 
     // Mesh runtime: peer sockets + presence + announce + mDNS discovery.
     state.peernet.start();
+
+    // Guest links to other people's Threadknots. Outbound only, so unlike the
+    // mesh this opens no listener and advertises nothing.
+    state.servernet.spawn_supervisor();
 
     let app = build_router(state.clone());
 
@@ -2199,6 +2208,14 @@ const ROUTABLE: &[&str] = &[
     "device.info",
     "device.rename",
     "device.setAppearance",
+    // Both are sidebar opinions rather than edits to the record, and on the
+    // far side they land in the CALLER's own preference overlay (people.rs).
+    // Inert for an existing client: nothing sends `machineId` for a workspace
+    // op today, and without one these still run locally exactly as before.
+    // What this enables is stashing or starring a workspace that belongs to a
+    // remote server you are a guest on.
+    "workspace.setHidden",
+    "workspace.setFavorite",
     "thread.list",
     "thread.get",
     "thread.search",
@@ -2474,6 +2491,63 @@ async fn replicate_workspace_delete(state: &ServerState, id: &str, deleted_at: &
     }
 }
 
+/// Which person a request is acting as (see `people.rs`).
+///
+/// Master is the owner by definition. A paired device speaks for whoever it was
+/// assigned to via `device.setPerson`, falling back to the owner — which covers
+/// every device paired before people existed and every device on a
+/// single-person install, so nothing that worked before changes.
+///
+/// A peer request also resolves to the owner. Mesh frames carry the calling
+/// principal's *capabilities* but not their identity, so a teammate driving a
+/// thread here from their own laptop is attributed to this machine's owner
+/// rather than to themselves. Carrying identity across the link is a protocol
+/// change on both ends — a second assertion alongside the grants, plus a field
+/// on `PeerPrincipal` — and it is deliberately not in this change: a peer that
+/// could name any person as the author would make the whole stamp meaningless.
+pub fn acting_person(state: &ServerState, principal: &Principal) -> String {
+    principal
+        .device_id()
+        .and_then(|id| state.mobile.person_for(id))
+        // A device pointed at a deleted person falls back rather than
+        // authenticating as a ghost whose overlay nothing can edit.
+        .filter(|id| state.hub.people.exists(id))
+        .unwrap_or_else(|| crate::people::OWNER_ID.to_string())
+}
+
+/// Overlay one person's sidebar preferences onto a workspace on its way out.
+/// Absent overlay entries leave the stored fields untouched, which is what
+/// makes every pre-people record render exactly as it always has.
+fn project_workspace(hub: &Hub, person: &str, mut ws: Workspace) -> Workspace {
+    if let Some(favorite) = hub.people.workspace_favorite(person, &ws.id) {
+        ws.favorite = favorite.then_some(true);
+    }
+    if let Some(hidden) = hub.people.workspace_hidden(person, &ws.id) {
+        ws.hidden = hidden.then_some(true);
+    }
+    ws
+}
+
+fn project_thread(hub: &Hub, person: &str, mut thread: Thread) -> Thread {
+    if let Some(favorite) = hub.people.thread_favorite(person, &thread.id) {
+        thread.favorite = favorite.then_some(true);
+    }
+    if let Some(shelf) = hub.people.thread_shelf(person, &thread.id) {
+        thread.settled_at = shelf.settled_at;
+        thread.kept_active_at = shelf.kept_active_at;
+    }
+    thread
+}
+
+/// A thread response with the caller's overlay already applied.
+fn thread_value(hub: &Hub, person: &str, thread: Thread) -> anyhow::Result<Value> {
+    Ok(serde_json::to_value(project_thread(hub, person, thread))?)
+}
+
+fn workspace_value(hub: &Hub, person: &str, ws: Workspace) -> anyhow::Result<Value> {
+    Ok(serde_json::to_value(project_workspace(hub, person, ws))?)
+}
+
 /// Dispatch one client RPC. This is where request-kind, capability and
 /// payload-field authorization all live, so the authorization matrix in
 /// `tests/authorization_matrix.rs` drives it directly rather than a stand-in.
@@ -2546,6 +2620,16 @@ pub async fn handle_request(
                 if let Some(obj) = payload.as_object_mut() {
                     obj.remove("machineId");
                 }
+                // A remote server is checked BEFORE the peer table: a machine
+                // cannot be both, and a server record is the more specific
+                // claim. No assertion travels — over there we are a guest, and
+                // the credential we hold decides what we may do and who we
+                // speak for. What stops a local phone from borrowing more
+                // authority than it has is the capability gate above, which
+                // already ran against ITS grants, on this side.
+                if state.servernet.knows(&mid) {
+                    return state.servernet.request(&mid, &req.kind, payload).await;
+                }
                 // The caller's own grants travel with the request. This is
                 // the structural half of the fix: the far side no longer has to
                 // trust that this side checked, because it can check itself.
@@ -2574,6 +2658,8 @@ pub async fn handle_request(
                     }
                 }
             };
+            let person = acting_person(state, principal);
+            let person_name = hub.people.person(&person).map(|p| p.name);
             Ok(json!({
                 // Git-derived at compile time (build.rs): "0.1.<commit count>",
                 // so every commit to master bumps what the UI shows.
@@ -2613,6 +2699,14 @@ pub async fn handle_request(
                 // the owner did not grant instead of offering it and failing.
                 // Advisory only — every one of these is enforced server-side.
                 "principal": principal.label(),
+                // Which person this credential speaks for, so the sidebar can
+                // open on their own threads without a second round trip. The
+                // name rides along because the id alone is unreadable, and the
+                // one place it matters most is a guest link's settings row:
+                // "assigned to somebody" is not the same reassurance as
+                // "assigned to you".
+                "person": person,
+                "personName": person_name,
                 "capabilities": principal
                     .capabilities()
                     .iter()
@@ -2662,6 +2756,213 @@ pub async fn handle_request(
             // UI must refetch hello to see it.
             hub.broadcast_state("identity", None);
             Ok(json!({ "avatar": avatar, "color": color }))
+        }
+        // ---- person.* : who is using this machine (see people.rs) ----
+        //
+        // Reading the roster is open to any authenticated client, because the
+        // sidebar needs names and faces to label threads with. Editing it is
+        // owner-only: deciding who counts as a person here, and which
+        // credential speaks for them, is machine administration.
+        "person.list" => Ok(json!({
+            "people": hub.people.list(),
+            // Which of them THIS credential is acting as, so the client can
+            // preselect its own face without guessing.
+            "acting": acting_person(state, principal),
+        })),
+        "person.create" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "adding people requires this machine's master token"
+            );
+            let person = hub.people.create(field(&p, "name")?)?;
+            hub.broadcast_state("people", None);
+            Ok(serde_json::to_value(person)?)
+        }
+        "person.update" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "editing people requires this machine's master token"
+            );
+            let id = field(&p, "personId")?.to_string();
+            let name = p.get("name").and_then(|v| v.as_str()).map(str::to_string);
+            let avatar = appearance_patch(&p, "avatar")?;
+            let color = appearance_patch(&p, "color")?;
+            let person = hub.people.update(&id, |person| {
+                if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
+                    person.name = name.trim().to_string();
+                }
+                if let Some(avatar) = avatar {
+                    person.avatar = avatar;
+                }
+                if let Some(color) = color {
+                    person.color = color;
+                }
+            })?;
+            hub.broadcast_state("people", None);
+            Ok(serde_json::to_value(person)?)
+        }
+        "person.delete" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "removing people requires this machine's master token"
+            );
+            let id = field(&p, "personId")?;
+            // Devices first: a credential pointing at a record that no longer
+            // exists would still authenticate, and `acting_person` would have
+            // to guess. Sending them back to the owner is the honest answer,
+            // and it is also what an unassigned device has always been.
+            let released = state.mobile.release_person(id)?;
+            hub.people.delete(id)?;
+            hub.broadcast_state("people", None);
+            hub.broadcast_state("mobileDevices", None);
+            Ok(json!({ "releasedDevices": released }))
+        }
+        "person.setClaudeLogin" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "changing a person's Claude login requires this machine's master token"
+            );
+            let id = field(&p, "personId")?;
+            let isolated = bool_field(&p, "isolated")?;
+            let person = hub.people.set_claude_isolation(id, isolated)?;
+            hub.broadcast_state("people", None);
+            // The path is the whole point of the answer: it is what they type
+            // into `CLAUDE_CONFIG_DIR=<dir> claude /login` to put their own
+            // subscription behind their own turns.
+            Ok(json!({
+                "person": person,
+                "loginCommand": person.claude_config_dir.as_ref().map(|dir| {
+                    format!("CLAUDE_CONFIG_DIR={dir} claude /login")
+                }),
+            }))
+        }
+        "device.setPerson" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "assigning a device to a person requires this machine's master token"
+            );
+            let device_id = field(&p, "deviceId")?.to_string();
+            let person_id = p.get("personId").and_then(|v| v.as_str()).map(str::to_string);
+            if let Some(id) = &person_id {
+                anyhow::ensure!(hub.people.exists(id), "unknown person");
+            }
+            // The owner is the absence of an assignment, not a value to store:
+            // one representation for "speaks for the owner" keeps
+            // `acting_person` from having to treat two of them alike.
+            let stored = person_id.filter(|id| id != crate::people::OWNER_ID);
+            let device = state.mobile.update(&device_id, |d| d.person_id = stored)?;
+            hub.broadcast_state("mobileDevices", None);
+            Ok(serde_json::to_value(device)?)
+        }
+        // ---- server.* : remote Threadknots we are a GUEST on (servers.rs) ----
+        //
+        // Deliberately not `peer.*`. Adding a peer makes two machines equals
+        // and merges their workspace catalogs; adding a server makes this
+        // machine a client of somebody else's, one way, with a credential they
+        // scope and can revoke.
+        "server.list" => {
+            let servers: Vec<Value> = state
+                .servernet
+                .registry
+                .list()
+                .into_iter()
+                .map(|s| {
+                    let online = state.servernet.is_online(&s.machine_id);
+                    s.public(online)
+                })
+                .collect();
+            Ok(json!({ "servers": servers }))
+        }
+        "server.add" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "connecting to another Threadknot requires this machine's master token"
+            );
+            let origin = field(&p, "origin")?.trim().to_string();
+            let pairing_code = p.get("pairingCode").and_then(|v| v.as_str());
+            // A master token is accepted only for a LAN address, the same
+            // convenience `POST /api/mobile/pair` allows and for the same
+            // reason: over a relay there is no legitimate way to be holding
+            // somebody else's master token.
+            let token = p.get("token").and_then(|v| v.as_str());
+            let device_name = p
+                .get("deviceName")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| format!("{} (Threadknot desktop)", state.device.friendly_name()));
+            let (credential, device_id) =
+                crate::servers::redeem(&origin, pairing_code, token, &device_name).await?;
+            let record = crate::servers::RemoteServer {
+                id: new_id(),
+                // Replaced by the remote's own name on the first hello; until
+                // then the address is the only honest label we have.
+                name: origin.clone(),
+                origin,
+                machine_id: String::new(),
+                credential,
+                device_id,
+                person_id: None,
+                person_name: None,
+                capabilities: Vec::new(),
+                added_at: now_iso(),
+                last_seen_at: None,
+            };
+            let added = state.servernet.registry.add(record)?;
+            state.servernet.wake();
+            hub.broadcast_state("servers", None);
+            Ok(added.public(false))
+        }
+        "server.remove" => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "disconnecting from another Threadknot requires this machine's master token"
+            );
+            let gone = state.servernet.registry.remove(field(&p, "serverId")?)?;
+            state.servernet.wake();
+            hub.broadcast_state("servers", None);
+            // Nothing local to clean up, which is the point: none of that
+            // server's workspaces were ever written to our store, so removing
+            // the record removes every trace of it. Compare
+            // `purge_peer_workspaces`, which has to go hunting.
+            Ok(json!({ "removed": gone.id }))
+        }
+        "server.catalog" => {
+            let server = state
+                .servernet
+                .registry
+                .get(field(&p, "serverId")?)
+                .ok_or_else(|| anyhow::anyhow!("unknown server"))?;
+            anyhow::ensure!(
+                !server.machine_id.is_empty(),
+                "still connecting to {} — try again in a moment",
+                server.name
+            );
+            principal.require(Capability::Mesh)?;
+            let machine_id = server.machine_id.clone();
+            // Who we are over there, and what we may do, can change without our
+            // involvement. Re-read it alongside the catalog rather than trust
+            // an answer from whenever the socket last came up.
+            if let Err(e) = state.servernet.refresh_identity(&machine_id).await {
+                tracing::debug!("identity refresh for {machine_id} failed: {e:#}");
+            }
+            // Fetched fresh and returned straight to the caller. NOT written to
+            // the store: a workspace in `projects.json` is a workspace our own
+            // peers receive on their next connect, which is exactly the bleed
+            // this whole design exists to avoid.
+            let workspaces = state
+                .servernet
+                .request(&machine_id, "workspace.list", json!({}))
+                .await?;
+            let projects = state
+                .servernet
+                .request(&machine_id, "project.list", json!({}))
+                .await?;
+            Ok(json!({
+                "serverId": server.id,
+                "machineId": machine_id,
+                "workspaces": workspaces.get("workspaces").cloned().unwrap_or(json!([])),
+                "projects": projects.get("projects").cloned().unwrap_or(json!([])),
+            }))
         }
         "peer.list" => {
             let peers: Vec<Value> = state
@@ -2943,7 +3244,15 @@ pub async fn handle_request(
             }
             Ok(json!({}))
         }
-        "workspace.list" => Ok(json!({ "workspaces": store.list_workspaces() })),
+        "workspace.list" => {
+            let person = acting_person(state, principal);
+            let workspaces: Vec<Workspace> = store
+                .list_workspaces()
+                .into_iter()
+                .map(|ws| project_workspace(hub, &person, ws))
+                .collect();
+            Ok(json!({ "workspaces": workspaces }))
+        }
         "thread.organize" => crate::agents::organize::organize_chats(&p).await,
         "workspace.rename" => {
             let ws = store.rename_workspace(
@@ -2954,23 +3263,43 @@ pub async fn handle_request(
             replicate_workspace(state, &ws).await;
             Ok(serde_json::to_value(ws)?)
         }
+        // Starring and stashing are the two places teammates used to overwrite
+        // each other, so both take the same shape: everyone records their own
+        // opinion, and only the owner also writes the stored flag and
+        // replicates it across the mesh. That split is what keeps a
+        // single-person install, an older client and every paired machine
+        // behaving exactly as they did before people existed.
         "workspace.setFavorite" => {
-            let ws = store.set_workspace_favorite(
-                field(&p, "workspaceId")?,
-                bool_field(&p, "favorite")?,
-            )?;
+            let workspace_id = field(&p, "workspaceId")?.to_string();
+            let favorite = bool_field(&p, "favorite")?;
+            let person = acting_person(state, principal);
+            hub.people
+                .set_workspace_favorite(&person, &workspace_id, favorite)?;
+            let ws = if person == crate::people::OWNER_ID {
+                let ws = store.set_workspace_favorite(&workspace_id, favorite)?;
+                replicate_workspace(state, &ws).await;
+                ws
+            } else {
+                store.workspace(&workspace_id).context("unknown workspace")?
+            };
             hub.broadcast_state("workspaces", None);
-            replicate_workspace(state, &ws).await;
-            Ok(serde_json::to_value(ws)?)
+            workspace_value(hub, &person, ws)
         }
         "workspace.setHidden" => {
-            let ws = store.set_workspace_hidden(
-                field(&p, "workspaceId")?,
-                bool_field(&p, "hidden")?,
-            )?;
+            let workspace_id = field(&p, "workspaceId")?.to_string();
+            let hidden = bool_field(&p, "hidden")?;
+            let person = acting_person(state, principal);
+            hub.people
+                .set_workspace_hidden(&person, &workspace_id, hidden)?;
+            let ws = if person == crate::people::OWNER_ID {
+                let ws = store.set_workspace_hidden(&workspace_id, hidden)?;
+                replicate_workspace(state, &ws).await;
+                ws
+            } else {
+                store.workspace(&workspace_id).context("unknown workspace")?
+            };
             hub.broadcast_state("workspaces", None);
-            replicate_workspace(state, &ws).await;
-            Ok(serde_json::to_value(ws)?)
+            workspace_value(hub, &person, ws)
         }
         "workspace.setImage" => {
             let image = optional_sidebar_image(&p, "image")?;
@@ -3531,6 +3860,24 @@ pub async fn handle_request(
             // machineId is a real local parameter, so this kind is NOT in
             // ROUTABLE.
             match machine_id {
+                // A SERVER we are a guest on is the opposite case, and the
+                // reason this cannot simply be added to ROUTABLE: the workspace
+                // is created in THEIR store and nothing is written in ours. The
+                // peer branch below wraps the remote root in a local workspace
+                // record and replicates it out to our own peers — for a guest
+                // link that is precisely the bleed the link exists to prevent.
+                //
+                // Their `projects` broadcast comes back over the link tagged
+                // with their machineId, and the catalog refresh it triggers is
+                // what puts the new workspace in our sidebar.
+                Some(ref m) if state.servernet.knows(m) => {
+                    principal.require(Capability::Mesh)?;
+                    let mut payload = json!({ "path": path });
+                    if let Some(n) = &name {
+                        payload["name"] = json!(n);
+                    }
+                    state.servernet.request(m, "project.create", payload).await
+                }
                 Some(m) if m != state.device.machine_id => {
                     anyhow::ensure!(
                         principal.is_owner(),
@@ -3599,16 +3946,31 @@ pub async fn handle_request(
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("missing settings"))?,
             )?;
-            let thread = store.create_thread(project_id.clone(), agent, settings)?;
+            // Stamped once, here, from the credential that asked. The owner
+            // stamps nothing, so a single-person install keeps writing exactly
+            // the record it wrote before.
+            let person = acting_person(state, principal);
+            let author = (person != crate::people::OWNER_ID).then(|| person.clone());
+            let thread = store.create_thread(project_id.clone(), agent, settings, author)?;
             hub.broadcast_state("threads", Some(project_id));
-            Ok(serde_json::to_value(thread)?)
+            thread_value(hub, &person, thread)
         }
-        "thread.list" => Ok(json!({ "threads": store.list_threads(field(&p, "projectId")?) })),
+        "thread.list" => {
+            let person = acting_person(state, principal);
+            let threads: Vec<Thread> = store
+                .list_threads(field(&p, "projectId")?)
+                .into_iter()
+                .map(|t| project_thread(hub, &person, t))
+                .collect();
+            Ok(json!({ "threads": threads }))
+        }
         "thread.get" => {
             let thread_id = field(&p, "threadId")?;
             let thread = store
                 .thread(thread_id)
                 .ok_or_else(|| anyhow::anyhow!("unknown thread"))?;
+            let person = acting_person(state, principal);
+            let thread = project_thread(hub, &person, thread);
             let mut events = store.read_events(thread_id);
             trim_replay_output(&mut events);
             Ok(json!({ "thread": thread, "events": events }))
@@ -3640,7 +4002,7 @@ pub async fn handle_request(
             let title = field(&p, "title")?.to_string();
             let thread = store.update_thread(field(&p, "threadId")?, |t| t.title = title)?;
             hub.broadcast_state("threads", Some(thread.project_id.clone()));
-            Ok(serde_json::to_value(thread)?)
+            thread_value(hub, &acting_person(state, principal), thread)
         }
         "thread.setSettled" => {
             let settled = p
@@ -3664,26 +4026,63 @@ pub async fn handle_request(
             // Quiet write: filing a thread is not activity in it. Bumping
             // updated_at here would relabel a stale thread as fresh and
             // restart the idle window auto-settle measures.
-            let thread = store.try_update_thread_quiet(field(&p, "threadId")?, |t| {
-                anyhow::ensure!(
-                    !settled || t.status == ThreadStatus::Idle,
-                    "thread is still working — interrupt or wait before settling it"
-                );
-                t.settled_at = if settled { Some(now_iso()) } else { None };
-                t.kept_active_at = if settled { None } else { Some(now_iso()) };
-                Ok(())
-            })?;
+            let thread_id = field(&p, "threadId")?.to_string();
+            let person = acting_person(state, principal);
+            let now = now_iso();
+            let shelf = crate::people::ShelfState {
+                settled_at: settled.then(|| now.clone()),
+                kept_active_at: (!settled).then(|| now.clone()),
+            };
+            let thread = if person == crate::people::OWNER_ID {
+                let thread = store.try_update_thread_quiet(&thread_id, |t| {
+                    anyhow::ensure!(
+                        !settled || t.status == ThreadStatus::Idle,
+                        "thread is still working — interrupt or wait before settling it"
+                    );
+                    t.settled_at = if settled { Some(now_iso()) } else { None };
+                    t.kept_active_at = if settled { None } else { Some(now_iso()) };
+                    Ok(())
+                })?;
+                hub.people.set_thread_shelf(&person, &thread_id, shelf)?;
+                thread
+            } else {
+                // A non-owner writes no record, so the idle check cannot ride
+                // inside the write. Record the opinion FIRST and validate
+                // after: if the thread turned out to be running, or started
+                // while we were asking, the entry comes straight back out.
+                // Checking first instead would leave a window where the hub's
+                // un-park hook fires between the check and the write, and the
+                // write would then re-park a thread that had just started.
+                hub.people.set_thread_shelf(&person, &thread_id, shelf)?;
+                let thread = store
+                    .thread(&thread_id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown thread"))?;
+                if settled && thread.status != ThreadStatus::Idle {
+                    hub.people.clear_thread_shelf(&person, &thread_id)?;
+                    anyhow::bail!("thread is still working — interrupt or wait before settling it");
+                }
+                thread
+            };
             hub.broadcast_state("threads", Some(thread.project_id.clone()));
-            Ok(serde_json::to_value(thread)?)
+            thread_value(hub, &person, thread)
         }
         "thread.setFavorite" => {
             let favorite = bool_field(&p, "favorite")?;
+            let thread_id = field(&p, "threadId")?.to_string();
+            let person = acting_person(state, principal);
+            hub.people.set_thread_favorite(&person, &thread_id, favorite)?;
             // Starring must NOT bump updatedAt: it is not chat activity, and a
             // recency bump would jump the thread in the sidebar sort and make
             // "Xm ago" lie. set_thread_favorite mutates + flushes only.
-            let thread = store.set_thread_favorite(field(&p, "threadId")?, favorite)?;
+            let thread = if person == crate::people::OWNER_ID {
+                store.set_thread_favorite(&thread_id, favorite)?
+            } else {
+                store
+                    .thread(&thread_id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown thread"))?
+            };
             hub.broadcast_state("threads", Some(thread.project_id.clone()));
-            Ok(serde_json::to_value(thread)?)
+            thread_value(hub, &person, thread)
         }
         "thread.setAgent" => {
             let agent: Agent = serde_json::from_value(
@@ -3697,7 +4096,7 @@ pub async fn handle_request(
                     .ok_or_else(|| anyhow::anyhow!("missing settings"))?,
             )?;
             let thread = hub.set_agent(field(&p, "threadId")?, agent, settings)?;
-            Ok(serde_json::to_value(thread)?)
+            thread_value(hub, &acting_person(state, principal), thread)
         }
         "thread.setSettings" => {
             let settings: ThreadSettings = serde_json::from_value(
@@ -3706,7 +4105,7 @@ pub async fn handle_request(
                     .ok_or_else(|| anyhow::anyhow!("missing settings"))?,
             )?;
             let thread = hub.set_settings(field(&p, "threadId")?, settings)?;
-            Ok(serde_json::to_value(thread)?)
+            thread_value(hub, &acting_person(state, principal), thread)
         }
         // Throw a second agent at this thread as a read-only adversarial
         // reviewer, for exactly one turn (Parley phase 1; see docs/PARLEY.md).
@@ -3826,6 +4225,9 @@ pub async fn handle_request(
             hub.stop_session(thread_id);
             state.browsers.remove(thread_id);
             store.delete_thread(thread_id)?;
+            // Take every person's overlay with it, or a recycled id could come
+            // back wearing somebody's old star.
+            hub.people.forget_thread(thread_id);
             hub.broadcast_state("threads", None);
             Ok(json!({}))
         }
@@ -3895,9 +4297,17 @@ pub async fn handle_request(
                 .name
                 .filter(|n| !n.trim().is_empty())
                 .unwrap_or_else(|| c.prompt.trim().chars().take(40).collect());
+            // Every thread this schedule fires inherits the stamp, so a
+            // teammate's recurring run lands in their sidebar rather than
+            // everyone's. Absent for the owner, like `thread.create`.
+            let author = {
+                let person = acting_person(state, principal);
+                (person != crate::people::OWNER_ID).then_some(person)
+            };
             let schedule = store.create_schedule(Schedule {
                 id: new_id(),
                 project_id: c.project_id,
+                author,
                 agent: c.agent,
                 settings: c.settings,
                 name,

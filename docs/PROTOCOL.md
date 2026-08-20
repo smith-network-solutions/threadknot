@@ -1046,6 +1046,127 @@ button; `threadknot --test-notification` exercises the same backend without open
 a window. Windows native notifications require the NSIS-installed build (the
 portable CI executable has no registered toast identity).
 
+## People (several teammates on one machine)
+
+Threadknot assumes one owner per machine, and that is still the security model:
+every agent process runs as the same OS user, so anyone with `files` or
+`terminal` can read anyone else's transcripts and tokens no matter what any of
+this says. `people.rs` is a **convenience** layer for a shared dev box — it
+separates people who trust each other, so three teammates stop un-starring each
+other's projects.
+
+**Records.** `people.json` holds a `Person` (id, name, avatar, color, optional
+private `claudeConfigDir`) plus a sparse per-person preference overlay. Id
+`owner` is reserved and seeded on first open: a master credential acts as it,
+and every record written before this feature is implicitly attributed to it.
+
+**Who a request is.** `acting_person()` resolves the principal: `Master` is the
+owner; a `Device` speaks for whatever `MobileDevice.person_id` names, defaulting
+to the owner; a `Peer` is the owner. Mesh frames carry the caller's
+*capabilities* but not their identity, so a thread driven here from a paired
+machine is attributed to this machine's owner. Carrying identity across the link
+is a protocol change on both ends and is deliberately not implemented: a peer
+that could name any person as the author would make the stamp meaningless.
+
+**Authorship.** `Thread.author` and `Schedule.author` hold a person id, stamped
+once at creation and never rewritten — it records who *opened* the thread, not
+who last spoke in it, so a teammate helping in your chat does not move it into
+their sidebar. Absent means the owner. A dispatched worker inherits its parent's
+author; a scheduled run inherits its schedule's.
+
+**The preference overlay.** `Workspace.favorite`/`hidden` ride the whole-record
+LWW mesh replica, and `Thread.favorite`/`settled_at`/`kept_active_at` are
+server-side so a phone and a desktop agree. Both are correct for one person with
+several devices and wrong for several people with one machine. Rather than
+change either, the overlay sits *beside* them, machine-local, so the mesh sees
+exactly what it saw before:
+
+- **Read** — `project_workspace` / `project_thread` apply the acting person's
+  overlay to records on their way out of `workspace.list`, `thread.list`,
+  `thread.get` and every handler that returns one. An absent overlay entry
+  leaves the stored field alone.
+- **Write** — everyone records their own opinion; the **owner also** writes the
+  stored field and replicates it. So a single-person install, an older client
+  and every paired machine behave exactly as they did.
+- **Inheritance** — a person added later falls through to the stored value until
+  they disagree, which is why an explicit `false` is stored rather than the key
+  being removed.
+- **Invalidation** — the hub's un-park hook clears every person's shelf entry
+  for a thread when new activity clears the record's, or news would land in a
+  collapsed shelf. Deleting a thread or workspace forgets its overlay entries.
+
+**Per-person Claude logins.** `person.setClaudeLogin` gives someone their own
+`CLAUDE_CONFIG_DIR` under `people/<id>/claude`, and the Claude driver uses it
+for threads they authored. A Claudex profile still wins (it points the harness
+at a non-Anthropic backend, where a personal Anthropic login means nothing).
+This is a billing and rate-limit fix, not an isolation one: three people sharing
+one `~/.claude` is one subscription seat between them.
+
+**Requests.** `person.list` is open to any authenticated client — the sidebar
+needs names to label chats with. `person.create`, `person.update`,
+`person.delete`, `person.setClaudeLogin` and `device.setPerson` require this
+machine's master token. None are in `ROUTABLE`: people are machine-local.
+
+## Remote servers (being a guest on somebody else's machine)
+
+`peernet.rs` and `servers.rs` are two different relationships, and conflating
+them is the bug this section exists to prevent.
+
+A **peer** is another machine of yours. The link is symmetric: both sides dial,
+and on every connect each pushes its **entire** workspace catalog — including
+replicas it picked up from *its* peers, since there is no origin tag to exclude
+them. That is correct for a fleet one person owns and wrong for a machine shared
+with colleagues: pair three laptops to one box and all three sidebars merge,
+transitively, through the box.
+
+A **server** is somebody else's machine you are a guest on. `servers.rs` makes
+the link asymmetric by construction:
+
+- **Only the guest dials.** The server holds no record of us and has no channel
+  on which to originate a request, so it cannot ask for our catalog.
+- **We send only requests we originated.** No announce, no catalog push, no
+  tombstone resync — those frames do not exist on this path.
+- **Nothing learned is written to `projects.json`.** `server.catalog` fetches
+  the remote's workspaces and projects live and hands them straight to the
+  caller. Storing them would put them into the catalog our own peers receive on
+  their next connect, which is the bleed being avoided.
+
+**Authentication is a device bearer**, not a peer credential — and not by
+choice: the strict ingress refuses a peer credential outright on a remote
+connection (see "Listeners and ingress policy"), so over a relay this is the
+only door that opens. Three properties follow. The server's owner scopes our
+grants when they mint the pairing code; the credential is assignable to a person
+there (`device.setPerson`), so threads we start are stamped with **us**; and
+revoking the device cuts us off immediately with no cooperation from this end.
+`hello` carries `person` and `personName` so a guest can show *who* it is over
+there rather than only that it is somebody.
+
+**Routing.** A `machineId` naming a server is checked *before* the peer table in
+`handle_request` — a machine cannot be both, and a server record is the more
+specific claim. No `on_behalf_of` assertion travels: over there we are a guest,
+and our credential decides what we may do. What stops a local phone from
+borrowing more authority than it holds is the capability gate that already ran
+against *its* grants on this side, before routing.
+
+**Relay of their events** follows the same rule as their catalog: a frame the
+server produced itself is relayed to our clients with an `origin` tag, and a
+frame that already carries an origin — meaning it reached them from a third
+machine — is dropped. What belongs to that server crosses; what merely passed
+through it does not.
+
+**Sidebar preferences on a guest's workspace.** `workspace.setHidden` and
+`workspace.setFavorite` are in `ROUTABLE`, which is inert for an existing
+client: nothing sends `machineId` for a workspace op, and without one they run
+locally exactly as before (their flags ride the mesh replica, so a local write
+is what propagates). What it enables is stashing or starring a workspace on a
+server you are a guest on — the request routes there and lands in **your own**
+person overlay (see "People"), so their record and their sidebar are untouched.
+
+**Requests.** `server.list` and `server.catalog` are open to an authenticated
+client (`catalog` additionally needs `mesh`); `server.add` and `server.remove`
+need this machine's master token. Records live in `servers.json`, `0600`,
+because each holds a bearer credential for somebody else's machine.
+
 ## Persistence (server side)
 
 `~/.threadknot/`
@@ -1064,11 +1185,19 @@ portable CI executable has no registered toast identity).
   server-assigned installation id/hostname, and its Ed25519 identity
 - `hermes.json` — registered remote Hermes gateways (base URL + bearer API key
   in plaintext — needed for outbound calls; never serialized to clients)
+- `servers.json` (0600) — remote Threadknots we are a guest on: origin, our
+  device bearer over there, and the machine id we route by. Never merged into
+  `projects.json` (see "Remote servers" above)
+- `people.json` — who shares this machine, plus the per-person sidebar
+  preference overlay. Machine-local by design: it must never join the mesh
+  replica (see "People" above)
 - `projects.json` — project + thread + schedule + terminal + artifact index
 - `threads/<threadId>.jsonl` — one `PersistedEvent` per line, append-only
 - `artifacts/<threadId>/<id>.<ext>` — durable snapshots of produced deliverables
 - `terminals/<termId>.scrollback` — raw pty output ring (≤512 KiB), replayed on reopen
 - `terminals/<termId>.cwd` — shell's last-known working directory, restored on reopen (Linux)
+- `people/<personId>/claude/` (0700) — that person's own `CLAUDE_CONFIG_DIR`,
+  when they have been given one
 
 ## Reconnection
 

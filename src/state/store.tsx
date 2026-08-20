@@ -15,6 +15,8 @@ import type {
   OutgoingAttachment,
   PeerInfo,
   PersistedEvent,
+  Person,
+  RemoteServerInfo,
   Project,
   ProviderUsage,
   ReviewerPersona,
@@ -25,7 +27,7 @@ import type {
   ThreadStatus,
   Workspace,
 } from "../lib/protocol";
-import { isQuickHomeProjectId } from "../lib/protocol";
+import { isQuickHomeProjectId, OWNER_PERSON_ID } from "../lib/protocol";
 import type { ConnState } from "../lib/ws";
 import { isAgentVisible, setHermesConfigured } from "../lib/agentVisibility";
 import { applyEvent, type FeedItem } from "./feed";
@@ -34,6 +36,7 @@ export const LS_LAST_THREAD = "threadknot.lastThread";
 export const LS_LAST_PROJECT = "threadknot.lastProject";
 const LS_NEW_THREAD_SETTINGS = "threadknot.newThreadSettings";
 export const LS_THREAD_ATTENTION = "threadknot.threadAttention";
+const LS_VIEW_PERSON = "threadknot.viewPerson";
 const NEW_THREAD_DEFAULTS_VERSION = 3;
 const RETIRED_CLAUDE_OPUS_MODEL = "claude-opus-4-8";
 const CURRENT_CLAUDE_OPUS_MODEL = "claude-opus-5";
@@ -53,6 +56,119 @@ export function loadThreadAttention(): Record<string, true> {
   } catch {
     return {};
   }
+}
+
+/** Whose chats this browser was last looking at. Per-client on purpose: it is
+ *  a view, not a setting, and the shared box is exactly where two people on two
+ *  browsers must not push each other's sidebar around. */
+export function loadViewPerson(): string | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    return localStorage.getItem(LS_VIEW_PERSON) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveViewPerson(personId: string | null): void {
+  try {
+    if (personId) localStorage.setItem(LS_VIEW_PERSON, personId);
+    else localStorage.removeItem(LS_VIEW_PERSON);
+  } catch {
+    // A view preference is not worth failing a render over.
+  }
+}
+
+/** One remote server's catalog, fetched live and never persisted. */
+export interface ServerCatalog {
+  serverId: string;
+  machineId: string;
+  workspaces: Workspace[];
+  projects: Project[];
+}
+
+/** Every workspace the sidebar should render: this machine's own, plus the ones
+ *  each remote server is showing us.
+ *
+ *  A local record wins on an id collision. Ids are uuids so this should never
+ *  happen, but "should never" is not a reason to let a guest link shadow
+ *  something of ours. */
+export function allWorkspaces(state: AppState): Workspace[] {
+  const catalogs = Object.values(state.serverCatalogs);
+  if (catalogs.length === 0) return state.workspaces;
+  const seen = new Set(state.workspaces.map((w) => w.id));
+  return [
+    ...state.workspaces,
+    ...catalogs.flatMap((c) => c.workspaces).filter((w) => !seen.has(w.id)),
+  ];
+}
+
+export function allProjects(state: AppState): Project[] {
+  const catalogs = Object.values(state.serverCatalogs);
+  if (catalogs.length === 0) return state.projects;
+  const seen = new Set(state.projects.map((p) => p.id));
+  return [
+    ...state.projects,
+    ...catalogs.flatMap((c) => c.projects).filter((p) => !seen.has(p.id)),
+  ];
+}
+
+/** The remote server a workspace belongs to, or undefined for one of ours.
+ *
+ *  Derived from membership rather than stored on the record: a workspace whose
+ *  roots live on a machine we hold a server link for is that server's, and
+ *  nothing has to remember to set a flag. */
+export function workspaceServer(
+  state: AppState,
+  workspace: Workspace,
+): RemoteServerInfo | undefined {
+  if (state.servers.length === 0) return undefined;
+  return state.servers.find((s) =>
+    s.machineId && workspace.members.some((m) => m.machineId === s.machineId),
+  );
+}
+
+/** The server a project id belongs to, if any. */
+export function projectServer(
+  state: AppState,
+  projectId: string | undefined,
+): RemoteServerInfo | undefined {
+  if (!projectId || state.servers.length === 0) return undefined;
+  for (const catalog of Object.values(state.serverCatalogs)) {
+    if (catalog.projects.some((p) => p.id === projectId)) {
+      return state.servers.find((s) => s.id === catalog.serverId);
+    }
+  }
+  return undefined;
+}
+
+/** Who a chat belongs to. An unstamped chat is the owner's — that is every
+ *  chat written before people existed, and every chat on an install that only
+ *  ever had one person. */
+export function threadAuthor(thread: Thread): string {
+  return thread.author ?? OWNER_PERSON_ID;
+}
+
+/** Whether the sidebar's current view should show this chat.
+ *
+ *  Takes the id rather than the whole store on purpose, like `threadSettled`:
+ *  callers memoize on `state.viewPerson`, which changes when someone clicks a
+ *  face, instead of on `state`, which changes on every streamed token. `null`
+ *  means everyone's, which is what a single-person install always is. */
+export function threadInView(viewPerson: string | null, thread: Thread): boolean {
+  return viewPerson === null || threadAuthor(thread) === viewPerson;
+}
+
+/** The person record for an id, when there is one. A stamp whose record was
+ *  deleted deliberately resolves to `undefined` rather than to the owner: the
+ *  chat was somebody else's, and saying so is more honest than reassigning it. */
+export function personById(state: AppState, personId: string): Person | undefined {
+  return state.people.find((p) => p.id === personId);
+}
+
+/** Whether this install has any reason to show the people UI at all. */
+export function hasSeveralPeople(state: AppState): boolean {
+  return state.people.length > 1;
 }
 
 export function persistThreadAttention(attention: Record<string, true>): void {
@@ -175,6 +291,27 @@ export interface AppState {
   peers: PeerInfo[];
   /** Unpaired Threadknots discovered on the LAN via mDNS. */
   discovered: DiscoveredPeer[];
+  /** Remote Threadknots we are a guest on. Empty on almost every install. */
+  servers: RemoteServerInfo[];
+  /** What each of those servers is showing us, keyed by server id.
+   *
+   *  Held APART from `workspaces`/`projects` rather than merged into them, and
+   *  that separation is load-bearing rather than tidiness: `state.workspaces`
+   *  mirrors what this machine's own store holds, which is what its peers
+   *  receive on their next connect. Anything a guest link learns must never
+   *  find its way in there, so it lives here and the two are merged only at
+   *  read time by `allWorkspaces` / `allProjects`. */
+  serverCatalogs: Record<string, ServerCatalog>;
+  /** Everyone using this machine. Length 1 (the seeded owner) on the
+   *  overwhelming majority of installs, and the whole people UI hides itself
+   *  in that case — nothing about the sidebar changes until someone adds a
+   *  second person. */
+  people: Person[];
+  /** Which of them THIS connection speaks for, from `hello`. */
+  actingPerson: string;
+  /** Whose chats the sidebar is showing. `null` means everyone's, which is
+   *  also what a single-person install always is. */
+  viewPerson: string | null;
   /** Registered Hermes gateways (avatars for sidebar rows + chat headers). */
   hermesAgents: HermesAgentInfo[];
   /** Live Online/Offline presence per registered Hermes gateway, keyed by
@@ -269,6 +406,11 @@ export const initialState: AppState = {
   workspaces: [],
   peers: [],
   discovered: [],
+  servers: [],
+  serverCatalogs: {},
+  people: [],
+  actingPerson: OWNER_PERSON_ID,
+  viewPerson: null,
   hermesAgents: [],
   hermesStatuses: {},
   hermesRevision: -1,
@@ -310,6 +452,10 @@ export type Action =
   | { type: "projects"; projects: Project[] }
   | { type: "workspaces"; workspaces: Workspace[] }
   | { type: "peers"; peers: PeerInfo[]; discovered: DiscoveredPeer[] }
+  | { type: "people"; people: Person[]; acting: string }
+  | { type: "servers"; servers: RemoteServerInfo[] }
+  | { type: "serverCatalog"; catalog: ServerCatalog }
+  | { type: "viewPerson"; personId: string | null }
   | { type: "armHermesSwap"; threadId: string; hermesAgentId: string }
   | { type: "clearHermesSwap"; threadId: string }
   | { type: "hermesAgents"; agents: HermesAgentInfo[] }
@@ -431,7 +577,7 @@ export function workspaceIdForProject(
   projectId: string | undefined,
 ): string | undefined {
   if (!projectId) return undefined;
-  const ws = state.workspaces.find((w) =>
+  const ws = allWorkspaces(state).find((w) =>
     w.members.some((m) => m.projectId === projectId),
   );
   return ws?.id ?? projectId;
@@ -559,9 +705,14 @@ export function remoteMachineId(
   return local && machineId !== local ? machineId : undefined;
 }
 
-/** Which machine owns a project, resolved from workspace membership. */
+/** Which machine owns a project, resolved from workspace membership.
+ *
+ *  Reads the MERGED list: a root on a remote server has to resolve to that
+ *  server's machine id, or every RPC about it would be attempted locally and
+ *  fail with "unknown project". This is the one function that makes a guest
+ *  link's chats routable at all. */
 export function projectOwner(state: AppState, projectId: string): string | undefined {
-  for (const w of state.workspaces) {
+  for (const w of allWorkspaces(state)) {
     const m = w.members.find((x) => x.projectId === projectId);
     if (m) return m.machineId;
   }
@@ -579,7 +730,16 @@ export function resolveProjectView(
   if (!projectId) return null;
   const local = state.projects.find((p) => p.id === projectId);
   if (local) return { project: local };
-  for (const w of state.workspaces) {
+  // A server's project IS a real record — just one we were handed rather than
+  // one we own — so prefer it over the membership snapshot.
+  for (const catalog of Object.values(state.serverCatalogs)) {
+    const owned = catalog.projects.find((p) => p.id === projectId);
+    if (owned) {
+      const machineId = remoteMachineId(state, catalog.machineId);
+      if (machineId) return { project: owned, machineId };
+    }
+  }
+  for (const w of allWorkspaces(state)) {
     const m = w.members.find((x) => x.projectId === projectId);
     if (m) {
       const machineId = remoteMachineId(state, m.machineId);
@@ -677,6 +837,12 @@ export function reducer(state: AppState, action: Action): AppState {
       // the workspace snapped back to the chat. Membership is what makes a
       // project ours to remember, not locality.
       for (const w of state.workspaces) for (const m of w.members) keep.add(m.projectId);
+      // A remote server's roots are ours to REMEMBER but never ours to own:
+      // they are absent from `project.list` by construction, so without this
+      // every refresh would drop their chats and the open one would vanish
+      // mid-read — the same collapse the peer-membership line above prevents.
+      for (const c of Object.values(state.serverCatalogs))
+        for (const p of c.projects) keep.add(p.id);
       const threads: Record<string, Thread[]> = {};
       for (const pid of Object.keys(state.threads)) {
         if (keep.has(pid) || isQuickHomeProjectId(pid)) threads[pid] = state.threads[pid];
@@ -687,6 +853,34 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, workspaces: action.workspaces };
     case "peers":
       return { ...state, peers: action.peers, discovered: action.discovered };
+    case "servers": {
+      // Drop catalogs for servers that are gone, so a removed record cannot
+      // leave its workspaces on screen with nothing behind them.
+      const live = new Set(action.servers.map((s) => s.id));
+      const serverCatalogs = Object.fromEntries(
+        Object.entries(state.serverCatalogs).filter(([id]) => live.has(id)),
+      );
+      return { ...state, servers: action.servers, serverCatalogs };
+    }
+    case "serverCatalog":
+      return {
+        ...state,
+        serverCatalogs: {
+          ...state.serverCatalogs,
+          [action.catalog.serverId]: action.catalog,
+        },
+      };
+    case "people": {
+      // A view pinned to someone who has since been removed would filter the
+      // sidebar down to nothing with no obvious way back, so it falls open.
+      const known = new Set(action.people.map((p) => p.id));
+      const viewPerson =
+        state.viewPerson && known.has(state.viewPerson) ? state.viewPerson : null;
+      return { ...state, people: action.people, actingPerson: action.acting, viewPerson };
+    }
+    case "viewPerson":
+      saveViewPerson(action.personId);
+      return { ...state, viewPerson: action.personId };
     case "hermesAgents":
       return { ...state, hermesAgents: action.agents };
     case "armHermesSwap":
@@ -1136,6 +1330,36 @@ export interface ThreadknotActions {
   ) => Promise<import("../lib/protocol").OrganizedChatFolder[]>;
   /** Reload paired peers + LAN-discovered machines into state. */
   refreshPeers: () => Promise<void>;
+  /** Re-pull the people roster and which of them this connection is. */
+  refreshPeople: () => Promise<void>;
+  /** Re-pull the remote-server list and each one's catalog. */
+  refreshServers: () => Promise<void>;
+  refreshServerCatalog: (machineId: string) => Promise<void>;
+  /** Become a guest on another Threadknot. `token` is a LAN-only convenience;
+   *  over a relay a one-time pairing code is the only accepted proof. */
+  addServer: (input: {
+    origin: string;
+    pairingCode?: string;
+    token?: string;
+  }) => Promise<void>;
+  removeServer: (serverId: string) => Promise<void>;
+  /** Point the sidebar at one person's chats, or at everyone's (`null`). */
+  setViewPerson: (personId: string | null) => void;
+  /** Master-only. Add someone who shares this machine. */
+  createPerson: (name: string) => Promise<Person>;
+  /** Master-only. Omitted field = unchanged, null = clear. */
+  updatePerson: (
+    personId: string,
+    patch: { name?: string; avatar?: string | null; color?: string | null },
+  ) => Promise<void>;
+  /** Master-only. Their devices are handed back to the owner, and their chats
+   *  keep the stamp. */
+  deletePerson: (personId: string) => Promise<void>;
+  /** Master-only. Give this person their own Claude login; resolves with the
+   *  one-off command they run to sign in (null when handing it back). */
+  setPersonClaudeLogin: (personId: string, isolated: boolean) => Promise<string | null>;
+  /** Master-only. Which person a paired credential speaks for. */
+  setDevicePerson: (deviceId: string, personId: string | null) => Promise<void>;
   /** Attach a folder on `machineId` as a new root of the workspace; resolves
    *  with the (created or reused) project on that machine. */
   attachRoot: (workspaceId: string, machineId: string, path: string) => Promise<Project>;

@@ -69,6 +69,59 @@ export interface Workspace {
   members: WorkspaceMember[];
 }
 
+/** Someone using this installation (Settings → People). A convenience layer,
+ *  not a security boundary: agents all run as the same OS user, so this
+ *  separates people who trust each other rather than people who don't.
+ *  `id === "owner"` is the seeded record a master credential acts as, and the
+ *  one every pre-people thread is implicitly attributed to. */
+export interface Person {
+  id: string;
+  name: string;
+  avatar?: string;
+  color?: string;
+  /** Set when this person has their own Claude login, so their turns spend
+   *  their own subscription seat instead of the machine's. */
+  claudeConfigDir?: string;
+  /** True only for the seeded owner, which cannot be deleted. */
+  builtin?: boolean;
+  createdAt: string;
+}
+
+/** The reserved id of the machine owner. */
+export const OWNER_PERSON_ID = "owner";
+
+/** A remote Threadknot this machine is a **guest** on (Settings → Servers).
+ *
+ *  Not a `PeerInfo`. A peer is another machine of yours: symmetric, both sides
+ *  dial, and both push their whole workspace catalog on connect — which is
+ *  correct for a fleet you own and is exactly what merges three colleagues'
+ *  sidebars when they all pair to one shared box. A server is somebody else's
+ *  machine: this side only ever dials, nothing of ours crosses, and nothing of
+ *  theirs is written to our store. Their workspaces arrive via `server.catalog`
+ *  and are rendered as their own section, never merged into `state.workspaces`.
+ */
+export interface RemoteServerInfo {
+  id: string;
+  name: string;
+  /** Origin we dial, e.g. `https://team.threadknot.ai`. */
+  origin: string;
+  /** The remote's machine id — what `machineId`-routed requests name. Empty
+   *  until the first successful connection. */
+  machineId: string;
+  /** The device id the remote minted for us, so its owner can find the row to
+   *  reassign or revoke. */
+  deviceId: string;
+  /** Which person we act as over there; absent means their owner. */
+  personId?: string;
+  /** That person's display name over there. */
+  personName?: string;
+  /** What we were granted there. Advisory — enforced on their side. */
+  capabilities: DeviceCapability[];
+  addedAt: string;
+  lastSeenAt?: string;
+  online: boolean;
+}
+
 export interface OrganizedChatFolder {
   workspaceId: string;
   name: string;
@@ -323,6 +376,11 @@ export interface Thread {
   /** The machine this thread lives and runs on — immutable once set. Absent
    *  only on servers older than the mesh migration. */
   machineId?: string;
+  /** Who started this chat (a `Person.id`). Absent means the owner — which is
+   *  every chat on a single-person install and every chat written before
+   *  people existed. Stamped once at creation: it records who opened the
+   *  thread, not who last spoke in it. */
+  author?: string;
   /** The agent the NEXT turn runs on — switchable mid-thread (thread.setAgent). */
   agent: Agent;
   title: string;
@@ -522,6 +580,9 @@ export interface HelloData {
   lanUrl: string;
   /** Whether this connection is the desktop owner or a paired device. */
   principal?: "master" | "device" | "peer";
+  /** Which `Person` this credential speaks for. Absent on old servers, which
+   *  the client reads as the owner. */
+  person?: string;
   /** What this connection may do. Advisory — enforced server-side regardless. */
   capabilities?: DeviceCapability[];
   agents: AgentInfo[];
@@ -1361,6 +1422,8 @@ export interface MobileDeviceInfo {
   /** Absent only from a server older than capability-scoped pairing. */
   capabilities?: DeviceCapability[];
   capabilitiesVersion?: number;
+  /** Which person this credential speaks for; absent means the owner. */
+  personId?: string;
   createdAt: string;
   lastSeenAt?: string;
 }
@@ -1495,6 +1558,76 @@ export interface RequestMap {
   "mobile.device.setCapabilities": {
     payload: { deviceId: string; capabilities: DeviceCapability[] };
     data: { device: MobileDeviceInfo };
+  };
+  /** Remote Threadknots we are a guest on. `list` is open; adding and removing
+   *  one is machine administration and needs the master token. */
+  "server.list": {
+    payload: Record<string, never>;
+    data: { servers: RemoteServerInfo[] };
+  };
+  /** Redeem a pairing code at `origin` and hold a guest link to it. `token` is
+   *  a LAN-only convenience (their master token, pasted from their Settings);
+   *  over a relay a one-time `pairingCode` is the only accepted proof. */
+  "server.add": {
+    payload: {
+      origin: string;
+      pairingCode?: string;
+      token?: string;
+      deviceName?: string;
+    };
+    data: RemoteServerInfo;
+  };
+  "server.remove": {
+    payload: { serverId: string };
+    data: { removed: string };
+  };
+  /** That server's workspaces and projects, fetched live. Deliberately NOT
+   *  persisted on this side: a workspace in our store is a workspace our own
+   *  peers receive on their next connect. */
+  "server.catalog": {
+    payload: { serverId: string };
+    data: {
+      serverId: string;
+      machineId: string;
+      workspaces: Workspace[];
+      projects: Project[];
+    };
+  };
+  /** Who is using this machine. Reading is open to any authenticated client
+   *  (the sidebar needs names and faces to label chats with); every mutation
+   *  below is master-only, because deciding who counts as a person here is
+   *  machine administration. */
+  "person.list": {
+    payload: Record<string, never>;
+    /** `acting` is which of them THIS credential speaks for. */
+    data: { people: Person[]; acting: string };
+  };
+  "person.create": { payload: { name: string }; data: Person };
+  /** Absent fields are left alone; `null` clears an avatar or color. */
+  "person.update": {
+    payload: {
+      personId: string;
+      name?: string;
+      avatar?: string | null;
+      color?: string | null;
+    };
+    data: Person;
+  };
+  "person.delete": {
+    payload: { personId: string };
+    /** Their devices are handed back to the owner rather than orphaned. */
+    data: { releasedDevices: number };
+  };
+  /** Give this person their own `CLAUDE_CONFIG_DIR` (or hand back the
+   *  machine's). `loginCommand` is what they run once to sign in. */
+  "person.setClaudeLogin": {
+    payload: { personId: string; isolated: boolean };
+    data: { person: Person; loginCommand: string | null };
+  };
+  /** Master-only. `personId: null` means "speaks for the owner". */
+  "device.setPerson": {
+    payload: { deviceId: string; personId: string | null };
+    data: MobileDeviceInfo;
   };
   /** Master-only. */
   "connector.status": { payload: Record<string, never>; data: ConnectorStatus };
@@ -1935,6 +2068,8 @@ export interface StateChangedFrame {
     | "projects"
     | "workspaces"
     | "peers"
+    | "people"
+    | "servers"
     | "threads"
     | "schedules"
     | "terminals"

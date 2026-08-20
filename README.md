@@ -102,6 +102,40 @@ chmod +x threadknot-headless-linux
 Open that URL from any browser on your network and you get the same UI the
 desktop app shows. Real model turns work with no desktop session at all.
 
+### Sharing one machine with teammates
+
+A headless box holding the team's checkouts is the case this is for. Add each
+person under **Settings → People**, pair their browser, and assign the two to
+each other under **Settings → Phone & access**. From then on each of them gets
+their own sidebar: their own chats by default, a row of faces to look at anyone
+else's, and their own stars, stashed projects and settled shelf, so filing
+something away stops filing it away for everybody. Give each person their own
+Claude login from the same panel and their turns spend their own subscription
+seat instead of all three sharing one.
+
+Everyone can still open everyone's chats, which is the point — you drop into a
+colleague's thread to help. It is **not** an isolation boundary: agents all run
+as the same OS user, so anyone granted `files` or `terminal` can read anything
+on that machine. If you need people separated rather than merely tidy, run one
+headless instance per OS user instead.
+
+### Working on somebody else's machine from your own app
+
+Adding a **machine** under Settings → Machines makes two installs equals: both
+sides dial, and both push their whole project catalog to the other. That is
+what you want for your own laptop and homelab, and it is the wrong shape for a
+box you share with colleagues — pair three laptops to one and all three
+sidebars merge through it.
+
+Settings → **Servers** is the other shape. Paste the machine's address and a
+one-time pairing code from its Settings → Phone & access, and its projects
+appear in your sidebar next to your own, marked with its name. Chats there run
+there. The link is one way: your desktop never sends its catalog, nothing of
+theirs is written to this machine, and what you hold is an ordinary device
+credential their owner scopes, assigns to you by name, and can revoke without
+asking. Starring or stashing one of their projects is your own view of it and
+does not touch theirs.
+
 ### Updating
 
 Installed copies update themselves: **Settings → updates → check now**, then one

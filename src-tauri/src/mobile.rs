@@ -324,6 +324,15 @@ pub struct MobileDevice {
     /// Whether agent `error` events should also push (noisier).
     #[serde(default)]
     pub notify_errors: bool,
+    /// Which person this device speaks for (`people.rs`). Absent means the
+    /// owner, which is what every device paired before people existed is — and
+    /// what a single-person install leaves every device as forever.
+    ///
+    /// It sits on the DEVICE rather than being the device itself so one person
+    /// can hold several: a paired browser on the shared box, a phone, and a
+    /// laptop's Threadknot are three credentials and one name in the sidebar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_id: Option<String>,
     #[serde(default)]
     pub notify_scope: NotifyScope,
     /// Workspace ids this device has opted out of (scope `All`) or opted into
@@ -549,6 +558,10 @@ impl MobileStore {
             notifications_enabled: true,
             notification_previews: true,
             notify_errors: false,
+            // Assigned afterwards via `device.setPerson`. Pairing cannot ask:
+            // the QR is redeemed by the joining client, which has no way to
+            // know who is holding it.
+            person_id: None,
             notify_scope: NotifyScope::All,
             notify_workspaces: Vec::new(),
             capabilities: normalize_capabilities(capabilities),
@@ -609,6 +622,37 @@ impl MobileStore {
             d.capabilities = normalized;
             d.capabilities_version = CAPABILITIES_VERSION;
         })
+    }
+
+    /// Which person a device speaks for, or `None` for the owner. Resolved on
+    /// every request rather than stamped onto the session, for the same reason
+    /// grants are: reassigning a device has to take effect on its next request
+    /// without the client cooperating.
+    pub fn person_for(&self, device_id: &str) -> Option<String> {
+        self.devices
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|d| d.id == device_id)
+            .and_then(|d| d.person_id.clone())
+    }
+
+    /// Point every device currently assigned to `person_id` back at the owner.
+    /// Called when a person is deleted, so their paired browser keeps working
+    /// instead of authenticating as somebody who no longer exists.
+    pub fn release_person(&self, person_id: &str) -> Result<usize> {
+        let mut devices = self.devices.lock().unwrap();
+        let mut released = 0;
+        for device in devices.iter_mut() {
+            if device.person_id.as_deref() == Some(person_id) {
+                device.person_id = None;
+                released += 1;
+            }
+        }
+        if released > 0 {
+            self.flush(&devices)?;
+        }
+        Ok(released)
     }
 
     pub fn list(&self) -> Vec<MobileDevice> {

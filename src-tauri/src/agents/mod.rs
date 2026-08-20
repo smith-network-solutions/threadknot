@@ -740,6 +740,11 @@ pub struct Hub {
     pub claudex: Arc<crate::claudex::ClaudexRegistry>,
     /// Named reviewer presets for Parley debates (personas.json).
     pub personas: Arc<crate::personas::PersonaRegistry>,
+    /// Who is using this machine, and the per-person half of their sidebar
+    /// preferences (people.json). Lives on the hub rather than on `ServerState`
+    /// because the agent drivers need it too: a thread's author decides which
+    /// `CLAUDE_CONFIG_DIR` its turns run under.
+    pub people: Arc<crate::people::PeopleRegistry>,
     /// The dispatch ledger (dispatches.json) — every worker this machine sent
     /// out and every one it is running for somebody else.
     pub dispatch: Arc<crate::dispatch::DispatchLedger>,
@@ -806,6 +811,9 @@ impl Hub {
         let personas = Arc::new(
             crate::personas::PersonaRegistry::open(store.dir()).expect("open persona registry"),
         );
+        let people = Arc::new(
+            crate::people::PeopleRegistry::open(store.dir()).expect("open people registry"),
+        );
         let themes = Arc::new(
             crate::themes::ThemeStore::open(store.dir()).expect("open theme store"),
         );
@@ -824,6 +832,7 @@ impl Hub {
             hermes_status: crate::hermes::HermesStatusState::default(),
             claudex,
             personas,
+            people,
             library,
             themes,
             dispatch,
@@ -1241,6 +1250,13 @@ impl Hub {
                     t.kept_active_at = None;
                 }
             });
+            // The record-side clear above only speaks for whoever has no
+            // personal opinion. Anyone who filed this thread away themselves
+            // holds their own copy, so clear those too or the news lands in a
+            // shelf they have collapsed.
+            if unparks {
+                self.people.unpark_thread(thread_id);
+            }
             // Scope the nudge to the owning project. An unscoped "threads"
             // change makes every client re-pull the ENTIRE catalog — project
             // list, workspaces (sidebar art and all), and a thread list per
@@ -2950,7 +2966,7 @@ mod tests {
     fn changing_claude_chrome_retires_an_idle_driver() {
         let (root, store, project, settings) = test_store("claude-chrome-retire");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings.clone())
+            .create_thread(project.id, Agent::Claude, settings.clone(), None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
@@ -2991,7 +3007,7 @@ mod tests {
         let (root, store, project, mut settings) = test_store("claudex-anchor");
         settings.model = "profile-a".into();
         let thread = store
-            .create_thread(project.id.clone(), Agent::Claudex, settings.clone())
+            .create_thread(project.id.clone(), Agent::Claudex, settings.clone(), None)
             .unwrap();
         // The implicit lane's id is the agent wire name, which is exactly the
         // key pre-Parley anchors used.
@@ -3030,7 +3046,7 @@ mod tests {
         // Agents with a single backend keep the plain, profile-less key — and
         // a legacy anchor written before this field still resumes.
         let claude = store
-            .create_thread(project.id, Agent::Claude, settings)
+            .create_thread(project.id, Agent::Claude, settings, None)
             .unwrap();
         let claude_lane = claude.primary_participant();
         assert_eq!(session_key(&claude_lane), ("claude".to_string(), None));
@@ -3096,7 +3112,7 @@ mod tests {
     fn review_adds_a_full_access_lane_that_never_shares_the_builders_session() {
         let (root, store, project, settings) = test_store("review-lane");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings.clone())
+            .create_thread(project.id, Agent::Claude, settings.clone(), None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
 
@@ -3241,7 +3257,7 @@ mod tests {
     fn a_persona_names_its_lane_and_owns_its_identity() {
         let (root, store, project, settings) = test_store("review-persona");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings.clone())
+            .create_thread(project.id, Agent::Claude, settings.clone(), None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         hub.emit(
@@ -3319,7 +3335,7 @@ mod tests {
     fn a_reviewer_yields_the_floor_at_the_turn_boundary() {
         let (root, store, project, settings) = test_store("review-yield");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings.clone())
+            .create_thread(project.id, Agent::Claude, settings.clone(), None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
 
@@ -3545,7 +3561,7 @@ mod tests {
         let (root, store, project, mut settings) = test_store("hermes-binding");
         settings.model = "gateway-b".into();
         let thread = store
-            .create_thread(project.id, Agent::Hermes, settings.clone())
+            .create_thread(project.id, Agent::Hermes, settings.clone(), None)
             .unwrap();
         assert_eq!(
             thread.settings.hermes_agent_id.as_deref(),
@@ -3593,7 +3609,7 @@ mod tests {
     fn start_parley_validates_before_seating_anyone() {
         let (root, store, project, settings) = test_store("parley-validate");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings)
+            .create_thread(project.id, Agent::Claude, settings, None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
 
@@ -3625,7 +3641,7 @@ mod tests {
     fn a_message_typed_mid_parley_queues_for_the_floor() {
         let (root, store, project, settings) = test_store("parley-queue");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings)
+            .create_thread(project.id, Agent::Claude, settings, None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         store
@@ -3663,7 +3679,7 @@ mod tests {
     fn a_conceded_single_reviewer_ends_the_parley_at_the_boundary() {
         let (root, store, project, settings) = test_store("parley-end");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings.clone())
+            .create_thread(project.id, Agent::Claude, settings.clone(), None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         hub.emit(
@@ -3729,7 +3745,7 @@ mod tests {
         let (root, store, project, mut settings) = test_store("claudex-switch");
         settings.model = "profile-a".into();
         let thread = store
-            .create_thread(project.id, Agent::Claudex, settings.clone())
+            .create_thread(project.id, Agent::Claudex, settings.clone(), None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
 
@@ -3785,19 +3801,19 @@ mod tests {
     fn restart_recovery_waits_for_bind_and_classifies_busy_threads() {
         let (root, store, project, settings) = test_store("startup-recovery");
         let running = store
-            .create_thread(project.id.clone(), Agent::Claude, settings.clone())
+            .create_thread(project.id.clone(), Agent::Claude, settings.clone(), None)
             .unwrap();
         store
             .update_thread(&running.id, |t| t.status = ThreadStatus::Running)
             .unwrap();
         let waiting = store
-            .create_thread(project.id.clone(), Agent::Codex, settings.clone())
+            .create_thread(project.id.clone(), Agent::Codex, settings.clone(), None)
             .unwrap();
         store
             .update_thread(&waiting.id, |t| t.status = ThreadStatus::WaitingApproval)
             .unwrap();
         let hermes = store
-            .create_thread(project.id, Agent::Hermes, settings)
+            .create_thread(project.id, Agent::Hermes, settings, None)
             .unwrap();
         store
             .update_thread(&hermes.id, |t| {
@@ -3858,7 +3874,7 @@ mod tests {
     fn interrupt_repairs_busy_thread_without_live_session() {
         let (root, store, project, settings) = test_store("interrupt-recovery");
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings)
+            .create_thread(project.id, Agent::Claude, settings, None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         store
@@ -3884,7 +3900,7 @@ mod tests {
     fn detects_deliverable_artifacts_across_a_turn() {
         let (root, store, project, settings) = test_store("artifacts");
         let thread = store
-            .create_thread(project.id.clone(), Agent::Claude, settings)
+            .create_thread(project.id.clone(), Agent::Claude, settings, None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         let ws = std::path::PathBuf::from(&project.path);
@@ -3994,7 +4010,7 @@ mod tests {
     fn published_artifacts_and_attachments_are_handled_by_provenance() {
         let (root, store, project, settings) = test_store("artifacts-publish");
         let thread = store
-            .create_thread(project.id.clone(), Agent::Claude, settings)
+            .create_thread(project.id.clone(), Agent::Claude, settings, None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         let ws = std::path::PathBuf::from(&project.path);
@@ -4080,7 +4096,7 @@ mod tests {
         let (root, store, project, mut settings) = test_store("stale-plan");
         settings.mode = Mode::Plan;
         let thread = store
-            .create_thread(project.id, Agent::Claude, settings)
+            .create_thread(project.id, Agent::Claude, settings, None)
             .unwrap();
         let hub = Hub::new(Arc::clone(&store), 42800);
         hub.emit(&thread.id, plan_approval_request("appr-1"));

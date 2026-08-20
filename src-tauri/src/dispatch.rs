@@ -404,10 +404,18 @@ pub fn begin_worker(hub: &Arc<Hub>, mut record: DispatchRecord, autostart: bool)
         limits::MAX_LIVE_DISPATCHES_PER_MACHINE
     );
 
+    // A worker inherits its parent's author, so a crew someone dispatched shows
+    // up under their name rather than the owner's. Absent when the parent lives
+    // on another machine (a remote dispatch has no local copy to read), which
+    // falls back to the owner like any unstamped thread.
+    let author = store
+        .thread(&record.parent_thread_id)
+        .and_then(|t| t.author.clone());
     let thread = store.create_thread(
         record.project_id.clone(),
         record.agent,
         record.settings.clone(),
+        author,
     )?;
     let origin = DispatchOrigin {
         id: record.id.clone(),
@@ -1598,6 +1606,7 @@ mod tests {
             id: "p".into(),
             project_id: "proj".into(),
             machine_id: "a".into(),
+            author: None,
             agent: Agent::Claude,
             title: "Plan".into(),
             settings: settings(Access::Full),

@@ -20,7 +20,12 @@ export interface MachineLook {
 
 /** Resolve how a machine should look on THIS device: the local machine uses
  *  its own advertised appearance (hello); a peer prefers the local override
- *  (peer.setAppearance) over what it advertises, else initials from its name. */
+ *  (peer.setAppearance) over what it advertises, else initials from its name.
+ *
+ *  A server we are a guest on is a machine too, and it is NOT in `peers` — that
+ *  is the whole point of a guest link. Before it was looked up here it fell to
+ *  the unknown-machine fallback, so a box you are actively connected to was
+ *  labelled "remote machine" in every menu that renders a machine by id. */
 export function machineLook(state: AppState, machineId: string | undefined): MachineLook {
   const localId = state.hello?.machineId;
   if (!machineId || !localId || machineId === localId) {
@@ -31,12 +36,16 @@ export function machineLook(state: AppState, machineId: string | undefined): Mac
     };
   }
   const peer = state.peers.find((p) => p.machineId === machineId);
-  if (!peer) return { name: "remote machine" };
-  return {
-    image: peer.avatarOverride ?? peer.avatar,
-    color: peer.colorOverride ?? peer.color,
-    name: peer.name,
-  };
+  if (peer) {
+    return {
+      image: peer.avatarOverride ?? peer.avatar,
+      color: peer.colorOverride ?? peer.color,
+      name: peer.name,
+    };
+  }
+  const server = state.servers.find((s) => s.machineId === machineId);
+  if (server) return { name: server.name };
+  return { name: "remote machine" };
 }
 
 /** Round machine badge: image when set, else initials; ringed in the machine's

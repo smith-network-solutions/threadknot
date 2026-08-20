@@ -865,11 +865,15 @@ impl Store {
         Ok(PathBuf::from(project.path))
     }
 
+    /// `author` is the person id to stamp (see [`Thread::author`]). `None` for
+    /// the owner and for every caller that predates people, which keeps the
+    /// field absent on single-person installs exactly as it was.
     pub fn create_thread(
         &self,
         project_id: String,
         agent: Agent,
         mut settings: ThreadSettings,
+        author: Option<String>,
     ) -> Result<Thread> {
         anyhow::ensure!(self.project(&project_id).is_some(), "unknown project");
         // A chat born on Hermes is bound to that gateway from its first turn,
@@ -890,6 +894,7 @@ impl Store {
             id,
             project_id,
             machine_id: self.local_machine_id(),
+            author,
             agent,
             title: "New thread".into(),
             settings,
@@ -1985,10 +1990,10 @@ mod quick_home_tests {
         assert!(store.workspace_for_project(&project_id).is_none());
 
         let first = store
-            .create_thread(project_id.clone(), Agent::Claude, settings())
+            .create_thread(project_id.clone(), Agent::Claude, settings(), None)
             .unwrap();
         let second = store
-            .create_thread(project_id, Agent::Codex, settings())
+            .create_thread(project_id, Agent::Codex, settings(), None)
             .unwrap();
         let first_dir = store.thread_working_dir(&first).unwrap();
         let second_dir = store.thread_working_dir(&second).unwrap();
@@ -2201,6 +2206,7 @@ mod migrate_mesh_tests {
                 "proj-a".into(),
                 Agent::Claude,
                 reloaded.thread("t1").unwrap().settings,
+                None,
             )
             .unwrap();
         assert_eq!(t.machine_id, "machine-1");
@@ -2468,10 +2474,10 @@ mod thread_search_tests {
             .create_project(dir.clone().to_string_lossy().into(), None)
             .unwrap();
         let first = store
-            .create_thread(project.id.clone(), Agent::Claude, settings())
+            .create_thread(project.id.clone(), Agent::Claude, settings(), None)
             .unwrap();
         let second = store
-            .create_thread(project.id, Agent::Codex, settings())
+            .create_thread(project.id, Agent::Codex, settings(), None)
             .unwrap();
         store
             .append_event(

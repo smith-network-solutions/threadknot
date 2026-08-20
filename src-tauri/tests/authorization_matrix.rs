@@ -79,7 +79,7 @@ fn harness() -> &'static Harness {
         let plain_thread = state
             .hub
             .store
-            .create_thread(project.id.clone(), Agent::Claude, settings(None, false))
+            .create_thread(project.id.clone(), Agent::Claude, settings(None, false), None)
             .unwrap();
         let signed_thread = state
             .hub
@@ -88,6 +88,7 @@ fn harness() -> &'static Harness {
                 project.id.clone(),
                 Agent::Claude,
                 settings(Some("profile-abc"), false),
+                None,
             )
             .unwrap();
 
@@ -205,6 +206,7 @@ fn new_thread(signed: bool) -> Thread {
             h.project.id.clone(),
             Agent::Claude,
             settings(signed.then_some("profile-abc"), false),
+            None,
         )
         .unwrap()
 }

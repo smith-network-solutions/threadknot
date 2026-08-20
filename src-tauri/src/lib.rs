@@ -32,6 +32,7 @@ pub mod notices;
 pub mod notifications;
 pub mod peernet;
 pub mod peers;
+pub mod people;
 pub mod ports;
 pub mod protocol;
 pub mod push;
@@ -41,6 +42,7 @@ pub mod remote;
 pub mod schedules;
 pub mod security_key;
 pub mod server;
+pub mod servers;
 pub mod sessions;
 pub mod store;
 pub mod term;
@@ -545,11 +547,20 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
         });
     }
 
+    // Remote servers we are a guest on. Distinct from `peernet` on purpose:
+    // this side only ever dials out, and nothing it learns is written to the
+    // store (see `servers.rs`).
+    let servernet = servers::ServerNet::new(
+        Arc::new(servers::ServerRegistry::open(&store::data_dir())?),
+        Arc::clone(&hub),
+    );
+
     let state = server::ServerState {
         hub,
         config,
         device,
         peernet,
+        servernet,
         mesh: mesh_identity,
         pairing_challenges: Arc::new(mesh::PairingChallenges::new()),
         exec: Arc::new(exec::ExecRegistry::new()),

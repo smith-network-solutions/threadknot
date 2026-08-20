@@ -410,6 +410,18 @@ pub struct Thread {
     /// reading pre-mesh records, and the startup migration rewrites those.
     #[serde(default)]
     pub machine_id: String,
+    /// Who started this thread (a `people.rs` person id), when the machine has
+    /// more than one person using it. Absent on every thread written before
+    /// people existed and on any thread started by a principal that resolves to
+    /// the owner, which is what a single-person install always does — so an
+    /// absent author reads as "the owner's", never as "nobody's".
+    ///
+    /// Stamped once at creation and never rewritten: it records who opened the
+    /// thread, not who last spoke in it. Teammates dropping into each other's
+    /// threads is the point of the feature, and a field that moved with the
+    /// last turn would make the sidebar reshuffle under whoever was helping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     /// The agent the NEXT turn runs on. Mutable mid-thread (thread.setAgent);
     /// history stays valid because events are provider-agnostic.
     pub agent: Agent,
@@ -1065,6 +1077,12 @@ pub struct ScheduleDispatch {
 pub struct Schedule {
     pub id: String,
     pub project_id: String,
+    /// Who set this schedule up (a `people.rs` person id), stamped like
+    /// [`Thread::author`] and inherited by every thread it fires. Absent means
+    /// the owner. Without it a teammate's 6am run would land in everybody's
+    /// sidebar every morning, which is the noise this feature exists to stop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     pub agent: Agent,
     pub settings: ThreadSettings,
     pub name: String,

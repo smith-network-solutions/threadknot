@@ -38,6 +38,7 @@ import type {
 import {
   HERMES_HOME_PROJECT_ID,
   isQuickHomeProjectId,
+  OWNER_PERSON_ID,
   quickHomeProjectId,
 } from "./lib/protocol";
 import { HERMES_ENABLED_EVENT, isAgentVisible } from "./lib/agentVisibility";
@@ -53,6 +54,7 @@ import {
   initialState,
   loadLastThread,
   loadThreadAttention,
+  loadViewPerson,
   LS_THREAD_ATTENTION,
   persistThreadAttention,
   lastProjectKey,
@@ -105,6 +107,23 @@ function makeActions(
   const projectRoute = (projectId: string): string | undefined =>
     remoteMachineId(getState(), projectOwner(getState(), projectId));
 
+  /** Route a workspace's sidebar preferences by whoever owns the record.
+   *
+   *  Undefined for our own workspaces, which keeps those calls byte-identical
+   *  to what they have always been — the flags there ride the mesh replica and
+   *  must stay a LOCAL write. A workspace belonging to a remote server we are a
+   *  guest on routes there instead, where it lands in our own person overlay
+   *  rather than editing their record. */
+  const workspaceRoute = (workspaceId: string): string | undefined => {
+    const s = getState();
+    const server = s.servers.find((srv) =>
+      Object.values(s.serverCatalogs).some(
+        (c) => c.serverId === srv.id && c.workspaces.some((w) => w.id === workspaceId),
+      ),
+    );
+    return remoteMachineId(s, server?.machineId);
+  };
+
   /** Route a repoId via the project its record belongs to. */
   const repoRoute = (repoId: string): string | undefined => {
     const s = getState();
@@ -125,6 +144,34 @@ function makeActions(
 
   const route = (machineId: string | undefined) =>
     machineId ? { machineId } : {};
+
+  /** Put an updated workspace back wherever it came from.
+   *
+   *  One of ours lands in `state.workspaces`; one belonging to a remote server
+   *  lands in that server's catalog. Writing the second into the first would
+   *  put a guest link's record into the list our own peers are sent. */
+  const applyWorkspacePatch = (ws: import("./lib/protocol").Workspace) => {
+    const s = getState();
+    if (s.workspaces.some((w) => w.id === ws.id)) {
+      dispatch({
+        type: "workspaces",
+        workspaces: s.workspaces.map((w) => (w.id === ws.id ? ws : w)),
+      });
+      return;
+    }
+    const catalog = Object.values(s.serverCatalogs).find((c) =>
+      c.workspaces.some((w) => w.id === ws.id),
+    );
+    if (catalog) {
+      dispatch({
+        type: "serverCatalog",
+        catalog: {
+          ...catalog,
+          workspaces: catalog.workspaces.map((w) => (w.id === ws.id ? ws : w)),
+        },
+      });
+    }
+  };
 
   const refreshThreads = async (projectId: string, machineId?: string) => {
     const { threads } = await client.request(
@@ -147,6 +194,72 @@ function makeActions(
         }
       }
     }
+  };
+
+  const refreshPeople = async () => {
+    // Old servers have no `person.list`. That is not an error state — it is a
+    // single-person install by definition, so fall back to one implicit owner
+    // and leave the people UI hidden.
+    try {
+      const { people, acting } = await client.request("person.list", {});
+      dispatch({ type: "people", people, acting });
+    } catch {
+      dispatch({ type: "people", people: [], acting: OWNER_PERSON_ID });
+    }
+  };
+
+  /** Refetch ONE server's catalog.
+   *
+   *  Creating a workspace on a server broadcasts over there, and the frame
+   *  reaches us carrying that machine as its origin. Every scope handler
+   *  predates servers and treats a broadcast as local, so the frame ran a
+   *  refresh of OUR workspace list — which can never contain theirs. The result
+   *  was a workspace made on the box staying invisible here until the link was
+   *  torn down and rebuilt. */
+  const refreshServerCatalog = async (machineId: string) => {
+    const s = getState();
+    const server = s.servers.find((srv) => srv.machineId === machineId);
+    if (!server) return;
+    const catalog = await client.request("server.catalog", { serverId: server.id });
+    dispatch({ type: "serverCatalog", catalog });
+    await Promise.all(
+      catalog.projects.map((p) =>
+        refreshThreads(p.id, catalog.machineId).catch(() => undefined),
+      ),
+    );
+  };
+
+  const refreshServers = async () => {
+    // Old servers have no `server.list`; an install with no guest links is the
+    // same shape as one that cannot have them, so both read as an empty list.
+    let servers = [];
+    try {
+      ({ servers } = await client.request("server.list", {}));
+    } catch {
+      dispatch({ type: "servers", servers: [] });
+      return;
+    }
+    dispatch({ type: "servers", servers });
+    // Pull each catalog, then the chats for every root it holds. Best effort
+    // per server: one that is still connecting must not stop the others.
+    await Promise.all(
+      servers
+        .filter((s) => s.online && s.machineId)
+        .map(async (s) => {
+          try {
+            const catalog = await client.request("server.catalog", { serverId: s.id });
+            dispatch({ type: "serverCatalog", catalog });
+            await Promise.all(
+              catalog.projects.map((p) =>
+                refreshThreads(p.id, catalog.machineId).catch(() => undefined),
+              ),
+            );
+          } catch {
+            // Offline mid-fetch, or the credential was revoked. The record
+            // stays listed (and shows as offline) rather than disappearing.
+          }
+        }),
+    );
   };
 
   const refreshPeers = async () => {
@@ -428,6 +541,57 @@ function makeActions(
     refreshProjects,
     refreshWorkspaces,
     refreshPeers,
+    refreshPeople,
+    refreshServers,
+    refreshServerCatalog,
+
+    async addServer(input: { origin: string; pairingCode?: string; token?: string }) {
+      await client.request("server.add", input);
+      await refreshServers();
+    },
+
+    async removeServer(serverId: string) {
+      await client.request("server.remove", { serverId });
+      await refreshServers();
+    },
+
+    setViewPerson(personId: string | null) {
+      dispatch({ type: "viewPerson", personId });
+    },
+
+    async createPerson(name: string) {
+      const person = await client.request("person.create", { name });
+      await refreshPeople();
+      return person;
+    },
+
+    async updatePerson(
+      personId: string,
+      patch: { name?: string; avatar?: string | null; color?: string | null },
+    ) {
+      await client.request("person.update", { personId, ...patch });
+      await refreshPeople();
+    },
+
+    async deletePerson(personId: string) {
+      await client.request("person.delete", { personId });
+      await refreshPeople();
+    },
+
+    async setPersonClaudeLogin(personId: string, isolated: boolean) {
+      const { loginCommand } = await client.request("person.setClaudeLogin", {
+        personId,
+        isolated,
+      });
+      await refreshPeople();
+      return loginCommand;
+    },
+
+    async setDevicePerson(deviceId: string, personId: string | null) {
+      await client.request("device.setPerson", { deviceId, personId });
+      await refreshPeople();
+    },
+
     refreshRemoteThreads,
     refreshThreads,
     selectThread,
@@ -518,19 +682,21 @@ function makeActions(
     },
 
     async setWorkspaceFavorite(workspaceId: string, favorite: boolean) {
-      const ws = await client.request("workspace.setFavorite", { workspaceId, favorite });
-      dispatch({
-        type: "workspaces",
-        workspaces: getState().workspaces.map((w) => (w.id === ws.id ? ws : w)),
+      const ws = await client.request("workspace.setFavorite", {
+        workspaceId,
+        favorite,
+        ...route(workspaceRoute(workspaceId)),
       });
+      applyWorkspacePatch(ws);
     },
 
     async setWorkspaceHidden(workspaceId: string, hidden: boolean) {
-      const ws = await client.request("workspace.setHidden", { workspaceId, hidden });
-      dispatch({
-        type: "workspaces",
-        workspaces: getState().workspaces.map((w) => (w.id === ws.id ? ws : w)),
+      const ws = await client.request("workspace.setHidden", {
+        workspaceId,
+        hidden,
+        ...route(workspaceRoute(workspaceId)),
       });
+      applyWorkspacePatch(ws);
     },
 
     async setWorkspaceImage(workspaceId: string, image?: string) {
@@ -1155,7 +1321,17 @@ function makeActions(
         path,
         ...(machineId ? { machineId } : {}),
       });
-      await refreshProjects();
+      // A workspace created on a server lives in THEIR catalog and never in our
+      // project list, so refreshing ours would leave the draft below pointing
+      // at a workspace this side has never heard of. Waiting on the relayed
+      // broadcast instead would race the draft.
+      const isServer =
+        !!machineId && getState().servers.some((s) => s.machineId === machineId);
+      if (isServer && machineId) {
+        await refreshServerCatalog(machineId).catch(() => undefined);
+      } else {
+        await refreshProjects();
+      }
       dispatch({
         type: "openDraft",
         draft: defaultDraft(getState(), project.id, machineId),
@@ -1960,7 +2136,16 @@ export default function App() {
       if (frame.scope === "schedules") void actionsRef.current.refreshSchedules();
       else if (frame.scope === "themes")
         void actionsRef.current.listThemes().catch(() => undefined);
-      else if (frame.scope === "workspaces") void actionsRef.current.refreshWorkspaces();
+      else if (frame.scope === "workspaces") {
+        // Relayed from a server we are a guest on: refresh THAT catalog.
+        if (frame.origin)
+          void actionsRef.current.refreshServerCatalog(frame.origin).catch(() => undefined);
+        else void actionsRef.current.refreshWorkspaces();
+      }
+      else if (frame.scope === "people")
+        void actionsRef.current.refreshPeople().catch(() => undefined);
+      else if (frame.scope === "servers")
+        void actionsRef.current.refreshServers().catch(() => undefined);
       else if (frame.scope === "peers") {
         // A relayed `peers` frame describes the OTHER machine's own peer graph,
         // not a change to ours. Peers can flap on a short cadence, and treating
@@ -2005,7 +2190,11 @@ export default function App() {
         // refresh THAT machine's list. A locally produced frame has no origin,
         // so this refreshes the local machine's archives.
         void actionsRef.current.refreshArchives(frame.origin);
-      else if (frame.scope === "projects") void actionsRef.current.refreshProjects();
+      else if (frame.scope === "projects") {
+        if (frame.origin)
+          void actionsRef.current.refreshServerCatalog(frame.origin).catch(() => undefined);
+        else void actionsRef.current.refreshProjects();
+      }
       else if (frame.scope === "terminals" && frame.projectId)
         void actionsRef.current.refreshTerminals(frame.projectId);
       else if (frame.scope === "artifacts" && frame.projectId)
@@ -2046,6 +2235,17 @@ export default function App() {
           void actionsRef.current.refreshArchives().catch(() => undefined);
           void actionsRef.current.refreshUpdate().catch(() => undefined);
           void actionsRef.current.refreshPeers().catch(() => undefined);
+          // Seed the roster before the sidebar paints, and restore whichever
+          // person this browser was last looking at (the reducer drops the
+          // choice if that record is gone).
+          void actionsRef.current
+            .refreshPeople()
+            .then(() => {
+              const saved = loadViewPerson();
+              if (saved) actionsRef.current.setViewPerson(saved);
+            })
+            .catch(() => undefined);
+          void actionsRef.current.refreshServers().catch(() => undefined);
           void actionsRef.current.listHermesAgents().catch(() => undefined);
           // Seed the machine's custom themes; the `themes` state-changed
           // broadcast keeps them fresh from here on.
@@ -2296,16 +2496,22 @@ export default function App() {
   }, [actions]);
 
   const onAddProject = useCallback(async () => {
-    // With an online peer, WHICH machine gets the new workspace is a real
-    // choice, so ask first; with none, keep the one-step local flow.
-    if (state.peers.some((p) => p.online)) {
+    // With an online peer — or a server we are a guest on — WHICH machine gets
+    // the new workspace is a real choice, so ask first; with neither, keep the
+    // one-step local flow. A machine with only a server link used to skip the
+    // chooser entirely and open a local folder dialog, so the server was
+    // unreachable from this button no matter what.
+    const remoteChoice =
+      state.peers.some((p) => p.online) ||
+      state.servers.some((s) => s.online && s.capabilities.includes("files"));
+    if (remoteChoice) {
       setShowNewWorkspace(true);
     } else if (state.isTauri) {
       await pickLocalDirectory();
     } else {
       setPicker({});
     }
-  }, [pickLocalDirectory, state.isTauri, state.peers]);
+  }, [pickLocalDirectory, state.isTauri, state.peers, state.servers]);
 
   const onNewWorkspaceMachine = useCallback((mc: { machineId: string; label: string }) => {
     setShowNewWorkspace(false);

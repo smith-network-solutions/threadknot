@@ -714,6 +714,15 @@ fn command_args_with_mcp_config(
     args
 }
 
+/// The private `CLAUDE_CONFIG_DIR` belonging to this thread's author, if they
+/// have one. `None` — the overwhelmingly common case, and every install with
+/// one person on it — leaves the child on the machine's own `~/.claude`.
+fn person_config_dir(ctx: &DriverCtx) -> Option<std::path::PathBuf> {
+    let author = ctx.hub.store.thread(&ctx.thread_id)?.author?;
+    let dir = ctx.hub.people.person(&author)?.claude_config_dir?;
+    Some(std::path::PathBuf::from(dir))
+}
+
 fn spawn_claude(
     ctx: &DriverCtx,
     settings: &ThreadSettings,
@@ -726,10 +735,19 @@ fn spawn_claude(
         .ok_or_else(|| anyhow::anyhow!("claude CLI not found on PATH"))?;
     // A bridged profile keeps its own CLAUDE_CONFIG_DIR: its transcripts,
     // session ids and (absent) login all live there, apart from ~/.claude.
-    let config_dir = profile.map(|p| p.config_dir(ctx.hub.store.dir()));
+    //
+    // Failing that, a thread's author may hold their own Claude login (see
+    // `people.rs`). On a shared box that is what stops three developers from
+    // spending one subscription seat — each person's turns authenticate as
+    // themselves. A Claudex profile still wins: it is already pointing the
+    // harness at a non-Anthropic backend, where a personal Anthropic login
+    // means nothing.
+    let config_dir = profile
+        .map(|p| p.config_dir(ctx.hub.store.dir()))
+        .or_else(|| person_config_dir(ctx));
     if let Some(dir) = &config_dir {
         std::fs::create_dir_all(dir)
-            .with_context(|| format!("create Claudex config dir {}", dir.display()))?;
+            .with_context(|| format!("create Claude config dir {}", dir.display()))?;
     }
     if let Some(session_id) = resume_session_id {
         let repair = match &config_dir {
@@ -768,6 +786,12 @@ fn spawn_claude(
         for (name, value) in profile.env(ctx.hub.store.dir()) {
             cmd.env(name, value);
         }
+    } else if let Some(dir) = &config_dir {
+        // A Claudex profile carries the variable in its own env overlay above.
+        // A person's login is otherwise the only thing pointing this child away
+        // from `~/.claude`, so it has to be set here or the config dir computed
+        // above would only affect transcript repair and nothing else.
+        cmd.env("CLAUDE_CONFIG_DIR", dir);
     }
     cmd.args(command_args_with_mcp_config(
         settings,

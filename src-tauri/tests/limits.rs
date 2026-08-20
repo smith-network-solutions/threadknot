@@ -71,6 +71,7 @@ fn harness() -> &'static Harness {
                     browser_profile_id: None,
                     hermes_agent_id: None,
                 },
+                None,
             )
             .unwrap();
         let term_id = state

@@ -114,6 +114,7 @@ fn open_thread(hub: &Arc<Hub>, schedule: &Schedule) -> Result<String> {
         schedule.project_id.clone(),
         schedule.agent,
         schedule.settings.clone(),
+        schedule.author.clone(),
     )?;
     let title = format!("{} · {}", schedule.name, Local::now().format("%b %-d, %H:%M"));
     let _ = hub.store.update_thread(&thread.id, |t| t.title = title);

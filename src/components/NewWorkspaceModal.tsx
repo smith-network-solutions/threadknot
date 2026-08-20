@@ -10,6 +10,12 @@ export interface MachineChoice {
  * First step of "add workspace": which machine the new workspace's folder
  * lives on. This machine first, then every paired peer (offline ones listed
  * but disabled) — same machine list the workspace roots manager uses.
+ *
+ * Servers are listed separately because the outcome is different, not just the
+ * destination: a workspace made on a peer is OUR record naming a remote root,
+ * replicated to our peers, whereas one made on a server is created in THEIR
+ * store and leaves nothing here. Same button, two meanings, so they do not
+ * share a list.
  */
 export function NewWorkspaceModal({
   onClose,
@@ -32,6 +38,11 @@ export function NewWorkspaceModal({
       online: !!p.online,
     })),
   ];
+  // `files` is what lets us browse their disk to choose the folder; without it
+  // the picker would open on nothing.
+  const servers = state.servers
+    .filter((s) => s.machineId && s.capabilities.includes("files"))
+    .map((s) => ({ machineId: s.machineId, label: s.name, online: !!s.online }));
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -63,6 +74,31 @@ export function NewWorkspaceModal({
             </button>
           ))}
         </div>
+
+        {servers.length > 0 && (
+          <>
+            <div className="settings-label">or on a server you work on</div>
+            <div className="roots-attach">
+              {servers.map((mc) => (
+                <button
+                  key={mc.machineId}
+                  type="button"
+                  className="settings-toggle"
+                  disabled={!mc.online}
+                  title={
+                    mc.online
+                      ? `Create it on ${mc.label}. It stays in their catalog — nothing is stored on this machine.`
+                      : `${mc.label} is offline`
+                  }
+                  onClick={() => onChoose({ machineId: mc.machineId, label: mc.label })}
+                >
+                  {mc.label}
+                  {mc.online ? "" : " (offline)"}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

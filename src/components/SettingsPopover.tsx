@@ -13,12 +13,14 @@ import type {
   ConnectorStatus,
   DeviceCapability,
   DiscoveredPeer,
+  Person,
   RemoteAccess,
   UpdateStatus,
 } from "../lib/protocol";
 import {
   DEFAULT_DEVICE_CAPABILITIES,
   DEVICE_CAPABILITY_LABELS,
+  OWNER_PERSON_ID,
 } from "../lib/protocol";
 import { copyText, formatFullDateTime, timeAgo } from "../lib/format";
 import { useIsMobile } from "../lib/viewport";
@@ -90,6 +92,7 @@ import {
   PencilIcon,
   TrashIcon,
   UsbKeyIcon,
+  UsersIcon,
   XIcon,
 } from "./icons";
 import type {
@@ -1444,6 +1447,359 @@ function RemoteAccessSettings() {
   );
 }
 
+/** Remote Threadknots this machine is a guest on.
+ *
+ *  Deliberately its own section rather than a row under Machines. Adding a
+ *  machine makes two installs equals and merges their workspace catalogs;
+ *  adding a server makes this one a client of somebody else's, one way. Putting
+ *  them in the same list is how you end up pairing your laptop to a shared box
+ *  and wondering why your colleague's projects are in your sidebar.
+ */
+function ServersSettings() {
+  const { state, actions } = useStore();
+  const [adding, setAdding] = useState(false);
+  const [origin, setOrigin] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isMaster = state.hello?.principal !== "device";
+
+  const add = () => {
+    const url = origin.trim();
+    if (!url || busy) return;
+    setBusy(true);
+    setError(null);
+    void actions
+      .addServer({ origin: url, pairingCode: code.trim() || undefined })
+      .then(() => {
+        setOrigin("");
+        setCode("");
+        setAdding(false);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="settings-block">
+      <div className="settings-row">
+        <span className="settings-label">servers</span>
+        {isMaster && (
+          <button
+            type="button"
+            className="settings-toggle"
+            title="Become a guest on a machine somebody else runs"
+            onClick={() => {
+              setAdding((v) => !v);
+              setError(null);
+            }}
+          >
+            {adding ? "cancel" : "add server"}
+          </button>
+        )}
+      </div>
+      {/* The long version lives in the empty state, where somebody is actually
+          deciding whether they want one. Once a server is on the list you know
+          what a server is, so a single line is the whole reminder — and running
+          both at once said "sidebar" twice in four lines. */}
+      {state.servers.length > 0 && (
+        <div className="settings-value dim">
+          Machines somebody else runs. Their work shows in your sidebar; none of
+          yours crosses.
+        </div>
+      )}
+
+      <div className="machine-cards">
+        {state.servers.map((server) => (
+          <div key={server.id} className="machine-card">
+            <MachineAvatar name={server.name} size={48} className="machine-card-avatar" />
+            <div className="machine-card-main">
+              <div className="machine-card-name">
+                <span className="machine-card-title">{server.name}</span>
+                <span className="machine-badge">guest</span>
+              </div>
+              <div className="machine-card-sub">{server.origin}</div>
+              <div className="server-card-meta">
+                <span className={`machine-pill${server.online ? " online" : ""}`}>
+                  <span className="pill-dot" />
+                  {server.online ? "connected" : "offline"}
+                </span>
+                {/* Who you are over there is the fact that makes a server
+                    different from a machine, and it was buried in a run-on
+                    sentence. Their people live on their machine, so we know the
+                    name and nothing else — render the face from that. */}
+                {server.personName ? (
+                  <span className="server-identity" title="Their owner assigned you this name">
+                    <span className="server-identity-label">as</span>
+                    <MachineAvatar name={server.personName} size={18} preview={false} />
+                    {server.personName}
+                  </span>
+                ) : (
+                  <span className="server-identity unassigned" title="Only that machine's owner can assign this">
+                    <UsersIcon size={12} />
+                    Nobody yet
+                  </span>
+                )}
+                {server.capabilities.length > 0 && (
+                  <span className="grant-pills">
+                    {server.capabilities.map((c) => (
+                      <span key={c} className="grant-pill">
+                        {c}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </div>
+            </div>
+            {isMaster && (
+              <div className="machine-card-actions">
+                <MachineCardMenu
+                  label={`Actions for ${server.name}`}
+                  items={[
+                    {
+                      label: "Disconnect",
+                      icon: <TrashIcon size={13} />,
+                      danger: true,
+                      onSelect: () => {
+                        setError(null);
+                        void actions.removeServer(server.id).catch((e: unknown) =>
+                          setError(e instanceof Error ? e.message : String(e)),
+                        );
+                      },
+                    },
+                  ]}
+                />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {state.servers.length === 0 && !adding && (
+        <div className="settings-value dim">
+          No servers yet. Their projects appear in your sidebar and their chats
+          run on their machine — unlike a machine under “Machines”, which merges
+          both sides' project lists in each direction. Ask whoever runs it for a
+          pairing code from their Settings → Phone &amp; access.
+        </div>
+      )}
+
+      {adding && (
+        <div className="hermes-add">
+          <input
+            type="text"
+            placeholder="https://their-machine.example.com"
+            value={origin}
+            onChange={(e) => setOrigin(e.target.value)}
+            autoFocus
+          />
+          <input
+            type="text"
+            placeholder="pairing code (ABCDE-FGHIJ)"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") add();
+            }}
+          />
+          {error && <div className="settings-value notify-failed">{error}</div>}
+          <button
+            type="button"
+            className="settings-toggle"
+            disabled={busy || !origin.trim()}
+            onClick={add}
+          >
+            {busy ? "connecting…" : "connect"}
+          </button>
+          <div className="settings-value dim">
+            The code is one-time and short-lived. What you get back is a device
+            credential on their machine: they choose what it may do, assign it to
+            you by name, and can revoke it without asking you.
+          </div>
+        </div>
+      )}
+      {error && !adding && <div className="settings-value notify-failed">{error}</div>}
+    </div>
+  );
+}
+
+/** Who shares this machine.
+ *
+ *  The sidebar's people row is driven entirely from here, and it stays hidden
+ *  until this list has a second entry — so an install nobody touches keeps the
+ *  interface it already had. What this separates is *attention*, not access:
+ *  every agent still runs as the same OS user, and a person with `terminal` can
+ *  read anyone's files. It is for teammates who trust each other and are tired
+ *  of un-starring each other's projects.
+ */
+function PeopleSettings() {
+  const { state, actions } = useStore();
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isMaster = state.hello?.principal !== "device";
+
+  const add = () => {
+    const trimmed = name.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setError(null);
+    void actions
+      .createPerson(trimmed)
+      .then(() => setName(""))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="settings-block">
+      <div className="settings-row">
+        <span className="settings-label">people</span>
+      </div>
+      <div className="settings-value dim">
+        each person gets their own sidebar view, their own starred and stashed
+        projects, and their own settled shelf. chats stay visible to everyone —
+        this is tidiness, not privacy.
+      </div>
+      {state.people.map((person) => (
+        <PersonRow key={person.id} person={person} editable={isMaster} />
+      ))}
+      {isMaster && (
+        <div className="settings-row">
+          <input
+            className="settings-input"
+            placeholder="add someone…"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") add();
+            }}
+          />
+          <button
+            type="button"
+            className="settings-toggle primary"
+            disabled={!name.trim() || busy}
+            onClick={add}
+          >
+            add
+          </button>
+        </div>
+      )}
+      {error && <div className="settings-value error">{error}</div>}
+      {isMaster && state.people.length > 1 && (
+        <div className="settings-value dim">
+          then assign each paired browser or phone to a person under “Phone &
+          access” — an unassigned credential speaks for the owner, which is what
+          every device paired before this existed still does.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One person: rename, their own Claude login, and remove. */
+function PersonRow({ person, editable }: { person: Person; editable: boolean }) {
+  const { state, actions } = useStore();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(person.name);
+  const [command, setCommand] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isolated = !!person.claudeConfigDir;
+  const you = person.id === state.actingPerson;
+
+  const fail = (e: unknown) =>
+    setError(e instanceof Error ? e.message : String(e));
+
+  return (
+    <div className="settings-subblock">
+      <div className="settings-row">
+        <span className="settings-value">
+          {person.name}
+          {you && <span className="dim"> · you</span>}
+          {person.builtin && <span className="dim"> · owner</span>}
+        </span>
+        <span className="settings-row-actions">
+          <button
+            type="button"
+            className="settings-toggle"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {isolated ? "own Claude login" : "shared Claude login"}
+          </button>
+          {editable && !person.builtin && (
+            <button
+              type="button"
+              className="settings-toggle"
+              title="Remove this person. Their chats keep their name; their devices go back to the owner."
+              onClick={() => {
+                setError(null);
+                void actions.deletePerson(person.id).catch(fail);
+              }}
+            >
+              remove
+            </button>
+          )}
+        </span>
+      </div>
+      {open && (
+        <>
+          {editable && (
+            <div className="settings-row">
+              <input
+                className="settings-input"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={() => {
+                  if (draft.trim() && draft.trim() !== person.name) {
+                    setError(null);
+                    void actions
+                      .updatePerson(person.id, { name: draft.trim() })
+                      .catch(fail);
+                  }
+                }}
+              />
+            </div>
+          )}
+          <div className="settings-value dim">
+            a shared login spends one Claude subscription seat between everyone
+            here, which is what runs you all into the same rate limit. give this
+            person their own and their turns authenticate as them.
+          </div>
+          {editable && (
+            <div className="settings-row">
+              <span className="settings-label">own Claude login</span>
+              <button
+                type="button"
+                className={`settings-toggle${isolated ? " primary" : ""}`}
+                onClick={() => {
+                  setError(null);
+                  void actions
+                    .setPersonClaudeLogin(person.id, !isolated)
+                    .then(setCommand)
+                    .catch(fail);
+                }}
+              >
+                {isolated ? "on" : "off"}
+              </button>
+            </div>
+          )}
+          {isolated && (
+            <div className="settings-value">
+              run this once, as them:{" "}
+              <code>
+                {command ??
+                  `CLAUDE_CONFIG_DIR=${person.claudeConfigDir} claude /login`}
+              </code>
+            </div>
+          )}
+          {error && <div className="settings-value error">{error}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function MobileDevices() {
   const { actions } = useStore();
   const [devices, setDevices] = useState<
@@ -1528,10 +1884,11 @@ function PairedPhoneRow({
   onChanged: (device: import("../lib/protocol").MobileDeviceInfo) => void;
   onRevoked: () => void;
 }) {
-  const { actions } = useStore();
+  const { state, actions } = useStore();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const granted = device.capabilities ?? DEFAULT_DEVICE_CAPABILITIES;
+  const people = state.people;
 
   const toggle = (id: DeviceCapability, on: boolean) => {
     const next = on
@@ -1556,6 +1913,33 @@ function PairedPhoneRow({
           </span>
         </span>
         <span className="settings-row-actions">
+          {/* Only worth asking once a second person exists; before that every
+              credential speaks for the owner and the question is noise. */}
+          {people.length > 1 && (
+            <select
+              className="settings-select"
+              title="Which person this credential speaks for"
+              value={device.personId ?? OWNER_PERSON_ID}
+              onChange={(e) => {
+                const next = e.target.value;
+                setError(null);
+                void actions
+                  .setDevicePerson(
+                    device.id,
+                    next === OWNER_PERSON_ID ? null : next,
+                  )
+                  .catch((err: unknown) =>
+                    setError(err instanceof Error ? err.message : String(err)),
+                  );
+              }}
+            >
+              {people.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             className="settings-toggle"
@@ -3946,6 +4330,8 @@ const SETTINGS_SECTIONS = [
   { id: "notifications", label: "Notifications", blurb: "alerts & sound" },
   { id: "machines", label: "Machines", blurb: "your fleet" },
   { id: "phone", label: "Phone & access", blurb: "LAN URL, devices" },
+  { id: "people", label: "People", blurb: "who shares this machine" },
+  { id: "servers", label: "Servers", blurb: "machines you work on" },
   { id: "agents", label: "Agents", blurb: "Claude, Codex, Kimi, Claudex" },
   { id: "voice", label: "Voice", blurb: "dictation & transcription" },
   { id: "library", label: "Library", blurb: "skills & MCP tools" },
@@ -3993,6 +4379,10 @@ function SettingsSectionContent({
       return <MachinesSettings />;
     case "phone":
       return <PhoneAccessSettings />;
+    case "people":
+      return <PeopleSettings />;
+    case "servers":
+      return <ServersSettings />;
     case "agents":
       return <AgentsSettings />;
     case "voice":

@@ -23,7 +23,11 @@ import {
 } from "../lib/appearance";
 import { createPortal } from "react-dom";
 import type { Project, Thread, Workspace } from "../lib/protocol";
-import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
+import {
+  HERMES_HOME_PROJECT_ID,
+  isQuickHomeProjectId,
+  OWNER_PERSON_ID,
+} from "../lib/protocol";
 import { showHermesAgents } from "../lib/agentVisibility";
 import { hermesActive, hermesDormant, hermesGatewayId } from "../lib/hermesBinding";
 import {
@@ -37,14 +41,20 @@ import { timeAgo } from "../lib/format";
 import {
   findThread,
   hermesAttentionThreads,
+  allProjects,
+  allWorkspaces,
+  personById,
   projectActivity,
+  workspaceServer,
   threadNeedsAttention,
+  threadInView,
   threadSettled,
   useStore,
   type AppState,
   type ProjectActivity,
 } from "../state/store";
 import { SettingsScreen } from "./SettingsPopover";
+import { PeopleRow, PersonAvatar } from "./PeopleRow";
 import { CrestBadge } from "./legacy/Crest";
 import { UsageMeter } from "./UsageMeter";
 import { VersionBadge } from "./VersionBadge";
@@ -1373,6 +1383,15 @@ function ThreadRow({
   const chipTitle = peer?.online
     ? `runs on ${peer.name}`
     : `on ${peer?.name ?? "another machine"} (offline)`;
+  // Whose chat this is, shown only when it isn't yours and only once a second
+  // person exists. Your own rows keep exactly the shape they always had, so
+  // the badge reads as "somebody else's" rather than as new furniture.
+  const author = thread.author ?? OWNER_PERSON_ID;
+  const authorEl =
+    state.people.length > 1 && author !== state.actingPerson ? (
+      <PersonAvatar person={personById(state, author)} size={16} />
+    ) : null;
+
   const chipsEl = (
     <>
       {/* Who is working this chat. In a workspace that is the gateway's name,
@@ -1760,6 +1779,7 @@ function ThreadRow({
           </div>
           <div className="thread-card-meta">
             {chipsEl}
+            {authorEl}
             <span className="thread-row-time">{timeAgo(thread.updatedAt)}</span>
             {cachedPreview && cachedPreview.turnCount > 0 && (
               <span className="thread-card-turns">
@@ -1806,6 +1826,7 @@ function ThreadRow({
           </div>
           <div className="thread-row-sub">
             {chipsEl}
+            {authorEl}
             <span className="thread-row-time">{timeAgo(thread.updatedAt)}</span>
             {settleEl}
             {starEl}
@@ -1839,6 +1860,7 @@ function ThreadRow({
           {thread.title || "Untitled thread"}
         </span>
         {chipsEl}
+        {authorEl}
         <span className="thread-row-time">{timeAgo(thread.updatedAt)}</span>
         {settleEl}
         {starEl}
@@ -1958,6 +1980,11 @@ function WorkspaceSection({
     setVisibleThreadCount((count) => Math.max(count, pageSize));
   }
   const [name, setName] = useState(workspace.name);
+  // Set when this workspace belongs to a remote server we are a guest on.
+  // Also gates the local-only actions below: renaming, restyling or attaching
+  // a root to somebody else's workspace is their machine's business, and those
+  // requests do not route, so offering them would only produce an error.
+  const guestServer = workspaceServer(state, workspace);
   const workspacePreview = useAvatarHoverPreview({
     image: workspace.image,
     name: workspace.name,
@@ -2115,6 +2142,15 @@ function WorkspaceSection({
           >
             <FolderClosedIcon size={13} className="project-folder-icon" />
             <span className="project-name">{workspace.name}</span>
+            {/* Whose machine this lives on, when it is not ours. A guest link's
+                workspaces sit in the same list as our own — they are work we
+                actually do — but which box a chat will run on is not something
+                to leave the reader to infer from the roots. */}
+            {guestServer && (
+              <span className="project-server-chip" title={`on ${guestServer.name}`}>
+                {guestServer.name}
+              </span>
+            )}
             {workspace.favorite && (
               <StarIcon size={11} filled className="project-fav-star" />
             )}
@@ -3356,8 +3392,8 @@ export const Sidebar = memo(function Sidebar({
       : "";
 
   const projectById = useMemo(
-    () => new Map(state.projects.map((p) => [p.id, p])),
-    [state.projects],
+    () => new Map(allProjects(state).map((p) => [p.id, p])),
+    [state.projects, state.serverCatalogs],
   );
 
   // Workspaces are the sidebar's top level. Until the workspace list arrives
@@ -3368,7 +3404,11 @@ export const Sidebar = memo(function Sidebar({
     // plus tile), never as a workspace. Servers from before that rule may
     // still replicate a same-name workspace wrapping the home; strip those
     // memberships here so the fleet can never show the home twice.
-    const workspaces = state.workspaces
+    // The MERGED list: this machine's own workspaces plus whatever each remote
+    // server is showing us. `allWorkspaces` is a read-time merge — the guest
+    // catalogs are never folded into `state.workspaces`, because that is the
+    // list our own peers receive on their next connect.
+    const workspaces = allWorkspaces(state)
       .map((w) => ({
         ...w,
         members: w.members.filter((m) => !isQuickHomeProjectId(m.projectId)),
@@ -3377,7 +3417,7 @@ export const Sidebar = memo(function Sidebar({
     const covered = new Set(
       workspaces.flatMap((w) => w.members.map((m) => m.projectId)),
     );
-    const synthetic: Workspace[] = state.projects
+    const synthetic: Workspace[] = allProjects(state)
       // The Hermes home project renders as the dedicated section, never as a
       // workspace.
       .filter(
@@ -3394,7 +3434,7 @@ export const Sidebar = memo(function Sidebar({
         members: [{ machineId: "", projectId: p.id }],
       }));
     return [...workspaces, ...synthetic];
-  }, [state.workspaces, state.projects]);
+  }, [state.workspaces, state.projects, state.serverCatalogs, state.servers]);
 
   /** Members resolved for display + their threads (local AND remote roots,
    *  merged newest first). In solo mode only the solo project's slice of the
@@ -3419,6 +3459,12 @@ export const Sidebar = memo(function Sidebar({
           !localId || m.machineId === localId || m.machineId === "";
         const p = projectById.get(m.projectId);
         const peer = state.peers.find((x) => x.machineId === m.machineId);
+        // A server we are a guest on is never in `peers`. Reading liveness from
+        // the peer table alone reported a box we are connected to as an offline
+        // "remote machine", which disabled every row that pointed at it.
+        const server = peer
+          ? undefined
+          : state.servers.find((x) => x.machineId === m.machineId);
         return {
           machineId: m.machineId,
           projectId: m.projectId,
@@ -3429,9 +3475,9 @@ export const Sidebar = memo(function Sidebar({
             "folder",
           machineLabel: isLocal
             ? (state.hello?.friendlyName ?? "this machine")
-            : (peer?.name ?? "remote machine"),
+            : (peer?.name ?? server?.name ?? "remote machine"),
           isLocal,
-          online: isLocal || !!peer?.online,
+          online: isLocal || !!peer?.online || !!server?.online,
           path: p?.path ?? m.path ?? "",
         };
       });
@@ -3445,8 +3491,13 @@ export const Sidebar = memo(function Sidebar({
       // Deliberately two places, one chat: which folder it belongs to and who
       // is working it are different questions. Only the folderless Hermes home
       // is exclusive to that view, and its project never reaches `members`.
+      // The people filter lands here, on the one memo every section, card and
+      // count downstream reads from. `threadInView` is always true until a
+      // second person exists, so a single-person install computes the same
+      // list it always did.
       const threads = members
         .flatMap((m) => state.threads[m.projectId] ?? [])
+        .filter((t) => threadInView(state.viewPerson, t))
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
       // The workspace's true last activity is the max updatedAt across its
       // threads, computed BEFORE the favorite re-sort scrambles the order. An
@@ -3465,7 +3516,7 @@ export const Sidebar = memo(function Sidebar({
       map.set(w.id, { projects, members, threads, lastActivity });
     }
     return map;
-  }, [sections, soloId, projectById, state.threads, state.peers, state.hello, layout.threadOrder]);
+  }, [sections, soloId, projectById, state.threads, state.peers, state.hello, state.viewPerson, state.serverCatalogs, layout.threadOrder]);
 
   // Projects sit where they were PUT. The base order used to be activity —
   // the workspace holding the newest thread floated to the top — which meant
@@ -3923,6 +3974,8 @@ export const Sidebar = memo(function Sidebar({
         </button>
       </div>
 
+      <PeopleRow />
+
       <div className="sidebar-launch">
         <button
           type="button"
@@ -4091,6 +4144,16 @@ export const Sidebar = memo(function Sidebar({
                 <span className="project-picker-name">
                   {pickedWorkspace.name}
                 </span>
+                {/* Same label as the list layout's header: which machine this
+                    workspace lives on, when it is not this one. */}
+                {(() => {
+                  const guest = workspaceServer(state, pickedWorkspace);
+                  return guest ? (
+                    <span className="project-server-chip" title={`on ${guest.name}`}>
+                      {guest.name}
+                    </span>
+                  ) : null;
+                })()}
                 <span className="project-picker-count">
                   {sectionData.get(pickedWorkspace.id)?.threads.length ?? 0}
                 </span>
@@ -4330,6 +4393,14 @@ export const Sidebar = memo(function Sidebar({
                   ? unhideWorkspace(menu.workspace.id)
                   : hideWorkspace(menu.workspace.id),
             },
+            // Everything below edits the workspace RECORD, which for a guest
+            // link lives on somebody else's machine. None of these kinds
+            // route, so offering them would produce "unknown workspace" and
+            // nothing else. Hiding is different and stays above: it is a
+            // sidebar opinion, not an edit to their record.
+            ...(workspaceServer(state, menu.workspace)
+              ? []
+              : [
             {
               label: "Rename workspace",
               icon: <PencilIcon size={13} />,
@@ -4373,6 +4444,7 @@ export const Sidebar = memo(function Sidebar({
                   },
                 ]
               : []),
+              ]),
           ]}
         />
       )}
@@ -4461,6 +4533,12 @@ export const Sidebar = memo(function Sidebar({
                 // workspace on any machine (this one first, then each peer), then
                 // draft there. Offered for machines already in the workspace AND
                 // ones not on it yet; offline peers stay listed but disabled.
+                //
+                // Servers are deliberately NOT offered here. This attaches a
+                // root to OUR workspace record and replicates it to our peers;
+                // a server's folders belong to its own catalog and must never
+                // land in a record we hand out. Creating a whole workspace over
+                // there is the supported move — "Add workspace" offers it.
                 ...[
                   {
                     machineId: localId,

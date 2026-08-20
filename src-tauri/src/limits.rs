@@ -281,6 +281,15 @@ pub const EXEC_KILL_GRACE: Duration = Duration::from_secs(5);
 /// error says.
 pub const PEER_REQUEST_QUEUE: usize = 64;
 
+/// Remote servers this machine may be a guest on at once (`servers.rs`).
+///
+/// Each record holds an open socket and a reconnect loop, so the cost is real
+/// but small; the cap is here because a runaway "add server" loop should fail
+/// loudly rather than open connections until the file descriptors run out.
+/// Being a guest on more than a handful of other people's machines is not a
+/// workflow anyone has, so the number is deliberately unambitious.
+pub const MAX_REMOTE_SERVERS: usize = 8;
+
 /// Bytes read per chunk when streaming a file response.
 ///
 /// The size of the *whole* buffer for a download: `Body::from_stream` is polled

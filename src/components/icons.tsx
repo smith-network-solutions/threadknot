@@ -56,6 +56,18 @@ export const UsbKeyIcon = ({ size = 40, className }: IconProps) => (
   </svg>
 );
 
+/** Two overlapping figures — "everyone", the people row's unfiltered chip. */
+export const UsersIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M16 19v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 17.5V19" />
+      <circle cx="10" cy="8" r="3.2" />
+      <path d="M20 19v-1.5a3.5 3.5 0 0 0-2.6-3.38" />
+      <path d="M15.4 5.2a3.2 3.2 0 0 1 0 5.6" />
+    </>,
+    p,
+  );
+
 /** Notebook with a pen nib — "start a new chat / write". */
 export const NotebookPenIcon = (p: IconProps) =>
   svg(
