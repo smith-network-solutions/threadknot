@@ -9,7 +9,7 @@
 use crate::store::Store;
 use clipboard_rs::{Clipboard, ClipboardContext};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone)]
 pub struct ClipboardState {
@@ -20,6 +20,36 @@ impl ClipboardState {
     pub fn new(store: Arc<Store>) -> Self {
         Self { store }
     }
+}
+
+/// The one clipboard context this process ever builds.
+///
+/// `ClipboardContext::new` opens two X server connections and detaches a thread
+/// that keeps an `Arc` to them, and the type has no `Drop` — so a context built
+/// per call never gives either connection back, even after the value goes out
+/// of scope. Xorg caps a *session* at 256 clients, shared by every application
+/// on the desktop, so a few dozen copies here take the clipboard away from the
+/// whole machine ("Maximum number of clients reached") until Threadknot exits.
+///
+/// A single long-lived context is also what X selection ownership wants: the
+/// owner has to still be running to answer paste requests, which arrive long
+/// after the copy call returns.
+pub(crate) fn context() -> Result<&'static ClipboardContext, String> {
+    static CONTEXT: OnceLock<ClipboardContext> = OnceLock::new();
+    static INIT: Mutex<()> = Mutex::new(());
+
+    if let Some(context) = CONTEXT.get() {
+        return Ok(context);
+    }
+    // Hold the lock across the connect so two racing callers cannot each build
+    // a context and leak the loser's connections — the very thing above.
+    let _guard = INIT.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(context) = CONTEXT.get() {
+        return Ok(context);
+    }
+    let context = ClipboardContext::new()
+        .map_err(|error| format!("Couldn't open the system clipboard: {error}"))?;
+    Ok(CONTEXT.get_or_init(|| context))
 }
 
 /// Put an existing project file on the native file clipboard.
@@ -95,8 +125,7 @@ async fn set_file(path: PathBuf) -> Result<(), String> {
         let path = path
             .canonicalize()
             .map_err(|error| format!("Couldn't resolve the file: {error}"))?;
-        let context = ClipboardContext::new()
-            .map_err(|error| format!("Couldn't open the system clipboard: {error}"))?;
+        let context = context()?;
         let path_text = path.to_string_lossy().into_owned();
 
         #[cfg(target_os = "linux")]

@@ -144,12 +144,11 @@ async fn clipboard_images() -> Result<Vec<ClipboardImage>, String> {
     #[cfg(target_os = "linux")]
     {
         use base64::Engine as _;
-        use clipboard_rs::{Clipboard, ClipboardContext};
+        use clipboard_rs::Clipboard;
 
         let images =
             tauri::async_runtime::spawn_blocking(|| -> Result<Vec<ClipboardImage>, String> {
-                let context = ClipboardContext::new()
-                    .map_err(|error| format!("couldn't open the system clipboard: {error}"))?;
+                let context = crate::clipboard::context()?;
                 let mut uris = context.get_files().unwrap_or_default();
 
                 // GNOME Files' canonical target carries `copy`/`cut` on its
