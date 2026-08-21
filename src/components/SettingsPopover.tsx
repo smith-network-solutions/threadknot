@@ -4023,10 +4023,21 @@ function BrowserProfileSettings() {
                 onClick={() => setExpanded(isOpen ? null : profile.id)}
               >
                 <span className="bl-fav">
-                  {favicon ? (
-                    <img src={favicon} alt="" width={18} height={18} />
-                  ) : (
-                    <GlobeIcon size={16} />
+                  {/* Globe always renders underneath; a loaded favicon covers
+                      it, and a failed one (offline, blocked, none) hides
+                      itself so the globe shows instead of a broken image. */}
+                  <GlobeIcon size={16} />
+                  {favicon && (
+                    <img
+                      className="bl-fav-img"
+                      src={favicon}
+                      alt=""
+                      width={18}
+                      height={18}
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
                   )}
                 </span>
                 <span className="bl-card-name">{profile.name}</span>

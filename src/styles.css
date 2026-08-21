@@ -12321,6 +12321,7 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 }
 .bl-card-head:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
 .bl-fav {
+  position: relative;
   flex: none;
   width: 22px;
   height: 22px;
@@ -12330,7 +12331,15 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   background: var(--panel-3, #1a2030);
   color: var(--dim);
 }
-.bl-fav img { display: block; border-radius: 4px; }
+/* Sits over the globe; hides itself on load failure so the globe shows. */
+.bl-fav-img {
+  position: absolute;
+  inset: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--panel-3, #1a2030);
+}
 .bl-live {
   flex: none;
   display: inline-flex;
