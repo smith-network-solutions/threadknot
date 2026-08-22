@@ -24,6 +24,7 @@ import {
 } from "../lib/protocol";
 import { copyText, formatFullDateTime, timeAgo } from "../lib/format";
 import { useIsMobile } from "../lib/viewport";
+import { useSheetClose, useSheetDrag } from "./Sheet";
 import { pickAvatarImage } from "../lib/sidebarImage";
 import { MachineAvatar, machineLook } from "./MachineAvatar";
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
@@ -4411,92 +4412,6 @@ function SettingsSectionContent({
   }
 }
 
-/** Downward pull, in px, past which releasing dismisses the mobile sheet. */
-const SHEET_DISMISS_PX = 96;
-/** Downward speed, in px/ms, that dismisses regardless of distance. */
-const SHEET_FLICK_SPEED = 0.5;
-
-/**
- * Pull-down-to-dismiss for the mobile sheet.
- *
- * Deliberately bound to the grip and header only. If the whole sheet took the
- * gesture, every upward scroll inside a long section (Machines, Library) would
- * be ambiguous at the top of its scroll range, and the sheet would fight the
- * content for it — the classic bottom-sheet bug. The grip is the handle in both
- * senses.
- *
- * Drag offset rides on the CSS `translate` property, which composes with — and
- * so never fights — the `transform` the open/close keyframes own.
- */
-function useSheetDrag(sheetRef: React.RefObject<HTMLDivElement | null>, onDismiss: () => void) {
-  const start = useRef<{ y: number; t: number } | null>(null);
-  const [dragging, setDragging] = useState(false);
-
-  const setOffset = useCallback(
-    (px: number) => {
-      sheetRef.current?.style.setProperty("--sheet-drag", `${px}px`);
-    },
-    [sheetRef],
-  );
-
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    // The close and back buttons live in the drag zone; let them be buttons.
-    if ((e.target as HTMLElement).closest("button")) return;
-    // Without this the header text starts a native selection-drag a few pixels
-    // in, which fires pointercancel and kills the gesture halfway down.
-    e.preventDefault();
-    start.current = { y: e.clientY, t: e.timeStamp };
-    setDragging(true);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  }, []);
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!start.current) return;
-      const dy = e.clientY - start.current.y;
-      // Upward pulls get rubber-banded rather than lifting the sheet out of
-      // its slot: there is nothing above it to reveal.
-      setOffset(dy > 0 ? dy : dy / 4);
-    },
-    [setOffset],
-  );
-
-  const onPointerUp = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const from = start.current;
-      if (!from) return;
-      start.current = null;
-      setDragging(false);
-      const dy = e.clientY - from.y;
-      const speed = dy / Math.max(1, e.timeStamp - from.t);
-      if (dy > SHEET_DISMISS_PX || (speed > SHEET_FLICK_SPEED && dy > 24)) {
-        // Leave the offset alone — the closing rule animates `translate` from
-        // wherever the finger let go, so the sheet keeps the gesture's momentum.
-        onDismiss();
-      } else {
-        setOffset(0);
-      }
-    },
-    [onDismiss, setOffset],
-  );
-
-  // A cancel is the system taking the pointer away (a call arrives, the OS
-  // claims the gesture). It carries no meaningful coordinates — reading
-  // clientY off one gives 0, which reads as a big *upward* drag — so it can
-  // never share the release path. Always put the sheet back.
-  const onPointerCancel = useCallback(() => {
-    if (!start.current) return;
-    start.current = null;
-    setDragging(false);
-    setOffset(0);
-  }, [setOffset]);
-
-  return {
-    dragging,
-    dragHandlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
-  };
-}
-
 /**
  * Settings: a centred dialog with a left nav rail on desktop, and on phones
  * (≤767px) a bottom sheet whose sections are a drill-down list. The old mobile
@@ -4523,44 +4438,9 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
   // and the keyboard, including Escape (which leaves it, rather than closing
   // Settings), so everything else here is unmounted for the duration.
   const [circuit, setCircuit] = useState(false);
-  const [closing, setClosing] = useState(false);
-
-  const requestClose = useCallback(() => {
-    if (!closing) setClosing(true);
-  }, [closing]);
-
   // The surface currently on screen — the sheet on mobile, the dialog on
   // desktop. Only one is mounted at a time, so they can share the ref.
-  const surfaceRef = useRef<HTMLDivElement | null>(null);
-
-  // Unmount when the exit animation actually ends, not on a timer guessing how
-  // long it took. A fixed 220ms was a race: the `.closing` class only lands on
-  // the next React render, so on a loaded machine the 200ms animation was still
-  // mid-flight when the timer fired and Settings vanished in a pop. The timeout
-  // survives only as a backstop for the case where no event ever arrives.
-  useEffect(() => {
-    if (!closing) return;
-    const node = surfaceRef.current;
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      onClose();
-    };
-    // Both events bubble, so a transition on any descendant (a hover, a
-    // spinner) would otherwise cut the exit short.
-    const onEnd = (e: Event) => {
-      if (e.target === node) finish();
-    };
-    node?.addEventListener("animationend", onEnd);
-    node?.addEventListener("transitionend", onEnd);
-    const timer = window.setTimeout(finish, 600);
-    return () => {
-      node?.removeEventListener("animationend", onEnd);
-      node?.removeEventListener("transitionend", onEnd);
-      window.clearTimeout(timer);
-    };
-  }, [closing, onClose]);
+  const { surfaceRef, closing, requestClose } = useSheetClose(onClose);
 
   // On mobile Escape is two-stage — out of a section first, then out of
   // Settings — so it agrees with the back arrow beside it.
