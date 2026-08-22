@@ -3,7 +3,7 @@ import type { BrowserProfileInfo, PortInfo, Project } from "../lib/protocol";
 import { findThread, useStore } from "../state/store";
 import { browserWsUrl } from "../lib/discovery";
 import { isNativeShell, readNativeClipboardText } from "../lib/native";
-import { APPEARANCE_EVENT, getPaneZoom } from "../lib/appearance";
+import { APPEARANCE_EVENT, getPaneZoom, setPaneZoom, ZOOM_MAX, ZOOM_MIN } from "../lib/appearance";
 import { BROWSER_INTENT_EVENT, takeBrowserUrl } from "../lib/browserIntent";
 import { ContextMenu, type CtxItem } from "./ContextMenu";
 import { UsbKeyIcon } from "./icons";
@@ -138,6 +138,15 @@ function isPasteShortcut(event: React.KeyboardEvent): boolean {
   );
 }
 
+/** Finger travel that turns a touch from a tap into a scroll. Small enough
+ *  that a deliberate swipe responds at once, large enough that the wobble in a
+ *  tap does not scroll the page out from under it. */
+const TOUCH_SCROLL_SLOP = 8;
+/** Hold this long without moving and a touch becomes a real mouse press, so
+ *  text selection and drag-and-drop stay reachable on a phone. Shorter than the
+ *  long-press menu, which still owns the longer hold. */
+const TOUCH_DRAG_HOLD_MS = 260;
+
 /** How long the agent's target box / cursor stays on screen after an action.
  *  Long enough to see what was touched, short enough that it never reads as a
  *  marker on whatever the page became. */
@@ -190,6 +199,17 @@ export function BrowserPane({
   const pointerFrame = useRef<number | null>(null);
   const pendingPointer = useRef<{ x: number; y: number } | null>(null);
   const pressedButton = useRef<string | null>(null);
+  /** Live touch points, so a second finger can turn a drag into a pinch. */
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  /** A one-finger touch drag scrolls instead of dragging the mouse — but only
+   *  once it has travelled far enough to be a swipe rather than a tap. */
+  const touchScroll = useRef<{ id: number; x: number; y: number; active: boolean } | null>(null);
+  /** Finger distance when a pinch began, and the pane zoom at that moment;
+   *  the new zoom is a ratio of the two. */
+  const pinch = useRef<{ dist: number; zoom: number } | null>(null);
+  /** Set when a long press promotes a touch into a real mouse drag (select,
+   *  drag and drop), which suppresses scrolling for the rest of the gesture. */
+  const touchHold = useRef<number | null>(null);
   /** Resolvers for in-flight right-click hit-tests, keyed by the nonce sent to
    *  the backend. The `context` frame that comes back settles the promise so
    *  the menu opens with what's actually under the cursor. */
@@ -702,7 +722,40 @@ export function BrowserPane({
     });
   }
 
+  /** Cancel a pending long-press promotion. */
+  function clearTouchHold() {
+    if (touchHold.current != null) {
+      window.clearTimeout(touchHold.current);
+      touchHold.current = null;
+    }
+  }
+
   function releasePointer(event: React.PointerEvent) {
+    if (event.pointerType === "touch") {
+      touches.current.delete(event.pointerId);
+      if (touches.current.size < 2) pinch.current = null;
+      const drag = touchScroll.current;
+      const scrolled = drag?.id === event.pointerId && drag.active;
+      const pending = touchHold.current != null && drag?.id === event.pointerId;
+      clearTouchHold();
+      if (drag?.id === event.pointerId) touchScroll.current = null;
+      // A tap: the press was deferred waiting to see if this became a swipe or
+      // a hold, so send the whole click now, on release.
+      if (pending && !scrolled && pressedButton.current == null) {
+        const tap = toFrameCoords(event);
+        send({ type: "mouse", event: "pressed", ...tap, button: "left", clickCount: 1 });
+        send({ type: "mouse", event: "released", ...tap, button: "left", clickCount: 1 });
+        (event.currentTarget as HTMLCanvasElement).releasePointerCapture?.(event.pointerId);
+        return;
+      }
+      // A swipe scrolled; there is no press to release.
+      if (scrolled) {
+        (event.currentTarget as HTMLCanvasElement).releasePointerCapture?.(event.pointerId);
+        return;
+      }
+      // Otherwise a long press promoted it to a real press — fall through and
+      // release it like a mouse.
+    }
     const button = pressedButton.current;
     if (!button) return;
     pressedButton.current = null;
@@ -1232,7 +1285,16 @@ export function BrowserPane({
             aria-label="Shared browser viewport"
             onPointerDown={(event) => {
               event.preventDefault();
-              event.currentTarget.setPointerCapture?.(event.pointerId);
+              // Capture keeps a drag alive when the finger/cursor leaves the
+              // canvas — but it THROWS for a pointer the browser no longer
+              // considers active, and an exception here would abort the whole
+              // handler, losing the press (and, for a second finger, the pinch
+              // that depends on it being registered).
+              try {
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+              } catch {
+                /* not capturable; the gesture still works without it */
+              }
               event.currentTarget.focus();
               const point = toFrameCoords(event);
               const button = buttonName(event.button);
@@ -1247,12 +1309,66 @@ export function BrowserPane({
                 setMenu(null);
                 if (button !== "right") return;
               }
+              if (event.pointerType === "touch") {
+                touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                // Two fingers: a pinch, never a press. Drop any pending scroll
+                // and record the baseline the zoom ratio is measured against.
+                if (touches.current.size === 2) {
+                  touchScroll.current = null;
+                  clearTouchHold();
+                  const [a, b] = [...touches.current.values()];
+                  pinch.current = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: getPaneZoom("browser") };
+                  return;
+                }
+                if (touches.current.size > 2) return;
+                // One finger is ambiguous until it moves: a tap clicks, a swipe
+                // scrolls, a hold becomes a real drag. Nothing is sent yet.
+                touchScroll.current = { id: event.pointerId, x: event.clientX, y: event.clientY, active: false };
+                touchHold.current = window.setTimeout(() => {
+                  touchHold.current = null;
+                  // Held still: promote to a mouse press so text selection and
+                  // drag-and-drop stay reachable on touch.
+                  touchScroll.current = null;
+                  pressedButton.current = button;
+                  send({ type: "mouse", event: "pressed", ...point, button, clickCount: 1 });
+                }, TOUCH_DRAG_HOLD_MS);
+                return;
+              }
               pressedButton.current = button;
               send({ type: "mouse", event: "pressed", ...point, button, clickCount: event.detail || 1 });
             }}
             onPointerUp={releasePointer}
             onPointerCancel={releasePointer}
             onPointerMove={(event) => {
+              if (event.pointerType === "touch") {
+                if (!touches.current.has(event.pointerId)) return;
+                touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                // Pinch: zoom is the ratio of the current finger distance to
+                // the distance when the second finger landed.
+                if (touches.current.size === 2 && pinch.current) {
+                  const [a, b] = [...touches.current.values()];
+                  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+                  if (pinch.current.dist > 0) {
+                    const next = (pinch.current.zoom * dist) / pinch.current.dist;
+                    setPaneZoom("browser", Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)));
+                  }
+                  return;
+                }
+                const drag = touchScroll.current;
+                if (!drag || drag.id !== event.pointerId) return;
+                const dx = drag.x - event.clientX;
+                const dy = drag.y - event.clientY;
+                if (!drag.active && Math.hypot(dx, dy) < TOUCH_SCROLL_SLOP) return;
+                // Past the slop this is a swipe, not a tap: cancel the pending
+                // long press and scroll by the delta since the last move. The
+                // sign matches a wheel — dragging content up scrolls down.
+                drag.active = true;
+                clearTouchHold();
+                drag.x = event.clientX;
+                drag.y = event.clientY;
+                send({ type: "wheel", ...toFrameCoords(event), deltaX: dx, deltaY: dy });
+                return;
+              }
               if (!event.isPrimary) return;
               queuePointerMove(toFrameCoords(event));
             }}
