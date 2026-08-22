@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -99,7 +100,27 @@ interface MediaTransform {
   y: number;
 }
 
-const MAX_MEDIA_ZOOM = 5;
+/** Pointer capture keeps a drag alive when the cursor leaves the frame, but it
+ *  THROWS for a pointer the browser no longer considers active — and an
+ *  exception mid-handler would abort the pan it was starting. */
+function capture(el: Element, pointerId: number): void {
+  try {
+    (el as HTMLElement).setPointerCapture?.(pointerId);
+  } catch {
+    /* not capturable; the gesture still works, it just ends at the edge */
+  }
+}
+
+/** Zoom ceiling (800%) and floor (10%). The floor used to be 1.0 — nothing
+ *  could be made SMALLER than the frame, which is half of what a zoom control
+ *  is for. */
+const MAX_MEDIA_ZOOM = 8;
+const MIN_MEDIA_ZOOM = 0.1;
+/** Wheel notch -> zoom factor. Multiplicative, so a notch feels the same at 10%
+ *  as at 800%; a fixed step crawls when zoomed in and lurches when zoomed out. */
+const WHEEL_ZOOM_STEP = 1.15;
+/** How far a plain (unmodified) wheel notch pans. */
+const WHEEL_PAN_STEP = 80;
 
 function ZoomableMedia({
   kind,
@@ -125,14 +146,18 @@ function ZoomableMedia({
     pointerY: 0,
   });
   const [percent, setPercent] = useState(100);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const apply = (next: MediaTransform) => {
     const frame = frameRef.current;
     const target = transformRef.current;
     if (!frame || !target) return;
-    const scale = Math.max(1, Math.min(MAX_MEDIA_ZOOM, next.scale));
-    const maxX = frame.clientWidth * (scale - 1) / 2;
-    const maxY = frame.clientHeight * (scale - 1) / 2;
+    const scale = Math.max(MIN_MEDIA_ZOOM, Math.min(MAX_MEDIA_ZOOM, next.scale));
+    // Panning is bounded by how far the scaled content actually overhangs the
+    // frame. Under 1 there is no overhang, so it stays centred instead of
+    // drifting off into the surrounding black.
+    const maxX = Math.max(0, (frame.clientWidth * (scale - 1)) / 2);
+    const maxY = Math.max(0, (frame.clientHeight * (scale - 1)) / 2);
     const value = {
       scale,
       x: Math.max(-maxX, Math.min(maxX, next.x)),
@@ -146,14 +171,38 @@ function ZoomableMedia({
   };
 
   const reset = () => apply({ scale: 1, x: 0, y: 0 });
-  const zoomBy = (amount: number) => {
+
+  /** Zoom by a factor, keeping whatever sits under the cursor where it is.
+   *  Scaling about the frame's centre instead — what this did before — walks
+   *  the thing you were looking at straight out of view. */
+  const zoomAt = (factor: number, clientX?: number, clientY?: number) => {
+    const frame = frameRef.current;
     const current = valueRef.current;
-    const scale = Math.max(1, Math.min(MAX_MEDIA_ZOOM, current.scale + amount));
-    apply(scale === 1 ? { scale, x: 0, y: 0 } : { ...current, scale });
+    const scale = Math.max(
+      MIN_MEDIA_ZOOM,
+      Math.min(MAX_MEDIA_ZOOM, current.scale * factor),
+    );
+    if (!frame || clientX === undefined || clientY === undefined) {
+      apply({ ...current, scale });
+      return;
+    }
+    const rect = frame.getBoundingClientRect();
+    // Cursor offset from the frame's centre, which is the transform origin.
+    const ox = clientX - rect.left - rect.width / 2;
+    const oy = clientY - rect.top - rect.height / 2;
+    const ratio = scale / current.scale;
+    apply({
+      scale,
+      x: ox - (ox - current.x) * ratio,
+      y: oy - (oy - current.y) * ratio,
+    });
   };
 
+  const zoomBy = (factor: number) => zoomAt(factor);
+
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== "touch") return;
+    // Every pointer type, not just touch. A mouse could not pan a zoomed image
+    // at all, which made zooming past the frame edge pointless.
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const points = [...pointersRef.current.values()];
     const current = valueRef.current;
@@ -169,11 +218,20 @@ function ZoomableMedia({
         pointerX: 0,
         pointerY: 0,
       };
-      for (const id of pointersRef.current.keys()) event.currentTarget.setPointerCapture(id);
-    } else if (current.scale > 1) {
-      gestureRef.current = { ...gestureRef.current, x: current.x, y: current.y, pointerX: event.clientX, pointerY: event.clientY };
-      event.currentTarget.setPointerCapture(event.pointerId);
+      for (const id of pointersRef.current.keys()) capture(event.currentTarget, id);
+      return;
     }
+    // A video's own controls need their clicks, so it only grabs the pointer
+    // once there is somewhere to pan to.
+    if (kind === "video" && current.scale <= 1) return;
+    gestureRef.current = {
+      ...gestureRef.current,
+      x: current.x,
+      y: current.y,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+    };
+    capture(event.currentTarget, event.pointerId);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -192,7 +250,7 @@ function ZoomableMedia({
         x: gesture.x + centerX - gesture.centerX,
         y: gesture.y + centerY - gesture.centerY,
       });
-    } else if (points.length === 1 && valueRef.current.scale > 1) {
+    } else if (points.length === 1) {
       event.preventDefault();
       apply({
         scale: valueRef.current.scale,
@@ -217,22 +275,95 @@ function ZoomableMedia({
     }
   };
 
+  /** Plain wheel pans (shift for sideways); ctrl/cmd zooms at the cursor. A
+   *  bare wheel used to return early and do nothing whatsoever, which is what
+   *  "you can't scroll" meant. */
   const onWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    zoomBy(event.deltaY < 0 ? 0.2 : -0.2);
+    if (event.ctrlKey || event.metaKey) {
+      zoomAt(
+        event.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP,
+        event.clientX,
+        event.clientY,
+      );
+      return;
+    }
+    const current = valueRef.current;
+    const step = (delta: number) =>
+      delta === 0 ? 0 : delta > 0 ? -WHEEL_PAN_STEP : WHEEL_PAN_STEP;
+    const sideways = event.shiftKey;
+    apply({
+      scale: current.scale,
+      x: current.x + step(sideways ? event.deltaY || event.deltaX : event.deltaX),
+      y: current.y + (sideways ? 0 : step(event.deltaY)),
+    });
+  };
+
+  const toggleFullscreen = () => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    if (document.fullscreenElement === frame) void document.exitFullscreen();
+    else void frame.requestFullscreen().catch(() => undefined);
+  };
+
+  // Keep the button honest when fullscreen is left by Escape or the OS chrome
+  // rather than by the button.
+  useEffect(() => {
+    const sync = () => setIsFullscreen(document.fullscreenElement === frameRef.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const current = valueRef.current;
+    const pan = event.shiftKey ? 200 : 60;
+    const nudge = (dx: number, dy: number) => {
+      event.preventDefault();
+      apply({ scale: current.scale, x: current.x + dx, y: current.y + dy });
+    };
+    switch (event.key) {
+      case "+":
+      case "=":
+        event.preventDefault();
+        zoomBy(WHEEL_ZOOM_STEP);
+        break;
+      case "-":
+      case "_":
+        event.preventDefault();
+        zoomBy(1 / WHEEL_ZOOM_STEP);
+        break;
+      case "0":
+        event.preventDefault();
+        reset();
+        break;
+      case "f":
+      case "F":
+        event.preventDefault();
+        toggleFullscreen();
+        break;
+      case "ArrowLeft": nudge(pan, 0); break;
+      case "ArrowRight": nudge(-pan, 0); break;
+      case "ArrowUp": nudge(0, pan); break;
+      case "ArrowDown": nudge(0, -pan); break;
+      default:
+        break;
+    }
   };
 
   return (
     <div
       ref={frameRef}
       className={`artifact-zoom-stage kind-${kind}`}
+      tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerEnd}
       onPointerCancel={onPointerEnd}
       onWheel={onWheel}
-      onDoubleClick={() => percent > 100 ? reset() : zoomBy(1)}
+      onKeyDown={onKeyDown}
+      onDoubleClick={(event) =>
+        percent > 100 ? reset() : zoomAt(2, event.clientX, event.clientY)
+      }
     >
       <div ref={transformRef} className="artifact-media-transform">
         {kind === "image" ? (
@@ -252,9 +383,43 @@ function ZoomableMedia({
       </div>
       <span className="artifact-pinch-hint" aria-hidden="true">Pinch to zoom</span>
       <div className="artifact-media-zoom" aria-label="Media zoom controls">
-        <button type="button" onClick={() => zoomBy(-0.5)} disabled={percent <= 100} aria-label="Zoom out">−</button>
-        <button type="button" onClick={reset} disabled={percent === 100} aria-label="Reset zoom">{percent}%</button>
-        <button type="button" onClick={() => zoomBy(0.5)} disabled={percent >= MAX_MEDIA_ZOOM * 100} aria-label="Zoom in">+</button>
+        <button
+          type="button"
+          onClick={() => zoomBy(1 / WHEEL_ZOOM_STEP)}
+          disabled={percent <= MIN_MEDIA_ZOOM * 100}
+          aria-label="Zoom out"
+          title="Zoom out (−)"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={reset}
+          disabled={percent === 100}
+          aria-label="Fit to window"
+          title="Fit to window (0)"
+        >
+          {percent}%
+        </button>
+        <button
+          type="button"
+          onClick={() => zoomBy(WHEEL_ZOOM_STEP)}
+          disabled={percent >= MAX_MEDIA_ZOOM * 100}
+          aria-label="Zoom in"
+          title="Zoom in (+)"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="artifact-media-full"
+          onClick={toggleFullscreen}
+          aria-pressed={isFullscreen}
+          aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
+          title={isFullscreen ? "Exit full screen (F)" : "Full screen (F)"}
+        >
+          {isFullscreen ? "⤡" : "⤢"}
+        </button>
       </div>
     </div>
   );

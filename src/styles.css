@@ -5692,6 +5692,18 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .artifact-zoom-stage.is-zoomed { cursor: grab; }
 .artifact-zoom-stage.is-zoomed:active { cursor: grabbing; }
+/* Focusable for keyboard zoom/pan, but the focus ring would frame the whole
+   image; the controls carry their own. */
+.artifact-zoom-stage:focus { outline: none; }
+.artifact-zoom-stage:focus-visible { outline: 1px solid var(--brass, #c08b3e); outline-offset: -1px; }
+/* In fullscreen the stage IS the screen, so it supplies its own backdrop and
+   keeps the controls clear of the very bottom edge. */
+.artifact-zoom-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+}
+.artifact-zoom-stage:fullscreen .artifact-media-zoom { bottom: 28px; }
 .artifact-media-transform {
   width: 100%;
   height: 100%;
@@ -5747,6 +5759,17 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .artifact-media-zoom button:last-child { border-right: 0; }
 .artifact-media-zoom button:hover:not(:disabled) { color: #fff; background: rgba(255, 255, 255, 0.09); }
 .artifact-media-zoom button:disabled { color: rgba(255, 255, 255, 0.28); }
+/* Full-screen sits apart from the zoom trio, with a hairline to say so.
+   Scoped through the parent so it outranks `.artifact-media-zoom button`,
+   which would otherwise strip the border straight back off. */
+.artifact-media-zoom .artifact-media-full {
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 14px;
+  line-height: 1;
+}
+.artifact-media-zoom .artifact-media-full[aria-pressed="true"] {
+  color: var(--brass-hi, #e5b567);
+}
 .artifact-zoom-stage.kind-video .artifact-media-zoom { top: 12px; bottom: auto; }
 .artifact-pinch-hint {
   display: none;
