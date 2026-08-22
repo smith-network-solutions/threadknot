@@ -84,6 +84,21 @@ const DEFAULT_HEIGHT: i64 = 800;
 /// 1600 × 1200 did that to every pane wider than 1600 CSS px. The cost of the
 /// larger ceiling is paid only when a viewport is actually that big: the
 /// screencast encodes the viewport's size, not the cap.
+/// JPEG quality for screencast frames.
+///
+/// 60 was cheap and it showed: mosquito noise around every glyph, which in a
+/// browser is most of what you look at. 82 costs perhaps a third more bytes on
+/// a socket that is usually loopback or LAN, and takes the artefacts off text.
+///
+/// This is the only lever there is. Frames cannot be made SHARPER than the CSS
+/// viewport: Page.startScreencast captures at CSS resolution and ignores the
+/// emulated deviceScaleFactor — measured directly against Chrome 151, where a
+/// page given deviceScaleFactor 2 reported devicePixelRatio 2 while its frame
+/// metadata still read deviceWidth 700 for a 700px viewport. Raising the
+/// density therefore buys nothing here, and a genuinely sharp pane would need a
+/// different transport (periodic Page.captureScreenshot at clip.scale > 1 while
+/// the page is idle, streamed frames while it moves).
+const SCREENCAST_QUALITY: i64 = 82;
 const MAX_FRAME_WIDTH: i64 = 2560;
 const MAX_FRAME_HEIGHT: i64 = 1600;
 const ACTIVITY_HISTORY_LIMIT: usize = 40;
@@ -1587,7 +1602,7 @@ impl BrowserSession {
         page.execute(
             StartScreencastParams::builder()
                 .format(StartScreencastFormat::Jpeg)
-                .quality(60)
+                .quality(SCREENCAST_QUALITY)
                 .max_width(MAX_FRAME_WIDTH)
                 .max_height(MAX_FRAME_HEIGHT)
                 .every_nth_frame(1)
@@ -3864,7 +3879,7 @@ async fn spawn_session(
     page.execute(
         StartScreencastParams::builder()
             .format(StartScreencastFormat::Jpeg)
-            .quality(60)
+            .quality(SCREENCAST_QUALITY)
             .max_width(MAX_FRAME_WIDTH)
             .max_height(MAX_FRAME_HEIGHT)
             .every_nth_frame(1)
