@@ -14,6 +14,7 @@ import { repoForPath } from "../lib/git";
 import { artifactFileUrl, attachmentUrl } from "../lib/discovery";
 import { downloadViaShell } from "../lib/download";
 import { claimJustSent } from "../lib/justSent";
+import { agentLabel, OpenWorkerButton } from "./AgentHud";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
 import { parseReply, replyPreview, type ReplyTarget } from "../lib/reply";
@@ -48,7 +49,11 @@ import { AGENT_LABELS as AGENT_NAMES } from "../lib/protocol";
 
 type FeedActions = Pick<
   ThreadknotActions,
-  "toolOutput" | "respondApproval" | "setQuestionAnswers" | "respondQuestion"
+  | "toolOutput"
+  | "respondApproval"
+  | "setQuestionAnswers"
+  | "respondQuestion"
+  | "selectThread"
 >;
 
 /** Stable, non-feed state needed by an individual row. Keeping this out of the
@@ -331,7 +336,13 @@ function ArtifactCard({
 
 const SUBAGENT_LINE_MAX = 300;
 
-function SubagentCard({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
+function SubagentCard({
+  item,
+  render,
+}: {
+  item: Extract<FeedItem, { type: "tool" }>;
+  render: FeedRenderContext;
+}) {
   const sub = item.subagent!;
   const running = sub.status === "running";
   const [open, setOpen] = useState(running);
@@ -342,19 +353,40 @@ function SubagentCard({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
     return () => window.clearInterval(timer);
   }, [running]);
   const started = sub.startedAt ? Date.parse(sub.startedAt) : NaN;
-  const elapsed = running && Number.isFinite(started) ? formatDuration(now - started) : null;
+  const ended = sub.completedAt ? Date.parse(sub.completedAt) : NaN;
+  // Ticks while it runs, then freezes at what the run actually took. The old
+  // card dropped the timer entirely on completion, so the finished card — the
+  // one that stays in the log forever — was the one that said least.
+  const stopped = Number.isFinite(ended) ? ended : now;
+  const elapsed = Number.isFinite(started)
+    ? formatDuration(Math.max(0, (running ? now : stopped) - started))
+    : null;
   const lastActivity = sub.lastActivityAt ? Date.parse(sub.lastActivityAt) : NaN;
   const updateAge = running && Number.isFinite(lastActivity)
     ? formatDuration(Math.max(0, now - lastActivity))
     : null;
   const hasBody = running || sub.activity.length > 0 || !!sub.summary || !!sub.prompt;
   const title = sub.description || item.detail || sub.subagentType || "subagent";
+  const d = sub.dispatch;
+  // A dispatch is not a "background agent" — it is a brief handed to a worker
+  // thread on a named machine. Saying which is the difference between a card
+  // you can act on and one you scroll past.
+  const kind = d ? "Dispatched" : sub.background ? "Background agent" : "Subagent";
   return (
     <div className={`row-card subagent-row status-${sub.status}`}>
       <button className="row-head" onClick={() => hasBody && setOpen(!open)} disabled={!hasBody}>
         <span className="row-glyph"><ToolGlyph name="Agent" /></span>
-        <span className="row-name">{sub.background ? "Background agent" : "Subagent"}</span>
-        {sub.subagentType && <span className="subagent-type">{sub.subagentType}</span>}
+        <span className="row-name">{kind}</span>
+        {d ? (
+          <>
+            <span className="agent-hud-badge is-agent">{agentLabel(d.agent)}</span>
+            <span className="agent-hud-badge is-machine" title={d.machineId}>
+              {d.machineName}
+            </span>
+          </>
+        ) : (
+          sub.subagentType && <span className="subagent-type">{sub.subagentType}</span>
+        )}
         <span className="row-detail">{title}</span>
         {elapsed && <span className="subagent-elapsed">{elapsed}</span>}
         {running ? (
@@ -366,15 +398,29 @@ function SubagentCard({ item }: { item: Extract<FeedItem, { type: "tool" }> }) {
         )}
         {hasBody && <ChevronIcon size={13} open={open} className="row-chevron" />}
       </button>
+      {/* The HUD unmounts the moment the last agent finishes, so without this
+          the only route to a finished worker's thread disappears exactly when
+          you have a reason to go read it. */}
+      <OpenWorkerButton
+        childThreadId={d?.childThreadId}
+        onOpenThread={(threadId) => void render.actions.selectThread(threadId)}
+        className="subagent-open-thread"
+      />
       {open && hasBody && (
         <div className="subagent-body">
-          {running && (
+          {running ? (
             <div className="subagent-live-status">
               Running{elapsed ? ` · ${elapsed} elapsed` : ""}
               {updateAge
                 ? ` · last child update ${updateAge} ago`
                 : " · waiting for first child update"}
             </div>
+          ) : (
+            elapsed && (
+              <div className="subagent-live-status">
+                {sub.status === "error" ? "Failed" : "Finished"} · took {elapsed}
+              </div>
+            )
           )}
           {sub.prompt && (
             <div className="subagent-line kind-prompt">
@@ -422,7 +468,7 @@ function ToolRow({
   const [full, setFull] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
   const threadId = render.threadId;
-  if (item.subagent) return <SubagentCard item={item} />;
+  if (item.subagent) return <SubagentCard item={item} render={render} />;
   const hasDetail = item.detail.trim().length > 0;
   const hasOutput = item.output.length > 0;
   // A live tool is useful before it has printed anything: opening it reveals

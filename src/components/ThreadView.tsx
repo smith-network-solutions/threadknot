@@ -38,6 +38,7 @@ import { Composer } from "./Composer";
 import {
   AgentMark,
   ArrowDownIcon,
+  ArrowUpIcon,
   CheckIcon,
   ChevronIcon,
   MenuIcon,
@@ -810,6 +811,9 @@ export function ThreadView() {
   }, [state.feed]);
   const subagents = feedDerived.subagents;
   const runningSubagents = subagents.filter((subagent) => subagent.status === "running").length;
+  // Shared by the working status row and the count pill — both open the one
+  // panel, so they can never disagree about whether it is showing.
+  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const feedParticipants = useMemo(
     () => (thread ? threadParticipants(thread) : []),
     [thread?.participants, thread?.agent, thread?.settings],
@@ -1127,6 +1131,11 @@ export function ThreadView() {
     return () => window.removeEventListener(APPEARANCE_EVENT, onAppearance);
   }, [pinToEnd]);
 
+  // The parent may live on another machine and may not be loaded at all; the
+  // dispatch label is the fallback so the way back never disappears.
+  const parentThread = thread?.dispatch
+    ? findThread(state, thread.dispatch.parentThreadId)
+    : null;
   const busy = thread && thread.status !== "idle";
   // Multi-lane threads get a two-row header on phones (the lane roster drops
   // to its own scrolling strip) — see the mobile `.thread-head.has-lanes` CSS.
@@ -1180,6 +1189,25 @@ export function ThreadView() {
           )}
         </div>
         <div className="thread-head-main">
+          {/* A dispatched worker is lifted out of the flat thread list and
+              nested under whoever sent it, so once you are inside one there is
+              no way back — parentThreadId had exactly one reader in the whole
+              frontend before this. */}
+          {thread?.dispatch && (
+            <button
+              type="button"
+              className="worker-origin"
+              title={`Back to the thread that dispatched this worker${
+                parentThread ? `: ${parentThread.title || "Untitled thread"}` : ""
+              }`}
+              onClick={() => void actions.selectThread(thread.dispatch!.parentThreadId)}
+            >
+              <ArrowUpIcon size={11} />
+              <span className="worker-origin-label">
+                {parentThread?.title || thread.dispatch.label || "the thread that sent this"}
+              </span>
+            </button>
+          )}
           {thread && editing ? (
             <input
               className="title-input"
@@ -1509,24 +1537,45 @@ export function ThreadView() {
               />
             );
           })}
-          {busy && (
-            <div className="working-row">
-              <span className="working-signal" aria-hidden="true">
-                <i /><i /><i />
-              </span>
-              <span className="working-copy">
-                <strong>
-                  {thread!.status === "waiting_approval"
-                    ? "Holding for approval"
-                    : runningSubagents > 0
-                      ? "Waiting on a child agent"
-                      : "Working"}
-                </strong>
-                <em>{runningSubagents > 0 ? "still in motion…" : "following the thread…"}</em>
-              </span>
-              <span className="working-sweep" aria-hidden="true" />
-            </div>
-          )}
+          {busy && (() => {
+            const waiting = thread!.status === "waiting_approval";
+            const agents = !waiting && runningSubagents > 0;
+            const headline = waiting
+              ? "Holding for approval"
+              : agents
+                ? `Waiting on ${runningSubagents} agent${runningSubagents === 1 ? "" : "s"}`
+                : "Working";
+            const inner = (
+              <>
+                <span className="working-signal" aria-hidden="true">
+                  <i /><i /><i />
+                </span>
+                <span className="working-copy">
+                  <strong>{headline}</strong>
+                  <em>{agents ? "see what they're doing →" : "following the thread…"}</em>
+                </span>
+                <span className="working-sweep" aria-hidden="true" />
+              </>
+            );
+            // While child agents run, this row is the way into the agent panel:
+            // it is the element a reader is already looking at, unlike the
+            // count chip in the corner. With nothing running there is nothing
+            // to open, so it stays inert rather than advertising a door that
+            // leads nowhere.
+            return agents ? (
+              <button
+                type="button"
+                className="working-row is-actionable"
+                aria-expanded={agentPanelOpen}
+                aria-label={`${headline} — show what ${runningSubagents === 1 ? "it is" : "they are"} doing`}
+                onClick={() => setAgentPanelOpen((v) => !v)}
+              >
+                {inner}
+              </button>
+            ) : (
+              <div className="working-row">{inner}</div>
+            );
+          })()}
         </div>
       </div>
 
@@ -1548,6 +1597,8 @@ export function ThreadView() {
         <AgentHud
           subagents={subagents}
           onOpenThread={(threadId) => void actions.selectThread(threadId)}
+          open={agentPanelOpen}
+          onOpenChange={setAgentPanelOpen}
         />
         <Composer
           thread={thread ?? null}

@@ -5027,6 +5027,36 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 12px;
   padding: 4px 2px;
 }
+
+/* While child agents run, the status row is a button — it is the element a
+   reader is already looking at, unlike the 11px count chip in the corner. It
+   goes inert again the moment nothing is running, so it never advertises a
+   door that leads nowhere. */
+.working-row.is-actionable {
+  width: 100%;
+  padding: 4px 8px;
+  margin-left: -6px;
+  border-radius: 8px;
+  text-align: left;
+  transition: background 0.14s;
+}
+.working-row.is-actionable .working-copy em {
+  color: color-mix(in srgb, var(--teal) 70%, var(--faint));
+}
+@media (hover: hover) {
+  .working-row.is-actionable:hover {
+    background: color-mix(in srgb, var(--teal) 10%, transparent);
+  }
+  .working-row.is-actionable:hover .working-copy em { color: var(--teal); }
+}
+.working-row.is-actionable:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--teal) 55%, transparent);
+  outline-offset: 1px;
+}
+/* A thumb target, without changing the desktop rhythm. */
+@media (any-pointer: coarse) {
+  .working-row.is-actionable { padding: 9px 8px; }
+}
 .working-signal {
   display: inline-flex;
   align-items: center;
@@ -6436,6 +6466,130 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .agent-hud-act-line.is-result .agent-hud-act-text { color: var(--text); }
 .agent-hud-act-text { min-width: 0; color: #a8b2c8; white-space: pre-wrap; word-break: break-word; }
 .agent-hud-act-empty { font-size: 11.5px; color: var(--faint); font-style: italic; }
+
+/* The HUD's open-thread affordance, repeated on the feed card that outlives
+   it. Same words, same colour — one link, two homes. */
+.subagent-open-thread {
+  display: block;
+  width: 100%;
+  padding: 0 12px 9px 34px;
+  font-size: 11.5px;
+  color: var(--accent);
+  text-align: left;
+}
+.subagent-open-thread:hover { text-decoration: underline; }
+@media (any-pointer: coarse) {
+  .subagent-open-thread { padding: 6px 12px 12px 34px; font-size: 13px; }
+}
+
+/* Breadcrumb out of a dispatched worker, back to whoever sent it. The sidebar
+   nests workers under their parent, so inside one there is otherwise no way
+   back at all. */
+.worker-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin-bottom: 3px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--faint);
+  transition: color 0.14s, border-color 0.14s;
+}
+.worker-origin-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  .worker-origin:hover { color: var(--text); border-color: var(--line-2); }
+}
+@media (any-pointer: coarse) {
+  .worker-origin { padding: 5px 10px 5px 8px; font-size: 11.5px; }
+}
+
+/* ---- Agent activity on phones: a bottom sheet, not a corner popover ----
+
+   `.agent-hud-pop` is a mouse affordance — it hangs off an 11px chip beside
+   the composer, which is not something a thumb finds. The same list arrives
+   here as a sheet reusing the Settings sheet's grip, drag gesture
+   (useSheetDrag) and exit timing, so the app has one dismissal idiom instead
+   of two. Sits above the sidebar drawer (60) and below Settings (95). */
+@media (max-width: 767px) {
+  .agent-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    display: flex;
+    align-items: flex-end;
+    background: rgba(5, 6, 10, 0.6);
+    animation: fadeIn 0.18s ease both;
+  }
+  .agent-sheet-backdrop.closing { animation: fadeIn 0.2s ease both reverse; }
+
+  .agent-sheet {
+    position: relative;
+    width: 100%;
+    max-height: 78dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-raise);
+    border: 1px solid var(--line-2);
+    border-bottom: none;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.42);
+    padding-bottom: var(--safe-b);
+    /* Two independent properties, as in the Settings sheet: the open keyframe
+       owns `transform`, the drag owns `translate`, and they compose rather
+       than overwrite each other. */
+    translate: 0 var(--sheet-drag, 0px);
+    transition: translate 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+    animation: settings-sheet-in 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .agent-sheet.dragging { transition: none; }
+  .agent-sheet.closing {
+    translate: 0 100%;
+    transition: translate 0.2s ease-in;
+  }
+
+  .agent-sheet-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .agent-sheet-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 620;
+    color: var(--text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agent-sheet-close { flex: none; }
+
+  .agent-sheet .agent-hud-pop-list {
+    flex: 1;
+    min-height: 0;
+    padding: 6px;
+  }
+  /* The popover's 11-12px scale is a lean-in-with-a-mouse size. Rows here are
+     thumb-sized and the text is readable at arm's length. */
+  .agent-sheet .agent-hud-row-head-btn { padding: 11px 10px; }
+  .agent-sheet .agent-hud-row-name { font-size: 14px; }
+  .agent-sheet .agent-hud-row-detail { font-size: 12.5px; -webkit-line-clamp: 3; }
+  .agent-sheet .agent-hud-act-line { font-size: 12.5px; }
+  /* The sheet already scrolls; a second clipped scroller inside it is a trap. */
+  .agent-sheet .agent-hud-activity { max-height: none; }
+  .agent-sheet .agent-hud-open-thread { padding: 4px 12px 12px 32px; font-size: 13px; }
+}
 
 /* diff */
 
