@@ -164,9 +164,19 @@ async fn generate_claude(prompt: &str, model: &str, env: &[(String, String)]) ->
         .arg(title_schema().to_string())
         .arg("--model")
         .arg(model)
-        .arg("--safe-mode")
         .arg("--tools")
         .arg("")
+        // Titling is a metadata task with no tools, so the user's MCP fleet has
+        // no business being loaded: every server's tool definitions are billed
+        // into the prompt and then cannot be called anyway. Measured on a real
+        // login, dropping them takes a title from ~$0.12 and 250k tokens to
+        // ~$0.02. `--strict-mcp-config` with no `--mcp-config` means "none".
+        //
+        // This replaces `--safe-mode`, which the Claude CLI removed (it now
+        // exits 1 on the unknown option, so every title silently fell back).
+        // Authentication still comes from the user's normal CLI login, so do
+        // not reach for `--bare`: it refuses OAuth and the keychain outright.
+        .arg("--strict-mcp-config")
         .arg("--no-session-persistence")
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::piped())
