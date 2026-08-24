@@ -67,11 +67,16 @@ pub const EVENT_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(10);
 /// cap stops the same thing arriving as a thousand fragments.
 ///
 /// A legitimate heavy user: the largest real frame is a `turn.start` carrying
-/// base64 attachments, which costs 4/3 of the file bytes. 32 MiB therefore
-/// covers about 24 MB of attachments in one turn — several large photos, a big
-/// PDF, or a short screen recording. tungstenite's default is 64 MiB, so this
-/// halves the worst case a flood of sockets can pin.
-pub const MAX_WS_MESSAGE_BYTES: usize = 32 << 20;
+/// base64 attachments, which costs 4/3 of the file bytes. 48 MiB therefore
+/// covers about 36 MB of attachments in one turn — a phone camera's full-size
+/// photos, which routinely clear 25 MB each, or a short screen recording.
+/// tungstenite's default is 64 MiB, so this still leaves a margin below the
+/// worst case a flood of sockets could pin.
+///
+/// This is the ceiling the composer's own caps are derived from
+/// (`MAX_ATTACHMENT_TOTAL_BASE64` in `src/components/Composer.tsx`); raising
+/// the per-file limit without raising this one closes the socket mid-send.
+pub const MAX_WS_MESSAGE_BYTES: usize = 48 << 20;
 
 // HTTP request bodies need no constant here: axum's `DefaultBodyLimit` already
 // caps them at 2 MiB, it applies to every extractor in this app that reads a body

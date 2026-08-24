@@ -53,8 +53,20 @@ pub mod usage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const MAX_CLIPBOARD_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+/// Keep in step with `MAX_ATTACHMENT_BYTES` in `src/components/Composer.tsx`:
+/// a file dropped on the window and the same file picked from the dialog must
+/// not disagree about whether it is too big.
+const MAX_CLIPBOARD_IMAGE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGES: usize = 8;
+
+/// One wording for "too big", derived from the cap so the number in the
+/// sentence cannot drift away from the number being enforced.
+fn oversize_message(what: &str) -> String {
+    format!(
+        "{what} exceeds the {} MB limit.",
+        MAX_CLIPBOARD_IMAGE_BYTES / (1024 * 1024)
+    )
+}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,7 +133,7 @@ async fn clipboard_image() -> Result<Option<ClipboardImage>, String> {
             return Ok(None);
         }
         if pasted.stdout.len() > MAX_CLIPBOARD_IMAGE_BYTES {
-            return Err("Clipboard image exceeds the 10 MB limit.".into());
+            return Err(oversize_message("Clipboard image"));
         }
 
         Ok(Some(ClipboardImage {
@@ -184,7 +196,7 @@ async fn clipboard_images() -> Result<Vec<ClipboardImage>, String> {
                     let bytes = std::fs::read(&path)
                         .map_err(|error| format!("Couldn't read '{}': {error}", path.display()))?;
                     if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
-                        return Err(format!("'{}' exceeds the 10 MB limit.", path.display()));
+                        return Err(oversize_message(&format!("'{}'", path.display())));
                     }
                     let name = path
                         .file_name()
@@ -217,7 +229,7 @@ async fn clipboard_images() -> Result<Vec<ClipboardImage>, String> {
                             continue;
                         }
                         if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
-                            return Err("Clipboard image exceeds the 10 MB limit.".into());
+                            return Err(oversize_message("Clipboard image"));
                         }
                         images.push(ClipboardImage {
                             name: format!("pasted-image.{extension}"),
