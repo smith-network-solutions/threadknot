@@ -30,6 +30,7 @@ CLAUDE.local.md
 # screenshot of a live session can carry machine names, project names and the
 # LAN URL, and this repository is public.
 /docs/tmp-evidence/
+/docs/evidence/
 
 # The hosted relay and its console are a separate, private service. They are
 # ignored here rather than merely absent, because both directories still exist in
