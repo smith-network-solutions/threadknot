@@ -54,16 +54,19 @@ import { hermesPresence } from "./HermesPresence";
 import { hermesDormant, hermesGatewayId } from "../lib/hermesBinding";
 import { getSidebarView, subscribeSidebarView } from "../lib/sidebarView";
 
-// Attachment limits — 8 files, 10 MB each.
+// Attachment limits — 8 files, 25 MB each. A full-size phone photo clears
+// 10 MB on its own, which is what the old limit kept bouncing.
 const MAX_ATTACHMENTS = 8;
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_LABEL = `${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`;
 // A turn is one WebSocket frame, and the server refuses a frame larger than
-// MAX_WS_MESSAGE_BYTES (src-tauri/src/limits.rs) by closing the socket. Base64
-// costs 4/3 of the file bytes, so the total is the ceiling that actually
+// MAX_WS_MESSAGE_BYTES (src-tauri/src/limits.rs, 48 MiB) by closing the socket.
+// Base64 costs 4/3 of the file bytes, so the total is the ceiling that actually
 // applies — the per-file limit above never was one for eight files at once.
-// Checked here so too much at once is a sentence the user can read instead of a
-// connection that drops mid-send.
-const MAX_ATTACHMENT_TOTAL_BASE64 = 30 * 1024 * 1024;
+// Kept below the server's cap with room for the JSON envelope and the message
+// text riding alongside. Checked here so too much at once is a sentence the
+// user can read instead of a connection that drops mid-send.
+const MAX_ATTACHMENT_TOTAL_BASE64 = 45 * 1024 * 1024;
 const MAX_ATTACHMENT_TOTAL_LABEL = `${Math.floor((MAX_ATTACHMENT_TOTAL_BASE64 * 3) / 4 / (1024 * 1024))} MB`;
 // Image types agents render inline (vision). Everything else is delivered as a
 // workspace file the agent reads with its own tools — so we accept any file.
@@ -137,7 +140,7 @@ function fileToAttachment(file: File): Promise<DraftAttachment | { error: string
   return new Promise((resolve) => {
     const label = file.name || "file";
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      resolve({ error: `'${label}' exceeds the 10 MB limit.` });
+      resolve({ error: `'${label}' exceeds the ${MAX_ATTACHMENT_LABEL} limit.` });
       return;
     }
     const reader = new FileReader();
