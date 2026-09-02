@@ -20,6 +20,7 @@ use std::sync::Mutex;
 pub mod chunker;
 pub mod eleven;
 pub mod playback;
+pub mod stt;
 
 /// How much the agent is asked to say out loud.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
