@@ -4364,6 +4364,8 @@ body.reordering { cursor: grabbing; user-select: none; }
 }
 .vp-key-status { font-size: 11px; color: var(--faint); margin-left: auto; }
 .vp-key-status.good { color: var(--teal); }
+.vp-key-status.warn { color: var(--amber); }
+.vp-key-suberror { font-size: 11px; color: var(--amber); }
 .vp-key-usage { display: flex; flex-direction: column; gap: 4px; }
 .vp-key-count {
   font-family: var(--font-mono);

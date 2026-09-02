@@ -4431,6 +4431,12 @@ function VoiceOutputSettings() {
     week: { chars: number };
     month: { chars: number };
   } | null>(null);
+  /** Bumped when a key is (re)saved so the account check re-runs even when
+   *  `connected` never flipped (the replace-key flow). */
+  const [subEpoch, setSubEpoch] = useState(0);
+  /** Account-check failure, shown in the key card: a scoped key can be
+   *  perfectly able to speak yet unable to read the subscription. */
+  const [subError, setSubError] = useState<string | null>(null);
 
   const connected = !!settings?.hasApiKey;
 
@@ -4455,13 +4461,14 @@ function VoiceOutputSettings() {
   useEffect(() => {
     if (!connected) return;
     let cancelled = false;
+    setSubError(null);
     void actions
       .testVoice()
       .then((sub) => {
         if (!cancelled) setSubscription(sub);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setSubError(e instanceof Error ? e.message : String(e));
       });
     void actions
       .listVoiceModels()
@@ -4482,18 +4489,22 @@ function VoiceOutputSettings() {
     return () => {
       cancelled = true;
     };
-  }, [actions, connected]);
+  }, [actions, connected, subEpoch]);
 
   async function connect() {
     if (busy || !apiKey.trim()) return;
     setBusy(true);
     setError(null);
     try {
+      // Flip to the connected view the moment the key is stored. The
+      // subscription check runs from the `connected` effect and fills the
+      // card in — a scoped key that can't read the subscription must not
+      // leave the screen looking like the click did nothing.
       const next = await actions.saveVoiceSettings({ apiKey: apiKey.trim() });
-      const sub = await actions.testVoice();
       setSettings(next);
       setDraft(next);
-      setSubscription(sub);
+      setSubscription(null);
+      setSubEpoch((n) => n + 1);
       setApiKey("");
       setReplacingKey(false);
     } catch (e) {
@@ -4631,6 +4642,9 @@ function VoiceOutputSettings() {
           <div className="settings-hint voice-secret-note">
             The key is stored on this machine and is never returned after saving.
           </div>
+          {error && (
+            <div className="settings-value notify-failed voice-result">{error}</div>
+          )}
           <div className="vp-key-actions">
             <button
               type="button"
@@ -4664,10 +4678,11 @@ function VoiceOutputSettings() {
               {subscription?.tier && (
                 <span className="usage-plan">{subscription.tier}</span>
               )}
-              <span className={`vp-key-status ${subscription ? "good" : ""}`}>
-                {subscription ? "connected" : "checking…"}
+              <span className={`vp-key-status ${subscription ? "good" : subError ? "warn" : ""}`}>
+                {subscription ? "connected" : subError ? "key saved" : "checking…"}
               </span>
             </div>
+            {subError && <span className="vp-key-suberror">{subError}</span>}
             {usagePct != null && (
               <div className="vp-key-usage">
                 <div className="usage-bar usage-bar-wide">
