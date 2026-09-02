@@ -4597,9 +4597,68 @@ body.reordering { cursor: grabbing; user-select: none; }
 .vs-btn.on { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); }
 .vs-end:not(:disabled):hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
 
+/* Docked mini session: the conversation keeps running while the app is used.
+   Sits above content but BELOW settings/modals (95/100) — docking it is the
+   point of getting it out of the way. */
+.vs-mini {
+  position: fixed;
+  right: 18px;
+  bottom: 86px; /* clear of the composer strip */
+  z-index: 85;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px 6px 6px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--teal));
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  animation: rise 0.2s ease-out;
+}
+.vs-mini-knot {
+  flex: none;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 50%;
+}
+.vs-mini-knot canvas { display: block; }
+.vs-mini-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 92px;
+}
+.vs-mini-phase {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--brass);
+}
+.vs-mini.vs-listening .vs-mini-phase { color: var(--teal); }
+.vs-mini.vs-error .vs-mini-phase { color: var(--red); }
+.vs-mini-actions { display: flex; gap: 5px; }
+.vs-mini-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--dim);
+  font-size: 10.5px;
+  transition: color 0.12s, border-color 0.12s;
+}
+.vs-mini-btn:not(:disabled):hover { color: var(--text); border-color: var(--brass-dim); }
+.vs-mini-btn:disabled { opacity: 0.4; cursor: default; }
+.vs-mini-btn.on { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); }
+.vs-mini-btn.vs-end:not(:disabled):hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+
 @media (prefers-reduced-motion: reduce) {
   .vb-backdrop,
   .vs-backdrop,
+  .vs-mini,
   .vs-transcript { animation: none; }
 }
 

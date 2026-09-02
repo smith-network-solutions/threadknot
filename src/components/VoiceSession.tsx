@@ -41,7 +41,13 @@ const PHASE_PARAMS: Record<VoiceSessionPhase, KnotParams> = {
  * cheap, GPU-composited, and honest about prefers-reduced-motion (a static
  * frame per phase instead of the loop).
  */
-function VoiceKnotCanvas({ frame }: { frame: VoiceStateFrame | null }) {
+function VoiceKnotCanvas({
+  frame,
+  size = 420,
+}: {
+  frame: VoiceStateFrame | null;
+  size?: number;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const live = useRef({ frame });
   live.current.frame = frame;
@@ -61,7 +67,6 @@ function VoiceKnotCanvas({ frame }: { frame: VoiceStateFrame | null }) {
     ];
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const size = 420;
     canvas.width = size * dpr;
     canvas.height = size * dpr;
     ctx.scale(dpr, dpr);
@@ -113,20 +118,21 @@ function VoiceKnotCanvas({ frame }: { frame: VoiceStateFrame | null }) {
           else ctx.lineTo(x, y);
         }
         ctx.closePath();
+        const scale = Math.max(size / 420, 0.45);
         ctx.strokeStyle = color;
         ctx.globalAlpha = 0.35 + current.glow * 0.4;
-        ctx.lineWidth = 2.2;
+        ctx.lineWidth = 2.2 * scale;
         ctx.shadowColor = color;
-        ctx.shadowBlur = 8 + current.glow * 22;
+        ctx.shadowBlur = (8 + current.glow * 22) * scale;
         ctx.stroke();
 
         // The running lights: a dashed pass in the accent color, drifting.
-        ctx.setLineDash([4, 26]);
+        ctx.setLineDash([4 * scale, 26 * scale]);
         ctx.lineDashOffset = -t * 30 * (0.4 + current.spin) - strand * 10;
         ctx.strokeStyle = accent;
         ctx.globalAlpha = 0.5 + current.glow * 0.35;
-        ctx.lineWidth = 1.4;
-        ctx.shadowBlur = 4;
+        ctx.lineWidth = 1.4 * scale;
+        ctx.shadowBlur = 4 * scale;
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -154,9 +160,11 @@ function VoiceKnotCanvas({ frame }: { frame: VoiceStateFrame | null }) {
       raf = requestAnimationFrame(loop);
     }
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [size]);
 
-  return <canvas ref={canvasRef} className="vs-knot" style={{ width: 420, height: 420 }} />;
+  return (
+    <canvas ref={canvasRef} className="vs-knot" style={{ width: size, height: size }} />
+  );
 }
 
 /**
@@ -167,6 +175,7 @@ function VoiceKnotCanvas({ frame }: { frame: VoiceStateFrame | null }) {
 export function VoiceSession() {
   const { state, actions, dispatch } = useStore();
   const frame = state.voice.frame;
+  const minimized = state.voice.minimized;
   const stageRef = useRef<HTMLDivElement>(null);
 
   const sessionId = frame?.sessionId;
@@ -181,8 +190,59 @@ export function VoiceSession() {
   }
 
   useEffect(() => {
-    stageRef.current?.focus();
-  }, []);
+    if (!minimized) stageRef.current?.focus();
+  }, [minimized]);
+
+  // Docked to a corner: the session keeps running server-side and this stays
+  // its live viewport while the rest of the app is used — another thread,
+  // another machine, whatever. Click the knot to bring the stage back.
+  if (minimized) {
+    return createPortal(
+      <div className={`vs-mini vs-${phase}`} role="complementary" aria-label="Voice conversation (docked)">
+        <button
+          type="button"
+          className="vs-mini-knot"
+          title="Open the voice conversation"
+          onClick={() => dispatch({ type: "voiceMinimized", minimized: false })}
+        >
+          <VoiceKnotCanvas frame={frame} size={72} />
+        </button>
+        <div className="vs-mini-body">
+          <span className="vs-mini-phase">{PHASE_WORDS[phase]}</span>
+          <div className="vs-mini-actions">
+            <button
+              type="button"
+              className={`vs-mini-btn ${muted ? "on" : ""}`}
+              disabled={!sessionId}
+              title={muted ? "Unmute" : "Mute"}
+              onClick={() =>
+                sessionId &&
+                void actions.setVoiceMuted(sessionId, !muted).catch(() => undefined)
+              }
+            >
+              {muted ? "unmute" : "mute"}
+            </button>
+            {canInterrupt && sessionId && (
+              <button
+                type="button"
+                className="vs-mini-btn"
+                title="Interrupt the reply"
+                onClick={() =>
+                  void actions.interruptVoice(sessionId).catch(() => undefined)
+                }
+              >
+                stop
+              </button>
+            )}
+            <button type="button" className="vs-mini-btn vs-end" title="End the conversation" onClick={end}>
+              end
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
 
   return createPortal(
     <div className="vs-backdrop">
@@ -195,8 +255,11 @@ export function VoiceSession() {
         tabIndex={-1}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
+            // Non-destructive by default: Esc tucks the conversation into
+            // the corner; ending is the explicit button.
             e.preventDefault();
-            end();
+            if (sessionId) dispatch({ type: "voiceMinimized", minimized: true });
+            else end();
           } else if ((e.key === "m" || e.key === "M") && sessionId) {
             e.preventDefault();
             void actions.setVoiceMuted(sessionId, !muted).catch(() => undefined);
@@ -241,6 +304,15 @@ export function VoiceSession() {
         <div className="vs-controls">
           <button
             type="button"
+            className="vs-btn"
+            disabled={!sessionId}
+            title="Keep talking while you work — dock to the corner (Esc)"
+            onClick={() => dispatch({ type: "voiceMinimized", minimized: true })}
+          >
+            minimize
+          </button>
+          <button
+            type="button"
             className={`vs-btn ${muted ? "on" : ""}`}
             disabled={!sessionId}
             title="Mute the microphone (M)"
@@ -262,7 +334,7 @@ export function VoiceSession() {
           >
             interrupt
           </button>
-          <button type="button" className="vs-btn vs-end" title="End the conversation (Esc)" onClick={end}>
+          <button type="button" className="vs-btn vs-end" title="End the conversation" onClick={end}>
             end conversation
           </button>
         </div>

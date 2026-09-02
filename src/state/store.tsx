@@ -343,9 +343,12 @@ export interface AppState {
   sidebarOpen: boolean;
   usage: ProviderUsage[];
   /** The live voice session, driving the Voice Parlay overlay. `open` is the
-   *  overlay's visibility; the frame is the server's latest state broadcast. */
+   *  overlay's visibility, `minimized` docks it to a corner so the rest of
+   *  the app stays usable mid-conversation; the frame is the server's latest
+   *  state broadcast. */
   voice: {
     open: boolean;
+    minimized: boolean;
     frame: import("../lib/protocol").VoiceStateFrame | null;
   };
   notices: Notice[];
@@ -432,7 +435,7 @@ export const initialState: AppState = {
   lastSeq: 0,
   sidebarOpen: false,
   usage: [],
-  voice: { open: false, frame: null },
+  voice: { open: false, minimized: false, frame: null },
   notices: [],
   workspace: {},
   schedules: [],
@@ -488,6 +491,7 @@ export type Action =
   | { type: "usage"; usage: ProviderUsage[] }
   | { type: "voiceFrame"; frame: import("../lib/protocol").VoiceStateFrame }
   | { type: "voiceOpen"; open: boolean }
+  | { type: "voiceMinimized"; minimized: boolean }
   | { type: "noticeAdd"; notice: Notice }
   | { type: "noticeDismiss"; id: number }
   | { type: "workspace"; projectId: string; tab: WorkspaceTab | null }
@@ -1157,11 +1161,24 @@ export function reducer(state: AppState, action: Action): AppState {
       const ended = action.frame.state === "idle" && !action.frame.sessionId;
       return {
         ...state,
-        voice: { open: state.voice.open && !ended, frame: action.frame },
+        voice: {
+          open: state.voice.open && !ended,
+          minimized: !ended && state.voice.minimized,
+          frame: action.frame,
+        },
       };
     }
     case "voiceOpen":
-      return { ...state, voice: { ...state.voice, open: action.open } };
+      // Explicitly opening always restores the full stage.
+      return {
+        ...state,
+        voice: { ...state.voice, open: action.open, minimized: false },
+      };
+    case "voiceMinimized":
+      return {
+        ...state,
+        voice: { ...state.voice, minimized: action.minimized },
+      };
     case "noticeAdd":
       // Newest last; cap the stack so an unattended session can't flood it.
       return { ...state, notices: [...state.notices.slice(-3), action.notice] };
