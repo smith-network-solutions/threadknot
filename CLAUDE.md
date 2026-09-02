@@ -19,7 +19,12 @@ on the LAN, so the app is usable from a phone.
   over HTTP/SSE), `agents/mod.rs` (hub: event persistence + fanout),
   `library.rs`/`catalog.rs` (the Library: skills written into each CLI's own
   skills dir + an MCP-server registry injected into every driver at spawn),
-  `store.rs` (the data dir), `protocol.rs` (normalized event schema).
+  `store.rs` (the data dir), `protocol.rs` (normalized event schema),
+  `voice/` (Voice Parlay: mic → local Whisper → the thread's agent →
+  ElevenLabs TTS → speakers, all server-side; `voice/session.rs` owns the
+  loop, `voice/stt.rs` spawns the warm faster-whisper sidecar
+  `scripts/voice_stt.py`, and the per-install ElevenLabs key lives in
+  `voice.json` with dictation.json's write-only rules).
   Contract: `docs/PROTOCOL.md`.
 - **Frontend**: React/TS in `src/`, plain CSS, no state libs. Works in the Tauri
   webview and any phone browser (LAN URL + token in Settings popover). For the
