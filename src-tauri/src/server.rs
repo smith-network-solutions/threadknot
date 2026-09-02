@@ -36,6 +36,7 @@ pub struct ServerState {
     pub browser_profiles: Arc<crate::browser_profiles::BrowserProfileStore>,
     pub mobile: Arc<MobileStore>,
     pub dictation: Arc<crate::dictation::Dictation>,
+    pub voice: Arc<crate::voice::Voice>,
     /// Non-interactive command jobs (`exec.*`). Machine-local and in-memory: a
     /// job's process dies with this one, so a handle that outlived a restart
     /// could only ever resolve to a lie.
@@ -2695,6 +2696,10 @@ pub async fn handle_request(
                 // Whether the composer's mic button can do anything here, and
                 // why not when it can't.
                 "dictation": state.dictation.capability(principal.is_owner()),
+                // Whether the Voice Parlay button can do anything here —
+                // like dictation, the session runs this machine's mic and
+                // speakers, so only the owner on that machine gets it.
+                "voice": state.voice.capability(principal.is_owner()),
                 // What this connection may actually do, so the UI can hide what
                 // the owner did not grant instead of offering it and failing.
                 // Advisory only — every one of these is enforced server-side.
@@ -4465,6 +4470,16 @@ pub async fn handle_request(
             );
             state.dictation.cancel(field(&p, "recordingId")?).await;
             Ok(json!({}))
+        }
+        // Voice Parlay drives this machine's mic and speakers, so like
+        // dictation it is never peer routed and never available to a paired
+        // device's credential.
+        k if k.starts_with("voice.") => {
+            anyhow::ensure!(
+                principal.is_owner(),
+                "voice conversations only run from the app on that machine"
+            );
+            crate::voice::handle(state, k, &p).await
         }
         // Must precede the generic git arm: these act on Threadknot's own checkout,
         // not on a project repo, so they take no repoId.

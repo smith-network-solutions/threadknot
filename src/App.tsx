@@ -1567,6 +1567,19 @@ function makeActions(
       return settings;
     },
 
+    getVoiceSettings() {
+      return client.request("voice.settings.get", {});
+    },
+
+    async saveVoiceSettings(input) {
+      const settings = await client.request("voice.settings.save", input);
+      // Capability rides hello, so make the voice button appear/disappear
+      // immediately instead of waiting for the identity broadcast.
+      const hello = await client.request("hello", {});
+      dispatch({ type: "hello", data: hello });
+      return settings;
+    },
+
     async startDictation() {
       const { recordingId } = await client.request("dictation.start", {});
       return recordingId;

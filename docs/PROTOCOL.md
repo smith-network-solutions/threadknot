@@ -145,6 +145,8 @@ Server → client:
 | `dictation.cancel` | `{ recordingId }` | `{}` — throw the clip away without transcribing it |
 | `dictation.settings.get` | `{}` | Secret-free voice settings (`provider`, API base/model, `hasApiKey`, local/capture readiness); master only |
 | `dictation.settings.save` | `{ provider, baseUrl, model, apiKey? }` | Saves local or OpenAI-compatible API transcription settings; the write-only key is never returned; master only |
+| `voice.settings.get` | `{}` | Secret-free Voice Parlay settings (`hasApiKey`/`keyHint`, voice/model/format, tuning, conversation prefs, capture/playback/STT readiness); like all `voice.*` verbs: this machine's mic and speakers, never peer routed, master only |
+| `voice.settings.save` | Partial `VoiceOutputSettingsInput` | Same shape as `voice.settings.get`; absent fields keep their value; `apiKey` is write-only (absent preserves, `""` clears) and never returned |
 | `fs.listDir` | `{ path? }` | `{ path, parent, entries: [{name, path, isDir}] }` (dirs only; for the phone's folder picker; `path` omitted → home dir) |
 | `fs.mkdir` | `{ path }` | `{ path }` (canonical) — creates the directory and any missing parents; powers the picker's "new folder" button, locally or on a peer via `machineId` routing |
 | `term.list` | `{ projectId }` | `{ terms: TermInfo[] }` — persisted tabs for the project, each with a live `alive` flag |

@@ -603,6 +603,8 @@ export interface HelloData {
   profileUpdatedAt?: string;
   /** Whether the composer's mic button can record here; absent on old servers. */
   dictation?: DictationCapability;
+  /** Whether the Voice Parlay button can run here; absent on old servers. */
+  voice?: VoiceCapability;
 }
 
 /** Why voice dictation can or can't run against this server. */
@@ -632,6 +634,66 @@ export interface DictationSettingsInput {
   model: string;
   /** Absent preserves the stored key; present replaces it. */
   apiKey?: string;
+}
+
+/** Why a voice conversation can or can't run against this server. Like
+ *  dictation, the session drives the serving machine's own mic and speakers,
+ *  so it is master-only and never peer routed. */
+export interface VoiceCapability {
+  available: boolean;
+  /** Key saved and voice output enabled — the button works, not just exists. */
+  configured: boolean;
+  hint?: string;
+}
+
+export type VoiceVerbosity = "concise" | "normal" | "detailed";
+
+/** Per-request ElevenLabs tuning; absent fields use the voice's own defaults. */
+export interface VoiceTuning {
+  stability?: number;
+  similarityBoost?: number;
+  style?: number;
+  useSpeakerBoost?: boolean;
+  speed?: number;
+}
+
+/** Secret-free Voice Parlay settings. The stored ElevenLabs key is exposed
+ *  only as a bool plus a two-character tail for the masked reminder. */
+export interface VoiceOutputSettings {
+  hasApiKey: boolean;
+  keyHint?: string;
+  enabled: boolean;
+  voiceId: string;
+  voiceName: string;
+  modelId: string;
+  outputFormat: string;
+  voiceSettings: VoiceTuning;
+  verbosity: VoiceVerbosity;
+  bargeIn: boolean;
+  endSilenceMs: number;
+  autoListen: boolean;
+  captureAvailable: boolean;
+  captureHint?: string;
+  playbackAvailable: boolean;
+  playbackHint?: string;
+  sttMode: "sidecar" | "cli" | "unavailable";
+  sttHint?: string;
+}
+
+/** Partial update: absent fields keep their value. `apiKey` is write-only —
+ *  absent preserves the stored key, `""` clears it. */
+export interface VoiceOutputSettingsInput {
+  apiKey?: string;
+  enabled?: boolean;
+  voiceId?: string;
+  voiceName?: string;
+  modelId?: string;
+  outputFormat?: string;
+  voiceSettings?: VoiceTuning;
+  verbosity?: VoiceVerbosity;
+  bargeIn?: boolean;
+  endSilenceMs?: number;
+  autoListen?: boolean;
 }
 
 /** One commit in the build's embedded changelog (app.changelog). */
@@ -1944,6 +2006,9 @@ export interface RequestMap {
   /** Empty `text` means the clip held no speech. */
   "dictation.stop": { payload: { recordingId: string }; data: { text: string } };
   "dictation.cancel": { payload: { recordingId: string }; data: Record<string, never> };
+  /** Voice Parlay — this machine's mic and speakers; never peer routed. */
+  "voice.settings.get": { payload: Record<string, never>; data: VoiceOutputSettings };
+  "voice.settings.save": { payload: VoiceOutputSettingsInput; data: VoiceOutputSettings };
   "fs.listDir": { payload: { path?: string; machineId?: string }; data: ListDirData };
   /** Create a directory (and parents) on the target machine; returns the
    *  canonical path. */

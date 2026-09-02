@@ -1550,6 +1550,10 @@ export interface ThreadknotActions {
   stopDictation: (recordingId: string) => Promise<string>;
   /** Drop the clip without transcribing it. */
   cancelDictation: (recordingId: string) => Promise<void>;
+  getVoiceSettings: () => Promise<import("../lib/protocol").VoiceOutputSettings>;
+  saveVoiceSettings: (
+    input: import("../lib/protocol").VoiceOutputSettingsInput,
+  ) => Promise<import("../lib/protocol").VoiceOutputSettings>;
   /** Rescan the project folder for repos; loads `state.git[projectId]`. */
   refreshGitRepos: (projectId: string) => Promise<import("../lib/protocol").GitRepoInfo[]>;
   gitStatus: (repoId: string) => Promise<import("../lib/protocol").GitStatusData>;

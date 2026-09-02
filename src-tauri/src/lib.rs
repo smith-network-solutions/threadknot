@@ -49,6 +49,7 @@ pub mod term;
 pub mod themes;
 pub mod update;
 pub mod usage;
+pub mod voice;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -584,6 +585,7 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
         browser_profiles,
         mobile,
         dictation: Arc::new(dictation::Dictation::open(&store::data_dir())?),
+        voice: Arc::new(voice::Voice::open(&store::data_dir())?),
         sessions: sessions::SessionRegistry::new(),
         browser_sessions,
         remote,

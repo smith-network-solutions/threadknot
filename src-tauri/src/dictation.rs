@@ -112,12 +112,12 @@ pub struct Dictation {
 /// Absolute path of a tool we shell out to. Resolved against the agent PATH
 /// because a desktop launch inherits almost none of the user's shell PATH, and
 /// because on Windows that resolution is what appends `.exe`.
-fn tool(name: &str) -> Result<PathBuf> {
+pub(crate) fn tool(name: &str) -> Result<PathBuf> {
     crate::agents::resolve_bin(name).ok_or_else(|| anyhow!("{name} is not installed"))
 }
 
 /// Why this machine can't capture audio, or `None` when it can.
-fn missing_capture_tool() -> Option<String> {
+pub(crate) fn missing_capture_tool() -> Option<String> {
     if !cfg!(any(
         target_os = "linux",
         target_os = "macos",
@@ -132,7 +132,7 @@ fn missing_capture_tool() -> Option<String> {
 }
 
 /// Why the on-device transcription path can't run, or `None` when it can.
-fn missing_local_transcriber() -> Option<String> {
+pub(crate) fn missing_local_transcriber() -> Option<String> {
     if tool("whisper").is_err() {
         return Some(
             "Whisper is not installed — run `pip install -U openai-whisper` to dictate".into(),
@@ -152,13 +152,13 @@ fn mic_override() -> Option<String> {
 
 /// ffmpeg's capture flags for this platform's default input device.
 #[cfg(target_os = "linux")]
-async fn capture_args() -> Result<(&'static str, String)> {
+pub(crate) async fn capture_args() -> Result<(&'static str, String)> {
     Ok(("pulse", mic_override().unwrap_or_else(|| "default".into())))
 }
 
 /// ffmpeg's capture flags for this platform's default input device.
 #[cfg(target_os = "macos")]
-async fn capture_args() -> Result<(&'static str, String)> {
+pub(crate) async fn capture_args() -> Result<(&'static str, String)> {
     Ok((
         "avfoundation",
         mic_override().unwrap_or_else(|| ":default".into()),
@@ -171,7 +171,7 @@ async fn capture_args() -> Result<(&'static str, String)> {
 /// a real device, and the names are machine-specific. So ask ffmpeg what
 /// Windows can see and record the first microphone in the list.
 #[cfg(target_os = "windows")]
-async fn capture_args() -> Result<(&'static str, String)> {
+pub(crate) async fn capture_args() -> Result<(&'static str, String)> {
     let name = match mic_override() {
         Some(name) => name,
         None => first_dshow_microphone().await?,
@@ -187,7 +187,7 @@ async fn capture_args() -> Result<(&'static str, String)> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-async fn capture_args() -> Result<(&'static str, String)> {
+pub(crate) async fn capture_args() -> Result<(&'static str, String)> {
     Err(anyhow!(
         "dictation is only supported on Windows, macOS and Linux"
     ))
@@ -522,6 +522,12 @@ impl Dictation {
         }
     }
 
+    /// Is a dictation clip being captured right now? Voice sessions refuse to
+    /// start while one is (and vice versa) — there is one microphone.
+    pub fn is_recording(&self) -> bool {
+        self.active.lock().unwrap().is_some()
+    }
+
     /// Remove the slot's recording if it is the one named.
     fn take(&self, id: &str) -> Option<Active> {
         let mut slot = self.active.lock().unwrap();
@@ -562,7 +568,7 @@ async fn close_ffmpeg(child: &mut Child) -> String {
 }
 
 /// True when the clip carries no signal worth transcribing.
-async fn is_silent(wav: &Path) -> bool {
+pub(crate) async fn is_silent(wav: &Path) -> bool {
     let Ok(bin) = tool("ffmpeg") else {
         return false;
     };
@@ -587,7 +593,7 @@ async fn is_silent(wav: &Path) -> bool {
 }
 
 /// Run Whisper over the clip and return what it heard.
-async fn transcribe_local(wav: &Path, dir: &Path) -> Result<String> {
+pub(crate) async fn transcribe_local(wav: &Path, dir: &Path) -> Result<String> {
     // English-only by default: `base.en` is markedly better than `base` at the
     // same speed. `THREADKNOT_WHISPER_MODEL` swaps in a bigger or multilingual one.
     let model = std::env::var("THREADKNOT_WHISPER_MODEL").unwrap_or_else(|_| "base.en".into());
@@ -684,7 +690,7 @@ async fn transcribe_api(wav: &Path, config: &DictationConfig) -> Result<String> 
 
 /// Collapse Whisper's line-per-segment output into one line, and drop the
 /// filler it invents when it hears nothing.
-fn clean(raw: &str) -> String {
+pub(crate) fn clean(raw: &str) -> String {
     let joined = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     let bare = joined
         .trim_matches(|c: char| !c.is_alphanumeric())
