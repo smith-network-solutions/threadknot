@@ -104,7 +104,7 @@ pub fn publish(hub: &Hub, mut usage: ProviderUsage) {
     });
 }
 
-pub fn spawn_poller(hub: Arc<Hub>) {
+pub fn spawn_poller(hub: Arc<Hub>, voice: Arc<crate::voice::Voice>) {
     tokio::spawn(async move {
         let mut last_fetch: HashMap<String, Instant> = HashMap::new();
         loop {
@@ -121,7 +121,8 @@ pub fn spawn_poller(hub: Arc<Hub>) {
             let claude_due = due(Agent::Claude.wire_id(), &last_fetch);
             let codex_due = due(Agent::Codex.wire_id(), &last_fetch);
             let kimi_due = due(Agent::Kimi.wire_id(), &last_fetch);
-            let (c, x, k) = tokio::join!(
+            let eleven_due = due(ELEVENLABS_PROVIDER, &last_fetch);
+            let (c, x, k, e) = tokio::join!(
                 async {
                     if claude_due {
                         Some(fetch_claude().await)
@@ -143,9 +144,32 @@ pub fn spawn_poller(hub: Arc<Hub>) {
                         None
                     }
                 },
+                async {
+                    if eleven_due {
+                        fetch_elevenlabs(&voice).await
+                    } else {
+                        None
+                    }
+                },
             );
+            // A removed ElevenLabs key drops the row entirely — an unconfigured
+            // provider is absent, not "unavailable".
+            if eleven_due && e.is_none() {
+                let removed = hub
+                    .usage
+                    .data
+                    .lock()
+                    .unwrap()
+                    .remove(ELEVENLABS_PROVIDER)
+                    .is_some();
+                if removed {
+                    let _ = hub.broadcast.send(ServerMessage::Usage {
+                        usage: hub.usage.snapshot(),
+                    });
+                }
+            }
             let mut changed = false;
-            for u in [c, x, k].into_iter().flatten() {
+            for u in [c, x, k, e].into_iter().flatten() {
                 // Keep the last good snapshot instead of clobbering it with a
                 // transient failure (Traycer's "retain last-good" rule).
                 let keep_last_good = !u.available
@@ -177,6 +201,53 @@ pub fn spawn_poller(hub: Arc<Hub>) {
             }
         }
     });
+}
+
+// ---- ElevenLabs (voice output, not a coding agent) ---------------------------
+
+/// One "Credits" window from the live subscription. `None` when no API key is
+/// configured — an unconfigured provider has no row at all, unlike a coding
+/// agent whose CLI is installed but logged out.
+async fn fetch_elevenlabs(voice: &crate::voice::Voice) -> Option<ProviderUsage> {
+    let key = voice.api_key()?;
+    let fetched = crate::voice::eleven::subscription(&key).await;
+    Some(match fetched {
+        Ok(sub) => {
+            let used = sub["characterCount"].as_u64().unwrap_or(0) as f64;
+            let limit = sub["characterLimit"].as_u64().unwrap_or(0) as f64;
+            let used_percent = if limit > 0.0 {
+                (used / limit * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            };
+            ProviderUsage {
+                agent: ELEVENLABS_PROVIDER.into(),
+                available: true,
+                plan: sub["tier"].as_str().map(titlecase),
+                windows: vec![RateWindow {
+                    label: "Credits".into(),
+                    used_percent,
+                    resets_at: sub["nextResetAt"].as_str().map(String::from),
+                    used: Some(used),
+                    limit: Some(limit),
+                    unit: Some("credits".into()),
+                    ..Default::default()
+                }],
+                estimated_cost: None,
+                error: None,
+                fetched_at: now_iso(),
+            }
+        }
+        Err(e) => ProviderUsage {
+            agent: ELEVENLABS_PROVIDER.into(),
+            available: false,
+            plan: None,
+            windows: Vec::new(),
+            estimated_cost: None,
+            error: Some(e.to_string()),
+            fetched_at: now_iso(),
+        },
+    })
 }
 
 fn unavailable(agent: Agent, error: impl Into<String>) -> ProviderUsage {

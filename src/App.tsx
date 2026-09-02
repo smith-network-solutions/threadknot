@@ -1580,6 +1580,24 @@ function makeActions(
       return settings;
     },
 
+    async testVoice() {
+      const { subscription } = await client.request("voice.test", {});
+      return subscription;
+    },
+
+    async listVoiceModels() {
+      const { models } = await client.request("voice.models.list", {});
+      return models;
+    },
+
+    searchVoices(query) {
+      return client.request("voice.voices.search", query);
+    },
+
+    getVoiceDefaults() {
+      return client.request("voice.voiceSettings.default", {});
+    },
+
     async startDictation() {
       const { recordingId } = await client.request("dictation.start", {});
       return recordingId;

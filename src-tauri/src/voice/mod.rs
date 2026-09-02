@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+pub mod eleven;
+
 /// How much the agent is asked to say out loud.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -360,6 +362,11 @@ pub async fn handle(
     kind: &str,
     payload: &serde_json::Value,
 ) -> Result<serde_json::Value> {
+    let require_key = || {
+        state.voice.api_key().ok_or_else(|| {
+            anyhow::anyhow!("No ElevenLabs API key saved — add one in Settings → Voice")
+        })
+    };
     match kind {
         "voice.settings.get" => Ok(state.voice.settings()),
         "voice.settings.save" => {
@@ -367,10 +374,36 @@ pub async fn handle(
                 .context("could not read the voice settings payload")?;
             let settings = state.voice.configure(input)?;
             // The composer's voice button gates on hello.voice.configured;
-            // nudge open clients to re-request hello.
+            // nudge open clients to re-request hello. A key change also makes
+            // the ElevenLabs usage row appear/disappear.
             state.hub.broadcast_state("identity", None);
+            state.hub.usage.kick(true);
             Ok(settings)
         }
+        // Live account state — doubles as key validation.
+        "voice.test" => {
+            let subscription = eleven::subscription(&require_key()?).await?;
+            Ok(serde_json::json!({ "ok": true, "subscription": subscription }))
+        }
+        "voice.models.list" => eleven::models(&require_key()?).await,
+        "voice.voices.search" => {
+            let str_field = |name: &str| payload.get(name).and_then(serde_json::Value::as_str);
+            eleven::voices_search(
+                &require_key()?,
+                str_field("search"),
+                str_field("category"),
+                str_field("pageToken"),
+            )
+            .await
+        }
+        "voice.voice.get" => {
+            let voice_id = payload
+                .get("voiceId")
+                .and_then(serde_json::Value::as_str)
+                .context("missing voiceId")?;
+            eleven::voice(&require_key()?, voice_id).await
+        }
+        "voice.voiceSettings.default" => eleven::default_voice_settings(&require_key()?).await,
         _ => anyhow::bail!("unknown request: {kind}"),
     }
 }

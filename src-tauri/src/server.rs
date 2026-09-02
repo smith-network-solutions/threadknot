@@ -313,8 +313,9 @@ pub async fn run(state: ServerState) {
         });
     }
 
-    // Background subscription-usage poller (sidebar meter).
-    crate::usage::spawn_poller(Arc::clone(&state.hub));
+    // Background subscription-usage poller (sidebar meter). The voice handle
+    // rides along so a configured ElevenLabs key adds its credits row.
+    crate::usage::spawn_poller(Arc::clone(&state.hub), Arc::clone(&state.voice));
 
     // The live-presence poller for registered Hermes gateways is spawned only
     // after the port bind succeeds (below), so a second app instance that

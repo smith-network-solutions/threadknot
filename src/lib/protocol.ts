@@ -680,6 +680,48 @@ export interface VoiceOutputSettings {
   sttHint?: string;
 }
 
+/** Live ElevenLabs account state (`voice.test`). Values come straight from
+ *  the subscription API; absent means the API did not expose it. */
+export interface VoiceSubscription {
+  tier?: string;
+  characterCount?: number;
+  characterLimit?: number;
+  nextResetAt?: string;
+  status?: string;
+}
+
+/** One TTS-capable ElevenLabs model, with the capability flags that decide
+ *  which tuning controls the settings UI enables. */
+export interface VoiceTtsModel {
+  id: string;
+  name?: string;
+  description?: string;
+  languages: string[];
+  supportsStyle: boolean;
+  supportsSpeakerBoost: boolean;
+  supportsSpeed: boolean;
+  maxCharacters?: number;
+  costFactor?: number;
+  /** Low-latency family — what a live conversation wants. */
+  recommended: boolean;
+}
+
+export interface VoiceSummary {
+  id: string;
+  name?: string;
+  category?: string;
+  description?: string;
+  previewUrl?: string;
+  labels: {
+    accent?: string;
+    gender?: string;
+    age?: string;
+    useCase?: string;
+    language?: string;
+    descriptive?: string;
+  };
+}
+
 /** Partial update: absent fields keep their value. `apiKey` is write-only —
  *  absent preserves the stored key, `""` clears it. */
 export interface VoiceOutputSettingsInput {
@@ -2009,6 +2051,19 @@ export interface RequestMap {
   /** Voice Parlay — this machine's mic and speakers; never peer routed. */
   "voice.settings.get": { payload: Record<string, never>; data: VoiceOutputSettings };
   "voice.settings.save": { payload: VoiceOutputSettingsInput; data: VoiceOutputSettings };
+  /** Validates the saved key against the live subscription endpoint. */
+  "voice.test": {
+    payload: Record<string, never>;
+    data: { ok: boolean; subscription: VoiceSubscription };
+  };
+  "voice.models.list": { payload: Record<string, never>; data: { models: VoiceTtsModel[] } };
+  "voice.voices.search": {
+    payload: { search?: string; category?: string; pageToken?: string };
+    data: { voices: VoiceSummary[]; nextPageToken?: string; totalCount?: number };
+  };
+  "voice.voice.get": { payload: { voiceId: string }; data: VoiceSummary };
+  /** ElevenLabs' own defaults, for the settings screen's reset button. */
+  "voice.voiceSettings.default": { payload: Record<string, never>; data: VoiceTuning };
   "fs.listDir": { payload: { path?: string; machineId?: string }; data: ListDirData };
   /** Create a directory (and parents) on the target machine; returns the
    *  canonical path. */

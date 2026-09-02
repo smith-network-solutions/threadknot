@@ -147,6 +147,11 @@ Server → client:
 | `dictation.settings.save` | `{ provider, baseUrl, model, apiKey? }` | Saves local or OpenAI-compatible API transcription settings; the write-only key is never returned; master only |
 | `voice.settings.get` | `{}` | Secret-free Voice Parlay settings (`hasApiKey`/`keyHint`, voice/model/format, tuning, conversation prefs, capture/playback/STT readiness); like all `voice.*` verbs: this machine's mic and speakers, never peer routed, master only |
 | `voice.settings.save` | Partial `VoiceOutputSettingsInput` | Same shape as `voice.settings.get`; absent fields keep their value; `apiKey` is write-only (absent preserves, `""` clears) and never returned |
+| `voice.test` | `{}` | `{ ok, subscription: { tier?, characterCount?, characterLimit?, nextResetAt?, status? } }` — live `GET /v1/user/subscription`; doubles as key validation |
+| `voice.models.list` | `{}` | `{ models: VoiceTtsModel[] }` — TTS-capable ElevenLabs models with per-model capability flags; low-latency families are `recommended` |
+| `voice.voices.search` | `{ search?, category?, pageToken? }` | `{ voices: VoiceSummary[], nextPageToken?, totalCount? }` — paginated account-voice search (30/page) |
+| `voice.voice.get` | `{ voiceId }` | One `VoiceSummary` — for validating a stored selection still exists |
+| `voice.voiceSettings.default` | `{}` | `VoiceTuning` — ElevenLabs' own defaults, for the settings screen's reset button |
 | `fs.listDir` | `{ path? }` | `{ path, parent, entries: [{name, path, isDir}] }` (dirs only; for the phone's folder picker; `path` omitted → home dir) |
 | `fs.mkdir` | `{ path }` | `{ path }` (canonical) — creates the directory and any missing parents; powers the picker's "new folder" button, locally or on a peer via `machineId` routing |
 | `term.list` | `{ projectId }` | `{ terms: TermInfo[] }` — persisted tabs for the project, each with a live `alive` flag |

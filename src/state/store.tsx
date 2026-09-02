@@ -1554,6 +1554,19 @@ export interface ThreadknotActions {
   saveVoiceSettings: (
     input: import("../lib/protocol").VoiceOutputSettingsInput,
   ) => Promise<import("../lib/protocol").VoiceOutputSettings>;
+  /** Validate the saved ElevenLabs key; resolves to the live subscription. */
+  testVoice: () => Promise<import("../lib/protocol").VoiceSubscription>;
+  listVoiceModels: () => Promise<import("../lib/protocol").VoiceTtsModel[]>;
+  searchVoices: (query: {
+    search?: string;
+    category?: string;
+    pageToken?: string;
+  }) => Promise<{
+    voices: import("../lib/protocol").VoiceSummary[];
+    nextPageToken?: string;
+  }>;
+  /** ElevenLabs' own voice-settings defaults, for the reset button. */
+  getVoiceDefaults: () => Promise<import("../lib/protocol").VoiceTuning>;
   /** Rescan the project folder for repos; loads `state.git[projectId]`. */
   refreshGitRepos: (projectId: string) => Promise<import("../lib/protocol").GitRepoInfo[]>;
   gitStatus: (repoId: string) => Promise<import("../lib/protocol").GitStatusData>;
