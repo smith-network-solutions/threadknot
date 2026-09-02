@@ -4414,7 +4414,9 @@ body.reordering { cursor: grabbing; user-select: none; }
 .vb-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  /* Opened FROM the settings screen (z 95): follows the modal-backdrop
+     convention (100) so it stacks above it, like the other pickers. */
+  z-index: 100;
   background: color-mix(in srgb, var(--bg) 72%, transparent);
   backdrop-filter: blur(3px);
   display: flex;
@@ -4522,7 +4524,9 @@ body.reordering { cursor: grabbing; user-select: none; }
 .vs-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 95;
+  /* The session takes the room: above settings (95), modals (100) and the
+     toast/picker tier (120); below only the 300-tier system overlays. */
+  z-index: 130;
   background: radial-gradient(
     ellipse at center,
     color-mix(in srgb, var(--panel-2) 88%, var(--teal)) 0%,
