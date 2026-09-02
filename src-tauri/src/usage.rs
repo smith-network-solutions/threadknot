@@ -211,6 +211,12 @@ pub fn spawn_poller(hub: Arc<Hub>, voice: Arc<crate::voice::Voice>) {
 async fn fetch_elevenlabs(voice: &crate::voice::Voice) -> Option<ProviderUsage> {
     let key = voice.api_key()?;
     let fetched = crate::voice::eleven::subscription(&key).await;
+    // A scoped key can speak but not read the subscription: there is nothing
+    // to meter, and painting the row "rejected" would call a working key
+    // broken. No row at all is the honest rendering.
+    if fetched.is_err() && crate::voice::eleven::probe_voices(&key).await {
+        return None;
+    }
     Some(match fetched {
         Ok(sub) => {
             let used = sub["characterCount"].as_u64().unwrap_or(0) as f64;

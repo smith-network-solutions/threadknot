@@ -84,6 +84,16 @@ pub async fn subscription(api_key: &str) -> Result<Value> {
     Ok(shape_subscription(&v))
 }
 
+/// Can this key list voices at all? The cheap fallback validity check:
+/// ElevenLabs keys can be SCOPED, and a key that is denied the subscription
+/// endpoint may still be perfectly able to browse voices and speak. Treating
+/// that 401 as "invalid key" told the owner their working key was broken.
+pub async fn probe_voices(api_key: &str) -> bool {
+    get_json(api_key, "/v2/voices", &[("page_size", "1".into())])
+        .await
+        .is_ok()
+}
+
 /// Reshape the subscription response for the wire. Live values only; anything
 /// the API does not expose stays absent rather than assumed.
 pub fn shape_subscription(v: &Value) -> Value {

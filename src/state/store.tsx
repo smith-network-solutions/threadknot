@@ -1576,8 +1576,12 @@ export interface ThreadknotActions {
   saveVoiceSettings: (
     input: import("../lib/protocol").VoiceOutputSettingsInput,
   ) => Promise<import("../lib/protocol").VoiceOutputSettings>;
-  /** Validate the saved ElevenLabs key; resolves to the live subscription. */
-  testVoice: () => Promise<import("../lib/protocol").VoiceSubscription>;
+  /** Validate the saved ElevenLabs key. `scoped` = works but can't read the
+   *  subscription (a restricted key), so there is no usage to show. */
+  testVoice: () => Promise<{
+    subscription?: import("../lib/protocol").VoiceSubscription;
+    scoped?: boolean;
+  }>;
   listVoiceModels: () => Promise<import("../lib/protocol").VoiceTtsModel[]>;
   searchVoices: (query: {
     search?: string;

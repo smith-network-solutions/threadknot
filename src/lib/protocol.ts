@@ -2058,10 +2058,11 @@ export interface RequestMap {
   /** Voice Parlay — this machine's mic and speakers; never peer routed. */
   "voice.settings.get": { payload: Record<string, never>; data: VoiceOutputSettings };
   "voice.settings.save": { payload: VoiceOutputSettingsInput; data: VoiceOutputSettings };
-  /** Validates the saved key against the live subscription endpoint. */
+  /** Validates the saved key. `scoped: true` means the key works (it can
+   *  list voices, and likely speak) but its scopes hide the subscription. */
   "voice.test": {
     payload: Record<string, never>;
-    data: { ok: boolean; subscription: VoiceSubscription };
+    data: { ok: boolean; subscription?: VoiceSubscription; scoped?: boolean };
   };
   "voice.models.list": { payload: Record<string, never>; data: { models: VoiceTtsModel[] } };
   "voice.voices.search": {

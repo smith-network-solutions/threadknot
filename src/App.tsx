@@ -1582,8 +1582,8 @@ function makeActions(
     },
 
     async testVoice() {
-      const { subscription } = await client.request("voice.test", {});
-      return subscription;
+      const { subscription, scoped } = await client.request("voice.test", {});
+      return { subscription, scoped };
     },
 
     async listVoiceModels() {

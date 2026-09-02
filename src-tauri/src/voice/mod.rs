@@ -608,10 +608,23 @@ pub async fn handle(
             state.hub.usage.kick(true);
             Ok(settings)
         }
-        // Live account state — doubles as key validation.
+        // Live account state — doubles as key validation. A scoped key can be
+        // denied the subscription endpoint yet speak fine, so a failure here
+        // falls back to a voices probe before calling the key bad.
         "voice.test" => {
-            let subscription = eleven::subscription(&require_key()?).await?;
-            Ok(serde_json::json!({ "ok": true, "subscription": subscription }))
+            let key = require_key()?;
+            match eleven::subscription(&key).await {
+                Ok(subscription) => {
+                    Ok(serde_json::json!({ "ok": true, "subscription": subscription }))
+                }
+                Err(e) => {
+                    if eleven::probe_voices(&key).await {
+                        Ok(serde_json::json!({ "ok": true, "scoped": true }))
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
         }
         "voice.models.list" => eleven::models(&require_key()?).await,
         "voice.voices.search" => {

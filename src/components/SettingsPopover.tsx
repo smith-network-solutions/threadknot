@@ -4437,6 +4437,8 @@ function VoiceOutputSettings() {
   /** Account-check failure, shown in the key card: a scoped key can be
    *  perfectly able to speak yet unable to read the subscription. */
   const [subError, setSubError] = useState<string | null>(null);
+  /** Key works but its scopes hide the subscription — nothing to meter. */
+  const [scoped, setScoped] = useState(false);
 
   const connected = !!settings?.hasApiKey;
 
@@ -4464,8 +4466,10 @@ function VoiceOutputSettings() {
     setSubError(null);
     void actions
       .testVoice()
-      .then((sub) => {
-        if (!cancelled) setSubscription(sub);
+      .then(({ subscription, scoped }) => {
+        if (cancelled) return;
+        setSubscription(subscription ?? null);
+        setScoped(!!scoped);
       })
       .catch((e) => {
         if (!cancelled) setSubError(e instanceof Error ? e.message : String(e));
@@ -4678,10 +4682,26 @@ function VoiceOutputSettings() {
               {subscription?.tier && (
                 <span className="usage-plan">{subscription.tier}</span>
               )}
-              <span className={`vp-key-status ${subscription ? "good" : subError ? "warn" : ""}`}>
-                {subscription ? "connected" : subError ? "key saved" : "checking…"}
+              <span
+                className={`vp-key-status ${subscription || scoped ? "good" : subError ? "warn" : ""}`}
+              >
+                {subscription
+                  ? "connected"
+                  : scoped
+                    ? "connected · scoped key"
+                    : subError
+                      ? "key saved"
+                      : "checking…"}
               </span>
             </div>
+            {scoped && !subscription && (
+              <span className="vp-key-suberror">
+                This key works, but its scopes hide the subscription, so credit
+                usage can&apos;t be shown. Add the &quot;User&quot; read scope
+                on elevenlabs.io to see it (and &quot;Models&quot; for the
+                model list).
+              </span>
+            )}
             {subError && <span className="vp-key-suberror">{subError}</span>}
             {usagePct != null && (
               <div className="vp-key-usage">
@@ -4715,11 +4735,15 @@ function VoiceOutputSettings() {
                 disabled={busy}
                 onClick={() => {
                   setSubscription(null);
+                  setSubError(null);
                   void actions
                     .testVoice()
-                    .then(setSubscription)
+                    .then(({ subscription, scoped }) => {
+                      setSubscription(subscription ?? null);
+                      setScoped(!!scoped);
+                    })
                     .catch((e) =>
-                      setError(e instanceof Error ? e.message : String(e)),
+                      setSubError(e instanceof Error ? e.message : String(e)),
                     );
                 }}
               >
