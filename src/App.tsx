@@ -24,6 +24,7 @@ import {
 import { isWindowFocused, startFocusTracking } from "./lib/focus";
 import { initZoomHotkeys } from "./lib/hotwheel";
 import { installExternalLinkHandler } from "./lib/links";
+import { VoiceSession } from "./components/VoiceSession";
 import { LinkOpenModal } from "./components/LinkOpenModal";
 import { getSidebarPrefs } from "./lib/appearance";
 import type {
@@ -1598,6 +1599,35 @@ function makeActions(
       return client.request("voice.voiceSettings.default", {});
     },
 
+    async previewVoice(voiceId, previewUrl) {
+      await client.request("voice.preview", {
+        ...(voiceId ? { voiceId } : {}),
+        ...(previewUrl ? { previewUrl } : {}),
+      });
+    },
+
+    async stopVoicePreview() {
+      await client.request("voice.preview.stop", {});
+    },
+
+    async startVoiceSession(threadId) {
+      const { sessionId } = await client.request("voice.session.start", { threadId });
+      dispatch({ type: "voiceOpen", open: true });
+      return sessionId;
+    },
+
+    async stopVoiceSession(sessionId) {
+      await client.request("voice.session.stop", { sessionId });
+    },
+
+    async setVoiceMuted(sessionId, muted) {
+      await client.request("voice.mute", { sessionId, muted });
+    },
+
+    async interruptVoice(sessionId) {
+      await client.request("voice.interrupt", { sessionId });
+    },
+
     async startDictation() {
       const { recordingId } = await client.request("dictation.start", {});
       return recordingId;
@@ -2152,6 +2182,7 @@ export default function App() {
       }
     };
     client.onUsage = (frame) => dispatch({ type: "usage", usage: frame.usage });
+    client.onVoice = (frame) => dispatch({ type: "voiceFrame", frame: frame.state });
     client.onHermesStatuses = (frame) =>
       dispatch({ type: "hermesStatuses", revision: frame.revision, statuses: frame.statuses });
     client.onStateChanged = (frame) => {
@@ -2592,6 +2623,9 @@ export default function App() {
         </div>
         {/* "Where should this link open?" chooser for clicked http(s) links. */}
         <LinkOpenModal />
+        {/* Voice Parlay overlay: mounted at the root so it survives thread
+            navigation; visibility is store state fed by voice.state frames. */}
+        {state.voice.open && <VoiceSession />}
         {state.conn !== "online" && (
           <div className={`conn-banner conn-${state.conn}`}>
             {state.conn === "connecting" ? "connecting to server…" : "offline — retrying…"}

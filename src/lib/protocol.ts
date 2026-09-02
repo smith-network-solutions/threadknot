@@ -2064,6 +2064,17 @@ export interface RequestMap {
   "voice.voice.get": { payload: { voiceId: string }; data: VoiceSummary };
   /** ElevenLabs' own defaults, for the settings screen's reset button. */
   "voice.voiceSettings.default": { payload: Record<string, never>; data: VoiceTuning };
+  /** Plays a sample through the serving machine's speakers. A previewUrl
+   *  streams free; without one the sample sentence is synthesized (credits). */
+  "voice.preview": {
+    payload: { voiceId?: string; previewUrl?: string };
+    data: Record<string, never>;
+  };
+  "voice.preview.stop": { payload: Record<string, never>; data: Record<string, never> };
+  "voice.session.start": { payload: { threadId: string }; data: { sessionId: string } };
+  "voice.session.stop": { payload: { sessionId: string }; data: Record<string, never> };
+  "voice.mute": { payload: { sessionId: string; muted: boolean }; data: Record<string, never> };
+  "voice.interrupt": { payload: { sessionId: string }; data: Record<string, never> };
   "fs.listDir": { payload: { path?: string; machineId?: string }; data: ListDirData };
   /** Create a directory (and parents) on the target machine; returns the
    *  canonical path. */
@@ -2240,9 +2251,44 @@ export interface HermesStatusesFrame {
   statuses: HermesAgentStatus[];
 }
 
+export type VoiceSessionPhase =
+  | "idle"
+  | "listening"
+  | "transcribing"
+  | "thinking"
+  | "synthesizing"
+  | "speaking"
+  | "interrupted"
+  | "error";
+
+/** One snapshot of the voice session, pushed on every transition. Not a
+ *  thread event: machine-level UI state driving the voice overlay. */
+export interface VoiceStateFrame {
+  sessionId?: string;
+  threadId?: string;
+  state: VoiceSessionPhase;
+  muted: boolean;
+  /** What STT heard last — the "you said…" line. */
+  lastUtterance?: string;
+  /** Transient status worth showing ("loading the speech model…"). */
+  detail?: string;
+  error?: { code: string; message: string; recoverable: boolean };
+  /** 0..1 mic level while listening, for the reactive visual. */
+  micLevel?: number;
+  since: string;
+  /** Monotonic; drop frames older than the newest seen. */
+  revision: number;
+}
+
+export interface VoiceFrame {
+  type: "voice.state";
+  state: VoiceStateFrame;
+}
+
 export type ServerFrame =
   | EventFrame
   | StateChangedFrame
   | ResponseFrame
   | UsageFrame
-  | HermesStatusesFrame;
+  | HermesStatusesFrame
+  | VoiceFrame;

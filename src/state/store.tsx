@@ -342,6 +342,12 @@ export interface AppState {
   lastSeq: number;
   sidebarOpen: boolean;
   usage: ProviderUsage[];
+  /** The live voice session, driving the Voice Parlay overlay. `open` is the
+   *  overlay's visibility; the frame is the server's latest state broadcast. */
+  voice: {
+    open: boolean;
+    frame: import("../lib/protocol").VoiceStateFrame | null;
+  };
   notices: Notice[];
   /** Open workspace tab (Files / Browser / Terminal side panel) per project;
    *  a project absent from the map has its panel closed. */
@@ -426,6 +432,7 @@ export const initialState: AppState = {
   lastSeq: 0,
   sidebarOpen: false,
   usage: [],
+  voice: { open: false, frame: null },
   notices: [],
   workspace: {},
   schedules: [],
@@ -479,6 +486,8 @@ export type Action =
   | { type: "questionPending"; requestId: string }
   | { type: "sidebar"; open: boolean }
   | { type: "usage"; usage: ProviderUsage[] }
+  | { type: "voiceFrame"; frame: import("../lib/protocol").VoiceStateFrame }
+  | { type: "voiceOpen"; open: boolean }
   | { type: "noticeAdd"; notice: Notice }
   | { type: "noticeDismiss"; id: number }
   | { type: "workspace"; projectId: string; tab: WorkspaceTab | null }
@@ -1140,6 +1149,19 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, sidebarOpen: action.open };
     case "usage":
       return { ...state, usage: action.usage };
+    case "voiceFrame": {
+      // Frames race the socket; the server's revision orders them.
+      const prev = state.voice.frame;
+      if (prev && action.frame.revision <= prev.revision) return state;
+      // A session ending (idle with no sessionId) closes the overlay.
+      const ended = action.frame.state === "idle" && !action.frame.sessionId;
+      return {
+        ...state,
+        voice: { open: state.voice.open && !ended, frame: action.frame },
+      };
+    }
+    case "voiceOpen":
+      return { ...state, voice: { ...state.voice, open: action.open } };
     case "noticeAdd":
       // Newest last; cap the stack so an unattended session can't flood it.
       return { ...state, notices: [...state.notices.slice(-3), action.notice] };
@@ -1567,6 +1589,15 @@ export interface ThreadknotActions {
   }>;
   /** ElevenLabs' own voice-settings defaults, for the reset button. */
   getVoiceDefaults: () => Promise<import("../lib/protocol").VoiceTuning>;
+  /** Play a voice sample through the serving machine's speakers. */
+  previewVoice: (voiceId?: string, previewUrl?: string) => Promise<void>;
+  stopVoicePreview: () => Promise<void>;
+  /** Open the conversation loop on a thread; resolves to the session id. */
+  startVoiceSession: (threadId: string) => Promise<string>;
+  stopVoiceSession: (sessionId: string) => Promise<void>;
+  setVoiceMuted: (sessionId: string, muted: boolean) => Promise<void>;
+  /** Stop playback now and interrupt the agent turn (the barge-in path). */
+  interruptVoice: (sessionId: string) => Promise<void>;
   /** Rescan the project folder for repos; loads `state.git[projectId]`. */
   refreshGitRepos: (projectId: string) => Promise<import("../lib/protocol").GitRepoInfo[]>;
   gitStatus: (repoId: string) => Promise<import("../lib/protocol").GitStatusData>;

@@ -36,6 +36,7 @@ import {
   GlobeIcon,
   HammerIcon,
   MicIcon,
+  VoiceWaveIcon,
   PaperclipIcon,
   PencilIcon,
   PlusIcon,
@@ -818,6 +819,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
 
   // Absent on servers built before dictation existed, which hides the button.
   const dictation = state.hello?.dictation;
+  // Voice Parlay: absent on older servers; hidden on drafts (a session needs
+  // a real thread to talk to).
+  const voice = state.hello?.voice;
 
   const key = thread ? thread.id : `draft:${draft?.projectId ?? "?"}`;
   const [text, setText] = useState(() => textDrafts.get(key) ?? "");
@@ -1807,6 +1811,51 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               >
                 <MicIcon size={18} />
                 {mic === "recording" && <span className="mic-time">{clock(micSeconds)}</span>}
+              </button>
+            )}
+            {voice?.available && thread && (
+              <button
+                type="button"
+                className={`mic-btn voice-btn${state.voice.frame?.sessionId ? " live" : ""}${voice.configured ? "" : " unconfigured"}`}
+                aria-label="Voice conversation"
+                title={
+                  voice.configured
+                    ? state.voice.frame?.sessionId
+                      ? "Voice conversation is live — reopen it"
+                      : "Start a voice conversation with this thread's agent"
+                    : "Set up ElevenLabs in Settings → Voice to talk to your agent"
+                }
+                onClick={() => {
+                  if (!voice.configured) {
+                    dispatch({
+                      type: "noticeAdd",
+                      notice: {
+                        id: Date.now(),
+                        threadId: thread.id,
+                        title: "Voice Parlay",
+                        body: "Connect your ElevenLabs API key and pick a voice in Settings → Voice first.",
+                      },
+                    });
+                    return;
+                  }
+                  if (state.voice.frame?.sessionId) {
+                    dispatch({ type: "voiceOpen", open: true });
+                    return;
+                  }
+                  void actions.startVoiceSession(thread.id).catch((e) => {
+                    dispatch({
+                      type: "noticeAdd",
+                      notice: {
+                        id: Date.now(),
+                        threadId: thread.id,
+                        title: "Voice Parlay",
+                        body: e instanceof Error ? e.message : String(e),
+                      },
+                    });
+                  });
+                }}
+              >
+                <VoiceWaveIcon size={18} />
               </button>
             )}
             <AgentModelPicker

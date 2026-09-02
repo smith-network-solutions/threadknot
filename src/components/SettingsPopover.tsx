@@ -102,7 +102,13 @@ import type {
   DictationSettings,
   HermesAgentDetails,
   HermesAgentInfo,
+  VoiceOutputSettings as VoiceOutputSettingsData,
+  VoiceSubscription,
+  VoiceTtsModel,
+  VoiceTuning,
+  VoiceVerbosity,
 } from "../lib/protocol";
+import { VoiceBrowser } from "./VoiceBrowser";
 
 function Stepper({
   label,
@@ -4336,6 +4342,593 @@ function VoiceSettings() {
   );
 }
 
+/** Threadknot convenience presets mapped onto ElevenLabs tuning. The chip is
+ *  computed from the values, so a hand-moved slider reads as "custom" with no
+ *  drift bookkeeping. */
+const VOICE_PRESETS: Record<string, VoiceTuning> = {
+  natural: { stability: 0.5, similarityBoost: 0.75, style: 0, speed: 1.0 },
+  conversational: { stability: 0.45, similarityBoost: 0.75, style: 0.15, speed: 1.05 },
+  calm: { stability: 0.75, similarityBoost: 0.75, style: 0, speed: 0.95 },
+  energetic: { stability: 0.3, similarityBoost: 0.8, style: 0.35, speed: 1.1 },
+  direct: { stability: 0.6, similarityBoost: 0.7, style: 0, speed: 1.08 },
+};
+
+function presetOf(tuning: VoiceTuning): string {
+  const close = (a?: number, b?: number) =>
+    Math.abs((a ?? 0) - (b ?? 0)) < 0.011;
+  for (const [name, p] of Object.entries(VOICE_PRESETS)) {
+    if (
+      close(tuning.stability, p.stability) &&
+      close(tuning.similarityBoost, p.similarityBoost) &&
+      close(tuning.style, p.style) &&
+      close(tuning.speed, p.speed)
+    ) {
+      return name;
+    }
+  }
+  return "custom";
+}
+
+function VoiceSlider({
+  label,
+  hint,
+  value,
+  min = 0,
+  max = 1,
+  step = 0.05,
+  disabled,
+  disabledHint,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  disabled?: boolean;
+  disabledHint?: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className={`vp-slider-row ${disabled ? "off" : ""}`}>
+      <span className="settings-value">
+        {label}
+        {(disabled ? disabledHint : hint) && (
+          <span className="settings-hint">{disabled ? disabledHint : hint}</span>
+        )}
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+      <span className="vp-slider-value">{value.toFixed(2)}</span>
+    </div>
+  );
+}
+
+/** ElevenLabs voice output: the speaking half of Voice Parlay. */
+function VoiceOutputSettings() {
+  const { state, actions } = useStore();
+  const [settings, setSettings] = useState<VoiceOutputSettingsData | null>(null);
+  const [subscription, setSubscription] = useState<VoiceSubscription | null>(null);
+  const [models, setModels] = useState<VoiceTtsModel[] | null>(null);
+  const [draft, setDraft] = useState<VoiceOutputSettingsData | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [replacingKey, setReplacingKey] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+
+  const connected = !!settings?.hasApiKey;
+
+  useEffect(() => {
+    let cancelled = false;
+    void actions
+      .getVoiceSettings()
+      .then((next) => {
+        if (cancelled) return;
+        setSettings(next);
+        setDraft(next);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [actions]);
+
+  // Once connected: live subscription + the TTS model list, fetched lazily.
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    void actions
+      .testVoice()
+      .then((sub) => {
+        if (!cancelled) setSubscription(sub);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    void actions
+      .listVoiceModels()
+      .then((list) => {
+        if (!cancelled) setModels(list);
+      })
+      .catch(() => {
+        /* the select degrades to the stored id */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [actions, connected]);
+
+  async function connect() {
+    if (busy || !apiKey.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await actions.saveVoiceSettings({ apiKey: apiKey.trim() });
+      const sub = await actions.testVoice();
+      setSettings(next);
+      setDraft(next);
+      setSubscription(sub);
+      setApiKey("");
+      setReplacingKey(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeKey() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await actions.saveVoiceSettings({ apiKey: "" });
+      setSettings(next);
+      setDraft(next);
+      setSubscription(null);
+      setModels(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save() {
+    if (busy || !draft) return;
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const next = await actions.saveVoiceSettings({
+        enabled: draft.enabled,
+        voiceId: draft.voiceId,
+        voiceName: draft.voiceName,
+        modelId: draft.modelId,
+        voiceSettings: draft.voiceSettings,
+        verbosity: draft.verbosity,
+        bargeIn: draft.bargeIn,
+        endSilenceMs: draft.endSilenceMs,
+        autoListen: draft.autoListen,
+      });
+      setSettings(next);
+      setDraft(next);
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function preview() {
+    if (!draft?.voiceId) return;
+    setPreviewing(true);
+    try {
+      await actions.previewVoice(draft.voiceId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      // The sample is short; re-enable after it will have finished.
+      setTimeout(() => setPreviewing(false), 5000);
+    }
+  }
+
+  if (!settings || !draft) {
+    return (
+      <div className="settings-block">
+        <div className="settings-label">voice conversation</div>
+        <div className={`settings-value ${error ? "notify-failed" : "dim"}`}>
+          {error ?? "loading voice output settings…"}
+        </div>
+      </div>
+    );
+  }
+
+  const model = models?.find((m) => m.id === draft.modelId);
+  const tuning = draft.voiceSettings;
+  const preset = presetOf(tuning);
+  const setTuning = (patch: Partial<VoiceTuning>) =>
+    setDraft({ ...draft, voiceSettings: { ...tuning, ...patch } });
+  const usagePct =
+    subscription?.characterCount != null && subscription.characterLimit
+      ? Math.min(100, (subscription.characterCount / subscription.characterLimit) * 100)
+      : null;
+
+  const seg = (
+    on: boolean,
+    label: string,
+    onClick: () => void,
+    key?: string,
+  ) => (
+    <button
+      key={key ?? label}
+      type="button"
+      className={`settings-toggle ${on ? "on" : ""}`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="settings-block voice-settings vp-output">
+      <div className="settings-label">voice conversation</div>
+      <p className="voice-intro">
+        Talk to any agent out loud: your ElevenLabs account speaks the replies
+        through this machine, and local Whisper does the listening.
+      </p>
+
+      {state.hello?.voice?.hint && (
+        <div className="voice-callout bad">{state.hello.voice.hint}</div>
+      )}
+
+      {!connected || replacingKey ? (
+        <>
+          <div className="voice-callout warn">
+            Connect your own ElevenLabs API key to unlock natural voice output,
+            voice browsing, previews, and usage tracking. Spoken replies are
+            billed to your ElevenLabs account.
+          </div>
+          <div className="claudex-form voice-form">
+            <label className="claudex-field">
+              <span>ElevenLabs API key</span>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={connected ? "stored — type to replace" : "sk_…"}
+                autoComplete="off"
+              />
+            </label>
+          </div>
+          <div className="settings-hint voice-secret-note">
+            The key is stored on this machine and is never returned after saving.
+          </div>
+          <div className="vp-key-actions">
+            <button
+              type="button"
+              className="settings-toggle primary"
+              disabled={busy || !apiKey.trim()}
+              onClick={() => void connect()}
+            >
+              {busy ? "connecting…" : "connect"}
+            </button>
+            {replacingKey && (
+              <button
+                type="button"
+                className="settings-toggle"
+                onClick={() => {
+                  setReplacingKey(false);
+                  setApiKey("");
+                }}
+              >
+                cancel
+              </button>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="vp-key-card">
+            <div className="vp-key-line">
+              <span className="vp-key-mask">
+                sk_••••••••{settings.keyHint ?? "••"}
+              </span>
+              {subscription?.tier && (
+                <span className="usage-plan">{subscription.tier}</span>
+              )}
+              <span className={`vp-key-status ${subscription ? "good" : ""}`}>
+                {subscription ? "connected" : "checking…"}
+              </span>
+            </div>
+            {usagePct != null && (
+              <div className="vp-key-usage">
+                <div className="usage-bar usage-bar-wide">
+                  <div
+                    className={`usage-bar-fill ${usagePct >= 95 ? "hot" : usagePct >= 80 ? "warn" : ""}`}
+                    style={{ width: `${usagePct}%` }}
+                  />
+                </div>
+                <span className="vp-key-count">
+                  {subscription!.characterCount!.toLocaleString()} /{" "}
+                  {subscription!.characterLimit!.toLocaleString()} credits
+                  {subscription?.nextResetAt
+                    ? ` · resets ${new Date(subscription.nextResetAt).toLocaleDateString()}`
+                    : ""}
+                </span>
+              </div>
+            )}
+            <div className="vp-key-actions">
+              <button
+                type="button"
+                className="settings-toggle"
+                disabled={busy}
+                onClick={() => {
+                  setSubscription(null);
+                  void actions
+                    .testVoice()
+                    .then(setSubscription)
+                    .catch((e) =>
+                      setError(e instanceof Error ? e.message : String(e)),
+                    );
+                }}
+              >
+                test
+              </button>
+              {seg(false, "replace key", () => setReplacingKey(true))}
+              {seg(false, "remove", () => void removeKey())}
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-value">
+              voice conversations
+              <span className="settings-hint">
+                Shows the Voice Parlay button in the composer.
+              </span>
+            </span>
+            <span className="settings-seg">
+              {seg(draft.enabled, draft.enabled ? "on" : "off", () =>
+                setDraft({ ...draft, enabled: !draft.enabled }),
+              )}
+            </span>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-value">
+              voice
+              <span className="settings-hint">
+                {draft.voiceId
+                  ? "Browse your account's voices to change it."
+                  : "Pick the voice that speaks the replies."}
+              </span>
+            </span>
+            <span className="vp-voice-controls">
+              <button
+                type="button"
+                className="vp-voice-trigger"
+                onClick={() => setBrowsing(true)}
+              >
+                {draft.voiceName || draft.voiceId || "choose a voice…"}
+              </button>
+              {draft.voiceId && (
+                <button
+                  type="button"
+                  className="settings-toggle"
+                  disabled={previewing}
+                  title="Preview through this machine's speakers (synthesizes a short sample — uses a few credits)"
+                  onClick={() => void preview()}
+                >
+                  {previewing ? "playing…" : "preview"}
+                </button>
+              )}
+            </span>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-value">
+              model
+              <span className="settings-hint">
+                {model && !model.recommended
+                  ? "Flash/Turbo models answer fastest in live conversation."
+                  : "Low-latency models are recommended for live conversation."}
+              </span>
+            </span>
+            <select
+              className="settings-select"
+              value={draft.modelId}
+              onChange={(e) => setDraft({ ...draft, modelId: e.target.value })}
+            >
+              {!models && <option value={draft.modelId}>{draft.modelId}</option>}
+              {models?.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name ?? m.id}
+                  {m.recommended ? " · recommended for live conversation" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-value">preset</span>
+            <span className="settings-seg vp-presets">
+              {Object.keys(VOICE_PRESETS).map((name) =>
+                seg(preset === name, name, () =>
+                  setDraft({
+                    ...draft,
+                    voiceSettings: {
+                      ...VOICE_PRESETS[name],
+                      useSpeakerBoost: tuning.useSpeakerBoost,
+                    },
+                  }),
+                ),
+              )}
+              {preset === "custom" && seg(true, "custom", () => {})}
+            </span>
+          </div>
+
+          <VoiceSlider
+            label="stability"
+            hint="Lower is more expressive, higher more consistent."
+            value={tuning.stability ?? 0.5}
+            onChange={(v) => setTuning({ stability: v })}
+          />
+          <VoiceSlider
+            label="similarity"
+            hint="Higher stays closer to the source voice."
+            value={tuning.similarityBoost ?? 0.75}
+            onChange={(v) => setTuning({ similarityBoost: v })}
+          />
+          <VoiceSlider
+            label="style"
+            hint="Expressive exaggeration; can add latency."
+            value={tuning.style ?? 0}
+            disabled={model ? !model.supportsStyle : false}
+            disabledHint={`not supported by ${model?.name ?? draft.modelId}`}
+            onChange={(v) => setTuning({ style: v })}
+          />
+          <VoiceSlider
+            label="speed"
+            hint="1.0 is normal pace."
+            value={tuning.speed ?? 1.0}
+            min={0.7}
+            max={1.2}
+            step={0.01}
+            disabled={model ? !model.supportsSpeed : false}
+            disabledHint={`not supported by ${model?.name ?? draft.modelId}`}
+            onChange={(v) => setTuning({ speed: v })}
+          />
+          <div className="settings-row">
+            <span className="settings-value">
+              speaker boost
+              <span className="settings-hint">
+                May improve resemblance, with a small latency cost.
+              </span>
+            </span>
+            <span className="settings-seg">
+              {model && !model.supportsSpeakerBoost ? (
+                <span className="settings-hint">
+                  not supported by {model.name ?? draft.modelId}
+                </span>
+              ) : (
+                seg(!!tuning.useSpeakerBoost, tuning.useSpeakerBoost ? "on" : "off", () =>
+                  setTuning({ useSpeakerBoost: !tuning.useSpeakerBoost }),
+                )
+              )}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="settings-toggle vp-reset"
+            disabled={busy}
+            onClick={() => {
+              void actions
+                .getVoiceDefaults()
+                .then((d) => setDraft({ ...draft, voiceSettings: d }))
+                .catch((e) =>
+                  setError(e instanceof Error ? e.message : String(e)),
+                );
+            }}
+          >
+            reset to ElevenLabs defaults
+          </button>
+
+          <div className="settings-row">
+            <span className="settings-value">
+              spoken detail
+              <span className="settings-hint">
+                Concise keeps replies short and puts long output in the thread —
+                it also spends fewer credits.
+              </span>
+            </span>
+            <span className="settings-seg">
+              {(["concise", "normal", "detailed"] as VoiceVerbosity[]).map((v) =>
+                seg(draft.verbosity === v, v, () =>
+                  setDraft({ ...draft, verbosity: v }),
+                ),
+              )}
+            </span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-value">
+              auto listen
+              <span className="settings-hint">
+                Return to listening after each reply.
+              </span>
+            </span>
+            <span className="settings-seg">
+              {seg(draft.autoListen, draft.autoListen ? "on" : "off", () =>
+                setDraft({ ...draft, autoListen: !draft.autoListen }),
+              )}
+            </span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-value">
+              barge-in
+              <span className="settings-hint">
+                Speaking over a reply interrupts it. Headphones make this
+                crisper — speaker bleed can trip it.
+              </span>
+            </span>
+            <span className="settings-seg">
+              {seg(draft.bargeIn, draft.bargeIn ? "on" : "off", () =>
+                setDraft({ ...draft, bargeIn: !draft.bargeIn }),
+              )}
+            </span>
+          </div>
+
+          {(settings.playbackHint || settings.sttHint) && (
+            <div className="voice-callout warn">
+              {settings.playbackHint ?? settings.sttHint}
+            </div>
+          )}
+
+          {error && <div className="settings-value notify-failed voice-result">{error}</div>}
+          {saved && !error && <div className="settings-value ok voice-result">saved</div>}
+          <button
+            type="button"
+            className="settings-toggle primary voice-save"
+            disabled={busy}
+            onClick={() => void save()}
+          >
+            {busy ? "saving…" : "save conversation settings"}
+          </button>
+        </>
+      )}
+
+      {browsing && (
+        <VoiceBrowser
+          selectedId={draft.voiceId}
+          onSelect={(voice) => {
+            setDraft({
+              ...draft,
+              voiceId: voice.id,
+              voiceName: voice.name ?? voice.id,
+            });
+            setBrowsing(false);
+          }}
+          onClose={() => setBrowsing(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 const SETTINGS_SECTIONS = [
   { id: "appearance", label: "Appearance", blurb: "theme, size, sidebar, composer" },
   { id: "notifications", label: "Notifications", blurb: "alerts & sound" },
@@ -4344,7 +4937,7 @@ const SETTINGS_SECTIONS = [
   { id: "people", label: "People", blurb: "who shares this machine" },
   { id: "servers", label: "Servers", blurb: "machines you work on" },
   { id: "agents", label: "Agents", blurb: "Claude, Codex, Kimi, Claudex" },
-  { id: "voice", label: "Voice", blurb: "dictation & transcription" },
+  { id: "voice", label: "Voice", blurb: "dictation & conversation" },
   { id: "library", label: "Library", blurb: "skills & MCP tools" },
   { id: "browser", label: "Browser logins", blurb: "stay signed in" },
   { id: "terminal", label: "Terminal", blurb: "font & cursor" },
@@ -4397,7 +4990,12 @@ function SettingsSectionContent({
     case "agents":
       return <AgentsSettings />;
     case "voice":
-      return isMaster ? <VoiceSettings /> : null;
+      return isMaster ? (
+        <>
+          <VoiceSettings />
+          <VoiceOutputSettings />
+        </>
+      ) : null;
     case "library":
       return <LibrarySettings />;
     case "browser":

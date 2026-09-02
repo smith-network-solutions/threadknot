@@ -31,6 +31,19 @@ function svg(
 
 export const PlusIcon = (p: IconProps) => svg(<path d="M12 5v14M5 12h14" />, p);
 
+/** Voice conversation: a sound wave — distinct from the dictation mic. */
+export const VoiceWaveIcon = (p: IconProps) =>
+  svg(
+    <>
+      <path d="M4 10v4" />
+      <path d="M8 7v10" />
+      <path d="M12 4v16" />
+      <path d="M16 7v10" />
+      <path d="M20 10v4" />
+    </>,
+    p,
+  );
+
 /** A USB-A security key on its side: connector + contact slots, body, touch
  *  disc, keyring hole. Shared by the Bitwarden vault sheet and the Browser-
  *  logins gate, so the key art reads identically in both. */

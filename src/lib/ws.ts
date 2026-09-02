@@ -6,6 +6,7 @@ import type {
   ServerFrame,
   StateChangedFrame,
   UsageFrame,
+  VoiceFrame,
 } from "./protocol";
 
 export type ConnState = "connecting" | "online" | "offline";
@@ -41,6 +42,7 @@ export class ThreadknotClient {
   onStateChanged: ((frame: StateChangedFrame) => void) | null = null;
   onUsage: ((frame: UsageFrame) => void) | null = null;
   onHermesStatuses: ((frame: HermesStatusesFrame) => void) | null = null;
+  onVoice: ((frame: VoiceFrame) => void) | null = null;
   onStatus: ((state: ConnState) => void) | null = null;
   onOpen: ((isReconnect: boolean) => void) | null = null;
 
@@ -121,6 +123,8 @@ export class ThreadknotClient {
         this.onUsage?.(frame);
       } else if (frame.type === "hermes.statuses") {
         this.onHermesStatuses?.(frame);
+      } else if (frame.type === "voice.state") {
+        this.onVoice?.(frame);
       }
     };
 
