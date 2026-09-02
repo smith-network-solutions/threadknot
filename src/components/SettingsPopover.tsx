@@ -4426,6 +4426,11 @@ function VoiceOutputSettings() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  const [localUsage, setLocalUsage] = useState<{
+    today: { chars: number };
+    week: { chars: number };
+    month: { chars: number };
+  } | null>(null);
 
   const connected = !!settings?.hasApiKey;
 
@@ -4465,6 +4470,14 @@ function VoiceOutputSettings() {
       })
       .catch(() => {
         /* the select degrades to the stored id */
+      });
+    void actions
+      .getVoiceLocalUsage()
+      .then((usage) => {
+        if (!cancelled) setLocalUsage(usage);
+      })
+      .catch(() => {
+        /* purely informational */
       });
     return () => {
       cancelled = true;
@@ -4671,6 +4684,14 @@ function VoiceOutputSettings() {
                     : ""}
                 </span>
               </div>
+            )}
+            {localUsage && localUsage.month.chars > 0 && (
+              <span className="vp-key-count">
+                Threadknot voice: {localUsage.today.chars.toLocaleString()} today ·{" "}
+                {localUsage.week.chars.toLocaleString()} this week ·{" "}
+                {localUsage.month.chars.toLocaleString()} this month (chars ≈
+                credits, estimated)
+              </span>
             )}
             <div className="vp-key-actions">
               <button

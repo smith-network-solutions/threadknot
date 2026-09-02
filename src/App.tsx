@@ -1599,6 +1599,10 @@ function makeActions(
       return client.request("voice.voiceSettings.default", {});
     },
 
+    getVoiceLocalUsage() {
+      return client.request("voice.usage.get", {});
+    },
+
     async previewVoice(voiceId, previewUrl) {
       await client.request("voice.preview", {
         ...(voiceId ? { voiceId } : {}),

@@ -722,6 +722,13 @@ export interface VoiceSummary {
   };
 }
 
+/** Local TTS consumption over one window — an estimate, never an invoice. */
+export interface VoiceLocalUsage {
+  requests: number;
+  chars: number;
+  estCredits: number;
+}
+
 /** Partial update: absent fields keep their value. `apiKey` is write-only —
  *  absent preserves the stored key, `""` clears it. */
 export interface VoiceOutputSettingsInput {
@@ -2071,6 +2078,17 @@ export interface RequestMap {
     data: Record<string, never>;
   };
   "voice.preview.stop": { payload: Record<string, never>; data: Record<string, never> };
+  /** Threadknot's own TTS consumption (voice-usage.jsonl aggregates). All
+   *  figures are estimates; the subscription meter is the source of truth. */
+  "voice.usage.get": {
+    payload: Record<string, never>;
+    data: {
+      today: VoiceLocalUsage;
+      week: VoiceLocalUsage;
+      month: VoiceLocalUsage;
+      estimated: true;
+    };
+  };
   "voice.session.start": { payload: { threadId: string }; data: { sessionId: string } };
   "voice.session.stop": { payload: { sessionId: string }; data: Record<string, never> };
   "voice.mute": { payload: { sessionId: string; muted: boolean }; data: Record<string, never> };

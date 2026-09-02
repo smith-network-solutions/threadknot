@@ -282,6 +282,64 @@ impl Voice {
 
     // ---- local usage metrics -------------------------------------------------
 
+    /// Aggregate voice-usage.jsonl into today / 7-day / 30-day totals. All
+    /// figures are character-count estimates, labeled as such on the wire.
+    pub fn local_usage(&self) -> serde_json::Value {
+        #[derive(Default)]
+        struct Bucket {
+            requests: u64,
+            chars: u64,
+        }
+        let mut today = Bucket::default();
+        let mut week = Bucket::default();
+        let mut month = Bucket::default();
+
+        let now = chrono::Utc::now();
+        let path = self.path.with_file_name("voice-usage.jsonl");
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            for line in text.lines() {
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
+                let Some(ts) = v["ts"]
+                    .as_str()
+                    .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                else {
+                    continue;
+                };
+                let age = now.signed_duration_since(ts.with_timezone(&chrono::Utc));
+                if age > chrono::Duration::days(30) {
+                    continue;
+                }
+                let chars = v["chars"].as_u64().unwrap_or(0);
+                month.requests += 1;
+                month.chars += chars;
+                if age <= chrono::Duration::days(7) {
+                    week.requests += 1;
+                    week.chars += chars;
+                }
+                if age <= chrono::Duration::hours(24) {
+                    today.requests += 1;
+                    today.chars += chars;
+                }
+            }
+        }
+        let shape = |b: &Bucket| {
+            serde_json::json!({
+                "requests": b.requests,
+                "chars": b.chars,
+                // 1 char ≈ 1 credit baseline; model multipliers vary.
+                "estCredits": b.chars,
+            })
+        };
+        serde_json::json!({
+            "today": shape(&today),
+            "week": shape(&week),
+            "month": shape(&month),
+            "estimated": true,
+        })
+    }
+
     /// Append one TTS request to voice-usage.jsonl. Estimates only — the
     /// subscription meter is the source of truth. Never the key.
     #[allow(clippy::too_many_arguments)]
@@ -678,6 +736,9 @@ pub async fn handle(
             })?;
             Ok(serde_json::json!({}))
         }
+        // Threadknot's own TTS consumption, aggregated from voice-usage.jsonl.
+        // Estimates only — the subscription meter is the source of truth.
+        "voice.usage.get" => Ok(state.voice.local_usage()),
         "voice.interrupt" => {
             let session_id = payload
                 .get("sessionId")

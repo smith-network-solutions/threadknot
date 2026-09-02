@@ -1589,6 +1589,10 @@ export interface ThreadknotActions {
   }>;
   /** ElevenLabs' own voice-settings defaults, for the reset button. */
   getVoiceDefaults: () => Promise<import("../lib/protocol").VoiceTuning>;
+  /** Threadknot's own TTS consumption aggregates (estimates). */
+  getVoiceLocalUsage: () => Promise<
+    import("../lib/protocol").RequestMap["voice.usage.get"]["data"]
+  >;
   /** Play a voice sample through the serving machine's speakers. */
   previewVoice: (voiceId?: string, previewUrl?: string) => Promise<void>;
   stopVoicePreview: () => Promise<void>;

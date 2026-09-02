@@ -154,6 +154,7 @@ Server → client:
 | `voice.voiceSettings.default` | `{}` | `VoiceTuning` — ElevenLabs' own defaults, for the settings screen's reset button |
 | `voice.preview` | `{ voiceId?, previewUrl? }` | `{}` — plays a sample through this machine's speakers; a `previewUrl` streams free, without one the sample sentence is synthesized (spends credits) |
 | `voice.preview.stop` | `{}` | `{}` — one preview at a time; starting another also stops the last |
+| `voice.usage.get` | `{}` | `{ today, week, month: { requests, chars, estCredits }, estimated: true }` — Threadknot's own TTS consumption from voice-usage.jsonl; estimates only, the subscription meter is the source of truth |
 | `voice.session.start` | `{ threadId }` | `{ sessionId }` — opens the conversation loop (mic → Whisper → the thread's agent → ElevenLabs → speakers); replaces any running session; refuses while dictation records |
 | `voice.session.stop` | `{ sessionId }` | `{}` |
 | `voice.mute` | `{ sessionId, muted }` | `{}` — the mic stays hot but frames are discarded |
