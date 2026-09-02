@@ -4516,42 +4516,90 @@ export const Sidebar = memo(function Sidebar({
         (() => {
           const members = sectionData.get(newThreadMenu.workspaceId)?.members;
           if (!members) return null;
+          const byName = (a: string, b: string) =>
+            a.localeCompare(b, undefined, { sensitivity: "base" });
+          // Folders on THIS computer first, then the machines we can reach,
+          // then whatever is offline. Unsorted, a dead root could sit between
+          // two live ones and the list read as a pile rather than an order.
+          const roots = [...members].sort(
+            (a, b) =>
+              Number(b.isLocal) - Number(a.isLocal) ||
+              Number(b.online) - Number(a.online) ||
+              byName(a.machineLabel, b.machineLabel) ||
+              byName(a.rootLabel, b.rootLabel),
+          );
+          // Same order for the "add a folder" group: this machine, then peers
+          // (reachable ones first) alphabetically.
+          const machines = [
+            {
+              machineId: localId,
+              label: state.hello?.friendlyName ?? "this machine",
+              isLocal: true,
+              online: true,
+            },
+            ...state.peers
+              .map((p) => ({
+                machineId: p.machineId,
+                label: p.name,
+                isLocal: false,
+                online: !!p.online,
+              }))
+              .sort(
+                (a, b) => Number(b.online) - Number(a.online) || byName(a.label, b.label),
+              ),
+          ];
           return (
             <ContextMenu
               x={newThreadMenu.x}
               y={newThreadMenu.y}
               onClose={() => setNewThreadMenu(null)}
               items={[
-                // Existing roots: click to draft straight into one.
-                ...members.map((m) => ({
-                  label: `${m.rootLabel} · ${m.machineLabel}${m.online ? "" : " (offline)"}`,
+                // Existing roots: click to draft straight into one. A root on
+                // this computer drops the "· <machine>" tail and wears the blue
+                // Local pill instead — the machine name is the noise here, and
+                // "which of these is my box" is the one thing the list has to
+                // answer at a glance.
+                ...(roots.length > 0
+                  ? [
+                      {
+                        kind: "heading" as const,
+                        label: "Open a folder",
+                        onSelect: () => {},
+                      },
+                    ]
+                  : []),
+                ...roots.map((m) => ({
+                  label: m.isLocal
+                    ? m.rootLabel
+                    : `${m.rootLabel} · ${m.machineLabel}${m.online ? "" : " (offline)"}`,
+                  ...(m.isLocal ? { badge: "Local", badgeTone: "local" as const } : {}),
                   icon: <MachineAvatar {...machineLook(state, m.machineId)} size={16} />,
                   disabled: !m.online,
                   onSelect: () => actions.openDraft(m.projectId, m.machineId || undefined),
                 })),
-                // "New folder on <machine>...": add a project folder to the
-                // workspace on any machine (this one first, then each peer), then
-                // draft there. Offered for machines already in the workspace AND
-                // ones not on it yet; offline peers stay listed but disabled.
+                // Add a project folder to the workspace on any machine (this
+                // one first, then each peer), then draft there. Offered for
+                // machines already in the workspace AND ones not on it yet;
+                // offline peers stay listed but disabled. Kept in its own
+                // divided group so "make something new" never interleaves with
+                // "go to something that exists".
                 //
                 // Servers are deliberately NOT offered here. This attaches a
                 // root to OUR workspace record and replicates it to our peers;
                 // a server's folders belong to its own catalog and must never
                 // land in a record we hand out. Creating a whole workspace over
                 // there is the supported move — "Add workspace" offers it.
-                ...[
-                  {
-                    machineId: localId,
-                    label: state.hello?.friendlyName ?? "this machine",
-                    online: true,
-                  },
-                  ...state.peers.map((p) => ({
-                    machineId: p.machineId,
-                    label: p.name,
-                    online: !!p.online,
-                  })),
-                ].map((mc) => ({
-                  label: `New folder on ${mc.label}...${mc.online ? "" : " (offline)"}`,
+                {
+                  kind: "heading" as const,
+                  label: "New folder",
+                  dividerBefore: true,
+                  onSelect: () => {},
+                },
+                ...machines.map((mc) => ({
+                  label: mc.isLocal
+                    ? "On this computer…"
+                    : `On ${mc.label}…${mc.online ? "" : " (offline)"}`,
+                  ...(mc.isLocal ? { badge: "Local", badgeTone: "local" as const } : {}),
                   icon: <MachineAvatar {...machineLook(state, mc.machineId)} size={16} />,
                   disabled: !mc.online,
                   onSelect: () =>

@@ -19,6 +19,12 @@ export interface CtxItem {
   inset?: boolean;
   /** Starts a new command group without introducing another heading. */
   dividerBefore?: boolean;
+  /** Trailing pill, for a one-word qualifier the label should not carry
+   *  (e.g. "Local" on the rows that point at this very machine). */
+  badge?: string;
+  /** Colour family for the badge. "local" is the bright blue that means
+   *  "this computer"; omit for the quiet default. */
+  badgeTone?: "local";
   onSelect: () => void;
 }
 
@@ -162,7 +168,12 @@ export function ContextMenu({
             }}
           >
             {it.icon}
-            <span>{it.label}</span>
+            <span className="ctx-label">{it.label}</span>
+            {it.badge && (
+              <span className={`ctx-badge${it.badgeTone ? ` ${it.badgeTone}` : ""}`}>
+                {it.badge}
+              </span>
+            )}
           </button>
         ),
       )}

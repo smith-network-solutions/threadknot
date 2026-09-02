@@ -10417,6 +10417,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   position: fixed;
   z-index: 220;
   min-width: 224px;
+  max-width: min(340px, calc(100vw - 16px));
   max-height: calc(100dvh - 8px);
   overflow-y: auto;
   padding: 8px;
@@ -10507,6 +10508,40 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .ctx-item:hover { background: var(--panel-3); }
 .ctx-item.danger { color: var(--red); }
 .ctx-item.danger svg { color: var(--red); }
+
+/* The label takes the slack and truncates, so a long folder-plus-machine line
+   can no longer stretch the whole menu wider than the sidebar it drops out of
+   (see the max-width on .ctx-menu). */
+.ctx-item .ctx-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Trailing pill on a menu row. "Local" is bright blue and deliberately the
+   only saturated thing in the menu: in a list of folders spread over several
+   machines, "which of these is THIS computer" is the question the eye is
+   actually asking. */
+.ctx-badge {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ctx-badge.local {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 45%, transparent);
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+}
 
 .chat-folder-modal { width: 360px; }
 .chat-folder-field {
