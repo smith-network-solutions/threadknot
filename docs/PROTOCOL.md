@@ -152,6 +152,14 @@ Server → client:
 | `voice.voices.search` | `{ search?, category?, pageToken? }` | `{ voices: VoiceSummary[], nextPageToken?, totalCount? }` — paginated account-voice search (30/page) |
 | `voice.voice.get` | `{ voiceId }` | One `VoiceSummary` — for validating a stored selection still exists |
 | `voice.voiceSettings.default` | `{}` | `VoiceTuning` — ElevenLabs' own defaults, for the settings screen's reset button |
+| `voice.preview` | `{ voiceId?, previewUrl? }` | `{}` — plays a sample through this machine's speakers; a `previewUrl` streams free, without one the sample sentence is synthesized (spends credits) |
+| `voice.preview.stop` | `{}` | `{}` — one preview at a time; starting another also stops the last |
+| `voice.session.start` | `{ threadId }` | `{ sessionId }` — opens the conversation loop (mic → Whisper → the thread's agent → ElevenLabs → speakers); replaces any running session; refuses while dictation records |
+| `voice.session.stop` | `{ sessionId }` | `{}` |
+| `voice.mute` | `{ sessionId, muted }` | `{}` — the mic stays hot but frames are discarded |
+| `voice.interrupt` | `{ sessionId }` | `{}` — stop playback now and interrupt the agent turn (same path barge-in takes) |
+
+Voice session state rides its own broadcast, `{ "type": "voice.state", "state": VoiceStateFrame }` — deliberately not a thread event (machine-level UI state; must never enter a transcript). `VoiceStateFrame` = `{ sessionId?, threadId?, state, muted, lastUtterance?, detail?, error?: { code, message, recoverable }, micLevel?, since, revision }`; `state` is one of `idle | listening | transcribing | thinking | synthesizing | speaking | interrupted | error`, and `revision` orders frames so clients drop stale ones (the HermesStatuses pattern).
 | `fs.listDir` | `{ path? }` | `{ path, parent, entries: [{name, path, isDir}] }` (dirs only; for the phone's folder picker; `path` omitted → home dir) |
 | `fs.mkdir` | `{ path }` | `{ path }` (canonical) — creates the directory and any missing parents; powers the picker's "new folder" button, locally or on a peer via `machineId` routing |
 | `term.list` | `{ projectId }` | `{ terms: TermInfo[] }` — persisted tabs for the project, each with a live `alive` flag |

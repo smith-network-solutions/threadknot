@@ -4454,6 +4454,10 @@ pub async fn handle_request(
                 principal.is_owner(),
                 "dictation records this machine's mic, so it only runs from the app on that machine"
             );
+            anyhow::ensure!(
+                !state.voice.session_active(),
+                "a voice conversation is using the microphone — end it first"
+            );
             Ok(json!({ "recordingId": state.dictation.start().await? }))
         }
         "dictation.stop" => {

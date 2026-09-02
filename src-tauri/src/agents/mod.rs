@@ -873,7 +873,7 @@ impl Hub {
     /// brief is marked `injected` — it is machine-issued, like a Parley role
     /// prompt, and the transcript should not claim a human typed it.
     pub fn start_dispatch_turn(self: &Arc<Self>, thread_id: &str, brief: String) -> Result<()> {
-        self.start_turn_as(thread_id, None, brief, Vec::new(), true)
+        self.start_turn_as(thread_id, None, brief, Vec::new(), true, None)
     }
 
     /// Record what a worker passed to `report_result`. Kept until its turn ends
@@ -1902,12 +1902,25 @@ impl Hub {
                 return Ok(());
             }
         }
-        self.start_turn_as(thread_id, None, text, attachments, false)
+        self.start_turn_as(thread_id, None, text, attachments, false, None)
+    }
+
+    /// Voice-mode turn: `preface` rides to the driver ahead of the spoken text
+    /// ("answer briefly, you're being read aloud") without ever entering the
+    /// persisted transcript — the thread reads like a normal conversation.
+    pub fn start_turn_voice(
+        self: &Arc<Self>,
+        thread_id: &str,
+        text: String,
+        preface: Option<String>,
+    ) -> Result<()> {
+        self.start_turn_as(thread_id, None, text, Vec::new(), false, preface)
     }
 
     /// Run a turn on a specific lane. `lane` of `None` means the primary
     /// Builder; `injected` marks the prompt as machine-issued (a role brief)
-    /// rather than something the human typed.
+    /// rather than something the human typed. `preface` is prepended to the
+    /// text the DRIVER receives but not to the persisted `UserMessage`.
     fn start_turn_as(
         self: &Arc<Self>,
         thread_id: &str,
@@ -1915,6 +1928,7 @@ impl Hub {
         text: String,
         attachments: Vec<IncomingAttachment>,
         injected: bool,
+        preface: Option<String>,
     ) -> Result<()> {
         let thread = self
             .store
@@ -2074,7 +2088,7 @@ impl Hub {
             None,
         );
         tx.send(AgentCommand::User {
-            text,
+            text: transcript::seeded_message(preface.as_deref(), &text),
             settings: lane.settings.clone(),
             attachments: refs,
         })
@@ -2127,6 +2141,7 @@ impl Hub {
             review_brief(&builder, &lane, instructions.as_deref(), personality.as_deref()),
             Vec::new(),
             true,
+            None,
         )?;
         Ok(lane)
     }
@@ -2323,7 +2338,7 @@ impl Hub {
             instructions.as_deref(),
             personalities.get(&first.id).map(|s| s.as_str()),
         );
-        self.start_turn_as(thread_id, Some(first), brief, Vec::new(), true)?;
+        self.start_turn_as(thread_id, Some(first), brief, Vec::new(), true, None)?;
         Ok(thread)
     }
 
@@ -2419,7 +2434,7 @@ impl Hub {
                     None,
                     parley.personalities.get(&lane_id).map(|s| s.as_str()),
                 );
-                if let Err(e) = self.start_turn_as(thread_id, Some(lane), brief, Vec::new(), true)
+                if let Err(e) = self.start_turn_as(thread_id, Some(lane), brief, Vec::new(), true, None)
                 {
                     self.end_parley_with_note(thread_id, &format!("parley: ended — {e:#}"));
                 }
@@ -2433,7 +2448,7 @@ impl Hub {
                     .join(", ");
                 let brief = parley_answer_brief(&names, parley.round, parley.max_rounds);
                 if let Err(e) =
-                    self.start_turn_as(thread_id, Some(builder.clone()), brief, Vec::new(), true)
+                    self.start_turn_as(thread_id, Some(builder.clone()), brief, Vec::new(), true, None)
                 {
                     self.end_parley_with_note(thread_id, &format!("parley: ended — {e:#}"));
                 }
@@ -2451,6 +2466,7 @@ impl Hub {
                     parley_execute_brief(),
                     Vec::new(),
                     true,
+                    None,
                 ) {
                     self.end_parley_with_note(thread_id, &format!("parley: ended — {e:#}"));
                 }
@@ -2476,13 +2492,13 @@ impl Hub {
                     parley_plan_brief()
                 };
                 if let Err(e) =
-                    self.start_turn_as(thread_id, Some(builder.clone()), brief, Vec::new(), true)
+                    self.start_turn_as(thread_id, Some(builder.clone()), brief, Vec::new(), true, None)
                 {
                     self.end_parley_with_note(thread_id, &format!("parley: ended — {e:#}"));
                 }
             }
             ParleyAction::UserTurn { text } => {
-                if let Err(e) = self.start_turn_as(thread_id, None, text, Vec::new(), false) {
+                if let Err(e) = self.start_turn_as(thread_id, None, text, Vec::new(), false, None) {
                     self.end_parley_with_note(thread_id, &format!("parley: ended — {e:#}"));
                 }
             }

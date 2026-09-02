@@ -20,6 +20,7 @@ use std::sync::Mutex;
 pub mod chunker;
 pub mod eleven;
 pub mod playback;
+pub mod session;
 pub mod stt;
 
 /// How much the agent is asked to say out loud.
@@ -150,6 +151,12 @@ pub struct Voice {
     /// The running voice preview, if any. One pair of speakers: starting a
     /// new preview (or stopping) cancels the old one.
     preview: Mutex<Option<tokio_util::sync::CancellationToken>>,
+    /// The live conversation, if any. One microphone: one session slot.
+    session: Mutex<Option<session::SessionCtl>>,
+    /// The warm STT sidecar, shared across sessions.
+    pub(crate) stt: tokio::sync::Mutex<session::SttState>,
+    /// Monotonic counter on `voice.state` frames so clients drop stale ones.
+    revision: std::sync::atomic::AtomicU64,
 }
 
 impl Voice {
@@ -164,7 +171,153 @@ impl Voice {
             path,
             config: Mutex::new(config),
             preview: Mutex::new(None),
+            session: Mutex::new(None),
+            stt: tokio::sync::Mutex::new(session::SttState::default()),
+            revision: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+
+    // ---- session slot --------------------------------------------------------
+
+    pub fn session_active(&self) -> bool {
+        self.session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| !s.cancel.is_cancelled())
+            .unwrap_or(false)
+    }
+
+    fn set_session(&self, ctl: session::SessionCtl) {
+        *self.session.lock().unwrap() = Some(ctl);
+    }
+
+    /// Cancel whatever session is running (idempotent).
+    pub fn end_session(&self) {
+        if let Some(ctl) = self.session.lock().unwrap().take() {
+            ctl.cancel.cancel();
+        }
+    }
+
+    /// Drop the slot only if it still belongs to the session that ended.
+    /// Returns whether it did — a replaced session must NOT go on to publish
+    /// idle over the state of the session that replaced it.
+    fn clear_session(&self, session_id: &str) -> bool {
+        let mut slot = self.session.lock().unwrap();
+        if slot.as_ref().map(|s| s.id.as_str()) == Some(session_id) {
+            *slot = None;
+            return true;
+        }
+        false
+    }
+
+    /// Run `f` against the named live session's controls.
+    fn with_session<T>(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&session::SessionCtl) -> T,
+    ) -> Result<T> {
+        let slot = self.session.lock().unwrap();
+        match slot.as_ref() {
+            Some(ctl) if ctl.id == session_id => Ok(f(ctl)),
+            _ => anyhow::bail!("that voice session already ended"),
+        }
+    }
+
+    // ---- state broadcast -----------------------------------------------------
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn publish_frame(
+        &self,
+        hub: &crate::agents::Hub,
+        session_id: Option<&str>,
+        thread_id: Option<&str>,
+        state: &str,
+        muted: bool,
+        last_utterance: Option<&str>,
+        detail: Option<&str>,
+        error: Option<crate::protocol::VoiceError>,
+        mic_level: Option<f32>,
+    ) {
+        use std::sync::atomic::Ordering;
+        let frame = crate::protocol::VoiceStateFrame {
+            session_id: session_id.map(str::to_string),
+            thread_id: thread_id.map(str::to_string),
+            state: state.to_string(),
+            muted,
+            last_utterance: last_utterance.map(str::to_string),
+            detail: detail.map(str::to_string),
+            error,
+            mic_level,
+            since: crate::protocol::now_iso(),
+            revision: self.revision.fetch_add(1, Ordering::Relaxed) + 1,
+        };
+        let _ = hub
+            .broadcast
+            .send(crate::protocol::ServerMessage::VoiceState { state: frame });
+    }
+
+    pub(crate) fn publish_idle(&self, hub: &crate::agents::Hub) {
+        self.publish_frame(hub, None, None, "idle", false, None, None, None, None);
+    }
+
+    // ---- STT sidecar lifecycle ----------------------------------------------
+
+    /// Kill the sidecar if nothing has used it for `idle`.
+    pub(crate) async fn reap_idle_sidecar(&self, idle: std::time::Duration) {
+        if self.session_active() {
+            return;
+        }
+        let mut state = self.stt.lock().await;
+        let stale = state
+            .idle_since()
+            .map(|t| t.elapsed() >= idle)
+            .unwrap_or(false);
+        if stale {
+            if let Some(sidecar) = state.take_sidecar() {
+                sidecar.kill().await;
+            }
+        }
+    }
+
+    // ---- local usage metrics -------------------------------------------------
+
+    /// Append one TTS request to voice-usage.jsonl. Estimates only — the
+    /// subscription meter is the source of truth. Never the key.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_tts_metric(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+        voice_id: &str,
+        model_id: &str,
+        chars: u64,
+        ttfb_ms: u64,
+        total_ms: u64,
+    ) {
+        let record = serde_json::json!({
+            "ts": crate::protocol::now_iso(),
+            "sessionId": session_id,
+            "threadId": thread_id,
+            "provider": "elevenlabs",
+            "voiceId": voice_id,
+            "modelId": model_id,
+            "chars": chars,
+            // 1 character ≈ 1 credit is the baseline; model multipliers vary,
+            // which is why every surface labels this an estimate.
+            "estCredits": chars,
+            "ttfbMs": ttfb_ms,
+            "streamMs": total_ms,
+        });
+        let path = self.path.with_file_name("voice-usage.jsonl");
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(f, "{record}");
+        }
     }
 
     /// Cancel whatever preview is playing; returns a fresh token when the
@@ -492,6 +645,49 @@ pub async fn handle(
             state.voice.replace_preview(None);
             Ok(serde_json::json!({}))
         }
+        // The conversation itself.
+        "voice.session.start" => {
+            let thread_id = payload
+                .get("threadId")
+                .and_then(serde_json::Value::as_str)
+                .context("missing threadId")?;
+            // A preview and a session share the speakers.
+            state.voice.replace_preview(None);
+            let session_id = session::start(state, thread_id)?;
+            Ok(serde_json::json!({ "sessionId": session_id }))
+        }
+        "voice.session.stop" => {
+            let session_id = payload
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .context("missing sessionId")?;
+            let _ = state.voice.with_session(session_id, |ctl| ctl.cancel.cancel());
+            Ok(serde_json::json!({}))
+        }
+        "voice.mute" => {
+            let session_id = payload
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .context("missing sessionId")?;
+            let muted = payload
+                .get("muted")
+                .and_then(serde_json::Value::as_bool)
+                .context("missing muted")?;
+            state.voice.with_session(session_id, |ctl| {
+                ctl.muted.store(muted, std::sync::atomic::Ordering::Relaxed)
+            })?;
+            Ok(serde_json::json!({}))
+        }
+        "voice.interrupt" => {
+            let session_id = payload
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .context("missing sessionId")?;
+            state
+                .voice
+                .with_session(session_id, |ctl| ctl.interrupt.notify_one())?;
+            Ok(serde_json::json!({}))
+        }
         _ => anyhow::bail!("unknown request: {kind}"),
     }
 }
@@ -513,6 +709,9 @@ mod tests {
             path: PathBuf::new(),
             config: Mutex::new(config),
             preview: Mutex::new(None),
+            session: Mutex::new(None),
+            stt: tokio::sync::Mutex::new(session::SttState::default()),
+            revision: std::sync::atomic::AtomicU64::new(0),
         }
     }
 

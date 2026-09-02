@@ -1256,6 +1256,54 @@ pub enum ServerMessage {
         revision: u64,
         statuses: Vec<HermesAgentStatus>,
     },
+    /// Voice Parlay session state, pushed on every transition. NOT a thread
+    /// event on purpose: this is machine-level UI state that changes several
+    /// times a second and must never enter a transcript or trip the thread
+    /// status machinery. Same stale-frame `revision` idea as HermesStatuses.
+    #[serde(rename = "voice.state")]
+    VoiceState { state: VoiceStateFrame },
+}
+
+/// One snapshot of the voice session for the animated UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceStateFrame {
+    /// Absent means no session — the idle/closed state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    /// idle | listening | transcribing | thinking | synthesizing | speaking
+    /// | interrupted | error
+    pub state: String,
+    pub muted: bool,
+    /// What STT heard last — the "you said…" line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_utterance: Option<String>,
+    /// Transient status worth showing ("loading the speech model…").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<VoiceError>,
+    /// 0..1 mic level while listening, for the reactive visual.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mic_level: Option<f32>,
+    /// ISO timestamp this state was entered.
+    pub since: String,
+    /// Monotonic per-process counter; clients drop frames older than the
+    /// newest seen.
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceError {
+    /// Stable code (mic_unavailable, tts_auth, …) for UI branching.
+    pub code: String,
+    pub message: String,
+    /// Recoverable errors return to listening on their own; fatal ones end
+    /// the session.
+    pub recoverable: bool,
 }
 
 pub fn now_iso() -> String {
