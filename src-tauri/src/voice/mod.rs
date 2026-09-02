@@ -19,6 +19,7 @@ use std::sync::Mutex;
 
 pub mod chunker;
 pub mod eleven;
+pub mod playback;
 
 /// How much the agent is asked to say out loud.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +146,9 @@ pub struct VoiceConfigInput {
 pub struct Voice {
     path: PathBuf,
     config: Mutex<VoiceConfig>,
+    /// The running voice preview, if any. One pair of speakers: starting a
+    /// new preview (or stopping) cancels the old one.
+    preview: Mutex<Option<tokio_util::sync::CancellationToken>>,
 }
 
 impl Voice {
@@ -158,7 +162,18 @@ impl Voice {
         Ok(Self {
             path,
             config: Mutex::new(config),
+            preview: Mutex::new(None),
         })
+    }
+
+    /// Cancel whatever preview is playing; returns a fresh token when the
+    /// caller is starting a new one.
+    fn replace_preview(&self, next: Option<tokio_util::sync::CancellationToken>) {
+        let mut slot = self.preview.lock().unwrap();
+        if let Some(old) = slot.take() {
+            old.cancel();
+        }
+        *slot = next;
     }
 
     pub fn config(&self) -> VoiceConfig {
@@ -405,6 +420,77 @@ pub async fn handle(
             eleven::voice(&require_key()?, voice_id).await
         }
         "voice.voiceSettings.default" => eleven::default_voice_settings(&require_key()?).await,
+        // Play a voice sample through this machine's speakers. A supplied
+        // previewUrl (from the voices list) costs nothing; without one the
+        // sample is synthesized, which spends credits — the UI says so.
+        "voice.preview" => {
+            let preview_url = payload
+                .get("previewUrl")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let voice_id = payload
+                .get("voiceId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+
+            let config = state.voice.config();
+            let (response, pcm_rate) = match &preview_url {
+                Some(url) => {
+                    anyhow::ensure!(
+                        url.starts_with("https://"),
+                        "preview URLs must be https"
+                    );
+                    let response = reqwest::Client::builder()
+                        .connect_timeout(std::time::Duration::from_secs(8))
+                        .build()?
+                        .get(url)
+                        .timeout(std::time::Duration::from_secs(30))
+                        .send()
+                        .await
+                        .context("could not fetch the voice preview")?
+                        .error_for_status()
+                        .context("the voice preview could not be fetched")?;
+                    // Preview files are containers (mp3); let ffplay sniff.
+                    (response, None)
+                }
+                None => {
+                    let voice_id = voice_id
+                        .filter(|v| !v.is_empty())
+                        .or_else(|| {
+                            let id = config.voice_id.clone();
+                            (!id.is_empty()).then_some(id)
+                        })
+                        .context("no voice selected to preview")?;
+                    let response = eleven::tts_stream(
+                        &require_key()?,
+                        &voice_id,
+                        &config.model_id,
+                        &config.output_format,
+                        "Hi — this is how I'll sound in your Threadknot conversations.",
+                        &config.voice_settings,
+                    )
+                    .await?;
+                    (response, playback::pcm_sample_rate(&config.output_format))
+                }
+            };
+
+            let mut sink = playback::FfplaySink::spawn(pcm_rate)?;
+            let cancel = tokio_util::sync::CancellationToken::new();
+            state.voice.replace_preview(Some(cancel.clone()));
+            tokio::spawn(async move {
+                if playback::pump(response, &mut sink, &cancel)
+                    .await
+                    .unwrap_or(false)
+                {
+                    let _ = sink.finish().await;
+                }
+            });
+            Ok(serde_json::json!({}))
+        }
+        "voice.preview.stop" => {
+            state.voice.replace_preview(None);
+            Ok(serde_json::json!({}))
+        }
         _ => anyhow::bail!("unknown request: {kind}"),
     }
 }
@@ -425,6 +511,7 @@ mod tests {
         Voice {
             path: PathBuf::new(),
             config: Mutex::new(config),
+            preview: Mutex::new(None),
         }
     }
 
