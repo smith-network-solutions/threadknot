@@ -7450,6 +7450,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .mark-kimi { color: #a9a5ff; }
 .mark-hermes { color: #8fb4ff; }
 .mark-claudex { color: #7fd6b0; }
+.mark-elevenlabs { color: var(--text); }
 
 .thread-row-mark { opacity: 0.8; }
 .thread-row.active .thread-row-mark { opacity: 1; }
@@ -9541,6 +9542,34 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 9.5px;
   color: var(--faint);
   white-space: nowrap;
+}
+/* Absolute consumption readout (ElevenLabs credits). It takes the reset
+   line's bottom-left berth; the reset shifts right to share the row. */
+.usage-row-count {
+  position: absolute;
+  left: 50px;
+  bottom: 0;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.usage-row-count + .usage-row-reset {
+  left: auto;
+  right: 0;
+}
+.usage-cost {
+  font-size: 10.5px;
+  color: var(--dim);
+  padding: 1px 0 3px;
+}
+.usage-cost-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  margin-left: 4px;
 }
 .usage-error { font-size: 11px; color: var(--faint); }
 .usage-pop-foot {

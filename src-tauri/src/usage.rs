@@ -38,9 +38,14 @@ const KICK_FLOOR: Duration = Duration::from_secs(120);
 /// Settle time after a kick before fetching, so a burst of turn-ends coalesces.
 const KICK_DEBOUNCE: Duration = Duration::from_secs(3);
 
+/// Wire id of the ElevenLabs voice-output meter entry. Not an `Agent` — a TTS
+/// vendor must never become selectable as a coding agent, so the usage layer is
+/// keyed by provider id strings instead of the closed enum.
+pub const ELEVENLABS_PROVIDER: &str = "elevenlabs";
+
 #[derive(Default)]
 pub struct UsageState {
-    data: Mutex<HashMap<Agent, ProviderUsage>>,
+    data: Mutex<HashMap<String, ProviderUsage>>,
     kick: Notify,
     force: AtomicBool,
 }
@@ -48,10 +53,15 @@ pub struct UsageState {
 impl UsageState {
     pub fn snapshot(&self) -> Vec<ProviderUsage> {
         let map = self.data.lock().unwrap();
-        // Stable order: Claude, Codex, then Kimi.
+        // Stable order: the coding agents, then the voice provider.
         let mut out = Vec::new();
-        for a in [Agent::Claude, Agent::Codex, Agent::Kimi] {
-            if let Some(u) = map.get(&a) {
+        for a in [
+            Agent::Claude.wire_id(),
+            Agent::Codex.wire_id(),
+            Agent::Kimi.wire_id(),
+            ELEVENLABS_PROVIDER,
+        ] {
+            if let Some(u) = map.get(a) {
                 out.push(u.clone());
             }
         }
@@ -71,7 +81,7 @@ impl UsageState {
     }
 
     fn store(&self, u: ProviderUsage) {
-        self.data.lock().unwrap().insert(u.agent, u);
+        self.data.lock().unwrap().insert(u.agent.clone(), u);
     }
 }
 
@@ -96,21 +106,21 @@ pub fn publish(hub: &Hub, mut usage: ProviderUsage) {
 
 pub fn spawn_poller(hub: Arc<Hub>) {
     tokio::spawn(async move {
-        let mut last_fetch: HashMap<Agent, Instant> = HashMap::new();
+        let mut last_fetch: HashMap<String, Instant> = HashMap::new();
         loop {
             let force = hub.usage.force.swap(false, Ordering::Relaxed);
             let now = Instant::now();
-            let due = |a: Agent, last: &HashMap<Agent, Instant>| {
+            let due = |a: &str, last: &HashMap<String, Instant>| {
                 force
                     || last
-                        .get(&a)
+                        .get(a)
                         .map(|t| now.duration_since(*t) >= KICK_FLOOR)
                         .unwrap_or(true)
             };
 
-            let claude_due = due(Agent::Claude, &last_fetch);
-            let codex_due = due(Agent::Codex, &last_fetch);
-            let kimi_due = due(Agent::Kimi, &last_fetch);
+            let claude_due = due(Agent::Claude.wire_id(), &last_fetch);
+            let codex_due = due(Agent::Codex.wire_id(), &last_fetch);
+            let kimi_due = due(Agent::Kimi.wire_id(), &last_fetch);
             let (c, x, k) = tokio::join!(
                 async {
                     if claude_due {
@@ -147,7 +157,7 @@ pub fn spawn_poller(hub: Arc<Hub>) {
                         .get(&u.agent)
                         .map(|prev| prev.available)
                         .unwrap_or(false);
-                last_fetch.insert(u.agent, Instant::now());
+                last_fetch.insert(u.agent.clone(), Instant::now());
                 if !keep_last_good {
                     hub.usage.store(u);
                     changed = true;
@@ -171,10 +181,11 @@ pub fn spawn_poller(hub: Arc<Hub>) {
 
 fn unavailable(agent: Agent, error: impl Into<String>) -> ProviderUsage {
     ProviderUsage {
-        agent,
+        agent: agent.wire_id().into(),
         available: false,
         plan: None,
         windows: Vec::new(),
+        estimated_cost: None,
         error: Some(error.into()),
         fetched_at: now_iso(),
     }
@@ -333,10 +344,11 @@ async fn fetch_claude() -> ProviderUsage {
         return unavailable(agent, "no usage windows in response");
     }
     ProviderUsage {
-        agent,
+        agent: agent.wire_id().into(),
         available: true,
         plan,
         windows,
+        estimated_cost: None,
         error: None,
         fetched_at: now_iso(),
     }
@@ -371,6 +383,7 @@ fn parse_claude_windows(v: &Value) -> Vec<RateWindow> {
                 used_percent: pct,
                 resets_at: limit["resets_at"].as_str().map(String::from),
                 window_mins: Some(mins),
+                ..Default::default()
             });
         }
     }
@@ -387,6 +400,7 @@ fn parse_claude_windows(v: &Value) -> Vec<RateWindow> {
                 used_percent: pct,
                 resets_at: v[key]["resets_at"].as_str().map(String::from),
                 window_mins: Some(if label == "5h" { 300 } else { 10080 }),
+                ..Default::default()
             });
         }
     }
@@ -684,6 +698,7 @@ fn kimi_usage_row(row: &Value, label: String, window_mins: Option<u64>) -> Optio
         label,
         used_percent,
         resets_at: kimi_reset_at(row),
+        ..Default::default()
     })
 }
 
@@ -836,10 +851,11 @@ async fn fetch_kimi_inner() -> ProviderUsage {
         return unavailable(agent, "no Kimi usage windows in response");
     }
     ProviderUsage {
-        agent,
+        agent: agent.wire_id().into(),
         available: true,
         plan: None,
         windows,
+        estimated_cost: None,
         error: None,
         fetched_at: now_iso(),
     }
@@ -863,6 +879,7 @@ pub fn parse_codex_rate_limits(rate_limits: &Value) -> Option<ProviderUsage> {
                     .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
                     .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
                 window_mins: mins,
+                ..Default::default()
             });
         }
     }
@@ -870,10 +887,11 @@ pub fn parse_codex_rate_limits(rate_limits: &Value) -> Option<ProviderUsage> {
         return None;
     }
     Some(ProviderUsage {
-        agent: Agent::Codex,
+        agent: Agent::Codex.wire_id().into(),
         available: true,
         plan: rate_limits["planType"].as_str().map(titlecase),
         windows,
+        estimated_cost: None,
         error: None,
         fetched_at: now_iso(),
     })
@@ -962,6 +980,41 @@ async fn fetch_codex_inner() -> ProviderUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The usage layer was re-keyed from the `Agent` enum to provider-id
+    /// strings so ElevenLabs could join the meter without becoming a
+    /// selectable coding agent. The wire shape must not have moved: `agent`
+    /// still serializes to the same lowercase ids, and the new optional
+    /// fields stay absent when unset.
+    #[test]
+    fn provider_usage_wire_shape_is_unchanged() {
+        let u = ProviderUsage {
+            agent: Agent::Claude.wire_id().into(),
+            available: true,
+            plan: Some("Max".into()),
+            windows: vec![RateWindow {
+                label: "5h".into(),
+                used_percent: 15.0,
+                resets_at: None,
+                window_mins: Some(300),
+                ..Default::default()
+            }],
+            estimated_cost: None,
+            error: None,
+            fetched_at: "t".into(),
+        };
+        let v = serde_json::to_value(&u).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "agent": "claude",
+                "available": true,
+                "plan": "Max",
+                "windows": [{ "label": "5h", "usedPercent": 15.0, "windowMins": 300 }],
+                "fetchedAt": "t"
+            })
+        );
+    }
 
     #[test]
     fn claude_limits_include_model_scoped_windows() {

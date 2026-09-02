@@ -699,14 +699,23 @@ export interface RateWindow {
   usedPercent: number;
   resetsAt?: string;
   windowMins?: number;
+  /** Absolute consumption for unit-metered providers (ElevenLabs credits);
+   *  the bar still draws `usedPercent`, these feed the popover readout. */
+  used?: number;
+  limit?: number;
+  unit?: string;
 }
 
-/** Subscription usage snapshot for one provider (drives the sidebar meter). */
+/** Subscription usage snapshot for one provider (drives the sidebar meter).
+ *  `agent` is a provider wire id: the coding agents' ids plus non-agent
+ *  providers like "elevenlabs" (which is deliberately NOT an `Agent`). */
 export interface ProviderUsage {
-  agent: Agent;
+  agent: Agent | "elevenlabs";
   available: boolean;
   plan?: string;
   windows?: RateWindow[];
+  /** Rough current-period dollar figure — always an estimate, never an invoice. */
+  estimatedCost?: string;
   error?: string;
   fetchedAt: string;
 }

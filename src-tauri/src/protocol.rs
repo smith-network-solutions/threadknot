@@ -947,7 +947,7 @@ pub struct AgentInfo {
 
 /// One provider rate-limit window (5-hour session, weekly, …), normalized
 /// across providers the way Traycer does it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RateWindow {
     /// Short display label: "5h", "Week", "3d", …
@@ -958,19 +958,37 @@ pub struct RateWindow {
     pub resets_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_mins: Option<u64>,
+    /// Absolute consumption, for providers metered in units rather than a bare
+    /// percentage (ElevenLabs credits). The bar still draws `used_percent`;
+    /// these let the popover say "142,300 / 600,000 credits".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 /// Subscription usage snapshot for one provider (drives the sidebar meter).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderUsage {
-    pub agent: Agent,
+    /// Wire id of the provider this snapshot describes. For coding agents this
+    /// is `Agent::wire_id()` ("claude", "codex", …); non-agent providers (the
+    /// ElevenLabs voice meter) use their own id without widening the closed
+    /// `Agent` enum into something a thread could select.
+    pub agent: String,
     pub available: bool,
     /// Plan label ("Max", "Pro", …).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub windows: Vec<RateWindow>,
+    /// Rough dollar figure for the current period, always presented to the
+    /// user as an estimate — provider metering is model-dependent and can
+    /// change, so this is never an invoice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_cost: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub fetched_at: String,

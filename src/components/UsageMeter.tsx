@@ -9,7 +9,14 @@ const AGENT_NAMES: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
   kimi: "Kimi Code",
+  elevenlabs: "ElevenLabs",
 };
+
+/** Usage entries that are not coding agents and therefore never appear in
+ *  `hello.agents` — without this bypass the connected-agents filter below
+ *  would silently drop them. The server only broadcasts these when the
+ *  provider is actually configured, so that is their gate. */
+const PROVIDER_ONLY = new Set<string>(["elevenlabs"]);
 
 function severity(pct: number): "" | "warn" | "hot" {
   if (pct >= 95) return "hot";
@@ -48,6 +55,10 @@ function fmtAge(iso: string): string {
 function WindowRow({ w }: { w: RateWindow }) {
   const sev = severity(w.usedPercent);
   const reset = fmtReset(w.resetsAt);
+  const count =
+    w.used != null && w.limit != null
+      ? `${Math.round(w.used).toLocaleString()} / ${Math.round(w.limit).toLocaleString()} ${w.unit ?? "credits"}`
+      : null;
   return (
     <div className="usage-row">
       <span className="usage-row-label">{w.label}</span>
@@ -58,6 +69,7 @@ function WindowRow({ w }: { w: RateWindow }) {
         />
       </div>
       <span className={`usage-row-pct ${sev}`}>{fmtPct(w.usedPercent)}</span>
+      {count && <span className="usage-row-count">{count}</span>}
       {reset && <span className="usage-row-reset">{reset}</span>}
     </div>
   );
@@ -74,6 +86,11 @@ function ProviderBlock({ u }: { u: ProviderUsage }) {
         {u.plan && <span className="usage-plan">{u.plan}</span>}
       </div>
       {u.available && (u.windows ?? []).map((w) => <WindowRow key={w.label} w={w} />)}
+      {u.available && u.estimatedCost && (
+        <div className="usage-cost">
+          ≈ {u.estimatedCost} <span className="usage-cost-tag">estimated</span>
+        </div>
+      )}
       {!u.available && <div className="usage-error">{u.error ?? "unavailable"}</div>}
     </div>
   );
@@ -140,12 +157,14 @@ export function UsageMeter() {
   // The startup probe is the source of truth for locally connected providers.
   // Thread focus/status is transient and must never make a subscription meter
   // disappear while that provider remains connected to Threadknot.
-  const connectedAgents = new Set(
+  const connectedAgents = new Set<string>(
     (state.hello?.agents ?? [])
       .filter((agent) => agent.available && isAgentVisible(agent.id))
       .map((agent) => agent.id),
   );
-  const usage = state.usage.filter((u) => connectedAgents.has(u.agent));
+  const usage = state.usage.filter(
+    (u) => PROVIDER_ONLY.has(u.agent) || connectedAgents.has(u.agent),
+  );
   const shown = usage.filter((u) => u.available && (u.windows?.length ?? 0) > 0);
   if (shown.length === 0) return null;
 

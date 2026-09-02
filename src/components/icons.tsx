@@ -550,6 +550,21 @@ const CLAUDEX_PATH =
   "M3 6.2h13V3.4L21.6 7 16 10.6V7.8H3V6.2z M21 16.2H8v-2.8L2.4 17 8 20.6v-2.8h13v-1.6z";
 export const ClaudexMark = (p: IconProps) => brandSvg(CLAUDEX_PATH, p);
 
+/** ElevenLabs: the "II" double-bar wordmark glyph (voice output provider). */
+export const ElevenLabsMark = ({ size = 14, className }: IconProps) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    className={className}
+    aria-hidden="true"
+  >
+    <rect x="6.2" y="3" width="4.2" height="18" rx="0.6" />
+    <rect x="13.6" y="3" width="4.2" height="18" rx="0.6" />
+  </svg>
+);
+
 /** Brand glyph for an agent id, pre-tinted via provider mark classes. */
 export function AgentMark({
   agent,
@@ -565,6 +580,8 @@ export function AgentMark({
   if (agent === "kimi") return <KimiMark size={size} className={cls("mark mark-kimi")} />;
   if (agent === "hermes") return <HermesMark size={size} className={cls("mark mark-hermes")} />;
   if (agent === "claudex") return <ClaudexMark size={size} className={cls("mark mark-claudex")} />;
+  if (agent === "elevenlabs")
+    return <ElevenLabsMark size={size} className={cls("mark mark-elevenlabs")} />;
   return <CodexMark size={size} className={cls("mark mark-codex")} />;
 }
 
