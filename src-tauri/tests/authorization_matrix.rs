@@ -688,6 +688,171 @@ async fn paired(state: &ServerState, name: &str, capabilities: &[Capability]) ->
     credential
 }
 
+// The guest target uses this harness's strict ingress. Its synthetic routing
+// id has no peer entry, so a regression to the old mesh-only proxy fails here.
+fn guest_target(capabilities: &[Capability]) -> (String, String) {
+    let h = harness();
+    let (device, credential) = h.state.mobile.pair(
+        "guest resources".into(), "test".into(), capabilities.to_vec(),
+    ).unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    h.state.servernet.registry.add(threadknot_lib::servers::RemoteServer {
+        id: id.clone(), name: "Guest test".into(), origin: h.remote_base.clone(),
+        machine_id: id.clone(), credential, device_id: device.id.clone(),
+        person_id: None, person_name: None,
+        capabilities: capabilities.iter().map(|c| c.as_str().into()).collect(),
+        added_at: threadknot_lib::protocol::now_iso(), last_seen_at: None,
+    }).unwrap();
+    (id, device.id)
+}
+
+#[tokio::test]
+async fn guest_files_attachments_and_artifacts_use_the_device_bearer() {
+    let h = harness();
+    let (mid, device_id) = guest_target(&[Capability::Files, Capability::Threads]);
+    let client = reqwest::Client::new();
+    let url = |endpoint: &str| format!("{}{endpoint}", h.base);
+    let auth = [("machineId", mid.as_str()), ("token", h.master_token.as_str())];
+    let file = client.get(url("/file")).query(&auth)
+        .query(&[("project", h.project.id.as_str()), ("path", "README.md")])
+        .send().await.unwrap();
+    assert_eq!(file.status(), 200);
+    assert_eq!(file.text().await.unwrap(), "hello");
+
+    let thread = new_thread(false);
+    let bytes = b"%PDF-1.4 guest document";
+    let attachment = h.state.hub.store.write_attachment(&thread.id, "brief.pdf", "application/pdf", bytes).unwrap();
+    let response = client.get(url("/attachment")).query(&auth)
+        .query(&[("thread", thread.id.as_str()), ("id", attachment.id.as_str())])
+        .send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-type"], "application/pdf");
+    assert_eq!(response.bytes().await.unwrap().as_ref(), bytes);
+
+    let artifact = h.state.hub.store.upsert_artifact(
+        &thread.id, &h.project.id, "result.png", "result.png", "image/png",
+        8, "test", "created", None,
+    ).unwrap();
+    h.state.hub.store.write_artifact_snapshot(&thread.id, &artifact.id, "png", b"PNGbytes").unwrap();
+    let response = client.get(url("/artifact-file")).query(&auth)
+        .query(&[("id", artifact.id.as_str()), ("download", "1")])
+        .send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert!(response.headers()["content-disposition"].to_str().unwrap().contains("result.png"));
+    assert_eq!(response.bytes().await.unwrap().as_ref(), b"PNGbytes");
+    let range = client.get(url("/artifact-file")).query(&auth)
+        .query(&[("id", artifact.id.as_str())]).header("Range", "bytes=0-2")
+        .send().await.unwrap();
+    assert_eq!(range.status(), 206);
+    assert_eq!(range.headers()["content-range"], "bytes 0-2/8");
+    assert_eq!(range.bytes().await.unwrap().as_ref(), b"PNG");
+
+    // Local grants cannot be borrowed from the guest credential.
+    let limited = paired(&h.state, "guest no mesh", &[Capability::Files]).await;
+    let denied = client.get(url("/file"))
+        .query(&[("token", limited.as_str()), ("machineId", mid.as_str())])
+        .send().await.unwrap();
+    assert_eq!(denied.status(), 403);
+    // Remote grants are enforced independently on the next fetch.
+    h.state.mobile.set_capabilities(&device_id, vec![Capability::Threads]).unwrap();
+    let denied = client.get(url("/file")).query(&auth).send().await.unwrap();
+    assert_eq!(denied.status(), 403);
+    h.state.mobile.revoke(&device_id).unwrap();
+    let revoked = client.get(url("/attachment")).query(&auth).send().await.unwrap();
+    assert_eq!(revoked.status(), 401);
+    h.state.servernet.registry.remove(&mid).unwrap();
+}
+
+#[tokio::test]
+async fn guest_terminal_streams_real_pty_and_honors_revocation() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let h = harness();
+    let (mid, device_id) = guest_target(&[Capability::Terminal]);
+    let terminal = h.state.hub.store.create_terminal(h.project.id.clone(), Some("Guest stream test".into())).unwrap();
+    let url = format!("{}/term?token={}&machineId={mid}&project={}&term={}",
+        h.base.replace("http://", "ws://"), h.master_token, h.project.id, terminal.id);
+    let (mut socket, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    socket.send(Message::Text(serde_json::json!({"type":"input", "data":"printf '%s%s\\n' 'GUEST_' 'PTY_OK'\n"}).to_string().into())).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let mut output = String::new();
+        while let Some(frame) = socket.next().await {
+            if let Message::Binary(bytes) = frame.unwrap() {
+                output.push_str(&String::from_utf8_lossy(&bytes));
+                if output.contains("GUEST_PTY_OK") { return; }
+            }
+        }
+        panic!("no remote PTY output");
+    }).await.expect("terminal output timed out");
+    h.state.mobile.revoke(&device_id).unwrap();
+    h.state.sessions.close_device(&device_id);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(frame) = socket.next().await {
+            if matches!(frame, Ok(Message::Close(_)) | Err(_)) { return; }
+        }
+    }).await.expect("revocation must close both ends");
+    h.state.terms.delete(&h.project.id, &terminal.id);
+    h.state.hub.store.delete_terminal(&terminal.id).unwrap();
+    h.state.servernet.registry.remove(&mid).unwrap();
+}
+
+#[tokio::test]
+async fn guest_stream_denials_survive_the_proxy_handshake() {
+    let h = harness();
+    let (mid, _) = guest_target(&[Capability::Threads]);
+    for endpoint in ["term", "browser"] {
+        let url = format!("{}/{endpoint}?token={}&machineId={mid}", h.base, h.master_token);
+        assert_eq!(ws_status(&url).await, 403, "upstream {endpoint} denial");
+    }
+    // An ordinary browser grant still cannot borrow a guest's signed identity.
+    let local = paired(&h.state, "guest browser caller", &[Capability::Browser, Capability::Mesh]).await;
+    assert_eq!(ws_status(&format!("{}/browser?token={local}&machineId={mid}", h.base)).await, 403);
+    h.state.servernet.registry.remove(&mid).unwrap();
+}
+
+#[tokio::test]
+async fn guest_browser_forwards_controls_and_binary_frames_without_local_credentials() {
+    use axum::{extract::{Query, State, WebSocketUpgrade}, http::HeaderMap, routing::get, Router};
+    use futures_util::{SinkExt, StreamExt};
+    use std::collections::HashMap;
+    use tokio_tungstenite::tungstenite::Message;
+    async fn browser(
+        ws: WebSocketUpgrade,
+        State(credential): State<String>,
+        Query(query): Query<HashMap<String, String>>,
+        headers: HeaderMap,
+    ) -> axum::response::Response {
+        assert_eq!(headers["authorization"], format!("Bearer {credential}"));
+        assert!(!headers.contains_key("x-threadknot-mesh-grants"));
+        assert_eq!(query.len(), 1);
+        assert_eq!(query["session"], "guest-browser-test");
+        ws.on_upgrade(|mut socket| async move {
+            let control = socket.recv().await.unwrap().unwrap();
+            assert_eq!(control.to_text().unwrap(), "{\"type\":\"navigate\",\"url\":\"about:blank\"}");
+            socket.send(axum::extract::ws::Message::Binary(vec![1, 2, 3, 4].into())).await.unwrap();
+            let _ = socket.close().await;
+        })
+    }
+    let h = harness();
+    let (mid, _) = guest_target(&[Capability::Browser]);
+    let credential = h.state.servernet.registry.get(&mid).unwrap().credential;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    h.state.servernet.registry.update(&mid, |s| s.origin = origin).unwrap();
+    let router = Router::new().route("/browser", get(browser)).with_state(credential);
+    let serving = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let url = format!("{}/browser?token={}&machineId={mid}&session=guest-browser-test",
+        h.base.replace("http://", "ws://"), h.master_token);
+    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    socket.send(Message::Text("{\"type\":\"navigate\",\"url\":\"about:blank\"}".into())).await.unwrap();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+    assert_eq!(frame, Message::Binary(vec![1, 2, 3, 4].into()));
+    let _ = socket.close(None).await;
+    serving.abort();
+    h.state.servernet.registry.remove(&mid).unwrap();
+}
+
 #[tokio::test]
 async fn sec002_term_socket_checks_the_principal_not_just_the_token() {
     let h = harness();

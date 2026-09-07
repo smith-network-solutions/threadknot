@@ -728,6 +728,7 @@ pub(crate) async fn maybe_proxy_bytes(
     principal: &Principal,
     endpoint: &str,
     params: &HashMap<String, String>,
+    headers: &axum::http::HeaderMap,
 ) -> Option<axum::response::Response> {
     let mid = params.get("machineId")?;
     if mid == &state.device.machine_id {
@@ -735,6 +736,9 @@ pub(crate) async fn maybe_proxy_bytes(
     }
     if let Err(e) = principal.require(Capability::Mesh) {
         return Some(forbidden(e));
+    }
+    if let Some(server) = state.servernet.registry.by_machine(mid) {
+        return Some(crate::servers::proxy_bytes(&server, endpoint, params, headers).await);
     }
     Some(proxy_peer_bytes(state, mid, endpoint, params, principal.mesh_assertion()).await)
 }
@@ -778,7 +782,7 @@ async fn attachment_handler(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    if let Some(resp) = maybe_proxy_bytes(&state, &principal, "/attachment", &params).await {
+    if let Some(resp) = maybe_proxy_bytes(&state, &principal, "/attachment", &params, &headers).await {
         return resp;
     }
     let (Some(thread), Some(id)) = (params.get("thread"), params.get("id")) else {
@@ -830,7 +834,7 @@ async fn artifact_file_handler(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    if let Some(resp) = maybe_proxy_bytes(&state, &principal, "/artifact-file", &params).await {
+    if let Some(resp) = maybe_proxy_bytes(&state, &principal, "/artifact-file", &params, &headers).await {
         return resp;
     }
     let Some(id) = params.get("id") else {

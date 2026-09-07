@@ -659,6 +659,155 @@ fn ws_request(server: &RemoteServer) -> Result<axum::http::Request<()>> {
     builder.body(()).context("build handshake")
 }
 
+/// Build only the known file/stream endpoints at the registered origin. Neither
+/// the local credential nor a mesh assertion belongs on a guest connection.
+fn resource_url(
+    server: &RemoteServer,
+    endpoint: &str,
+    params: &HashMap<String, String>,
+) -> Result<url::Url> {
+    anyhow::ensure!(
+        matches!(endpoint, "file" | "attachment" | "artifact-file" | "term" | "browser"),
+        "unsupported server endpoint"
+    );
+    let mut url = url::Url::parse(&server.origin)?;
+    anyhow::ensure!(matches!(url.scheme(), "http" | "https"), "invalid server scheme");
+    url.set_path(&format!("/{endpoint}"));
+    url.set_query(None);
+    url.set_fragment(None);
+    {
+        let mut query = url.query_pairs_mut();
+        for (key, value) in params {
+            if key != "machineId" && !crate::ingress::is_credential_query_key(key) {
+                query.append_pair(key, value);
+            }
+        }
+    }
+    Ok(url)
+}
+
+/// Stream snapshots, attachments and project files using the device credential
+/// held on the backend. Remote status and download headers survive the proxy.
+pub(crate) async fn proxy_bytes(
+    server: &RemoteServer,
+    endpoint: &str,
+    params: &HashMap<String, String>,
+    headers: &axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse};
+    let url = match resource_url(server, endpoint.trim_start_matches('/'), params) {
+        Ok(url) => url,
+        Err(_) => return (StatusCode::BAD_GATEWAY, "invalid server endpoint").into_response(),
+    };
+    // Do not follow a redirect to a different origin or turn a login page into
+    // a successful file download. The configured server owns these endpoints.
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(60))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return (StatusCode::BAD_GATEWAY, "cannot create server connection").into_response(),
+    };
+    let mut request = client.get(url).bearer_auth(&server.credential);
+    if let Some(range) = headers.get(axum::http::header::RANGE) {
+        request = request.header(axum::http::header::RANGE, range);
+    }
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(_) => return (StatusCode::BAD_GATEWAY, "cannot fetch file from server").into_response(),
+    };
+    let mut builder = axum::response::Response::builder().status(response.status());
+    for name in ["content-type", "content-disposition", "content-length", "x-content-type-options", "content-range", "accept-ranges"] {
+        if let Some(value) = response.headers().get(name) {
+            builder = builder.header(name, value);
+        }
+    }
+    builder
+        .body(axum::body::Body::from_stream(response.bytes_stream()))
+        .unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "cannot stream server file").into_response())
+}
+
+pub(crate) type GuestStream = tokio_tungstenite::WebSocketStream<
+    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+>;
+
+/// Authenticate upstream before upgrading locally, so a refused grant remains
+/// a 403 instead of a successful handshake followed by a dead terminal.
+pub(crate) async fn connect_stream(
+    server: &RemoteServer,
+    endpoint: &str,
+    params: &HashMap<String, String>,
+) -> std::result::Result<GuestStream, Box<axum::response::Response>> {
+    use axum::{http::StatusCode, response::IntoResponse};
+    let bad_gateway = || Box::new((StatusCode::BAD_GATEWAY, "cannot connect to server stream").into_response());
+    let mut url = resource_url(server, endpoint, params).map_err(|_| bad_gateway())?;
+    let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
+    url.set_scheme(scheme).map_err(|_| bad_gateway())?;
+    let mut request = ws_request(server).map_err(|_| bad_gateway())?;
+    *request.uri_mut() = url.as_str().parse().map_err(|_| bad_gateway())?;
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(limits::MAX_CONTROL_WS_MESSAGE_BYTES))
+        .max_frame_size(Some(limits::MAX_CONTROL_WS_MESSAGE_BYTES));
+    match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async_with_config(request, Some(config), false),
+    ).await {
+        Ok(Ok((stream, _))) => Ok(stream),
+        Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) => {
+            let status = response.status();
+            let message = match status {
+                StatusCode::FORBIDDEN => "this device needs permission to use the server's terminal or browser",
+                StatusCode::UNAUTHORIZED => "the server credential is no longer valid; pair again",
+                _ => "the server could not open this stream",
+            };
+            Err(Box::new((status, message).into_response()))
+        }
+        _ => Err(bad_gateway()),
+    }
+}
+
+/// Both directions live inside this future. Revocation or a disconnect drops
+/// both socket halves, with no detached forwarding task left running.
+pub(crate) async fn bridge_stream(
+    client: axum::extract::ws::WebSocket,
+    upstream: GuestStream,
+) {
+    use axum::extract::ws::Message as A;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as T;
+    let (mut c_tx, mut c_rx) = client.split();
+    let (mut s_tx, mut s_rx) = upstream.split();
+    let up = async {
+        while let Some(Ok(message)) = c_rx.next().await {
+            let message = match message {
+                A::Text(text) => T::Text(text.as_str().into()),
+                A::Binary(bytes) => T::Binary(bytes),
+                A::Ping(bytes) => T::Ping(bytes),
+                A::Pong(bytes) => T::Pong(bytes),
+                A::Close(_) => break,
+            };
+            if s_tx.send(message).await.is_err() { break; }
+        }
+        let _ = s_tx.close().await;
+    };
+    let down = async {
+        while let Some(Ok(message)) = s_rx.next().await {
+            let message = match message {
+                T::Text(text) => A::Text(text.as_str().into()),
+                T::Binary(bytes) => A::Binary(bytes),
+                T::Ping(bytes) => A::Ping(bytes),
+                T::Pong(bytes) => A::Pong(bytes),
+                T::Close(_) => break,
+                _ => continue,
+            };
+            if c_tx.send(message).await.is_err() { break; }
+        }
+        let _ = c_tx.close().await;
+    };
+    tokio::select! { _ = up => {}, _ = down => {} }
+}
+
 /// Read frames until the response to `want_id` arrives.
 async fn read_response<S>(ws: &mut S, want_id: u64) -> Result<Value>
 where
@@ -779,6 +928,25 @@ mod tests {
         // also have been logged by every hop on the way. Catch it here.
         assert!(!req.uri().to_string().contains("amd_secret"));
         assert!(req.uri().to_string().starts_with("wss://"));
+    }
+
+    #[test]
+    fn resource_urls_strip_local_credentials_and_encode_file_names() {
+        let params = HashMap::from([
+            ("token".into(), "local-master".into()),
+            ("credential".into(), "local-device".into()),
+            ("machineId".into(), "m1".into()),
+            ("path".into(), "docs/a & b.pdf".into()),
+            ("download".into(), "1".into()),
+        ]);
+        let target = server("https://team.example.com");
+        let url = resource_url(&target, "file", &params).unwrap();
+        let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(query.len(), 2);
+        assert_eq!(query["path"], "docs/a & b.pdf");
+        assert_eq!(query["download"], "1");
+        assert!(!url.as_str().contains("local-"));
+        assert!(resource_url(&target, "https://unrelated.example", &params).is_err());
     }
 
     #[test]

@@ -436,6 +436,18 @@ pub async fn ws_handler(
                 Ok(guard) => guard,
                 Err(resp) => return *resp,
             };
+            if let Some(server) = state.servernet.registry.by_machine(&mid) {
+                let upstream = match crate::servers::connect_stream(&server, "term", &params).await {
+                    Ok(upstream) => upstream,
+                    Err(response) => return *response,
+                };
+                return crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
+                    tokio::select! {
+                        _ = crate::servers::bridge_stream(socket, upstream) => {}
+                        _ = guard.closed() => {}
+                    }
+                });
+            }
             // The caller's grants travel with the splice, so the far side
             // enforces `terminal` for itself instead of trusting that we did.
             let grants = principal.mesh_assertion();
@@ -565,7 +577,8 @@ async fn bridge(socket: WebSocket, session: Arc<Session>, cols: u16, rows: u16) 
     }
 
     // Output task: broadcast -> WS.
-    let out = tokio::spawn(async move {
+    // Revocation drops bridge() before it reaches out.abort() below.
+    let out = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(TermMsg::Output(bytes)) => {
@@ -588,7 +601,7 @@ async fn bridge(socket: WebSocket, session: Arc<Session>, cols: u16, rows: u16) 
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
-    });
+    }));
 
     // Input loop: WS control frames -> pty. Ends on client disconnect; the
     // session is intentionally NOT torn down (reattach is the whole point).

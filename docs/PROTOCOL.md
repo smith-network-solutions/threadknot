@@ -1170,6 +1170,18 @@ frame that already carries an origin — meaning it reached them from a third
 machine — is dropped. What belongs to that server crosses; what merely passed
 through it does not.
 
+**Files and interactive streams.** `/file`, `/attachment`, `/artifact-file`,
+`/term` and `/browser` also resolve a guest server before looking for a mesh
+peer. The backend uses the stored device bearer in an Authorization header,
+strips local credentials and `machineId`, and sends no mesh assertion. File
+responses retain MIME type, download filename and range headers. Stream
+handshakes authenticate upstream before upgrading locally, and revocation
+closes both directions. Existing local capability checks still apply; the
+remote server independently enforces the guest's grants. A guest device needs
+`terminal` for a shell and `browser` for an unsigned browser. Signed browser
+profiles still require the separate `signedBrowser` grant. The local browser
+splice remains owner-only.
+
 **Sidebar preferences on a guest's workspace.** `workspace.setHidden` and
 `workspace.setFavorite` are in `ROUTABLE`, which is inert for an existing
 client: nothing sends `machineId` for a workspace op, and without one they run

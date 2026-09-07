@@ -1642,7 +1642,7 @@ impl Store {
     }
 }
 
-/// Map an image mime type to a file extension (defaults to `bin`).
+/// Map attachment MIME types to stored extensions (unknown types use `bin`).
 pub fn ext_for_mime(mime: &str) -> &'static str {
     match mime {
         "image/avif" => "avif",
@@ -1656,6 +1656,16 @@ pub fn ext_for_mime(mime: &str) -> &'static str {
         "image/tiff" => "tiff",
         "image/webp" => "webp",
         "image/x-icon" | "image/vnd.microsoft.icon" => "ico",
+        "application/pdf" => "pdf",
+        "application/msword" => "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "docx",
+        "application/vnd.ms-excel" => "xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => "xlsx",
+        "application/vnd.ms-powerpoint" => "ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => "pptx",
+        "text/plain" => "txt",
+        "text/csv" => "csv",
+        "application/zip" => "zip",
         _ => "bin",
     }
 }
@@ -1674,7 +1684,10 @@ pub fn mime_for_ext(ext: &str) -> &'static str {
         "tif" | "tiff" => "image/tiff",
         "webp" => "image/webp",
         "ico" => "image/x-icon",
-        _ => "application/octet-stream",
+        "doc" => "application/msword",
+        "xls" => "application/vnd.ms-excel",
+        "ppt" => "application/vnd.ms-powerpoint",
+        _ => crate::artifacts::deliverable_mime(ext).unwrap_or("application/octet-stream"),
     }
 }
 

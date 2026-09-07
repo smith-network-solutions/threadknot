@@ -16,6 +16,10 @@ histories. Releases moved to 0.2.x afterwards so no number is ever issued
 twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
 to the old line.
 
+## v0.2.159 · 2026-09-07
+
+- Shared servers now support terminal and browser streams, file previews, and artifact downloads through Settings → Servers. The server must grant terminal and browser access to your paired device. The attachment picker also accepts PDFs, Word documents, and other files alongside images.
+
 ## v0.2.158 · 2026-09-04
 
 - **Claude Fable 5.1 and GPT-6-Astra are both in the model picker.** Fable 5.1 joins the Claude list above Fable 5 and takes the same 1M context switch. New Codex chats start on Astra. Chats you already have open keep the model they were started with.

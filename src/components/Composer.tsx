@@ -86,11 +86,8 @@ const IMAGE_TYPES = [
   "image/x-icon",
   "image/vnd.microsoft.icon",
 ];
-// An explicit image filter is important for native WebKit file dialogs: a
-// generic */* is treated as a document filter by some platform pickers and
-// hides otherwise valid image files. Keep extension fallbacks for ICO and
-// image formats whose MIME is inconsistently reported by file managers.
-const ACCEPT_ATTR = "image/*,.ico,.svg,.avif,.heic,.heif,.tif,.tiff";
+// Leave the picker unrestricted: documents and images use the same attachment
+// path. An image-only accept filter hides PDFs, Word documents and other files.
 
 /** Total wire cost of a draft's attachments (they travel as base64). */
 function attachmentWireBytes(attachments: DraftAttachment[]): number {
@@ -1737,7 +1734,6 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
         <input
           ref={fileRef}
           type="file"
-          accept={ACCEPT_ATTR}
           multiple
           hidden
           onChange={(e) => {

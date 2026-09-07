@@ -153,7 +153,7 @@ pub async fn file_handler(
         Err(resp) => return *resp,
     };
     // Remote project: stream the bytes from the owning machine (mesh-gated).
-    if let Some(resp) = crate::server::maybe_proxy_bytes(&state, &principal, "/file", &params).await
+    if let Some(resp) = crate::server::maybe_proxy_bytes(&state, &principal, "/file", &params, &headers).await
     {
         return resp;
     }

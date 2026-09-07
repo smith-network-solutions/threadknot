@@ -91,7 +91,7 @@ relay-protocol = { path = "../relay-protocol" }
 webpki-roots = "1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 yamux = "0.13"
-tokio-util = { version = "0.7", features = ["compat"] }
+tokio-util = { version = "0.7", features = ["compat", "rt"] }
 futures = "0.3"
 
 # Cancelling an `exec` job has to kill the whole process group, not just the

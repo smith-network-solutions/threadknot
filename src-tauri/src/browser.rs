@@ -4129,6 +4129,18 @@ pub async fn ws_handler(
                 Ok(guard) => guard,
                 Err(resp) => return *resp,
             };
+            if let Some(server) = state.servernet.registry.by_machine(&mid) {
+                let upstream = match crate::servers::connect_stream(&server, "browser", &params).await {
+                    Ok(upstream) => upstream,
+                    Err(response) => return *response,
+                };
+                return crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
+                    tokio::select! {
+                        _ = crate::servers::bridge_stream(socket, upstream) => {}
+                        _ = guard.closed() => {}
+                    }
+                });
+            }
             return crate::limits::control_frame_caps(ws).on_upgrade(move |socket| async move {
                 tokio::select! {
                     _ = crate::peernet::splice_browser(socket, state, mid, params, grants) => {}
@@ -4285,7 +4297,8 @@ async fn bridge(
     }
 
     // Output task: broadcast frames/nav -> WS.
-    let out = tokio::spawn(async move {
+    // Closing a revoked session drops bridge() during the input loop too.
+    let out = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(BrowserMsg::Frame(bytes)) => {
@@ -4332,7 +4345,7 @@ async fn bridge(
             }
         }
         let _ = sink.send(Message::Close(None)).await;
-    });
+    }));
 
     // Input loop: control frames -> CDP. Ends on disconnect; session survives.
     while let Some(Ok(msg)) = stream.next().await {
