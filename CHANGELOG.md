@@ -16,6 +16,11 @@ histories. Releases moved to 0.2.x afterwards so no number is ever issued
 twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
 to the old line.
 
+## v0.2.158 · 2026-09-04
+
+- **Claude Fable 5.1 and GPT-6-Astra are both in the model picker.** Fable 5.1 joins the Claude list above Fable 5 and takes the same 1M context switch. New Codex chats start on Astra. Chats you already have open keep the model they were started with.
+- **New Codex chats still start at high reasoning.** Astra arrives from OpenAI set to medium; Threadknot raises it, the same as it already did for Sol. Change it in the composer and that choice is remembered for the project. A Codex too old to have heard of Astra keeps starting new chats on Sol.
+
 ## v0.2.126 · 2026-08-19
 
 - **Several people can share one Threadknot without sharing one sidebar.** Add them under Settings → People, then point each paired browser or phone at whoever is holding it under Phone & access. A row of faces appears at the top of the sidebar: yours is selected, click a teammate's to see what they have running, click it again for everyone. Chats stay visible to all of you — this is tidiness, not privacy, and anyone who can open a terminal here can still read anything.

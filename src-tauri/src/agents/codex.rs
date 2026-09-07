@@ -1148,21 +1148,28 @@ pub async fn probe(cwd: &str) -> Result<(bool, Vec<ModelInfo>, String)> {
 }
 
 /// Threadknot's opinionated Codex starting point. The app-server catalog remains
-/// authoritative for availability and effort options, but its own Sol default
-/// is deliberately "low"; new Threadknot Codex chats should start at high.
+/// authoritative for availability and effort options, but its own defaults are
+/// deliberately conservative — Sol ships at "low", Astra at "medium" — and new
+/// Threadknot Codex chats should start at high.
+///
+/// Newest first, so a Codex that has never heard of Astra still lands on Sol
+/// rather than on whatever the catalog happened to list first.
 fn apply_threadknot_defaults(models: &mut [ModelInfo], discovered_default: String) -> String {
-    const PREFERRED_MODEL: &str = "gpt-5.6-sol";
+    const PREFERRED_MODELS: &[&str] = &["gpt-6-astra", "gpt-5.6-sol"];
     const PREFERRED_EFFORT: &str = "high";
 
-    if let Some(sol) = models.iter_mut().find(|model| model.id == PREFERRED_MODEL) {
-        if sol
+    for preferred in PREFERRED_MODELS {
+        let Some(model) = models.iter_mut().find(|model| model.id == *preferred) else {
+            continue;
+        };
+        if model
             .efforts
             .as_ref()
             .is_some_and(|efforts| efforts.iter().any(|effort| effort == PREFERRED_EFFORT))
         {
-            sol.default_effort = Some(PREFERRED_EFFORT.into());
+            model.default_effort = Some(PREFERRED_EFFORT.into());
         }
-        return PREFERRED_MODEL.into();
+        return (*preferred).into();
     }
 
     if models.iter().any(|model| model.id == discovered_default) {
@@ -1196,32 +1203,75 @@ mod tests {
         assert!(!is_compact_command("/compact\nthen summarize"));
     }
 
+    fn model(id: &str, efforts: &[&str], default_effort: &str) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            name: id.to_uppercase(),
+            image: None,
+            supports_wide_context: None,
+            fixed_context_window: None,
+            efforts: Some(efforts.iter().map(|e| (*e).to_string()).collect()),
+            default_effort: Some(default_effort.into()),
+        }
+    }
+
     #[test]
     fn sol_is_the_codex_default_at_high_effort() {
         let mut models = vec![
-            ModelInfo {
-                id: "gpt-5.4".into(),
-                name: "GPT-5.4".into(),
-                image: None,
-                supports_wide_context: None,
-                fixed_context_window: None,
-                efforts: Some(vec!["low".into(), "high".into()]),
-                default_effort: Some("medium".into()),
-            },
-            ModelInfo {
-                id: "gpt-5.6-sol".into(),
-                name: "GPT-5.6 Sol".into(),
-                image: None,
-                supports_wide_context: None,
-                fixed_context_window: None,
-                efforts: Some(vec!["low".into(), "medium".into(), "high".into()]),
-                default_effort: Some("low".into()),
-            },
+            model("gpt-5.4", &["low", "high"], "medium"),
+            model("gpt-5.6-sol", &["low", "medium", "high"], "low"),
         ];
 
         let default_model = apply_threadknot_defaults(&mut models, "gpt-5.4".into());
 
         assert_eq!(default_model, "gpt-5.6-sol");
         assert_eq!(models[1].default_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn astra_outranks_sol_and_still_starts_at_high_effort() {
+        let mut models = vec![
+            model("gpt-5.6-sol", &["low", "medium", "high"], "low"),
+            model(
+                "gpt-6-astra",
+                &["low", "medium", "high", "xhigh", "max", "ultra"],
+                "medium",
+            ),
+        ];
+
+        // The app-server already calls Astra its default; Threadknot's own
+        // preference has to agree rather than pinning new chats to Sol.
+        let default_model = apply_threadknot_defaults(&mut models, "gpt-6-astra".into());
+
+        assert_eq!(default_model, "gpt-6-astra");
+        assert_eq!(models[1].default_effort.as_deref(), Some("high"));
+        // Sol is left exactly as the catalog described it.
+        assert_eq!(models[0].default_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn a_codex_without_astra_still_prefers_sol() {
+        let mut models = vec![
+            model("gpt-5.4", &["low", "high"], "medium"),
+            model("gpt-5.6-sol", &["low", "medium", "high"], "low"),
+        ];
+
+        assert_eq!(
+            apply_threadknot_defaults(&mut models, "gpt-5.4".into()),
+            "gpt-5.6-sol"
+        );
+    }
+
+    #[test]
+    fn without_a_preferred_model_the_catalog_default_stands() {
+        let mut models = vec![
+            model("gpt-5.4", &["low", "high"], "medium"),
+            model("gpt-5.5", &["low", "high"], "medium"),
+        ];
+
+        assert_eq!(
+            apply_threadknot_defaults(&mut models, "gpt-5.5".into()),
+            "gpt-5.5"
+        );
     }
 }

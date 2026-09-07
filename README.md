@@ -245,7 +245,7 @@ Design notes and the reasoning behind the roles: [`docs/PARLEY.md`](docs/PARLEY.
 | Control | Options |
 |---|---|
 | Agent | Claude Code, Codex, Kimi Code, Claudex (Claude harness + any model) |
-| Model | Claude: Fable 5 / Opus 5 / Sonnet 5 / Haiku 4.5 · Codex: discovered via `model/list` · Kimi: K3 / K3 256K / K2.7 Code |
+| Model | Claude: Fable 5.1 / Fable 5 / Opus 5 / Sonnet 5 / Haiku 4.5 · Codex: discovered via `model/list` · Kimi: K3 / K3 256K / K2.7 Code |
 | Effort | K3: low / high / max (high default) · other models expose their supported levels (+ **1M context** toggle on supported Claude models via the `[1m]` suffix) |
 | Access | **Read-only** (ask for everything) / **Edits** (auto-accept edits) / **Full** (no prompts) |
 | Mode | **Plan** (read-only planning, plan approval card → one-click "Approve & build") / **Build** |

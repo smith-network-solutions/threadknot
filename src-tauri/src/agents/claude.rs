@@ -306,7 +306,8 @@ fn reconnect_message(original: &str) -> String {
 /// Models with a 1M-token context variant (selected via the `[1m]` model-id suffix).
 /// Opus 5 is deliberately absent: its only context window is 1M and its
 /// canonical model id must not receive a suffix.
-pub const WIDE_CONTEXT_MODELS: &[&str] = &["claude-fable-5", "claude-sonnet-5"];
+pub const WIDE_CONTEXT_MODELS: &[&str] =
+    &["claude-fable-5-1", "claude-fable-5", "claude-sonnet-5"];
 
 pub fn builtin_models() -> Vec<ModelInfo> {
     let efforts = || {
@@ -328,6 +329,7 @@ pub fn builtin_models() -> Vec<ModelInfo> {
         default_effort: Some("high".into()),
     };
     let mut models = vec![
+        m("claude-fable-5-1", "Claude Fable 5.1", true, None),
         m("claude-fable-5", "Claude Fable 5", true, None),
         m("claude-opus-5", "Claude Opus 5", false, Some(1_000_000)),
         m("claude-sonnet-5", "Claude Sonnet 5", true, None),
@@ -1321,12 +1323,24 @@ fn control_context_usage(message: &Value) -> Option<(u64, u64)> {
     ))
 }
 
+/// The reported id is the current one, either exactly or as its dated snapshot
+/// (`claude-haiku-4-5` → `claude-haiku-4-5-20251001`).
+///
+/// The snapshot test is deliberately narrow — a `-` then an 8-digit YYYYMMDD —
+/// because a point release wears the same shape: `claude-fable-5-1` is its own
+/// model, not a snapshot of `claude-fable-5`, and treating the two as one would
+/// attribute Fable 5.1's context reading to a Fable 5 thread.
 fn same_model(reported: &str, current: &str) -> bool {
     let current = current.strip_suffix("[1m]").unwrap_or(current);
     reported == current
-        || reported
-            .strip_prefix(current)
-            .is_some_and(|suffix| suffix.starts_with('-'))
+        || reported.strip_prefix(current).is_some_and(|suffix| {
+            suffix.strip_prefix('-').is_some_and(|rest| {
+                let (date, tail) = rest.split_at(rest.len().min(8));
+                date.len() == 8
+                    && date.bytes().all(|b| b.is_ascii_digit())
+                    && (tail.is_empty() || tail.starts_with('-'))
+            })
+        })
 }
 
 /// Claude waits synchronously for a response to `can_use_tool`. An interrupt
@@ -2424,6 +2438,32 @@ mod tests {
     }
 
     #[test]
+    fn fable_51_is_offered_alongside_fable_5_and_widens_to_1m() {
+        let models = builtin_models();
+        let fable = models
+            .iter()
+            .find(|model| model.id == "claude-fable-5-1")
+            .expect("Fable 5.1 model");
+        assert_eq!(fable.name, "Claude Fable 5.1");
+        // Same shape as Fable 5: a 200k base window the `[1m]` suffix widens,
+        // not a fixed one.
+        assert_eq!(fable.fixed_context_window, None);
+        assert_eq!(fable.supports_wide_context, Some(true));
+        assert!(WIDE_CONTEXT_MODELS.contains(&"claude-fable-5-1"));
+        // Adding it displaces nothing: Fable 5 stays selectable and Opus 5
+        // stays the default.
+        assert!(models.iter().any(|model| model.id == "claude-fable-5"));
+        assert_eq!(DEFAULT_MODEL, "claude-opus-5");
+
+        let mut settings = settings(Access::Full);
+        settings.model = "claude-fable-5-1".into();
+        settings.wide_context = true;
+        assert_eq!(api_model_id(&settings, None), "claude-fable-5-1[1m]");
+        assert_eq!(context_window("claude-fable-5-1[1m]", None), 1_000_000);
+        assert_eq!(context_window("claude-fable-5-1", None), 200_000);
+    }
+
+    #[test]
     fn fallback_context_counts_latest_input_side_but_not_output() {
         let usage = json!({
             "input_tokens": 4,
@@ -2592,7 +2632,14 @@ mod tests {
     fn authoritative_model_matching_accepts_wide_and_dated_ids_only() {
         assert!(same_model("claude-fable-5", "claude-fable-5[1m]"));
         assert!(same_model("claude-haiku-4-5-20251001", "claude-haiku-4-5"));
+        assert!(same_model("claude-opus-4-1-20250805-v1", "claude-opus-4-1"));
         assert!(!same_model("claude-fable-5", "claude-sonnet-5[1m]"));
+        // A point release is a different model, not a snapshot of the one it
+        // succeeds — in either direction, and through the wide-context suffix.
+        assert!(!same_model("claude-fable-5-1", "claude-fable-5"));
+        assert!(!same_model("claude-fable-5-1", "claude-fable-5[1m]"));
+        assert!(!same_model("claude-fable-5", "claude-fable-5-1"));
+        assert!(same_model("claude-fable-5-1", "claude-fable-5-1[1m]"));
     }
 
     #[test]

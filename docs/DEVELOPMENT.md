@@ -418,8 +418,9 @@ threadknot` matches your own shell's cmdline.
 - **Claude** (`agents/claude.rs`): spawn `claude --output-format stream-json --verbose
   --input-format stream-json --include-partial-messages --permission-prompt-tool stdio
   --setting-sources user,project,local --model <id>`. No `--print`. Optional 1M
-  context = `<id>[1m]` suffix (only `claude-fable-5`, `claude-sonnet-5`);
-  `claude-opus-5` is always 1M and uses its unsuffixed canonical id. Permissions arrive as stdout
+  context = `<id>[1m]` suffix (only `claude-fable-5-1`, `claude-fable-5`,
+  `claude-sonnet-5`); `claude-opus-5` is always 1M and uses its unsuffixed
+  canonical id. Permissions arrive as stdout
   `control_request`/`can_use_tool`; answer with a `control_response`
   `{behavior:"allow",updatedInput} | {behavior:"deny",message}`. Mid-session control:
   `{type:"control_request",request:{subtype:"interrupt"|"set_model"|"set_permission_mode"}}`.
