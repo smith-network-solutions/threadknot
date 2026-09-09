@@ -325,6 +325,214 @@ async fn summary(record: &RepoRecord, project_name: &str, abs: &Path) -> Value {
     out
 }
 
+// ---- history -------------------------------------------------------------
+
+/// Commits per `git.log` page when the client doesn't say, and the ceiling.
+const LOG_PAGE: usize = 200;
+const LOG_PAGE_MAX: usize = 1000;
+
+/// One `git.log` record: NUL-separated via `-z`, fields split on %x1f. Full
+/// refnames (`--decorate=full`) are what let `parse_refs` tell a remote branch
+/// from a local one that happens to contain a slash.
+const LOG_FORMAT: &str = "%H\u{1f}%h\u{1f}%P\u{1f}%an\u{1f}%ae\u{1f}%aI\u{1f}%D\u{1f}%s";
+
+/// A commit hash is the one user value that reaches git as a bare revision
+/// argument, so it is held to hex before git sees it: no leading '-', no
+/// revision expressions.
+fn validate_hash(hash: &str) -> Result<()> {
+    anyhow::ensure!(
+        (4..=64).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit()),
+        "invalid commit hash: {hash}"
+    );
+    Ok(())
+}
+
+/// Same guard `paths_field` applies, for a single optional path.
+fn validate_rel_path(p: &str) -> Result<()> {
+    anyhow::ensure!(
+        !p.is_empty() && !p.starts_with('/') && !p.starts_with('-') && !p.split('/').any(|c| c == ".."),
+        "bad path: {p}"
+    );
+    Ok(())
+}
+
+/// `%D` under `--decorate=full` → ref chips. "HEAD -> x" marks the checked-out
+/// branch; a bare "HEAD" is a detached checkout. Stash, notes and replace refs
+/// are dropped, as is every remote's `HEAD` pointer.
+fn parse_refs(decorations: &str) -> Vec<Value> {
+    let mut refs = Vec::new();
+    for item in decorations.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let (current, name) = match item.strip_prefix("HEAD -> ") {
+            Some(rest) => (true, rest),
+            None => (false, item),
+        };
+        let (kind, short) = if let Some(b) = name.strip_prefix("refs/heads/") {
+            ("local", b)
+        } else if let Some(r) = name.strip_prefix("refs/remotes/") {
+            if r.ends_with("/HEAD") {
+                continue;
+            }
+            ("remote", r)
+        } else if let Some(t) = name.strip_prefix("tag: refs/tags/") {
+            ("tag", t)
+        } else if name == "HEAD" {
+            ("head", "HEAD")
+        } else {
+            continue;
+        };
+        let mut r = json!({ "name": short, "kind": kind });
+        if current || kind == "head" {
+            r["current"] = json!(true);
+        }
+        refs.push(r);
+    }
+    refs
+}
+
+fn parse_log(raw: &str) -> Vec<Value> {
+    raw.split('\0')
+        .filter(|rec| !rec.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.splitn(8, '\u{1f}').collect();
+            if f.len() < 8 {
+                return None;
+            }
+            Some(json!({
+                "hash": f[0],
+                "short": f[1],
+                "parents": f[2].split_whitespace().collect::<Vec<_>>(),
+                "author": f[3],
+                "authorEmail": f[4],
+                "at": f[5],
+                "refs": parse_refs(f[6]),
+                "subject": f[7],
+            }))
+        })
+        .collect()
+}
+
+/// `diff-tree --name-status -z`: `<status>\0<path>\0`; renames and copies
+/// (`R<score>`, `C<score>`) carry `<old>\0<new>\0` instead.
+fn parse_name_status(raw: &str) -> Vec<Value> {
+    let mut files = Vec::new();
+    let mut it = raw.split('\0');
+    while let Some(status) = it.next() {
+        if status.is_empty() {
+            continue;
+        }
+        let letter = status.chars().next().unwrap_or('M').to_string();
+        let Some(first) = it.next() else { break };
+        if status.starts_with('R') || status.starts_with('C') {
+            let Some(new) = it.next() else { break };
+            files.push(json!({ "path": new, "origPath": first, "status": letter }));
+        } else {
+            files.push(json!({ "path": first, "status": letter }));
+        }
+    }
+    files
+}
+
+/// `diff-tree --numstat -z`: `<adds>\t<dels>\t<path>\0`; renames and copies
+/// carry `<adds>\t<dels>\t\0<old>\0<new>\0`; binaries have `-` for both
+/// counts. Keyed by the new path; the value is (adds, dels, binary).
+fn parse_numstat(raw: &str) -> std::collections::HashMap<String, (i64, i64, bool)> {
+    let mut out = std::collections::HashMap::new();
+    let mut it = raw.split('\0');
+    while let Some(rec) = it.next() {
+        if rec.is_empty() {
+            continue;
+        }
+        let mut parts = rec.splitn(3, '\t');
+        let (Some(a), Some(d), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let path = if path.is_empty() {
+            let _old = it.next();
+            match it.next() {
+                Some(new) => new,
+                None => break,
+            }
+        } else {
+            path
+        };
+        out.insert(
+            path.to_string(),
+            (a.parse().unwrap_or(0), d.parse().unwrap_or(0), a == "-"),
+        );
+    }
+    out
+}
+
+/// Files a commit touched, against its first parent (a merge shows what the
+/// merge did to the branch it landed on) or the empty tree for a root commit.
+async fn commit_files(repo: &Path, hash: &str, first_parent: Option<&str>) -> Result<Vec<Value>> {
+    let base = ["diff-tree", "--no-commit-id", "-r", "-M", "-z"];
+    let mut names: Vec<&str> = base.to_vec();
+    let mut counts: Vec<&str> = base.to_vec();
+    names.push("--name-status");
+    counts.push("--numstat");
+    match first_parent {
+        Some(p) => {
+            names.extend([p, hash]);
+            counts.extend([p, hash]);
+        }
+        None => {
+            names.extend(["--root", hash]);
+            counts.extend(["--root", hash]);
+        }
+    }
+    let (names_out, counts_out) = tokio::try_join!(run_git(repo, &names), run_git(repo, &counts))?;
+    let stats = parse_numstat(&counts_out);
+    let mut files = parse_name_status(&names_out);
+    for f in &mut files {
+        let Some((adds, dels, binary)) = f["path"].as_str().and_then(|p| stats.get(p)) else {
+            continue;
+        };
+        if *binary {
+            f["binary"] = json!(true);
+        } else {
+            f["additions"] = json!(adds);
+            f["deletions"] = json!(dels);
+        }
+    }
+    Ok(files)
+}
+
+/// A branch name from the UI → the one ref to walk. Local heads win; a
+/// remote-only name (`feature`) or a decorated one (`origin/feature`) both
+/// resolve to the remote ref. The UI never sees a remote's `HEAD` pointer.
+async fn resolve_branch(repo: &Path, name: &str) -> Result<String> {
+    validate_branch(name)?;
+    let local = format!("refs/heads/{name}");
+    let remote = format!("refs/remotes/{name}");
+    let any_remote = format!("refs/remotes/*/{name}");
+    let raw = run_git(
+        repo,
+        &["for-each-ref", "--format=%(refname)", &local, &remote, &any_remote],
+    )
+    .await?;
+    raw.lines()
+        .find(|l| *l == local || *l == remote || (l.starts_with("refs/remotes/") && l.ends_with(&format!("/{name}"))))
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("unknown branch: {name}"))
+}
+
+/// Cap and classify a unified diff the way every diff request answers.
+fn diff_json(path: &str, unified: String) -> Value {
+    let binary = unified.contains("Binary files ") && unified.lines().count() <= 5;
+    let truncated = unified.len() > DIFF_CAP;
+    let unified = if truncated {
+        let mut end = DIFF_CAP;
+        while !unified.is_char_boundary(end) {
+            end -= 1;
+        }
+        unified[..end].to_string()
+    } else {
+        unified
+    };
+    json!({ "path": path, "unified": unified, "truncated": truncated, "binary": binary })
+}
+
 // ---- request handling ----------------------------------------------------
 
 fn field<'a>(payload: &'a Value, key: &str) -> Result<&'a str> {
@@ -421,18 +629,7 @@ pub async fn handle(state: &ServerState, kind: &str, payload: &Value) -> Result<
                 "staged" => run_git(&abs, &["diff", "--cached", "--", &path]).await?,
                 _ => run_git(&abs, &["diff", "--", &path]).await?,
             };
-            let binary = unified.contains("Binary files ") && unified.lines().count() <= 3;
-            let truncated = unified.len() > DIFF_CAP;
-            let unified = if truncated {
-                let mut end = DIFF_CAP;
-                while !unified.is_char_boundary(end) {
-                    end -= 1;
-                }
-                unified[..end].to_string()
-            } else {
-                unified
-            };
-            Ok(json!({ "path": path, "unified": unified, "truncated": truncated, "binary": binary }))
+            Ok(diff_json(&path, unified))
         }
         "git.stage" => {
             let (record, project, abs) = resolve(state, field(payload, "repoId")?)?;
@@ -682,6 +879,149 @@ pub async fn handle(state: &ServerState, kind: &str, payload: &Value) -> Result<
             out["output"] = json!(output.trim());
             Ok(out)
         }
+        // One page of history, newest first. `--date-order` guarantees no
+        // parent precedes its children, which is what lets the client lay the
+        // branch graph out in a single pass over the page.
+        "git.log" => {
+            let (_, _, abs) = resolve(state, field(payload, "repoId")?)?;
+            let limit = payload
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(LOG_PAGE)
+                .clamp(1, LOG_PAGE_MAX);
+            let skip = payload.get("skip").and_then(|v| v.as_u64()).unwrap_or(0);
+            let opt = |key: &str| {
+                payload
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            };
+            let (branch, query, author, path) = (opt("branch"), opt("query"), opt("author"), opt("path"));
+            if let Some(p) = &path {
+                validate_rel_path(p)?;
+            }
+            let revision = match &branch {
+                Some(b) => Some(resolve_branch(&abs, b).await?),
+                None => None,
+            };
+            // A hex query that names a commit is a jump, not a search.
+            let mut pinned: Option<String> = None;
+            if let Some(q) = query.as_deref().filter(|q| validate_hash(q).is_ok()) {
+                let spec = format!("{q}^{{commit}}");
+                if let Ok(full) = run_git(&abs, &["rev-parse", "--verify", "--quiet", &spec]).await {
+                    pinned = Some(full.trim().to_string());
+                }
+            }
+            let mut args: Vec<String> = vec![
+                "log".into(),
+                "--date-order".into(),
+                "--decorate=full".into(),
+                "-z".into(),
+                format!("--format={LOG_FORMAT}"),
+                format!("--max-count={}", limit + 1),
+                format!("--skip={skip}"),
+                // -F makes --grep and --author literal matches.
+                "-F".into(),
+                "-i".into(),
+            ];
+            if let Some(a) = &author {
+                args.push(format!("--author={a}"));
+            }
+            match (&pinned, &revision) {
+                // The one commit the hash names — not its ancestry.
+                (Some(h), _) => args.extend(["--max-count=1".into(), "--skip=0".into(), h.clone()]),
+                (None, Some(r)) => {
+                    if let Some(q) = &query {
+                        args.push(format!("--grep={q}"));
+                    }
+                    args.push(r.clone());
+                }
+                (None, None) => {
+                    if let Some(q) = &query {
+                        args.push(format!("--grep={q}"));
+                    }
+                    // The refs the chips can name — not stash, notes, or
+                    // tooling refs like refs/t3/… that --all would drag in.
+                    args.extend(["--branches".into(), "--remotes".into(), "--tags".into(), "HEAD".into()]);
+                }
+            }
+            args.push("--".into());
+            if let Some(p) = &path {
+                args.push(p.clone());
+            }
+            let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+            let raw = match run_git(&abs, &argv).await {
+                Ok(raw) => raw,
+                // An unborn branch has no history, not an error.
+                Err(e) if format!("{e:#}").contains("does not have any commits") => String::new(),
+                Err(e) => return Err(e),
+            };
+            let mut commits = parse_log(&raw);
+            let has_more = commits.len() > limit;
+            commits.truncate(limit);
+            let head = run_git(&abs, &["rev-parse", "--verify", "--quiet", "HEAD"])
+                .await
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            Ok(json!({ "commits": commits, "hasMore": has_more, "head": head }))
+        }
+        "git.show" => {
+            let (_, _, abs) = resolve(state, field(payload, "repoId")?)?;
+            let hash = field(payload, "hash")?;
+            validate_hash(hash)?;
+            const FMT: &str = "--format=%H\u{1f}%h\u{1f}%P\u{1f}%an\u{1f}%ae\u{1f}%aI\u{1f}%cn\u{1f}%cI\u{1f}%D\u{1f}%s\u{1f}%b";
+            let raw = run_git(&abs, &["show", "-s", "--decorate=full", FMT, hash, "--"]).await?;
+            let f: Vec<&str> = raw.splitn(11, '\u{1f}').collect();
+            anyhow::ensure!(f.len() == 11, "unexpected `git show` output");
+            let parents: Vec<&str> = f[2].split_whitespace().collect();
+            let files = commit_files(&abs, f[0], parents.first().copied()).await?;
+            Ok(json!({
+                "hash": f[0],
+                "short": f[1],
+                "parents": parents,
+                "author": f[3],
+                "authorEmail": f[4],
+                "at": f[5],
+                "committer": f[6],
+                "committedAt": f[7],
+                "refs": parse_refs(f[8]),
+                "subject": f[9],
+                "body": f[10].trim(),
+                "files": files,
+            }))
+        }
+        // One file's patch inside a commit. A merge is shown against its first
+        // parent — the combined format is not what anyone reviewing wants.
+        "git.commitDiff" => {
+            let (_, _, abs) = resolve(state, field(payload, "repoId")?)?;
+            let hash = field(payload, "hash")?;
+            validate_hash(hash)?;
+            let path = field(payload, "path")?.to_string();
+            validate_rel_path(&path)?;
+            let orig = payload.get("origPath").and_then(|v| v.as_str()).map(str::to_string);
+            if let Some(o) = &orig {
+                validate_rel_path(o)?;
+            }
+            let line = run_git(&abs, &["rev-list", "--parents", "-n", "1", hash, "--"]).await?;
+            let mut ids = line.split_whitespace();
+            let full = ids.next().unwrap_or(hash).to_string();
+            let parents: Vec<&str> = ids.collect();
+            let mut args: Vec<&str> = if parents.len() > 1 {
+                vec!["diff", "-M", parents[0], &full]
+            } else {
+                vec!["show", "--format=", "-M", &full]
+            };
+            args.push("--");
+            args.push(&path);
+            if let Some(o) = &orig {
+                args.push(o);
+            }
+            let unified = run_git(&abs, &args).await?;
+            Ok(diff_json(&path, unified))
+        }
         other => anyhow::bail!("unknown request type: {other}"),
     }
 }
@@ -818,5 +1158,77 @@ mod tests {
         assert!(st.detached);
         assert_eq!(st.conflicted, 1);
         assert_eq!(st.entries[0]["kind"], "conflicted");
+    }
+
+    #[test]
+    fn parses_full_decorations() {
+        let refs = parse_refs(
+            "HEAD -> refs/heads/master, refs/remotes/origin/master, refs/remotes/origin/HEAD, \
+             tag: refs/tags/v0.2.1, refs/heads/feat/x, refs/stash",
+        );
+        let names: Vec<(&str, &str, bool)> = refs
+            .iter()
+            .map(|r| {
+                (
+                    r["name"].as_str().unwrap(),
+                    r["kind"].as_str().unwrap(),
+                    r["current"].as_bool().unwrap_or(false),
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("master", "local", true),
+                ("origin/master", "remote", false),
+                ("v0.2.1", "tag", false),
+                ("feat/x", "local", false),
+            ]
+        );
+        let detached = parse_refs("HEAD, refs/heads/master");
+        assert_eq!(detached[0]["kind"], "head");
+        assert_eq!(detached[0]["current"], true);
+        assert_eq!(detached[1]["current"], Value::Null);
+        assert!(parse_refs("").is_empty());
+    }
+
+    #[test]
+    fn parses_log_records() {
+        let raw = "aaaa\u{1f}aaa\u{1f}bbbb cccc\u{1f}spencer\u{1f}s@x\u{1f}2026-09-07T12:30:29-04:00\u{1f}HEAD -> refs/heads/master\u{1f}Merge it\0\
+                   bbbb\u{1f}bbb\u{1f}\u{1f}Oscar\u{1f}o@x\u{1f}2026-09-02T15:57:29-04:00\u{1f}\u{1f}Root commit\0";
+        let commits = parse_log(raw);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0]["parents"], json!(["bbbb", "cccc"]));
+        assert_eq!(commits[0]["refs"][0]["name"], "master");
+        assert_eq!(commits[0]["subject"], "Merge it");
+        assert_eq!(commits[1]["parents"], json!([]));
+        assert_eq!(commits[1]["refs"], json!([]));
+        assert_eq!(commits[1]["subject"], "Root commit");
+    }
+
+    #[test]
+    fn parses_diff_tree_z() {
+        let names = "M\0src/app.ts\0R100\0old.ts\0new.ts\0A\0bin.dat\0D\0gone.md\0";
+        let files = parse_name_status(names);
+        assert_eq!(files.len(), 4);
+        assert_eq!(files[0], json!({ "path": "src/app.ts", "status": "M" }));
+        assert_eq!(files[1], json!({ "path": "new.ts", "origPath": "old.ts", "status": "R" }));
+        assert_eq!(files[3]["status"], "D");
+
+        let counts = "3\t1\tsrc/app.ts\0-\t-\tbin.dat\00\t0\t\0old.ts\0new.ts\00\t12\tgone.md\0";
+        let stats = parse_numstat(counts);
+        assert_eq!(stats["src/app.ts"], (3, 1, false));
+        assert_eq!(stats["bin.dat"], (0, 0, true));
+        assert_eq!(stats["new.ts"], (0, 0, false));
+        assert_eq!(stats["gone.md"], (0, 12, false));
+    }
+
+    #[test]
+    fn hash_guard() {
+        assert!(validate_hash("fa35a6f").is_ok());
+        assert!(validate_hash("fa35a6fc80df2abdb3fbec0bee01ceb650533b7f").is_ok());
+        assert!(validate_hash("--all").is_err());
+        assert!(validate_hash("HEAD~1").is_err());
+        assert!(validate_hash("abc").is_err());
     }
 }

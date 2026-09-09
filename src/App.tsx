@@ -1685,6 +1685,24 @@ function makeActions(
       });
     },
 
+    gitLog(repoId: string, opts = {}) {
+      return client.request("git.log", { repoId, ...opts, ...route(repoRoute(repoId)) });
+    },
+
+    gitShow(repoId: string, hash: string) {
+      return client.request("git.show", { repoId, hash, ...route(repoRoute(repoId)) });
+    },
+
+    gitCommitDiff(repoId: string, hash: string, path: string, origPath?: string) {
+      return client.request("git.commitDiff", {
+        repoId,
+        hash,
+        path,
+        ...(origPath ? { origPath } : {}),
+        ...route(repoRoute(repoId)),
+      });
+    },
+
     gitPush(repoId: string) {
       return client.request("git.push", { repoId, ...route(repoRoute(repoId)) });
     },

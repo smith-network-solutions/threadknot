@@ -15,26 +15,9 @@ import {
   GitBranchIcon,
   UploadIcon,
 } from "./icons";
+import { GitLogView } from "./GitLog";
+import { DiffBody, PathLabel, errText, statusLabel, useDiff } from "./git/shared";
 import "../styles/git.css";
-
-/** Porcelain status letter → human label. */
-function statusLabel(c: string): string {
-  switch (c) {
-    case "M": return "modified";
-    case "T": return "typechange";
-    case "A": return "added";
-    case "D": return "deleted";
-    case "R": return "renamed";
-    case "C": return "copied";
-    case "U": return "conflict";
-    case "?": return "untracked";
-    default: return c;
-  }
-}
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /** Sections of the drill-in status list. An entry with both staged and
  *  worktree changes (e.g. "MM") appears in both Staged and Changes. */
@@ -60,26 +43,7 @@ function DiffView({
   onBack: () => void;
 }) {
   const { actions } = useStore();
-  const [unified, setUnified] = useState<string | null>(null);
-  const [meta, setMeta] = useState<{ truncated: boolean; binary: boolean } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let gone = false;
-    setUnified(null);
-    setError(null);
-    actions
-      .gitDiff(repoId, path, scope)
-      .then((d) => {
-        if (gone) return;
-        setUnified(d.unified);
-        setMeta({ truncated: d.truncated, binary: d.binary });
-      })
-      .catch((e) => !gone && setError(errText(e)));
-    return () => {
-      gone = true;
-    };
-  }, [actions, repoId, path, scope]);
+  const diff = useDiff(() => actions.gitDiff(repoId, path, scope), `${repoId}\0${scope}\0${path}`);
 
   return (
     <div className="git-pane">
@@ -90,32 +54,11 @@ function DiffView({
           </button>
           <span className="git-diff-path" title={path}>{path}</span>
           {scope === "staged" && <span className="git-chip stage">staged</span>}
-          {meta?.truncated && <span className="git-chip warn">truncated</span>}
+          {diff.meta?.truncated && <span className="git-chip warn">truncated</span>}
         </div>
       </header>
       <div className="git-scroll">
-        {error && <div className="git-empty git-error">{error}</div>}
-        {!error && unified === null && <div className="git-empty">Loading…</div>}
-        {!error && meta?.binary && <div className="git-empty">Binary file.</div>}
-        {!error && unified !== null && !meta?.binary && unified.length === 0 && (
-          <div className="git-empty">No changes.</div>
-        )}
-        {!error && unified && !meta?.binary && (
-          <pre className="git-diff-body">
-            {unified.split("\n").map((line, i) => {
-              let cls = "ctx";
-              if (line.startsWith("+++") || line.startsWith("---")) cls = "file";
-              else if (line.startsWith("@@")) cls = "hunk";
-              else if (line.startsWith("+")) cls = "add";
-              else if (line.startsWith("-")) cls = "del";
-              return (
-                <span key={i} className={`git-diff-line ${cls}`}>
-                  {line || " "}
-                </span>
-              );
-            })}
-          </pre>
-        )}
+        <DiffBody {...diff} />
       </div>
     </div>
   );
@@ -242,20 +185,6 @@ function BranchSelect({
 
 // ---- one repo (drill-in) -------------------------------------------------
 
-/** Path rendered as dim directory + bright filename so the part that matters
- *  stays readable; the directory truncates first when space runs out. */
-function PathLabel({ path }: { path: string }) {
-  const idx = path.lastIndexOf("/");
-  const dir = idx >= 0 ? path.slice(0, idx + 1) : "";
-  const base = idx >= 0 ? path.slice(idx + 1) : path;
-  return (
-    <span className="git-row-path">
-      {dir && <span className="git-path-dir">{dir}</span>}
-      <span className="git-path-base">{base}</span>
-    </span>
-  );
-}
-
 function FileRow({
   entry,
   letter,
@@ -297,6 +226,10 @@ function RepoView({
   const [message, setMessage] = useState("");
   const [diff, setDiff] = useState<{ path: string; scope: GitDiffScope } | null>(null);
   const [prUrl, setPrUrl] = useState<string | null>(null);
+  /** Changes = the working tree (stage/commit); History = the commit log. */
+  const [mode, setMode] = useState<"changes" | "log">("changes");
+  /** Bumped by Refresh so the history reloads alongside the status. */
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -379,10 +312,33 @@ function RepoView({
             </button>
           )}
           <span className="git-repo-name" title={repo.relPath || "."}>{repo.name}</span>
+          <div className="git-seg" role="tablist" aria-label="Repository view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "changes"}
+              className={`git-seg-btn${mode === "changes" ? " on" : ""}`}
+              onClick={() => setMode("changes")}
+            >
+              Changes{status && status.entries.length > 0 ? ` · ${status.entries.length}` : ""}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "log"}
+              className={`git-seg-btn${mode === "log" ? " on" : ""}`}
+              onClick={() => setMode("log")}
+            >
+              History
+            </button>
+          </div>
           <button
             type="button"
             className="git-refresh"
-            onClick={() => void load()}
+            onClick={() => {
+              void load();
+              setRefreshTick((n) => n + 1);
+            }}
             disabled={busy}
             title="Refresh"
           >
@@ -453,7 +409,24 @@ function RepoView({
         )}
       </header>
 
-      <div className="git-scroll">
+      {mode === "log" && (
+        <>
+          {opError && (
+            <div className="git-op-error git-op-error-log">
+              <span>{opError}</span>
+              <button type="button" onClick={() => setOpError(null)} aria-label="Dismiss">×</button>
+            </div>
+          )}
+          <GitLogView
+            repo={repo}
+            branches={branches}
+            current={status?.branch}
+            refreshTick={refreshTick}
+          />
+        </>
+      )}
+
+      <div className="git-scroll" hidden={mode === "log"}>
         {error && <div className="git-empty git-error">{error}</div>}
         {opError && (
           <div className="git-op-error">
@@ -614,7 +587,7 @@ function RepoView({
         )}
       </div>
 
-      {status && (
+      {status && mode === "changes" && (
         <footer className="git-commit">
           <textarea
             className="git-commit-msg"

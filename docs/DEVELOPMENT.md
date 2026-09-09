@@ -25,7 +25,7 @@ threadknot/
 │       ├── peers.rs            ← the peer registry (peers.json): per-pair credentials + pinned CAs
 │       ├── peernet.rs          ← live peer sockets, mDNS discovery, routing, splices, byte proxy
 │       ├── connector.rs        ← the outbound relay connector (dials out; nothing listens)
-│       ├── git.rs              ← multi-repo git: discovery + status/diff/stage/commit/branch/push (git.* requests)
+│       ├── git.rs              ← multi-repo git: discovery + status/diff/stage/commit/branch/push/log (git.* requests)
 │       ├── claudex.rs         ← Claudex profiles + bridge sidecar supervisor
 │       ├── library.rs          ← the Library: skill folders + MCP-server registry
 │       ├── catalog.rs          ← shipped catalog (skill pointers, MCP templates)

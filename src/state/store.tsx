@@ -1645,6 +1645,20 @@ export interface ThreadknotActions {
     branch: string,
     create?: boolean,
   ) => Promise<import("../lib/protocol").GitStatusData>;
+  /** One page of history (all refs unless `branch`); see RequestMap["git.log"]. */
+  gitLog: (
+    repoId: string,
+    opts?: Omit<import("../lib/protocol").RequestMap["git.log"]["payload"], "repoId" | "machineId">,
+  ) => Promise<import("../lib/protocol").GitLogData>;
+  /** One commit in full: message, refs and the files it touched. */
+  gitShow: (repoId: string, hash: string) => Promise<import("../lib/protocol").GitCommitDetails>;
+  /** A file's patch within one commit (against its first parent). */
+  gitCommitDiff: (
+    repoId: string,
+    hash: string,
+    path: string,
+    origPath?: string,
+  ) => Promise<import("../lib/protocol").GitDiffData>;
   gitPush: (repoId: string) => Promise<import("../lib/protocol").GitStatusData & { output: string }>;
   gitPull: (repoId: string) => Promise<import("../lib/protocol").GitStatusData & { output: string }>;
   /** Commit several repos in one action; `link` stamps a shared Threadknot-Change trailer. */

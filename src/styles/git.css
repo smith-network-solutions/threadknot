@@ -749,6 +749,400 @@
   opacity: 0.85;
 }
 
+/* ---- history (commit log) --------------------------------------------- */
+
+/* Changes | History switch in the repo header. */
+.git-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+}
+
+.git-seg-btn {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--dim, #8b93a9);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 3px 9px;
+  min-height: 24px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.git-seg-btn:hover {
+  color: var(--text, #d8dde9);
+}
+
+.git-seg-btn.on {
+  color: var(--text, #d8dde9);
+  background: rgba(155, 170, 210, 0.1);
+}
+
+.git-op-error-log {
+  margin: 8px 10px 0;
+}
+
+.git-log {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Filter bar: search, branch, author. */
+.git-log-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  flex: 0 0 auto;
+}
+
+.git-log-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 150px;
+  min-width: 0;
+  padding: 0 8px;
+  min-height: 28px;
+  color: var(--dim, #8b93a9);
+  background: rgba(155, 170, 210, 0.06);
+  border: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  border-radius: 7px;
+}
+
+.git-log-search:focus-within {
+  border-color: var(--brass, #d9a35c);
+}
+
+.git-log-search input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text, #d8dde9);
+  background: none;
+  border: none;
+  outline: none;
+  padding: 0;
+}
+
+.git-log-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.git-log-clear {
+  display: inline-flex;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.git-pick {
+  max-width: 45%;
+}
+
+.git-pick-trigger {
+  font-weight: 500;
+  color: var(--dim, #8b93a9);
+}
+
+.git-pick-trigger.set {
+  color: var(--amber, #e5b567);
+}
+
+.git-log-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Wide: list on the left, the selected commit on the right. */
+.git-log.wide .git-log-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr);
+}
+
+.git-log-list {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 4px 0 8px;
+  outline: none;
+}
+
+.git-log-list:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--brass, #d9a35c);
+}
+
+/* One commit: graph | subject + refs | author | date. Fixed height so the
+   graph strokes meet row to row. */
+.git-log-row {
+  display: grid;
+  grid-template-columns: var(--graph-w, 12px) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px 0 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.git-log-row:hover {
+  background: rgba(155, 170, 210, 0.05);
+}
+
+.git-log-row.on {
+  background: var(--brass-dim, rgba(217, 163, 92, 0.16));
+}
+
+.git-log-row.merge .git-log-subject-text {
+  color: var(--dim, #8b93a9);
+}
+
+.git-graph {
+  display: block;
+  overflow: visible;
+}
+
+.git-graph line,
+.git-graph path {
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.git-log-subject {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.git-log-subject-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.git-log-refs {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+}
+
+/* Ref chips: branch/tag names sitting on a commit. Local branches are
+   clickable and narrow the log to that branch. */
+.git-ref {
+  font: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  background: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+button.git-ref {
+  cursor: pointer;
+}
+
+button.git-ref:hover {
+  filter: brightness(1.2);
+}
+
+.git-ref.local { color: var(--amber, #e5b567); }
+.git-ref.remote { color: #7fb2d9; }
+.git-ref.tag { color: var(--green, #86c68c); }
+.git-ref.head { color: var(--red, #d97b7b); }
+
+.git-ref.current {
+  font-weight: 700;
+  background: var(--brass-dim, rgba(217, 163, 92, 0.16));
+}
+
+.git-log-author {
+  font-size: 12px;
+  color: var(--dim, #8b93a9);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-log:not(.mid) .git-log-author {
+  display: none;
+}
+
+.git-log-date {
+  font-size: 11.5px;
+  color: var(--dim, #8b93a9);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-log-more {
+  display: block;
+  margin: 8px auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dim, #8b93a9);
+  background: none;
+  border: 1px solid var(--line-2, rgba(155, 170, 210, 0.18));
+  border-radius: 8px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.git-log-more:hover {
+  color: var(--text, #d8dde9);
+  border-color: var(--brass, #d9a35c);
+}
+
+/* Selected commit: message, refs, files; or one file's patch. */
+.git-log-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.git-log.wide .git-log-detail {
+  border-left: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+}
+
+.git-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.git-detail-subject {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.git-detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+  color: var(--dim, #8b93a9);
+}
+
+.git-detail-hash {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--brass, #d9a35c);
+}
+
+.git-detail-sep {
+  opacity: 0.6;
+}
+
+.git-detail-committer {
+  font-style: italic;
+}
+
+.git-copy {
+  display: inline-flex;
+  align-items: center;
+  font: inherit;
+  color: var(--dim, #8b93a9);
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.git-copy:hover {
+  color: var(--text, #d8dde9);
+}
+
+.git-detail-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.git-detail-body {
+  margin: 10px 0 12px;
+  padding: 8px 10px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text, #d8dde9);
+  background: rgba(155, 170, 210, 0.04);
+  border: 1px solid var(--line, rgba(155, 170, 210, 0.09));
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.git-file-counts {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+  padding-left: 8px;
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--dim, #8b93a9);
+}
+
+.git-file-counts .add { color: var(--green, #86c68c); }
+.git-file-counts .del { color: var(--red, #d97b7b); }
+
+/* Retro-Tech skin: the switch and ref chips take the pixel face like the
+   rest of the bay. */
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-seg {
+  border: 2px solid var(--rt-frame, #06070d);
+  box-shadow: 0 0 0 1px var(--rt-bezel, #454c78);
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-seg-btn {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+:root[data-theme="arcade"]:not([data-skin-off~="workspace"]) .git-ref {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  font-size: 8.5px;
+  text-shadow: 0 0 6px currentColor;
+}
+
 /* ===== Retro-Tech skin: git bay chrome =====
    Gated on the "workspace" skin module. Repo cards become framed plates on a
    cabinet shelf, chips become small LED tags that keep their existing status

@@ -16,6 +16,10 @@ histories. Releases moved to 0.2.x afterwards so no number is ever issued
 twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
 to the old line.
 
+## v0.2.160 · 2026-09-09
+
+- **The Git tab has a history.** Open a repo and switch from Changes to History for the commit log: a branch graph down the left, who made each commit and when, and the branches and tags sitting on each one, with the branch you have checked out marked. Click a commit to read its message and see every file it touched; click a file for the patch. Search by message text or paste a hash, or narrow the list to one branch (click any branch chip) or one author. On a wide panel the list and the commit sit side by side; on a phone they open one at a time.
+
 ## v0.2.159 · 2026-09-07
 
 - Shared servers now support terminal and browser streams, file previews, and artifact downloads through Settings → Servers. The server must grant terminal and browser access to your paired device. The attachment picker also accepts PDFs, Word documents, and other files alongside images.

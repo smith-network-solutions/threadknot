@@ -180,6 +180,9 @@ Voice session state rides its own broadcast, `{ "type": "voice.state", "state": 
 | `git.checkout` | `{ repoId, branch, create? }` | `GitStatus` — `create: true` = `checkout -b` |
 | `git.push` | `{ repoId }` | `GitStatus & { output }` — plain `git push`; auto-retries `-u origin HEAD` when the branch has no upstream |
 | `git.pull` | `{ repoId }` | `GitStatus & { output }` — `git pull --ff-only` |
+| `git.log` | `{ repoId, limit?, skip?, branch?, query?, author?, path? }` | `{ commits: GitCommit[], hasMore, head }` — one page of history (default 200, max 1000), newest first, across every branch, remote branch and tag (never stash, notes or tooling refs) unless `branch` names one (a local name, a remote-only name, or `origin/x`); `query` is a case-insensitive literal match on the message, or a jump to the commit when it is a hash prefix that resolves; `--date-order`, so no parent precedes its children and the client lays the graph out in one pass |
+| `git.show` | `{ repoId, hash }` | `GitCommitDetails` — message, refs and the files a commit touched, against its first parent (merges included) or the empty tree for a root commit |
+| `git.commitDiff` | `{ repoId, hash, path, origPath? }` | `{ path, unified, truncated, binary }` — one file's patch inside a commit; a merge diffs against its first parent |
 | `git.commitMany` | `{ projectId, entries: [{repoId, message, stageAll?}], link? }` | `{ results: GitOpResult[], changeId? }` — one action, several repos: optional `add -A` then commit each; `link` + ≥2 entries stamps every message with a shared `Threadknot-Change: <changeId>` trailer; per-repo failures land in `results`, not errors |
 | `git.checkoutMany` | `{ projectId, repoIds, branch }` | `{ results: GitOpResult[] }` — same branch across repos: switches where it exists, creates (`-b`) where it doesn't (`created` per repo) |
 | `git.pr` | `{ repoId, title?, body? }` | `{ url?, output }` — `gh pr create` (`--fill` without a title) using the installed gh CLI's auth |
@@ -434,6 +437,33 @@ Commits made through `git.commitMany` with `link` can be correlated later with
 `git log --grep "Threadknot-Change: <id>"` across the repos.
 
 `GitOpResult = { repoId, ok, hash?, subject?, created?, error? }`.
+
+History (`git.log`) decorates with `--decorate=full`, so refs come back typed:
+`refs/heads/x` → `local`, `refs/remotes/origin/x` → `remote` (`origin/x`),
+`refs/tags/x` → `tag`; `HEAD -> …` marks the checked-out branch `current`, and a
+bare `HEAD` (detached) becomes a `head` ref. Stash, notes and each remote's
+`HEAD` pointer are dropped. Hashes are held to hex before they reach git as a
+revision argument.
+
+```ts
+interface GitCommit {              // git.log rows
+  hash: string; short: string; parents: string[];   // parents.length ≥ 2 on a merge
+  author: string; authorEmail: string; at: string;  // author date, ISO 8601
+  subject: string;
+  refs: { name: string; kind: "local" | "remote" | "tag" | "head"; current?: boolean }[];
+}
+
+interface GitCommitDetails extends GitCommit {      // git.show
+  committer: string; committedAt: string;
+  body: string;                     // after the subject, trimmed; "" when none
+  files: {                          // against the first parent / empty tree
+    path: string; origPath?: string;                // origPath on renames and copies
+    status: string;                                 // diff-tree letter: M A D R C T
+    additions?: number; deletions?: number;         // absent on binaries
+    binary?: boolean;
+  }[];
+}
+```
 
 ```ts
 interface GitRepoInfo {           // git.repos summaries (fleet overview)

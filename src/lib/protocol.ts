@@ -1241,6 +1241,63 @@ export interface UpdateStatus {
   operation?: UpdateOperation | null;
 }
 
+/** A ref decorating a commit in the history log. `current` marks the
+ *  checked-out branch (or a detached HEAD). */
+export interface GitRef {
+  name: string;
+  kind: "local" | "remote" | "tag" | "head";
+  current?: boolean;
+}
+
+/** One row of `git.log`. `parents` has 2+ entries on a merge commit. */
+export interface GitCommit {
+  hash: string;
+  short: string;
+  parents: string[];
+  author: string;
+  authorEmail: string;
+  at: string;
+  subject: string;
+  refs: GitRef[];
+}
+
+export interface GitLogData {
+  commits: GitCommit[];
+  /** More commits exist past this page (`skip` by `commits.length` to fetch them). */
+  hasMore: boolean;
+  /** Full hash of HEAD, or "" on an unborn branch. */
+  head: string;
+}
+
+/** One file touched by a commit. `status` is the diff-tree letter (M/A/D/R/C/T);
+ *  `origPath` is set on renames and copies. Counts are absent for binaries. */
+export interface GitCommitFile {
+  path: string;
+  origPath?: string;
+  status: string;
+  additions?: number;
+  deletions?: number;
+  binary?: boolean;
+}
+
+/** `git.show`: one commit in full. Files are relative to the first parent
+ *  (or the empty tree for a root commit). */
+export interface GitCommitDetails {
+  hash: string;
+  short: string;
+  parents: string[];
+  author: string;
+  authorEmail: string;
+  at: string;
+  committer: string;
+  committedAt: string;
+  subject: string;
+  /** Message body after the subject line, trimmed; "" when there is none. */
+  body: string;
+  refs: GitRef[];
+  files: GitCommitFile[];
+}
+
 /** Per-repo outcome of a cross-repo operation (commitMany / checkoutMany). */
 export interface GitOpResult {
   repoId: string;
@@ -2142,6 +2199,28 @@ export interface RequestMap {
   "git.pr": {
     payload: { repoId: string; title?: string; body?: string; machineId?: string };
     data: { url?: string | null; output: string };
+  };
+  "git.log": {
+    payload: {
+      repoId: string;
+      /** Page size (default 200, max 1000) and offset. */
+      limit?: number;
+      skip?: number;
+      /** Restrict to one branch (local or remote name); omitted = every ref. */
+      branch?: string;
+      /** Subject/body text, or a hash prefix — a hex query that resolves wins. */
+      query?: string;
+      author?: string;
+      /** Only commits touching this repo-relative path. */
+      path?: string;
+      machineId?: string;
+    };
+    data: GitLogData;
+  };
+  "git.show": { payload: { repoId: string; hash: string; machineId?: string }; data: GitCommitDetails };
+  "git.commitDiff": {
+    payload: { repoId: string; hash: string; path: string; origPath?: string; machineId?: string };
+    data: GitDiffData;
   };
   "git.push": { payload: { repoId: string; machineId?: string }; data: GitStatusData & { output: string } };
   "git.pull": { payload: { repoId: string; machineId?: string }; data: GitStatusData & { output: string } };
