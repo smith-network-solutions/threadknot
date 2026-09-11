@@ -21,6 +21,31 @@ use threadknot_lib::server::{self, ServerState};
 
 // ---------------------------------------------------------------- harness ---
 
+#[tokio::test]
+async fn desktop_presence_is_owner_only_before_peer_routing() {
+    for payload in [serde_json::json!({"clientId": "desktop", "activeForMs": 30_000}),
+                    serde_json::json!({"clientId": "desktop", "activeForMs": 30_000, "machineId": "peer"})] {
+        let error = call(&device(&Capability::ALL), "desktop.presence", payload).await.unwrap_err();
+        assert!(error.contains("owner authority"), "{error}");
+    }
+    call(&Principal::Master, "desktop.presence", serde_json::json!({"clientId": "desktop", "activeForMs": 30_000})).await.unwrap();
+}
+
+#[tokio::test]
+async fn read_acknowledgments_require_thread_access() {
+    assert_denied(&device(&[]), "thread.read", serde_json::json!({"threadId": harness().plain_thread.id, "seq": 1}), Capability::Threads).await;
+}
+
+#[tokio::test]
+async fn read_acknowledgments_cannot_cover_future_events() {
+    let thread = new_thread(false);
+    let (seq, _) = harness().state.hub.store.append_event(&thread.id, None,
+        &threadknot_lib::protocol::AgentEvent::AssistantMessage { text: "Finished".into() }).unwrap();
+    let error = call(&Principal::Master, "thread.read", serde_json::json!({"threadId": thread.id, "seq": seq + 1})).await.unwrap_err();
+    assert!(error.contains("ahead of the transcript"), "{error}");
+    call(&Principal::Master, "thread.read", serde_json::json!({"threadId": thread.id, "seq": seq})).await.unwrap();
+}
+
 struct Harness {
     state: ServerState,
     /// `http://127.0.0.1:<port>` of a really-bound router.

@@ -5117,11 +5117,15 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "wayland-client",
+ "wayland-protocols",
  "webkit2gtk",
  "webpki-roots",
  "which 7.0.3",
  "windows-sys 0.59.0",
+ "x11rb",
  "yamux",
+ "zbus",
 ]
 
 [[package]]
@@ -5193,6 +5197,7 @@ dependencies = [
  "signal-hook-registry",
  "socket2 0.6.5",
  "tokio-macros",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -6847,6 +6852,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_repr",
+ "tokio",
  "tracing",
  "uds_windows",
  "uuid",

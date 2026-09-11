@@ -1625,6 +1625,10 @@ export interface PairingQr {
 }
 
 export interface RequestMap {
+  "thread.read": {
+    payload: { threadId: string; seq: number; machineId?: string };
+    data: Record<string, never>;
+  };
   hello: { payload: Record<string, never>; data: HelloData };
   "app.changelog": {
     payload: Record<string, never>;

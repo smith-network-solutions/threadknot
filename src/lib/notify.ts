@@ -10,6 +10,8 @@ import { CSRF_HEADER } from "./discovery";
 export type NotifyScope = "all" | "selected" | "none";
 
 export interface NotifyPrefs {
+  /** 0 disables desktop activity suppression of phone pushes. */
+  desktopIdleSeconds: number;
   enabled: boolean;
   sound: boolean;
   /** Whether user-visible event text may be shown in notification previews. */
@@ -28,6 +30,7 @@ export interface NativeNotificationReceipt {
 }
 
 const LS_NOTIFY_OFF = "threadknot.notifyOff";
+const LS_DESKTOP_IDLE = "threadknot.desktopIdleSeconds";
 const LS_SOUND_OFF = "threadknot.soundOff";
 const LS_PREVIEWS_OFF = "threadknot.notifyPreviewsOff";
 const LS_SCOPE = "threadknot.notifyScope";
@@ -57,6 +60,8 @@ function readWorkspaces(): string[] {
 
 export function getNotifyPrefs(): NotifyPrefs {
   cached ??= {
+    desktopIdleSeconds: [0, 30, 60, 120, 300].includes(Number(localStorage.getItem(LS_DESKTOP_IDLE) ?? 30))
+      ? Number(localStorage.getItem(LS_DESKTOP_IDLE) ?? 30) : 30,
     enabled: localStorage.getItem(LS_NOTIFY_OFF) == null,
     sound: localStorage.getItem(LS_SOUND_OFF) == null,
     previews: localStorage.getItem(LS_PREVIEWS_OFF) == null,
@@ -67,6 +72,7 @@ export function getNotifyPrefs(): NotifyPrefs {
 }
 
 export function setNotifyPrefs(p: NotifyPrefs): void {
+  localStorage.setItem(LS_DESKTOP_IDLE, String(p.desktopIdleSeconds));
   if (p.enabled) localStorage.removeItem(LS_NOTIFY_OFF);
   else localStorage.setItem(LS_NOTIFY_OFF, "1");
   if (p.sound) localStorage.removeItem(LS_SOUND_OFF);

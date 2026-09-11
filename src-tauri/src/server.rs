@@ -1676,6 +1676,7 @@ async fn mobile_push_test_handler(
     };
     push.enqueue(crate::push::PushJob {
         kind: crate::push::PushKind::Test,
+        seq: None,
         project_id: String::new(),
         // `only_device` bypasses subscription filtering: a test must prove the
         // transport even when the device subscribes to nothing.
@@ -2211,6 +2212,8 @@ const ROUTABLE: &[&str] = &[
     // Asking a machine what it is: os, arch, and which agent CLIs it has. The
     // fleet roster an orchestrating agent reads before choosing where to send
     // work, and nothing in it is secret (pairing hands out more).
+    "desktop.presence",
+    "thread.read",
     "device.info",
     "device.rename",
     "device.setAppearance",
@@ -2608,6 +2611,12 @@ pub async fn handle_request(
         );
     }
 
+    // Only owner desktops may suppress owner phone pushes. Peer requests made
+    // for guests lack a verifiable person identity on the destination server.
+    if req.kind == "desktop.presence" || (req.kind == "thread.read" && principal.is_peer()) {
+        anyhow::ensure!(principal.is_owner(), "desktop presence requires owner authority");
+    }
+
     // Central capability gate. Also BEFORE routing: a device that may not open
     // a terminal here must not be able to open one on a paired machine either,
     // and peer requests carry that machine's master token, so this side is the
@@ -2648,6 +2657,27 @@ pub async fn handle_request(
     }
 
     match req.kind.as_str() {
+        "desktop.presence" => {
+            let client = field(&p, "clientId")?;
+            anyhow::ensure!(!client.is_empty() && client.len() <= 128, "invalid desktop client id");
+            let active_for = p.get("activeForMs").and_then(Value::as_u64)
+                .ok_or_else(|| anyhow::anyhow!("invalid activity lease"))?;
+            if let Some(push) = hub.push() {
+                let source = format!("{}:{client}", principal.peer_machine_id().unwrap_or("local"));
+                push.presence.lock().unwrap().report(crate::people::OWNER_ID, &source, active_for, std::time::Instant::now());
+            }
+            Ok(json!({}))
+        }
+        "thread.read" => {
+            let thread = field(&p, "threadId")?;
+            anyhow::ensure!(store.thread(thread).is_some(), "unknown thread");
+            let seq = p.get("seq").and_then(Value::as_u64).ok_or_else(|| anyhow::anyhow!("invalid read sequence"))?;
+            anyhow::ensure!(store.latest_event_seq(thread).is_some_and(|latest| seq <= latest), "read sequence is ahead of the transcript");
+            if let Some(push) = hub.push() {
+                push.presence.lock().unwrap().acknowledge(&acting_person(state, principal), thread, seq, std::time::Instant::now());
+            }
+            Ok(json!({}))
+        }
         "hello" => {
             // If the background probe hasn't populated the cache yet, build the
             // agent list on demand so `hello` never returns an empty list — an

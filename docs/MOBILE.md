@@ -254,3 +254,29 @@ pairing has not run on real hardware** — `expo-camera` is a new native module,
 so it needs a fresh dev build (`eas build --profile development`); it will not
 appear in an existing installed build. Worth checking there: permission
 grant/deny/"don't ask again" paths, and scanning off a glossy monitor.
+
+## Desktop activity and phone alerts
+
+The native desktop pauses owner phone pushes while the computer is in use,
+including activity in other apps. Settings → Notifications → “resume phone
+alerts” defaults to 30 seconds idle, with 1/2/5-minute and always-send options.
+A native timer samples every five seconds, independent of WebView throttling.
+It reports locally and to trusted paired machines; headless servers and mobile
+WebViews never originate activity reports. Guest servers are not included.
+
+`desktop.presence {clientId, activeForMs}` is owner-only. Leases expire within
+12 seconds without renewal and are capped by the remaining idle timeout.
+Multiple desktops are combined: any fresh active desktop pauses pushes. Lock,
+inactive session, missing idle source, and sampling failures allow phone pushes.
+Windows uses session input time and the input desktop; macOS uses Quartz idle
+time and console/lock state; Linux uses Mutter, X11, or Wayland's v2 input-idle
+protocol (which ignores screen-saver inhibitors). Unsupported Wayland sessions
+allow pushes rather than using Xwayland's incomplete idle counter.
+
+Held alerts are coalesced to the newest status per person/thread. A focused,
+active native view sends `thread.read {threadId, seq, machineId?}` only after
+the transcript loads; the sequence watermark cannot dismiss newer activity.
+The push worker rechecks phone subscriptions, tokens, identity, and preview
+preferences on catch-up. Test pushes bypass the pause. Pending state is bounded
+and in memory; restarting the server discards held alerts. Already delivered
+phone notifications are not retracted by this feature.

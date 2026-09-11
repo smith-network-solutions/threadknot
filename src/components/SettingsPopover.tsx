@@ -414,6 +414,29 @@ function NotifySettings({ isTauri }: { isTauri: boolean }) {
   return (
     <div className="settings-block">
       <div className="settings-label">notifications — done / awaiting input</div>
+      {isTauri && (
+        <>
+          <div className="settings-row">
+            <label className="settings-value" htmlFor="desktop-idle-timeout">resume phone alerts</label>
+            <select
+              id="desktop-idle-timeout"
+              className="settings-select"
+              value={prefs.desktopIdleSeconds}
+              onChange={(event) => update({ ...prefs, desktopIdleSeconds: Number(event.target.value) })}
+            >
+              <option value={30}>after 30 seconds idle</option>
+              <option value={60}>after 1 minute idle</option>
+              <option value={120}>after 2 minutes idle</option>
+              <option value={300}>after 5 minutes idle</option>
+              <option value={0}>always send</option>
+            </select>
+          </div>
+          <div className="settings-value dim">
+            Activity in any app pauses phone alerts. Unread updates arrive when you step away.
+            If activity cannot be detected, phone alerts stay on.
+          </div>
+        </>
+      )}
       <div className="settings-row">
         <span className="settings-value">alerts</span>
         <button

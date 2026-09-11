@@ -808,6 +808,9 @@ fn push_finished(hub: &Arc<Hub>, record: &DispatchRecord) {
         .unwrap_or_else(|| format!("{} {outcome}", record.agent.display_name()));
     push.enqueue(crate::push::PushJob {
         kind: crate::push::PushKind::DispatchFinished,
+        seq: hub.store.read_events(&parent.id).iter().rev().find(|e| matches!(
+            &e.event, AgentEvent::SubagentCompleted { task_id, .. } if task_id == &record.id
+        )).map(|e| e.seq),
         project_id: parent.project_id.clone(),
         workspace_id,
         project_name,

@@ -999,6 +999,7 @@ impl Hub {
         thread_id: &str,
         event: &AgentEvent,
         notice: Option<&crate::protocol::EventNotice>,
+        seq: i64,
     ) {
         let Some(push) = self.push.get() else { return };
         let kind = match event {
@@ -1023,6 +1024,7 @@ impl Hub {
             .unwrap_or_else(|| thread.project_id.clone());
         push.enqueue(crate::push::PushJob {
             kind,
+            seq: u64::try_from(seq).ok(),
             project_id: thread.project_id,
             workspace_id,
             project_name,
@@ -1351,7 +1353,7 @@ impl Hub {
         }
 
         let notice = self.notice_for_event(thread_id, &event);
-        self.push_for_event(thread_id, &event, notice.as_ref());
+        self.push_for_event(thread_id, &event, notice.as_ref(), seq);
         // A dispatched worker has nobody who can answer a card: the sender is
         // an agent that has already moved on, and the thread is usually on
         // another machine. Left alone the worker sits in WaitingApproval until

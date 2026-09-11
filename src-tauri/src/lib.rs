@@ -36,6 +36,8 @@ pub mod people;
 pub mod ports;
 pub mod protocol;
 pub mod push;
+pub mod push_presence;
+pub mod desktop_activity;
 pub mod personas;
 pub mod recorder;
 pub mod remote;
@@ -691,6 +693,7 @@ pub fn run() {
         .manage(info)
         .manage(clipboard_state)
         .setup(move |_app| {
+            desktop_activity::start(state.clone());
             #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
@@ -705,6 +708,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             server_info,
+            desktop_activity::desktop_idle,
+            desktop_activity::configure_desktop_activity,
             clipboard_image,
             clipboard_images,
             clipboard::copy_project_file,

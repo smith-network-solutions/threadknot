@@ -119,6 +119,8 @@ impl PushKind {
 #[derive(Debug, Clone)]
 pub struct PushJob {
     pub kind: PushKind,
+    /// Persisted event covered by this notification; tests have no event.
+    pub seq: Option<u64>,
     pub project_id: String,
     /// Workspace the thread belongs to — the unit devices subscribe to. Empty
     /// for server-level notices that belong to no workspace.
@@ -142,24 +144,30 @@ struct PendingReceipt {
 
 pub struct PushService {
     tx: mpsc::Sender<PushJob>,
+    pub presence: Arc<Mutex<crate::push_presence::Presence>>,
 }
 
 impl PushService {
     pub fn spawn(mobile: Arc<MobileStore>, server_id: String) -> Arc<Self> {
         let (tx, rx) = mpsc::channel(QUEUE_CAP);
         let receipts: Arc<Mutex<Vec<PendingReceipt>>> = Arc::new(Mutex::new(Vec::new()));
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .expect("push HTTP client");
 
+        let presence = Arc::new(Mutex::new(crate::push_presence::Presence::default()));
         tokio::spawn(worker(
             rx,
             Arc::clone(&mobile),
             server_id,
             Arc::clone(&receipts),
             client.clone(),
+            Arc::clone(&presence),
         ));
         tokio::spawn(receipt_loop(mobile, receipts, client));
 
-        Arc::new(Self { tx })
+        Arc::new(Self { tx, presence })
     }
 
     /// Non-blocking enqueue; drops (with a log) if the queue is saturated so
@@ -171,94 +179,146 @@ impl PushService {
     }
 }
 
+fn targets(mobile: &MobileStore, job: &PushJob) -> Vec<crate::mobile::MobileDevice> {
+    match &job.only_device {
+        Some(id) => mobile
+            .device(id)
+            .into_iter()
+            .filter(|d| d.expo_push_token.is_some())
+            .collect(),
+        None => mobile.push_targets(&job.workspace_id, job.kind == PushKind::Error),
+    }
+}
+
+// Re-pairing can leave several rows for one physical phone. Resolve identity
+// once per token; ambiguous ownership is never a reason to suppress delivery.
+fn token_people(devices: &[crate::mobile::MobileDevice]) -> HashMap<String, String> {
+    let mut people = HashMap::<String, String>::new();
+    for d in devices {
+        if let Some(token) = &d.expo_push_token {
+            let person = d.person_id.as_deref().unwrap_or(crate::people::OWNER_ID);
+            people
+                .entry(token.clone())
+                .and_modify(|p| {
+                    if p != person {
+                        p.clear();
+                    }
+                })
+                .or_insert_with(|| person.to_owned());
+        }
+    }
+    people
+}
+
 async fn worker(
     mut rx: mpsc::Receiver<PushJob>,
     mobile: Arc<MobileStore>,
     server_id: String,
     receipts: Arc<Mutex<Vec<PendingReceipt>>>,
     client: reqwest::Client,
+    presence: Arc<Mutex<crate::push_presence::Presence>>,
 ) {
-    while let Some(job) = rx.recv().await {
-        let targets: Vec<crate::mobile::MobileDevice> = match &job.only_device {
-            Some(id) => mobile
-                .device(id)
-                .into_iter()
-                .filter(|d| d.expo_push_token.is_some())
-                .collect(),
-            None => mobile.push_targets(&job.workspace_id, job.kind == PushKind::Error),
-        };
-        if targets.is_empty() {
-            continue;
-        }
-
-        let (title, body) = match &job.notice {
-            Some(notice) => (notice.title.clone(), notice.body.clone()),
-            None => {
-                let title = if job.project_name.is_empty() {
-                    "Threadknot".to_string()
-                } else {
-                    job.project_name.clone()
-                };
-                let body = if job.thread_title.is_empty() {
-                    job.kind.label().to_string()
-                } else {
-                    format!("{} — {}", job.kind.label(), job.thread_title)
-                };
-                (title, body)
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        let deliveries = tokio::select! {
+            incoming = rx.recv() => {
+                let Some(job) = incoming else { break };
+                let people: std::collections::HashSet<_> = token_people(&targets(&mobile, &job)).into_values().collect();
+                let mut gate = presence.lock().unwrap();
+                people.into_iter().flat_map(|person| gate.offer(person, job.clone(), Instant::now())).collect::<Vec<_>>()
             }
+            _ = tick.tick() => presence.lock().unwrap().ready(Instant::now()),
         };
-        let status_title = if job.project_name.is_empty() {
-            "Threadknot".to_string()
-        } else {
-            job.project_name.clone()
-        };
-        let status_body = if job.thread_title.is_empty() {
-            job.kind.label().to_string()
-        } else {
-            format!("{} — {}", job.kind.label(), job.thread_title)
-        };
-        let data = json!({
-            "version": 1,
-            "serverId": server_id,
-            "projectId": job.project_id,
-            "threadId": job.thread_id,
-            "eventKind": job.kind.event_kind(),
-        });
-
-        // One message per *token*, not per device row. Re-pairing a phone creates
-        // a new row while the OS keeps handing out the same Expo token, so a
-        // device that had been paired three times received every notification
-        // three times. Expo accepts duplicate recipients without complaint, which
-        // is why this went unnoticed — the duplication is only visible on the
-        // phone.
-        // Duplicate rows for one physical phone can briefly disagree while a
-        // re-pair is being cleaned up. Privacy fails closed: one row disabling
-        // previews disables them for that token.
-        let previews_by_token = token_preview_preferences(
-            targets
-                .iter()
-                .map(|device| (device.expo_push_token.as_deref(), device.notification_previews)),
-        );
-        let messages: Vec<Value> =
-            distinct_tokens(targets.iter().map(|d| d.expo_push_token.as_deref()))
-                .into_iter()
-                .map(|token| {
-                    let show_preview = previews_by_token.get(token).copied().unwrap_or(false);
-                    json!({
-                        "to": token,
-                        "title": if show_preview { &title } else { &status_title },
-                        "body": if show_preview { &body } else { &status_body },
-                        "data": data,
-                        "sound": "default",
-                        "priority": "high",
-                        "channelId": "threadknot",
-                    })
-                })
-                .collect();
-
-        for chunk in messages.chunks(BATCH_SIZE) {
-            send_batch(&client, &mobile, &receipts, chunk).await;
+        for (person, job) in deliveries {
+            // Preferences, revocation, token rotation, and person reassignment
+            // may have changed while held. Always resolve recipients afresh.
+            let still_ready = presence.lock().unwrap().offer(person, job, Instant::now());
+            for (person, job) in still_ready {
+                send_job(&client, &mobile, &receipts, &server_id, &person, job).await;
+            }
         }
+    }
+}
+
+async fn send_job(
+    client: &reqwest::Client,
+    mobile: &MobileStore,
+    receipts: &Arc<Mutex<Vec<PendingReceipt>>>,
+    server_id: &str,
+    person: &str,
+    job: PushJob,
+) {
+    let targets = targets(mobile, &job);
+    let people = token_people(&targets);
+    let (title, body) = match &job.notice {
+        Some(notice) => (notice.title.clone(), notice.body.clone()),
+        None => {
+            let title = if job.project_name.is_empty() {
+                "Threadknot".to_string()
+            } else {
+                job.project_name.clone()
+            };
+            let body = if job.thread_title.is_empty() {
+                job.kind.label().to_string()
+            } else {
+                format!("{} — {}", job.kind.label(), job.thread_title)
+            };
+            (title, body)
+        }
+    };
+    let status_title = if job.project_name.is_empty() {
+        "Threadknot".to_string()
+    } else {
+        job.project_name.clone()
+    };
+    let status_body = if job.thread_title.is_empty() {
+        job.kind.label().to_string()
+    } else {
+        format!("{} — {}", job.kind.label(), job.thread_title)
+    };
+    let data = json!({
+        "version": 1,
+        "serverId": server_id,
+        "projectId": job.project_id,
+        "threadId": job.thread_id,
+        "eventKind": job.kind.event_kind(),
+    });
+
+    // One message per *token*, not per device row. Re-pairing a phone creates
+    // a new row while the OS keeps handing out the same Expo token, so a
+    // device that had been paired three times received every notification
+    // three times. Expo accepts duplicate recipients without complaint, which
+    // is why this went unnoticed — the duplication is only visible on the
+    // phone.
+    // Duplicate rows for one physical phone can briefly disagree while a
+    // re-pair is being cleaned up. Privacy fails closed: one row disabling
+    // previews disables them for that token.
+    let previews_by_token = token_preview_preferences(targets.iter().map(|device| {
+        (
+            device.expo_push_token.as_deref(),
+            device.notification_previews,
+        )
+    }));
+    let messages: Vec<Value> =
+        distinct_tokens(targets.iter().map(|d| d.expo_push_token.as_deref()))
+            .into_iter()
+            .filter(|token| people.get(*token).is_some_and(|p| p == person))
+            .map(|token| {
+                let show_preview = previews_by_token.get(token).copied().unwrap_or(false);
+                json!({
+                    "to": token,
+                    "title": if show_preview { &title } else { &status_title },
+                    "body": if show_preview { &body } else { &status_body },
+                    "data": data,
+                    "sound": "default",
+                    "priority": "high",
+                    "channelId": "threadknot",
+                })
+            })
+            .collect();
+
+    for chunk in messages.chunks(BATCH_SIZE) {
+        send_batch(client, mobile, receipts, chunk).await;
     }
 }
 

@@ -22,6 +22,7 @@ import {
   setNativeResumeHandler,
 } from "./lib/native";
 import { isWindowFocused, startFocusTracking } from "./lib/focus";
+import { startDesktopActivity } from "./lib/desktopActivity";
 import { initZoomHotkeys } from "./lib/hotwheel";
 import { installExternalLinkHandler } from "./lib/links";
 import { VoiceSession } from "./components/VoiceSession";
@@ -2501,6 +2502,10 @@ export default function App() {
       client.dispose();
     };
   }, [client]);
+
+  useEffect(() => {
+    if (state.isTauri) return startDesktopActivity(client, () => stateRef.current);
+  }, [client, state.isTauri]);
 
   // Ctrl/cmd + wheel zooms the pane under the cursor; ctrl/cmd + = / - / 0
   // step the last-clicked pane (terminals handle ctrl+wheel themselves for

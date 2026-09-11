@@ -1407,6 +1407,15 @@ impl Store {
             .collect()
     }
 
+    /// Highest persisted sequence, cached under the same lock as append.
+    pub fn latest_event_seq(&self, thread_id: &str) -> Option<u64> {
+        let mut seqs = self.seqs.lock().unwrap();
+        let next = seqs.entry(thread_id.to_owned()).or_insert_with(|| {
+            self.read_events(thread_id).last().map(|event| event.seq + 1).unwrap_or(0)
+        });
+        next.checked_sub(1)
+    }
+
     /// Append an event, returning its assigned seq and authoritative timestamp.
     /// `speaker` is the producing participant id (`None` for the user).
     pub fn append_event(
