@@ -31,6 +31,16 @@ use tokio::time::Instant;
 /// actually spawned background agents, so plain turns end with no added latency.
 const FINALIZE_GRACE: Duration = Duration::from_millis(750);
 
+/// Upper bound on holding a turn Running for outstanding background subagents.
+/// The hold is driven entirely by the CLI's `background_tasks_changed` set, so a
+/// frame that never arrives — or a task the CLI forgets to retract — otherwise
+/// pins the thread Running forever with no watchdog and no way back but Stop.
+/// Measured from the last frame of any kind, so a burst that is still reporting
+/// never trips it; only true silence does. Closing early is cheap and
+/// self-correcting: a background agent that finishes later still wakes the CLI,
+/// and that wake re-opens the turn and delivers its result as it always did.
+const BACKGROUND_HOLD_CEILING: Duration = Duration::from_secs(900);
+
 /// How many trailing stderr lines to retain for diagnostics. The CLI's stderr is
 /// otherwise discarded, so a startup failure (unknown flag on an outdated CLI,
 /// node-version abort, auth error) leaves the turn spinning with no clue. We keep
@@ -152,6 +162,7 @@ struct DriverPolicy {
     first_response_timeout: Duration,
     compaction_timeout: Duration,
     interrupt_grace: Duration,
+    background_hold_ceiling: Duration,
     max_auto_reconnects: u8,
 }
 
@@ -161,6 +172,7 @@ impl DriverPolicy {
             first_response_timeout: FIRST_RESPONSE_TIMEOUT,
             compaction_timeout: COMPACTION_TIMEOUT,
             interrupt_grace: INTERRUPT_GRACE,
+            background_hold_ceiling: BACKGROUND_HOLD_CEILING,
             max_auto_reconnects: MAX_AUTO_RECONNECTS,
         }
     }
@@ -457,6 +469,12 @@ struct Session {
     /// `TurnCompleted` once the stream goes quiet — coalescing any back-to-back
     /// completion results and never hanging on a wake miscount.
     pending_finalize: Option<(Instant, Usage)>,
+    /// Safety net for the background-agent hold. Armed with `(deadline, usage)`
+    /// whenever a `result` lands while agents are still outstanding, and pushed
+    /// forward by every subsequent frame, so it expires only on true silence.
+    /// Without it the hold has no upper bound at all — see
+    /// [`BACKGROUND_HOLD_CEILING`].
+    background_hold: Option<(Instant, Usage)>,
     /// tool_use_id -> task_id for every launched subagent, so inline subagent
     /// frames (carrying `parent_tool_use_id`) can be attributed to their task.
     tool_use_to_task: HashMap<String, String>,
@@ -864,6 +882,7 @@ fn spawn_claude(
         pending_questions: HashMap::new(),
         burst: BurstTracker::default(),
         pending_finalize: None,
+        background_hold: None,
         tool_use_to_task: HashMap::new(),
         subagent_task_ids: HashSet::new(),
         announced_session: None,
@@ -960,6 +979,7 @@ async fn run_with_policy(
         // Copy the deadline out so the timer future borrows nothing from
         // `session` (the branch handlers need `&mut session`).
         let finalize_deadline = session.pending_finalize.as_ref().map(|(d, _)| *d);
+        let hold_deadline = session.background_hold.as_ref().map(|(d, _)| *d);
         let response_deadline = watchdog.deadline();
         tokio::select! {
             _ = async {
@@ -971,6 +991,34 @@ async fn run_with_policy(
             } => {
                 if let Some((_, usage)) = session.pending_finalize.take() {
                     session.turn_active = false;
+                    ctx.emit(AgentEvent::TurnCompleted { usage: Some(usage) });
+                    session.burst.reset();
+                }
+            }
+            _ = async {
+                match hold_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                // The background-agent hold went quiet for its whole budget. The
+                // CLI owes us a `background_tasks_changed` that never came, so
+                // close the turn rather than spin forever. Say so plainly: the
+                // agents may still be alive, and if one finishes it wakes the
+                // CLI and re-opens the thread on its own.
+                if let Some((_, usage)) = session.background_hold.take() {
+                    let stranded = session.burst.outstanding();
+                    session.pending_finalize = None;
+                    session.turn_active = false;
+                    ctx.emit(AgentEvent::Status {
+                        text: format!(
+                            "Stopped waiting on {stranded} background agent{} — no update for {}. \
+                             The turn is closed; if one is still running its result \
+                             will arrive on its own.",
+                            if stranded == 1 { "" } else { "s" },
+                            humanize(policy.background_hold_ceiling),
+                        ),
+                    });
                     ctx.emit(AgentEvent::TurnCompleted { usage: Some(usage) });
                     session.burst.reset();
                 }
@@ -1057,6 +1105,7 @@ async fn run_with_policy(
                         // or prematurely end this one.
                         session.interrupt_requested = false;
                         session.pending_finalize = None;
+                        session.background_hold = None;
                         session.burst.begin_turn();
                         session.turn_active = true;
                         session
@@ -1082,6 +1131,7 @@ async fn run_with_policy(
                             // escape hatch. Never re-arm the watchdog here:
                             // its stall replay is only safe pre-first-output.
                             session.pending_finalize = None;
+                            session.background_hold = None;
                             // Keep the note in the reconnect replay text so the
                             // one pre-first-output reconnect can't drop it.
                             active_text.push_str(&format!("\n\n[Note added mid-turn]: {text}"));
@@ -1093,6 +1143,7 @@ async fn run_with_policy(
                             active_attachments = Vec::new();
                             session.interrupt_requested = false;
                             session.pending_finalize = None;
+                            session.background_hold = None;
                             session.burst.begin_turn();
                             session.turn_active = true;
                             session.user_message(&active_text, &[]).await?;
@@ -1118,6 +1169,7 @@ async fn run_with_policy(
                         // sees the handle as dead and can safely spawn a fresh
                         // process as soon as TurnAborted makes the thread idle.
                         session.pending_finalize = None;
+                        session.background_hold = None;
                         let _ = tokio::time::timeout(
                             Duration::from_millis(500),
                             interrupt_session(ctx, &mut session),
@@ -1153,7 +1205,12 @@ async fn run_with_policy(
                         } else if is_compaction_start(&v) {
                             watchdog.compacting(Instant::now());
                         }
-                        handle_message(ctx, &mut session, v).await?
+                        handle_message(ctx, &mut session, policy, v).await?;
+                        // The stream is alive, so the hold is not stranded —
+                        // only true silence should trip the ceiling.
+                        if let Some((deadline, _)) = session.background_hold.as_mut() {
+                            *deadline = Instant::now() + policy.background_hold_ceiling;
+                        }
                     },
                     // stdout closed: the CLI exited. Surface *why* — exit status
                     // plus the stderr tail — instead of a bare "exited", so an
@@ -1433,12 +1490,23 @@ fn is_subagent_task(v: &Value) -> bool {
 }
 
 /// Task ids in a `background_tasks_changed` frame — the live set of outstanding
-/// background subagents.
+/// background **subagents**.
+///
+/// The CLI lists both kinds of background task in this frame: `local_agent`
+/// (real subagents) and `local_bash` (a shell command sent to the background,
+/// either by `run_in_background` or by Bash's 600s timeout escape hatch).
+/// Only agents may hold a turn open. A backgrounded shell has no bounded
+/// lifetime — `tail -f`, a dev server, or an `until` loop whose condition never
+/// arrives all stay listed forever — and the CLI does not reliably retract one
+/// that outlives its turn. Counting those here held the thread Running with no
+/// timeout and no recovery: the agent was visibly finished and the spinner
+/// never stopped. Agents always terminate, so they remain safe to wait on.
 fn background_task_ids(v: &Value) -> HashSet<String> {
     v.get("tasks")
         .and_then(|t| t.as_array())
         .map(|arr| {
             arr.iter()
+                .filter(|t| is_subagent_task(t))
                 .filter_map(|t| t.get("task_id").and_then(|s| s.as_str()).map(String::from))
                 .collect()
         })
@@ -1563,7 +1631,56 @@ fn emit_subagent_progress(ctx: &DriverCtx, session: &Session, v: &Value) {
     }
 }
 
-async fn handle_message(ctx: &DriverCtx, session: &mut Session, v: Value) -> Result<()> {
+/// A duration as a person would say it. Only ever renders a budget, so whole
+/// units are enough — and it never rounds a real wait down to "0 minutes".
+fn humanize(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs} second{}", if secs == 1 { "" } else { "s" })
+    } else {
+        let mins = secs / 60;
+        format!("{mins} minute{}", if mins == 1 { "" } else { "s" })
+    }
+}
+
+/// The completion usage carried by a terminal `result` frame.
+///
+/// Shared by every branch that can end a turn — the immediate end, the
+/// background debounce, and the hold ceiling — so a turn closed by the safety
+/// net reports the same numbers as one that closed normally.
+fn result_usage(v: &Value, session: &Session) -> Usage {
+    let usage = v.get("usage");
+    // The result usage is summed across every API call in the turn, so cache
+    // reads repeat once per step — count only new tokens (fresh input + cache
+    // writes) as "in".
+    let input_tokens = usage.map(|u| {
+        ["input_tokens", "cache_creation_input_tokens"]
+            .iter()
+            .filter_map(|k| u.get(k).and_then(|v| v.as_u64()))
+            .sum::<u64>()
+    });
+    let max = session.context_window;
+    // Live context = the last single API call's input side, not the
+    // turn-cumulative result sum.
+    let used = session.last_context_tokens;
+    Usage {
+        input_tokens,
+        output_tokens: usage
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(|t| t.as_u64()),
+        used_tokens: used,
+        max_tokens: Some(max),
+        context_pct: used.map(|u| u as f64 / max as f64 * 100.0),
+        cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
+    }
+}
+
+async fn handle_message(
+    ctx: &DriverCtx,
+    session: &mut Session,
+    policy: DriverPolicy,
+    v: Value,
+) -> Result<()> {
     let msg_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
     // Skip subagent traffic (surfaces via the Task tool result instead).
     let from_subagent = v
@@ -1582,6 +1699,7 @@ async fn handle_message(ctx: &DriverCtx, session: &mut Session, v: Value) -> Res
                 // it, and only the LAST result (no init follows) survives the
                 // grace window to fire a single TurnCompleted.
                 session.pending_finalize = None;
+                session.background_hold = None;
                 if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
                     // Each background wake re-emits init with the same session
                     // id; announce a session only once per id so the chat isn't
@@ -1756,24 +1874,33 @@ async fn handle_message(ctx: &DriverCtx, session: &mut Session, v: Value) -> Res
             emit_last_context(ctx, session);
 
             let outstanding = session.burst.outstanding();
+            let completion = result_usage(&v, session);
 
             if interrupt_requested {
                 // Stop already emitted TurnAborted and reset burst when the user
                 // pressed it; just consume the CLI's interrupted result so it
                 // isn't mistaken for a fresh turn end.
                 session.pending_finalize = None;
+                session.background_hold = None;
                 session.turn_active = false;
             } else if interrupted {
                 // CLI-initiated abort (no user stop outstanding).
                 session.burst.reset();
                 session.pending_finalize = None;
+                session.background_hold = None;
                 session.turn_active = false;
                 ctx.emit(AgentEvent::TurnAborted);
             } else if outstanding > 0 {
                 // Background agents are still running: hold the thread Running.
                 // A result arriving now is either the launching turn pausing or a
                 // per-agent wake while others work — never the true end.
+                //
+                // Only `local_agent` tasks reach here (see `background_task_ids`),
+                // and an agent always terminates — but the hold depends on a
+                // retraction frame we do not control, so arm the ceiling too.
                 session.pending_finalize = None;
+                session.background_hold =
+                    Some((Instant::now() + policy.background_hold_ceiling, completion));
                 ctx.emit(AgentEvent::Status {
                     text: if subtype == "success" {
                         format!(
@@ -1788,30 +1915,7 @@ async fn handle_message(ctx: &DriverCtx, session: &mut Session, v: Value) -> Res
                     },
                 });
             } else if subtype == "success" {
-                let usage = v.get("usage");
-                // The result usage is summed across every API call in the turn,
-                // so cache reads repeat once per step — count only new tokens
-                // (fresh input + cache writes) as "in".
-                let input_tokens = usage.map(|u| {
-                    ["input_tokens", "cache_creation_input_tokens"]
-                        .iter()
-                        .filter_map(|k| u.get(k).and_then(|v| v.as_u64()))
-                        .sum::<u64>()
-                });
-                let max = session.context_window;
-                // Live context = the last single API call's input side, not the
-                // turn-cumulative result sum.
-                let used = session.last_context_tokens;
-                let completion = Usage {
-                    input_tokens,
-                    output_tokens: usage
-                        .and_then(|u| u.get("output_tokens"))
-                        .and_then(|t| t.as_u64()),
-                    used_tokens: used,
-                    max_tokens: Some(max),
-                    context_pct: used.map(|u| u as f64 / max as f64 * 100.0),
-                    cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
-                };
+                session.background_hold = None;
                 if session.burst.saw_background() {
                     // A turn that used background agents is winding down. Several
                     // completions can coalesce into back-to-back results (dropping
@@ -1832,6 +1936,7 @@ async fn handle_message(ctx: &DriverCtx, session: &mut Session, v: Value) -> Res
             } else {
                 // Non-success terminal result, no agents outstanding.
                 session.pending_finalize = None;
+                session.background_hold = None;
                 session.burst.reset();
                 session.turn_active = false;
                 ctx.emit(AgentEvent::Error {
@@ -2220,6 +2325,7 @@ mod tests {
             first_response_timeout: Duration::from_secs(5),
             compaction_timeout: COMPACTION_TIMEOUT,
             interrupt_grace: Duration::ZERO,
+            background_hold_ceiling: Duration::from_millis(200),
             max_auto_reconnects: 1,
         }
     }
@@ -2595,6 +2701,69 @@ mod tests {
             "type": "system", "subtype": "background_tasks_changed", "tasks": []
         });
         assert!(background_task_ids(&cleared).is_empty());
+    }
+
+    /// A backgrounded shell must never hold a turn open. The CLI lists it in
+    /// `background_tasks_changed` next to real subagents, and counting it there
+    /// is what stranded a finished thread on "Waiting on 1 background agent"
+    /// forever: the command was an `until` loop whose condition never arrived,
+    /// so the task was never retracted. Frame captured verbatim from claude CLI
+    /// 2.1.212 driving `run_in_background`.
+    #[test]
+    fn backgrounded_bash_does_not_hold_the_turn() {
+        let bash_only = json!({
+            "type": "system", "subtype": "background_tasks_changed",
+            "tasks": [{ "task_id": "bd35rydq8", "task_type": "local_bash",
+                        "description": "Sleep for 400 seconds" }]
+        });
+        assert!(background_task_ids(&bash_only).is_empty());
+    }
+
+    /// Mixed frame: only the agent counts toward the hold, and the shell beside
+    /// it neither adds to nor masks the count.
+    #[test]
+    fn only_agents_count_toward_the_background_hold() {
+        let mixed = json!({
+            "type": "system", "subtype": "background_tasks_changed",
+            "tasks": [
+                { "task_id": "a1", "task_type": "local_agent", "description": "Reply DONE" },
+                { "task_id": "b1", "task_type": "local_bash", "description": "tail -f a log" }
+            ]
+        });
+        assert_eq!(background_task_ids(&mixed), ids(&["a1"]));
+
+        let mut b = BurstTracker::default();
+        b.set_background(background_task_ids(&mixed));
+        assert_eq!(b.outstanding(), 1);
+        assert!(b.is_background("a1"));
+        assert!(!b.is_background("b1"));
+    }
+
+    /// A turn whose only background work was a shell command must not even be
+    /// flagged as a burst — no hold, and no finalize debounce either, so it ends
+    /// with the same latency as a plain turn.
+    #[test]
+    fn a_shell_only_turn_is_not_a_background_burst() {
+        let bash_only = json!({
+            "type": "system", "subtype": "background_tasks_changed",
+            "tasks": [{ "task_id": "b1", "task_type": "local_bash", "description": "npm run dev" }]
+        });
+        let mut b = BurstTracker::default();
+        b.set_background(background_task_ids(&bash_only));
+        assert_eq!(b.outstanding(), 0);
+        assert!(!b.saw_background());
+    }
+
+    /// A task entry with no `task_type` at all is not assumed to be an agent.
+    /// Guessing "agent" on an unknown shape is the failure that has no recovery;
+    /// guessing "not an agent" costs at most an early turn end.
+    #[test]
+    fn untyped_background_tasks_do_not_hold_the_turn() {
+        let untyped = json!({
+            "type": "system", "subtype": "background_tasks_changed",
+            "tasks": [{ "task_id": "z1", "description": "something new" }]
+        });
+        assert!(background_task_ids(&untyped).is_empty());
     }
 
     /// Only `local_agent` tasks are subagents. Background tool tasks (`local_bash`)
