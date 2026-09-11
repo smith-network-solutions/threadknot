@@ -955,6 +955,19 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     !!thread &&
     (text.trim().length > 0 || attachments.length > 0) &&
     state.conn === "online";
+  // Typing while the agent works should reach the agent while it is still
+  // working — that is the whole point. Claude and Codex inject the note into
+  // the live prompt; Kimi's driver holds it and starts it at the provider's
+  // own prompt boundary. Two things have no mid-turn path and still have to
+  // wait outside the turn: attachments (steer is text-only) and an armed
+  // hand-back, whose follow-up is meant to run as its own turn on the gateway
+  // it is being handed to.
+  const steersNow =
+    running &&
+    !!thread &&
+    acceptsRunningInput &&
+    attachments.length === 0 &&
+    !handBackGateway;
   const queuedMessages = thread ? state.queuedMessages[thread.id] ?? [] : [];
 
   const slashContext = slashContextAt(text, cursorPos ?? text.length);
@@ -1194,7 +1207,22 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   async function submit() {
     if (running && thread) {
       if (!canQueue) {
-        setAttachError("Finish the message before queueing it.");
+        setAttachError("Finish the message before sending it.");
+        return;
+      }
+      if (steersNow) {
+        const note = stripBtw(text.trim());
+        const outgoing = replyTo ? formatReply(replyTo, note) : note;
+        const typed = text;
+        updateText("");
+        setAttachError(null);
+        markJustSent();
+        try {
+          await actions.steer(outgoing);
+          onClearReply();
+        } catch {
+          updateText(typed); // restore so nothing is lost
+        }
         return;
       }
       queueMessage();
@@ -1461,7 +1489,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
       : "Give your orders…";
   const placeholder =
     running
-      ? "Queue a follow-up — Enter queues, Stop interrupts…"
+      ? steersNow
+        ? "Send a note while it works — Enter delivers it now…"
+        : "Queue a follow-up — Enter queues, Stop interrupts…"
       : agentInfo && !agentInfo.available
         ? (agentInfo.authHint ?? `${agentInfo.name} is not available`)
         : quickHome
@@ -1887,13 +1917,29 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
             ) : (
               <button
                 type="button"
-                className={`send-btn${running ? " queue" : ""}`}
+                className={`send-btn${running && !steersNow ? " queue" : ""}`}
                 disabled={!canSend}
-                title={running ? "Queue message (Enter)" : "Send (Enter)"}
-                aria-label={running ? "Queue message" : "Send message"}
+                title={
+                  running
+                    ? steersNow
+                      ? "Send now (Enter)"
+                      : "Queue message (Enter)"
+                    : "Send (Enter)"
+                }
+                aria-label={
+                  running
+                    ? steersNow
+                      ? "Send message now"
+                      : "Queue message"
+                    : "Send message"
+                }
                 onClick={() => void submit()}
               >
-                {running ? <ClockIcon size={19} /> : <ArrowUpIcon size={19} />}
+                {running && !steersNow ? (
+                  <ClockIcon size={19} />
+                ) : (
+                  <ArrowUpIcon size={19} />
+                )}
               </button>
             )}
           </div>
