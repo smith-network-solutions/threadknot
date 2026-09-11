@@ -69,9 +69,23 @@ const BOTTOM_STICK_EPSILON = 2;
  * the smallest deliberate scroll anyone makes. */
 const CLAMP_SLACK = 24;
 /** Keep the normal transcript DOM bounded. Older pages are prepended before the
- * reader reaches the top, with the visible position restored in layout. */
-const INITIAL_FEED_ROWS = 160;
+ * reader reaches the top, with the visible position restored in layout.
+ *
+ * Every row here is mounted, not virtualized, and a working thread's rows are
+ * not cheap — a Service Storm transcript averages one tool card every other
+ * row, each with its own glyph, chevron and diff. Measured on WebKitGTK (the
+ * engine in the desktop window, ~3x slower than Chromium on this work): 160
+ * rows blocked the main thread for 3.5s on every thread open and every project
+ * switch. The cost is linear in the row count and the reader only ever sees a
+ * screenful, so the initial mount buys nothing above the fold. */
+const INITIAL_FEED_ROWS = 60;
 const FEED_PAGE_ROWS = 80;
+/** Rows kept either side of the active Find match. Find used to drop the window
+ * entirely (`feedStart = 0`) so a match anywhere in history would be mounted
+ * and scrollable — but the render is a suffix, so matching an old line mounted
+ * everything after it: 5,313 rows and 40,319 DOM nodes on a real thread here.
+ * Windowing around the match instead keeps the jump instant and the DOM flat. */
+const FIND_CONTEXT_ROWS = 40;
 
 function feedSearchText(item: FeedItem): string {
   switch (item.type) {
@@ -756,11 +770,30 @@ export function ThreadView() {
     start: 0,
   });
   const initialFeedStart = Math.max(0, feedLen - INITIAL_FEED_ROWS);
-  const feedStart = findOpen
-    ? 0
-    : feedWindow.feedId === loadedFeedId
+  const scrolledFeedStart =
+    feedWindow.feedId === loadedFeedId
       ? Math.min(feedWindow.start, initialFeedStart)
       : initialFeedStart;
+  // Position of the match Find is currently sitting on, so the window can be
+  // built around it. -1 while Find is closed, has no query, or matches nothing —
+  // all of which keep the ordinary tail window.
+  const activeFindPos = useMemo(
+    () =>
+      findOpen && activeFindId
+        ? state.feed.findIndex((item) => item.id === activeFindId)
+        : -1,
+    [activeFindId, findOpen, state.feed],
+  );
+  // Find windows around the match; everything else renders the live tail. Both
+  // are computed during render, so the row the scroll-into-view effect wants is
+  // already mounted by the time its rAF runs.
+  const [feedStart, feedEnd] =
+    activeFindPos >= 0
+      ? [
+          Math.max(0, activeFindPos - FIND_CONTEXT_ROWS),
+          Math.min(feedLen, activeFindPos + FIND_CONTEXT_ROWS + 1),
+        ]
+      : [scrolledFeedStart, feedLen];
 
   useEffect(() => {
     prependAnchorRef.current = null;
@@ -904,8 +937,12 @@ export function ThreadView() {
       scrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
       setAtPresent(true);
     }
-    if (stickRef.current) pinToEnd();
-  }, [loadedFeedId, feedLen, state.feed, pinToEnd]);
+    // Never pull the reader off a Find match. The feed is windowed around it,
+    // so its end is the match's context rather than the present, and live
+    // traffic would otherwise drag them there mid-search. Find with no match
+    // still follows the tail as usual.
+    if (stickRef.current && activeFindPos < 0) pinToEnd();
+  }, [loadedFeedId, feedLen, state.feed, pinToEnd, activeFindPos]);
 
   const jumpToPresent = useCallback(() => {
     const el = scrollRef.current;
@@ -1494,7 +1531,7 @@ export function ThreadView() {
               )}
             </div>
           )}
-          {state.feed.slice(feedStart).map((item) => {
+          {state.feed.slice(feedStart, feedEnd).map((item) => {
             const matched = findMatchIds.has(item.id);
             const current = activeFindId === item.id;
             return (
