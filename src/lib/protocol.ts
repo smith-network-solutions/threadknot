@@ -1956,16 +1956,16 @@ export interface RequestMap {
   };
   "thread.list": { payload: { projectId: string; machineId?: string }; data: { threads: Thread[] } };
   "thread.get": {
-    payload: { threadId: string; machineId?: string };
-    data: { thread: Thread; events: PersistedEvent[] };
+    payload: { threadId: string; machineId?: string; limit?: number; before?: number };
+    data: { thread: Thread; events: PersistedEvent[]; nextBefore?: number | null };
   };
   "thread.search": {
     payload: { query: string; threadIds: string[]; machineId?: string };
     data: { threadIds: string[] };
   };
   "thread.toolOutput": {
-    payload: { threadId: string; callId: string; machineId?: string };
-    data: { output: string | null };
+    payload: { threadId: string; callId: string; machineId?: string; includeDetail?: boolean };
+    data: { output: string | null; detail?: string | null };
   };
   "thread.preview": { payload: { threadId: string; machineId?: string }; data: ThreadPreview };
   "thread.rename": { payload: { threadId: string; title: string; machineId?: string }; data: Thread };

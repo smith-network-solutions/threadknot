@@ -547,3 +547,41 @@ async fn a_large_file_is_streamed_with_a_declared_length() {
     assert_eq!(body.len(), big, "every chunk must arrive, exactly once");
     assert!(body.iter().all(|b| *b == 7));
 }
+
+#[tokio::test]
+async fn paged_replay_negotiates_gzip_and_preserves_legacy_text() {
+    use std::io::Read;
+    use threadknot_lib::protocol::AgentEvent;
+    let _lock = exclusive().await;
+    let h = harness();
+    for i in 0..12 {
+        h.state.hub.store.append_event(&h.thread.id, None, &AgentEvent::ToolStart {
+            call_id: format!("compression-{i}"), name: "shell".into(), detail: "→".repeat(10_000),
+        }).unwrap();
+    }
+    let url = format!("ws://{}/ws?token={}&compression=gzip", h.authority, h.master_token);
+    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    socket.send(request(991, "thread.get", serde_json::json!({"threadId": h.thread.id, "limit": 4}))).await.unwrap();
+    let compressed = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if let Some(Ok(Message::Binary(bytes))) = socket.next().await { break bytes; }
+        }
+    }).await.unwrap();
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(compressed.as_ref()).read_to_string(&mut text).unwrap();
+    let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(frame["id"], 991);
+    assert_eq!(frame["data"]["events"].as_array().unwrap().len(), 4);
+    assert!(frame["data"]["nextBefore"].as_u64().unwrap() > 0);
+    assert!(compressed.len() < text.len() / 2);
+    assert!(frame["data"]["events"][0]["event"]["detail"].as_str().unwrap().len() < 2200);
+    socket.close(None).await.unwrap();
+    let mut legacy = connect_app(h).await;
+    legacy.send(request(992, "thread.get", serde_json::json!({"threadId": h.thread.id}))).await.unwrap();
+    let full = await_response(&mut legacy, 992).await;
+    assert!(full["data"]["events"].as_array().unwrap().len() >= 12);
+    legacy.send(request(993, "thread.toolOutput", serde_json::json!({"threadId": h.thread.id, "callId": "compression-0", "includeDetail": true}))).await.unwrap();
+    let detail = await_response(&mut legacy, 993).await;
+    assert_eq!(detail["data"]["detail"], "→".repeat(10_000));
+    legacy.close(None).await.unwrap();
+}

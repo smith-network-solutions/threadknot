@@ -1737,6 +1737,7 @@ async fn ws_handler(
     };
     // A frame larger than this is refused from its header, before its payload is
     // read, so an oversized frame costs a disconnect rather than an allocation.
+    let gzip = params.get("compression").is_some_and(|v| v == "gzip");
     ws.max_message_size(crate::limits::MAX_WS_MESSAGE_BYTES)
         .max_frame_size(crate::limits::MAX_WS_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
@@ -1744,7 +1745,7 @@ async fn ws_handler(
             // which drops the socket — the connection closes without waiting for
             // the client to notice.
             tokio::select! {
-                _ = handle_socket(socket, state.clone(), principal.clone()) => {}
+                _ = handle_socket(socket, state.clone(), principal.clone(), gzip) => {}
                 _ = guard.closed() => {
                     tracing::info!("closing app socket: session revoked");
                 }
@@ -1772,7 +1773,7 @@ impl Drop for TaskGuard {
     }
 }
 
-async fn handle_socket(socket: WebSocket, state: ServerState, principal: Principal) {
+async fn handle_socket(socket: WebSocket, state: ServerState, principal: Principal, gzip: bool) {
     use crate::limits::{self, Enqueued, FrameClass};
 
     let (mut sink, mut stream) = socket.split();
@@ -1809,7 +1810,18 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
     // indiscriminate broadcast lag that loses persisted events along with deltas.
     let _writer = TaskGuard(tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
-            if sink.send(Message::Text(msg.into())).await.is_err() {
+            let frame = if gzip && msg.len() >= 4096 {
+                match tokio::task::spawn_blocking(move || {
+                    use std::io::Write;
+                    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+                    encoder.write_all(msg.as_bytes())?;
+                    encoder.finish()
+                }).await {
+                    Ok(Ok(bytes)) => Message::Binary(bytes.into()),
+                    _ => break,
+                }
+            } else { Message::Text(msg.into()) };
+            if sink.send(frame).await.is_err() {
                 break;
             }
         }
@@ -2038,6 +2050,14 @@ const REPLAY_OUTPUT_TAIL: usize = 500;
 fn trim_replay_output(events: &mut [PersistedEvent]) {
     const CAP: usize = REPLAY_OUTPUT_HEAD + REPLAY_OUTPUT_TAIL;
     for pe in events.iter_mut() {
+        if let AgentEvent::ToolStart { detail, name, .. } = &mut pe.event {
+            // Agent inputs carry structured subagent metadata. Keep those intact.
+            if detail.len() > CAP && (name == "shell" || name == "mcp" || name == "edit") {
+                let head = floor_char_boundary(detail, REPLAY_OUTPUT_HEAD);
+                let tail = ceil_char_boundary(detail, detail.len() - REPLAY_OUTPUT_TAIL);
+                *detail = format!("{}\n… call detail elided — expand to load …\n{}", &detail[..head], &detail[tail..]);
+            }
+        }
         let AgentEvent::ToolEnd {
             output, truncated, ..
         } = &mut pe.event
@@ -4011,9 +4031,18 @@ pub async fn handle_request(
                 .ok_or_else(|| anyhow::anyhow!("unknown thread"))?;
             let person = acting_person(state, principal);
             let thread = project_thread(hub, &person, thread);
-            let mut events = store.read_events(thread_id);
+            let before = p.get("before").and_then(Value::as_u64);
+            let limit = p.get("limit").and_then(Value::as_u64).map(|n| n.clamp(1, 2000) as usize);
+            let store = Arc::clone(&hub.store);
+            let id = thread_id.to_owned();
+            let (mut events, next_before) = tokio::task::spawn_blocking(move || {
+                match limit {
+                    Some(limit) => store.read_event_page(&id, before, limit),
+                    None => Ok((store.read_events(&id), None)),
+                }
+            }).await??;
             trim_replay_output(&mut events);
-            Ok(json!({ "thread": thread, "events": events }))
+            Ok(json!({ "thread": thread, "events": events, "nextBefore": next_before }))
         }
         "thread.search" => {
             let query = field(&p, "query")?.trim().to_string();
@@ -4031,7 +4060,19 @@ pub async fn handle_request(
         "thread.toolOutput" => {
             let thread_id = field(&p, "threadId")?;
             let call_id = field(&p, "callId")?;
-            Ok(json!({ "output": full_tool_output(store, thread_id, call_id) }))
+            let store = Arc::clone(&hub.store);
+            let id = thread_id.to_owned();
+            let call = call_id.to_owned();
+            let include_detail = p.get("includeDetail").and_then(Value::as_bool).unwrap_or(false);
+            tokio::task::spawn_blocking(move || {
+                let detail = if include_detail {
+                    store.read_events(&id).into_iter().rev().find_map(|pe| match pe.event {
+                        AgentEvent::ToolStart { call_id, detail, .. } if call_id == call => Some(detail),
+                        _ => None,
+                    })
+                } else { None };
+                Ok(json!({ "output": full_tool_output(&store, &id, &call), "detail": detail }))
+            }).await?
         }
         "thread.preview" => {
             // Unknown/empty threads answer with an empty preview rather than an

@@ -48,7 +48,7 @@ import { AGENT_LABELS as AGENT_NAMES } from "../lib/protocol";
 
 type FeedActions = Pick<
   ThreadknotActions,
-  "toolOutput" | "respondApproval" | "setQuestionAnswers" | "respondQuestion"
+  "toolDetail" | "toolOutput" | "respondApproval" | "setQuestionAnswers" | "respondQuestion"
 >;
 
 /** Stable, non-feed state needed by an individual row. Keeping this out of the
@@ -421,6 +421,7 @@ function ToolRow({
   // without ever losing what the agent printed.
   const [full, setFull] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
+  const [fullDetail, setFullDetail] = useState<string | null>(null);
   const threadId = render.threadId;
   if (item.subagent) return <SubagentCard item={item} />;
   const hasDetail = item.detail.trim().length > 0;
@@ -432,6 +433,9 @@ function ToolRow({
   const expand = () => {
     const next = !open;
     setOpen(next);
+    if (next && fullDetail === null && item.detail.includes("call detail elided — expand to load") && threadId) {
+      void render.actions.toolDetail(threadId, item.callId).then(setFullDetail).catch(() => undefined);
+    }
     if (next && item.truncated && full === null && !loadingFull && threadId) {
       setLoadingFull(true);
       void render.actions
@@ -461,7 +465,7 @@ function ToolRow({
           {hasDetail && (
             <div className="tool-input-wrap">
               <div className="tool-section-label">call</div>
-              <pre className="tool-input">{item.detail}</pre>
+              <pre className="tool-input">{fullDetail ?? item.detail}</pre>
             </div>
           )}
           {body.length > 0 && (

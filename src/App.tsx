@@ -395,9 +395,9 @@ function makeActions(
       if (known) rememberProject(known.projectId, known.machineId);
     }
     try {
-      const { thread, events } = await client.request(
+      const { thread, events, nextBefore } = await client.request(
         "thread.get",
-        machineId ? { threadId, machineId } : { threadId },
+        { threadId, machineId, limit: 1000 },
       );
       if (!isAgentVisible(thread.agent)) {
         if (!preserveFeed) {
@@ -406,7 +406,7 @@ function makeActions(
         }
         return false;
       }
-      dispatch({ type: "feedLoaded", threadId, thread, events });
+      dispatch({ type: "feedLoaded", threadId, thread, events, nextBefore });
       if (!preserveFeed) {
         rememberLastThread(getState().solo, threadId, thread.machineId);
         rememberProject(thread.projectId, thread.machineId);
@@ -609,6 +609,25 @@ function makeActions(
         false,
         true,
       );
+    },
+
+    async loadOlderEvents(threadId: string) {
+      const state = getState();
+      const before = state.feedBefore;
+      if (state.activeThreadId !== threadId || before === null || state.feedOlderLoading) return;
+      dispatch({ type: "feedOlderLoading", threadId, loading: true });
+      try {
+        const page = await client.request("thread.get", { threadId, machineId: routeFor(threadId), before, limit: 1000 });
+        dispatch({ type: "feedOlderLoaded", threadId, before, events: page.events, nextBefore: page.nextBefore });
+      } catch (err) {
+        dispatch({ type: "feedOlderLoading", threadId, loading: false });
+        throw err;
+      }
+    },
+
+    async toolDetail(threadId: string, callId: string) {
+      const { detail } = await client.request("thread.toolOutput", { threadId, callId, machineId: routeFor(threadId), includeDetail: true });
+      return detail ?? null;
     },
 
     async toolOutput(threadId: string, callId: string) {
@@ -1966,6 +1985,9 @@ const FEED_ONLY_KEYS = new Set<keyof AppState>([
   "feed",
   "feedThreadId",
   "feedLoading",
+  "feedEvents",
+  "feedBefore",
+  "feedOlderLoading",
   "lastSeq",
 ]);
 const NON_FEED_KEYS = (Object.keys(initialState) as Array<keyof AppState>).filter(

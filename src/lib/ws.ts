@@ -84,7 +84,9 @@ export class ThreadknotClient {
     this.onStatus?.("connecting");
     let ws: WebSocket;
     try {
-      ws = new WebSocket(this.url);
+      const url = new URL(this.url);
+      if (typeof DecompressionStream !== "undefined") url.searchParams.set("compression", "gzip");
+      ws = new WebSocket(url);
     } catch {
       this.scheduleReconnect();
       return;
@@ -100,11 +102,20 @@ export class ThreadknotClient {
       this.onOpen?.(isReconnect);
     };
 
+    // Serialize decompression and dispatch so text events cannot overtake a replay.
+    let incoming = Promise.resolve();
     ws.onmessage = (msg) => {
+      incoming = incoming.then(async () => {
+        const text = typeof msg.data === "string" ? msg.data
+          : await new Response((msg.data as Blob).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+        receive(text);
+      }).catch(() => { if (ws === this.ws) ws.close(); });
+    };
+    const receive = (text: string) => {
       if (ws !== this.ws) return;
       let frame: ServerFrame;
       try {
-        frame = JSON.parse(String(msg.data)) as ServerFrame;
+        frame = JSON.parse(text) as ServerFrame;
       } catch {
         return;
       }

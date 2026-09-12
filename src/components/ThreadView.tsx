@@ -56,18 +56,6 @@ const BOTTOM_SLACK = 90;
 /** Auto-follow only engages at the real end; a larger threshold makes manual
  * scrolling snap the final stretch and keeps tugging the reader back down. */
 const BOTTOM_STICK_EPSILON = 2;
-/** How far from the end a drop in scrollTop must leave the reader before it
- * counts as them scrolling up.
- *
- * A drop is not proof of intent. The browser drops scrollTop itself, by
- * clamping, whenever the end moves up under a reader sitting on it — which is
- * what every shrink of the composer dock does: an agent pill going away after a
- * tool call, the composer closing around a sent image, the phone keyboard
- * retracting. Those clamps land the reader exactly on the new end; a real
- * gesture leaves them off it. So the distance afterwards is what separates the
- * two, and it only has to clear rounding and sub-pixel geometry — well under
- * the smallest deliberate scroll anyone makes. */
-const CLAMP_SLACK = 24;
 /** Keep the normal transcript DOM bounded. Older pages are prepended before the
  * reader reaches the top, with the visible position restored in layout.
  *
@@ -644,6 +632,7 @@ export function ThreadView() {
   const scrollHeightRef = useRef(0);
   const clientHeightRef = useRef(0);
   const touchYRef = useRef<number | null>(null);
+  const scrollbarPointerRef = useRef<number | null>(null);
   // The zoom scrollTopRef's number was measured under. Compared (not just used)
   // so one zoom value is only ever rescaled once (see the APPEARANCE_EVENT
   // handler below).
@@ -681,10 +670,15 @@ export function ThreadView() {
     return callback;
   }, []);
 
-  useEffect(() => {
+  // Clear the previous thread's lookup before child refs attach. A passive
+  // effect runs after attachment and would erase the new thread's live nodes,
+  // leaving Find and history anchoring with no elements to measure.
+  const findRefsFeedRef = useRef<string | null>(null);
+  if (findRefsFeedRef.current !== loadedFeedId) {
+    findRefsFeedRef.current = loadedFeedId;
     findItemRefs.current = {};
     findItemRefCallbacks.current = {};
-  }, [loadedFeedId]);
+  }
 
   const openFind = useCallback(() => {
     if (findCloseTimerRef.current !== null) {
@@ -762,17 +756,31 @@ export function ThreadView() {
   const pinRafRef = useRef<number | null>(null);
   const scrollMetricsRafRef = useRef<number | null>(null);
   const scrollIdleTimerRef = useRef<number | null>(null);
-  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const prependAnchorRef = useRef<{ feedId: string; rows: { id: string; top: number }[] } | null>(null);
+  const captureReadingPosition = useCallback((el: HTMLDivElement) => {
+    if (!loadedFeedId) return;
+    const viewport = el.getBoundingClientRect();
+    const rows = Object.entries(findItemRefs.current)
+      .flatMap(([id, node]) => {
+        if (!node) return [];
+        const rect = node.getBoundingClientRect();
+        return rect.bottom > viewport.top && rect.top < viewport.bottom
+          ? [{ id, top: rect.top - viewport.top }] : [];
+      }).sort((a, b) => a.top - b.top);
+    prependAnchorRef.current = { feedId: loadedFeedId, rows };
+  }, [loadedFeedId]);
   const [atPresent, setAtPresent] = useState(true);
   const feedLen = state.feed.length;
-  const [feedWindow, setFeedWindow] = useState<{ feedId: string | null; start: number }>({
+  const [feedWindow, setFeedWindow] = useState<{ feedId: string | null; start: number; anchorId?: string; anchorBefore?: number | null }>({
     feedId: null,
     start: 0,
   });
   const initialFeedStart = Math.max(0, feedLen - INITIAL_FEED_ROWS);
   const scrolledFeedStart =
     feedWindow.feedId === loadedFeedId
-      ? Math.min(feedWindow.start, initialFeedStart)
+      ? Math.min(feedWindow.anchorId && feedWindow.anchorBefore !== state.feedBefore
+        ? Math.max(0, state.feed.findIndex(item => item.id === feedWindow.anchorId) - FEED_PAGE_ROWS)
+        : feedWindow.start, initialFeedStart)
       : initialFeedStart;
   // Position of the match Find is currently sitting on, so the window can be
   // built around it. -1 while Find is closed, has no query, or matches nothing —
@@ -800,27 +808,51 @@ export function ThreadView() {
     setFeedWindow({ feedId: loadedFeedId, start: initialFeedStart });
   }, [loadedFeedId]);
 
+  const [olderError, setOlderError] = useState<string | null>(null);
+  const olderRequestRef = useRef(false);
+  const loadOlderPage = useCallback((el: HTMLDivElement | null) => {
+    if (!loadedFeedId || state.feedBefore === null || state.feedOlderLoading || olderRequestRef.current) return;
+    olderRequestRef.current = true;
+    stickRef.current = false;
+    manualAwayRef.current = true;
+    setAtPresent(false);
+    setOlderError(null);
+    if (el) captureReadingPosition(el);
+    setFeedWindow({ feedId: loadedFeedId, start: feedStart, anchorId: state.feed[feedStart]?.id, anchorBefore: state.feedBefore });
+    void actions.loadOlderEvents(loadedFeedId).catch(err => {
+      prependAnchorRef.current = null;
+      setOlderError(err instanceof Error ? err.message : String(err));
+    }).finally(() => { olderRequestRef.current = false; });
+  }, [actions, loadedFeedId, state.feedBefore, state.feedOlderLoading, state.feed, feedStart, captureReadingPosition]);
+
   const prependOlderFeed = useCallback((el: HTMLDivElement) => {
+    if (feedStart <= 0) { if (!findOpen) loadOlderPage(el); return; }
     if (!loadedFeedId || findOpen || feedStart <= 0 || prependAnchorRef.current) return;
-    prependAnchorRef.current = {
-      scrollHeight: el.scrollHeight,
-      scrollTop: el.scrollTop,
-    };
+    captureReadingPosition(el);
     setFeedWindow({
       feedId: loadedFeedId,
       start: Math.max(0, feedStart - FEED_PAGE_ROWS),
     });
-  }, [feedStart, findOpen, loadedFeedId]);
+  }, [feedStart, findOpen, loadedFeedId, loadOlderPage, captureReadingPosition]);
 
   useLayoutEffect(() => {
     const anchor = prependAnchorRef.current;
     const el = scrollRef.current;
     if (!anchor || !el) return;
     prependAnchorRef.current = null;
-    const nextTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
-    el.scrollTop = nextTop;
-    scrollTopRef.current = nextTop;
-  }, [feedStart]);
+    if (anchor.feedId !== loadedFeedId) return;
+    // Preserve an actual visible row. Total height changes also include live
+    // output below the reader and browser anchoring, so they are not a reliable
+    // measure of how far the content above the reader moved.
+    for (const row of anchor.rows) {
+      const node = findItemRefs.current[row.id];
+      if (!node) continue;
+      const delta = node.getBoundingClientRect().top - el.getBoundingClientRect().top - row.top;
+      el.scrollTop += delta;
+      break;
+    }
+    scrollTopRef.current = el.scrollTop;
+  }, [feedStart, state.feedBefore]);
   const feedDerivedRef = useRef<{
     feed: FeedItem[];
     subagents: ReturnType<typeof activeSubagents>;
@@ -894,21 +926,8 @@ export function ThreadView() {
       const el = scrollRef.current;
       if (!el || !stickRef.current) return;
       const end = Math.max(0, el.scrollHeight - el.clientHeight);
-      // Both halves are required. A drop alone is what the browser does when it
-      // clamps a reader who is on the end onto a new, higher end (see
-      // CLAMP_SLACK) — releasing live-follow there is what left the feed stuck
-      // mid-history after a pill vanished. Distance alone is what growing
-      // content does every time a token lands, which is the case this whole
-      // callback exists to follow.
-      if (
-        el.scrollTop < scrollTopRef.current - BOTTOM_STICK_EPSILON &&
-        end - el.scrollTop > CLAMP_SLACK
-      ) {
-        manualAwayRef.current = true;
-        stickRef.current = false;
-        scrollTopRef.current = el.scrollTop;
-        return;
-      }
+      // Layout/scroll anchoring can move scrollTop without user input. Only
+      // gesture handlers release stickRef; geometry here must never do so.
       if (Math.abs(el.scrollTop - end) > 1) el.scrollTop = end;
       scrollTopRef.current = el.scrollTop;
       scrollHeightRef.current = el.scrollHeight;
@@ -994,6 +1013,18 @@ export function ThreadView() {
       scrollIdleTimerRef.current = null;
       el.classList.remove("is-user-scrolling");
     }, 120);
+  }, []);
+
+  useEffect(() => {
+    const release = () => { scrollbarPointerRef.current = null; };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+      window.removeEventListener("blur", release);
+    };
   }, []);
 
   // Capture wheel intent directly on the scrollport. React's delegated wheel
@@ -1379,6 +1410,16 @@ export function ThreadView() {
         className="feed-scroll"
         data-zoom-pane="feed"
         ref={scrollRef}
+        onPointerDown={(e) => {
+          const el = e.currentTarget;
+          const right = el.getBoundingClientRect().right;
+          // Include overlay scrollbars, which have no layout gutter. Content
+          // clicks and touch gestures retain their own existing behavior.
+          if (e.pointerType === "mouse" && e.target === el && e.clientX >= right - Math.max(16, el.offsetWidth - el.clientWidth)) {
+            scrollbarPointerRef.current = e.pointerId;
+            leavePresent();
+          }
+        }}
         onTouchStart={(e) => {
           touchYRef.current = e.touches[0]?.clientY ?? null;
         }}
@@ -1420,27 +1461,24 @@ export function ThreadView() {
           const nextTop = el.scrollTop;
           scrollTopRef.current = nextTop;
           if (manualAwayRef.current) markUserScrolling();
-          if (manualAwayRef.current && nextTop < el.clientHeight * 2.5) {
+          // Keep the anchor current if the reader moves while a network page
+          // is in flight. Restoring the request-time position would undo that
+          // movement seconds later.
+          if (olderRequestRef.current && prependAnchorRef.current) captureReadingPosition(el);
+          // Only an upward movement near the actual top loads another page.
+          // A height correction generates its own scroll event; it must not
+          // recursively load history, or a tiny gesture can mount many pages.
+          if (manualAwayRef.current && nextTop < previousTop - BOTTOM_STICK_EPSILON &&
+              nextTop < Math.min(160, el.clientHeight * 0.25)) {
             prependOlderFeed(el);
           }
-          // Browser-generated scroll events also fire when streaming content,
-          // the composer, or the mobile viewport changes size. Those must not
-          // cancel live-follow. Explicit wheel/touch/key gestures above turn it
-          // off; reaching the real end here is the only implicit state change.
-          if (nextTop < previousTop - BOTTOM_STICK_EPSILON) {
-            // Covers scrollbar drags and upward wheel/touch scrolling even when
-            // streaming changed the feed geometry in the same frame. A decrease
-            // is not by itself reader intent, though: the browser produces one
-            // by clamping whenever the end moves up under someone sitting on it
-            // (see CLAMP_SLACK). Only a decrease that leaves the reader off the
-            // end is a gesture.
-            //
-            // This is the one place that reads layout inside a scroll handler,
-            // and it is deliberately on this branch only: content growing under
-            // a follower never gets here, so the streaming path stays free of
-            // forced reflows.
-            const end = Math.max(0, el.scrollHeight - el.clientHeight);
-            if (end - nextTop > CLAMP_SLACK) leavePresent();
+          // Scroll events also come from images, font swaps, replay and browser
+          // scroll anchoring. A drop alone does not mean the reader scrolled.
+          if (scrollbarPointerRef.current !== null) {
+            if (nextTop < previousTop - BOTTOM_STICK_EPSILON) leavePresent();
+            else if (nextTop > previousTop + BOTTOM_STICK_EPSILON) manualAwayRef.current = false;
+          } else if (stickRef.current && activeFindPos < 0) {
+            pinToEnd();
           }
           // Reading scrollHeight/clientHeight here can force layout while the
           // browser is trying to paint the current wheel frame. Coalesce the
@@ -1507,6 +1545,15 @@ export function ThreadView() {
               aria-label={`Project directory: ${project.path}`}
             >
               {elidePathMiddle(project.path)}
+            </div>
+          )}
+          {state.feedBefore !== null && !state.feedLoading && (feedStart === 0 || findOpen) && (
+            <div className="feed-note note-status">
+              {findOpen && <span>Searching loaded messages. </span>}
+              <button disabled={state.feedOlderLoading} onClick={() => loadOlderPage(scrollRef.current)}>
+                {state.feedOlderLoading ? "Loading older messages…" : "Load older messages"}
+              </button>
+              {olderError && <span role="alert"> {olderError}</span>}
             </div>
           )}
           {state.feedLoading && <div className="feed-note note-status">loading log…</div>}

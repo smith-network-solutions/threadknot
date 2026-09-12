@@ -12,8 +12,10 @@ import type {
 import { AGENT_LABELS as AGENT_NAMES } from "../lib/protocol";
 
 let nextItemId = 1;
+let replayId: string | undefined;
+let replayIndex = 0;
 function iid(): string {
-  return `i${nextItemId++}`;
+  return replayId === undefined ? `i${nextItemId++}` : `${replayId}:${replayIndex++}`;
 }
 
 /** Live state of a subagent launched by a Task / background Agent tool call. */
@@ -310,6 +312,46 @@ function turnThinkingDuration(items: FeedItem[]): number | undefined {
  * Fold one agent event into the feed item list (pure; returns a new array).
  * `speaker` attributes the event to a lane — see [`stampSpeaker`].
  */
+export function replayEvents(events: import("../lib/protocol").PersistedEvent[]): FeedItem[] {
+  let feed: FeedItem[] = [];
+  const tools = new Map<string, number>();
+  const streaming = new Set<number>();
+  try {
+    for (let index = 0; index < events.length; index++) {
+      const pe = events[index];
+      replayId = pe.seq >= 0 ? `replay:${pe.seq}` : `local:${index}`;
+      replayIndex = 0;
+      const event = pe.event;
+      // Replay owns this array. Reuse the live reducer for card semantics, but
+      // avoid copying the whole history for each of tens of thousands of tools.
+      if (event.kind === "tool_start") {
+        const start = streaming.size ? Math.min(...streaming) : feed.length;
+        tools.set(event.callId, feed.length);
+        const tail = applyEvent(feed.slice(start), event, pe.ts, pe.speaker);
+        for (let i = 0; i < tail.length; i++) feed[start + i] = tail[i];
+        streaming.clear();
+      } else if (event.kind === "tool_end" || event.kind === "tool_output_delta") {
+        const i = tools.get(event.callId);
+        if (i !== undefined) feed[i] = applyEvent([feed[i]], event, pe.ts, i === feed.length - 1 ? pe.speaker : undefined)[0];
+        else {
+          const added = applyEvent([], event, pe.ts, pe.speaker);
+          if (added.length) { tools.set(event.callId, feed.length); feed.push(...added); }
+        }
+      } else if (event.kind === "context_usage" || event.kind === "file_diff" || event.kind === "artifact") {
+        feed.push(...applyEvent([], event, pe.ts, pe.speaker));
+      } else {
+        feed = applyEvent(feed, event, pe.ts, pe.speaker);
+        streaming.clear();
+        feed.forEach((item, i) => {
+          if (item.type === "tool") tools.set(item.callId, i);
+          if ((item.type === "assistant" || item.type === "thinking") && item.streaming) streaming.add(i);
+        });
+      }
+    }
+  } finally { replayId = undefined; }
+  return feed;
+}
+
 export function applyEvent(
   items: FeedItem[],
   ev: AgentEvent,

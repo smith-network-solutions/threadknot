@@ -1297,6 +1297,50 @@ impl Store {
             .collect()
     }
 
+    /// Read backwards in bounded blocks. The cursor is a JSONL byte boundary,
+    /// so loading the tail never parses or allocates the entire transcript.
+    pub fn read_event_page(&self, thread_id: &str, before: Option<u64>, limit: usize)
+        -> Result<(Vec<PersistedEvent>, Option<u64>)>
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = match std::fs::File::open(self.events_path(thread_id)) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((vec![], None)),
+            Err(e) => return Err(e.into()),
+        };
+        let len = file.metadata()?.len();
+        let mut pos = before.unwrap_or(len).min(len);
+        let mut pending = Vec::new();
+        let mut events = Vec::new();
+        let mut bytes = 0;
+        while pos > 0 {
+            let start = pos.saturating_sub(64 * 1024);
+            let mut block = vec![0; (pos - start) as usize];
+            file.seek(SeekFrom::Start(start))?;
+            file.read_exact(&mut block)?;
+            block.extend_from_slice(&pending);
+            let mut end = block.len();
+            for i in (0..block.len()).rev() {
+                if block[i] != b'\n' { continue; }
+                let line = &block[i + 1..end];
+                if let Ok(event) = serde_json::from_slice::<PersistedEvent>(line) {
+                    bytes += line.len();
+                    events.push(event);
+                    if events.len() >= limit.max(1) || bytes >= 2 * 1024 * 1024 {
+                        events.reverse();
+                        return Ok((events, Some(start + i as u64 + 1)));
+                    }
+                }
+                end = i;
+            }
+            pending = block[..end].to_vec();
+            pos = start;
+        }
+        if let Ok(event) = serde_json::from_slice(&pending) { events.push(event); }
+        events.reverse();
+        Ok((events, None))
+    }
+
     /// The last thing the assistant actually said, if anything.
     ///
     /// The salvage path for a dispatched worker that finished without calling
@@ -2543,6 +2587,46 @@ mod thread_search_tests {
             .search_thread_content(&["../../projects".into()], "projects")
             .is_empty());
 
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod event_page_tests {
+    use super::*;
+
+    #[test]
+    fn reverse_pages_cover_log_once_across_blocks_and_appends() {
+        let dir = std::env::temp_dir().join(format!("threadknot-pages-{}", uuid::Uuid::new_v4()));
+        let store = Store::open_at(dir.clone()).unwrap();
+        std::fs::create_dir_all(dir.join("threads")).unwrap();
+        let path = store.events_path("test");
+        let mut log = String::new();
+        for seq in 0..23 {
+            let event = PersistedEvent { seq, ts: "now".into(), speaker: None,
+                event: AgentEvent::ToolStart { call_id: seq.to_string(), name: "shell".into(), detail: "→".repeat(40_000) } };
+            log.push_str(&serde_json::to_string(&event).unwrap());
+            log.push('\n');
+            if seq == 8 { log.push_str("malformed\n\n"); }
+        }
+        std::fs::write(&path, log).unwrap();
+        let (bounded, next) = store.read_event_page("test", None, 1000).unwrap();
+        assert!(bounded.len() < 23 && next.is_some(), "byte budget bounds a page before the event limit");
+        let (tail, mut cursor) = store.read_event_page("test", None, 4).unwrap();
+        assert_eq!(tail.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![19,20,21,22]);
+        // An append after the first read must not shift an older-page cursor.
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"partial").unwrap();
+        let mut all = tail;
+        while let Some(before) = cursor {
+            let (mut page, next) = store.read_event_page("test", Some(before), 4).unwrap();
+            assert!(next.is_none_or(|n| n < before));
+            page.extend(all);
+            all = page;
+            cursor = next;
+        }
+        assert_eq!(all.iter().map(|e| e.seq).collect::<Vec<_>>(), (0..23).collect::<Vec<_>>());
+        assert!(store.read_event_page("missing", None, 4).unwrap().0.is_empty());
+        assert!(store.read_event_page("test", Some(0), 4).unwrap().0.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

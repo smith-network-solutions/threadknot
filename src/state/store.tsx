@@ -30,7 +30,7 @@ import type {
 import { isQuickHomeProjectId, OWNER_PERSON_ID } from "../lib/protocol";
 import type { ConnState } from "../lib/ws";
 import { isAgentVisible, setHermesConfigured } from "../lib/agentVisibility";
-import { applyEvent, type FeedItem } from "./feed";
+import { replayEvents, applyEvent, type FeedItem } from "./feed";
 
 export const LS_LAST_THREAD = "threadknot.lastThread";
 export const LS_LAST_PROJECT = "threadknot.lastProject";
@@ -339,6 +339,9 @@ export interface AppState {
   feed: FeedItem[];
   feedThreadId: string | null; // which thread the feed belongs to
   feedLoading: boolean;
+  feedEvents: PersistedEvent[];
+  feedBefore: number | null;
+  feedOlderLoading: boolean;
   lastSeq: number;
   sidebarOpen: boolean;
   usage: ProviderUsage[];
@@ -432,6 +435,9 @@ export const initialState: AppState = {
   feed: [],
   feedThreadId: null,
   feedLoading: false,
+  feedEvents: [],
+  feedBefore: null,
+  feedOlderLoading: false,
   lastSeq: 0,
   sidebarOpen: false,
   usage: [],
@@ -477,7 +483,9 @@ export type Action =
   | { type: "restored" }
   | { type: "openDraft"; draft: DraftThread }
   | { type: "closeActive" }
-  | { type: "feedLoaded"; threadId: string; thread: Thread; events: PersistedEvent[] }
+  | { type: "feedLoaded"; threadId: string; thread: Thread; events: PersistedEvent[]; nextBefore?: number | null }
+  | { type: "feedOlderLoading"; threadId: string; loading: boolean }
+  | { type: "feedOlderLoaded"; threadId: string; before: number; events: PersistedEvent[]; nextBefore?: number | null }
   | AgentEventAction
   | { type: "agentEvents"; events: AgentEventAction[] }
   | { type: "threadUpserted"; thread: Thread }
@@ -951,6 +959,9 @@ export function reducer(state: AppState, action: Action): AppState {
         feed: [],
         feedThreadId: null,
         feedLoading: true,
+        feedEvents: [],
+        feedBefore: null,
+        feedOlderLoading: false,
         lastSeq: 0,
         sidebarOpen: false,
         attention,
@@ -965,6 +976,9 @@ export function reducer(state: AppState, action: Action): AppState {
         draft: action.draft,
         feed: [],
         feedThreadId: null,
+        feedEvents: [],
+        feedBefore: null,
+        feedOlderLoading: false,
         feedLoading: false,
         lastSeq: 0,
         sidebarOpen: false,
@@ -976,19 +990,35 @@ export function reducer(state: AppState, action: Action): AppState {
         draft: null,
         feed: [],
         feedThreadId: null,
+        feedEvents: [],
+        feedBefore: null,
+        feedOlderLoading: false,
         feedLoading: false,
         lastSeq: 0,
       };
+    case "feedOlderLoading":
+      return state.activeThreadId === action.threadId
+        ? { ...state, feedOlderLoading: action.loading } : state;
+    case "feedOlderLoaded": {
+      if (state.activeThreadId !== action.threadId || state.feedBefore !== action.before) return state;
+      const feedEvents = [...action.events, ...state.feedEvents];
+      return { ...state, feedEvents, feed: replayEvents(feedEvents),
+        feedBefore: action.nextBefore ?? null, feedOlderLoading: false };
+    }
     case "feedLoaded": {
       if (state.activeThreadId !== action.threadId) return state;
-      let feed: FeedItem[] = [];
-      let lastSeq = 0;
-      for (const pe of action.events) {
-        feed = applyEvent(feed, pe.event, pe.ts, pe.speaker);
-        if (pe.seq > lastSeq) lastSeq = pe.seq;
-      }
+      const snapshotSeq = action.events[action.events.length - 1]?.seq ?? -1;
+      const arrived = state.feedEvents.filter(pe => pe.seq > snapshotSeq);
+      // Reconnect refreshes the tail without discarding history already loaded.
+      const firstSeq = action.events[0]?.seq;
+      const keepOlder = state.feedThreadId === action.threadId && firstSeq !== undefined && firstSeq <= state.lastSeq + 1;
+      const older = keepOlder ? state.feedEvents.filter(pe => pe.seq >= 0 && pe.seq < firstSeq) : [];
+      const feedEvents = [...older, ...action.events, ...arrived];
+      const feed = replayEvents(feedEvents);
+      const lastSeq = Math.max(0, snapshotSeq, ...arrived.map(pe => pe.seq));
       const threads = patchThread(state.threads, action.threadId, () => action.thread);
-      return { ...state, feed, feedThreadId: action.threadId, feedLoading: false, lastSeq, threads };
+      return { ...state, feed, feedEvents, feedBefore: older.length ? state.feedBefore : action.nextBefore ?? null,
+        feedOlderLoading: false, feedThreadId: action.threadId, feedLoading: false, lastSeq, threads };
     }
     case "agentEvent": {
       const { threadId, seq, timestamp, speaker, event } = action;
@@ -1012,6 +1042,9 @@ export function reducer(state: AppState, action: Action): AppState {
       if (threads !== state.threads) next = { ...next, threads };
 
       const viewing = state.feedThreadId === threadId && state.activeThreadId === threadId;
+      if (state.feedLoading && state.activeThreadId === threadId && seq >= 0) {
+        next = { ...next, feedEvents: [...next.feedEvents, { seq, ts: timestamp, speaker, event }] };
+      }
       if (viewing) {
         // Drop persisted duplicates during replay races; deltas (seq -1) always apply.
         if (seq > 0 && seq <= state.lastSeq) return next;
@@ -1024,6 +1057,7 @@ export function reducer(state: AppState, action: Action): AppState {
         next = {
           ...next,
           feed,
+          feedEvents: [...state.feedEvents, { seq, ts: timestamp, speaker, event }],
           lastSeq: seq > 0 ? seq : next.lastSeq,
         };
       } else if (seq >= 0 && isAttentionEvent(event) && !state.attention[threadId]) {
@@ -1438,6 +1472,8 @@ export interface ThreadknotActions {
    *  route cannot be resolved from state the way `selectThread` does. */
   restoreThread: (threadId: string, machineId?: string) => Promise<boolean>;
   /** Full text of a historical tool call whose replay copy was elided. */
+  loadOlderEvents: (threadId: string) => Promise<void>;
+  toolDetail: (threadId: string, callId: string) => Promise<string | null>;
   toolOutput: (threadId: string, callId: string) => Promise<string | null>;
   openDraft: (projectId: string, machineId?: string) => void;
   /** Start a folderless chat in an isolated scratch directory on a machine. */

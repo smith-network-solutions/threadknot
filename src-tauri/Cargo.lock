@@ -5077,6 +5077,7 @@ dependencies = [
  "clipboard-rs",
  "dirs",
  "ed25519-dalek",
+ "flate2",
  "futures",
  "futures-util",
  "gethostname",
