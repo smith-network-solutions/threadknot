@@ -151,7 +151,7 @@ export function useReorderDrag(opts: {
           guardTimer.current = null;
         }, CLICK_GUARD_MS);
       }
-      if (commit && s.active) {
+      if (commit && s.active && s.moved) {
         const to = slotAt(s.y);
         if (to !== s.from && to !== s.from + 1) {
           const next = [...s.ids];
@@ -172,7 +172,7 @@ export function useReorderDrag(opts: {
     // React's own touchmove listener is passive, so the scroll has to be
     // refused here, on a non-passive window listener installed for the life of
     // the drag.
-    if (e.cancelable) e.preventDefault();
+    if (session.current?.active && e.cancelable) e.preventDefault();
   }, []);
 
   /** Drag the list along when the pointer sits against a scroller's edge. */
@@ -181,7 +181,7 @@ export function useReorderDrag(opts: {
     if (!s || !s.active) return;
     const scroller =
       optsRef.current.scrollRef?.current ?? optsRef.current.containerRef.current;
-    if (scroller) {
+    if (scroller && s.moved) {
       const r = scroller.getBoundingClientRect();
       const dy =
         s.y < r.top + EDGE_PX
@@ -218,7 +218,7 @@ export function useReorderDrag(opts: {
       // A cursor and a "nothing here is selectable" rule for the whole drag,
       // regardless of which element the pointer is over.
       document.body.classList.add("reordering");
-      window.addEventListener("touchmove", blockScroll, { passive: false });
+
       s.raf = requestAnimationFrame(frame);
       setView({ id: s.id, to: slotAt(s.y) });
     },
@@ -287,14 +287,15 @@ export function useReorderDrag(opts: {
       return {
         onPointerDown: (event) => {
           if (event.pointerType === "mouse" && event.button !== 0) return;
+          // A new deliberate press is not the preceding drag's ghost click,
+          // including a press on a nested action button.
+          suppressClick.current = false;
+          if (guardTimer.current !== null) window.clearTimeout(guardTimer.current);
+          guardTimer.current = null;
           const target = event.target as Element | null;
-          // Never start a reorder from a control that does something else:
-          // the header's new-thread / pop-out / remove buttons, a rename box.
-          if (
-            target?.closest("input, textarea, select, [contenteditable='true']")
-          ) {
-            return;
-          }
+          const control = target?.closest("button, a, input, textarea, select, [contenteditable='true']");
+          if (control && control !== event.currentTarget) return;
+          if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
           if (session.current) end(false);
           // Two defaults to suppress on a mouse press: the text selection that
           // a drag across the sidebar would otherwise paint, and the HTML5
@@ -321,6 +322,9 @@ export function useReorderDrag(opts: {
             moved: false,
           };
           session.current = s;
+          // Register before movement begins. Until the hold activates this
+          // listener allows native scrolling; after activation it owns the drag.
+          if (touch) window.addEventListener("touchmove", blockScroll, { passive: false });
           window.addEventListener("pointermove", onMove);
           window.addEventListener("pointerup", onUp);
           window.addEventListener("pointercancel", onCancel);
@@ -344,7 +348,7 @@ export function useReorderDrag(opts: {
         },
       };
     },
-    [end, onMove, onUp, onCancel, onKey, activate],
+    [end, onMove, onUp, onCancel, onKey, activate, blockScroll],
   );
 
   // Where the insertion marker goes. A drop back into the item's own slot

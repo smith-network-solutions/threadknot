@@ -1889,3 +1889,26 @@ async fn sec012_no_peer_credential_appears_in_any_url_we_build() {
         assert!(!value.contains("BEGIN CERTIFICATE"), "certificate in peer.list");
     }
 }
+
+#[tokio::test]
+async fn html_preview_shell_is_isolated_without_relaxing_app_or_file_policy() {
+    let h = harness();
+    let client = reqwest::Client::new();
+    let response = client.get(format!("{}/html-preview", h.remote_base)).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let policy = response.headers()["content-security-policy"].to_str().unwrap();
+    assert!(policy.contains("sandbox allow-scripts"));
+    assert!(!policy.contains("allow-same-origin"));
+    assert!(policy.contains("connect-src 'none'"));
+    assert!(policy.contains("frame-ancestors 'self'"));
+    let body = response.text().await.unwrap();
+    assert!(body.contains("event.source !== parent"));
+    assert!(!body.contains(&h.master_token));
+    let file = client.get(format!("{}/file?project={}&path=README.md", h.remote_base, h.project.id)).send().await.unwrap();
+    assert!(!file.status().is_success(), "preview shell must not bypass file authentication");
+    let app = client.get(format!("{}/", h.remote_base)).send().await.unwrap();
+    let policy = app.headers()["content-security-policy"].to_str().unwrap();
+    assert!(policy.contains("script-src 'self'"));
+    assert!(policy.contains("frame-ancestors 'none'"));
+    assert!(!policy.contains("sandbox allow-scripts"));
+}

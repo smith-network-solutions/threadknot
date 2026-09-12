@@ -1,3 +1,4 @@
+import { HtmlPreview } from "./HtmlPreview";
 import {
   lazy,
   Suspense,
@@ -201,6 +202,7 @@ function ZoomableMedia({
   const zoomBy = (factor: number) => zoomAt(factor);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as Element).closest("button")) return;
     // Every pointer type, not just touch. A mouse could not pan a zoomed image
     // at all, which made zooming past the frame edge pointless.
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -441,7 +443,7 @@ export function ArtifactPreview({
   const kind = artifactKind(artifact);
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const needsText = kind === "markdown" || kind === "html" || kind === "text";
+  const needsText = kind === "markdown" || (kind === "html" && mode === "inline") || kind === "text";
 
   useEffect(() => {
     if (!url || !needsText) return;
@@ -488,14 +490,15 @@ export function ArtifactPreview({
     );
   }
 
+  if (kind === "html" && mode === "full") {
+    return <HtmlPreview url={url} title={`Preview of ${artifact.name}`} className="artifact-preview-html" />;
+  }
+
   if (needsText) {
     if (error) return <div className="artifact-preview-status is-error">{error}</div>;
     if (text == null) return <div className="artifact-preview-status">Loading preview…</div>;
     if (kind === "markdown") {
       return <div className={`artifact-preview-markdown mode-${mode}`}><Markdown text={text} /></div>;
-    }
-    if (kind === "html" && mode === "full") {
-      return <iframe className="artifact-preview-html" srcDoc={text} sandbox="" referrerPolicy="no-referrer" title={`Preview of ${artifact.name}`} />;
     }
     return <pre className={`artifact-preview-text mode-${mode}`}>{text}</pre>;
   }

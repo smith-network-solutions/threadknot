@@ -274,7 +274,15 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
         return false;
       }
       if (k === "v" && (e.shiftKey || e.metaKey)) {
-        void pasteFromClipboard();
+        // Returning false only stops xterm's key processing; it does not
+        // cancel the browser's native paste event. Browser shortcuts should
+        // use that event alone (also works without async clipboard permission).
+        // The desktop clipboard bridge owns the paste only after explicitly
+        // cancelling the native default, or the same text arrives twice.
+        if (isNativeShell()) {
+          e.preventDefault();
+          void pasteFromClipboard();
+        }
         return false;
       }
       return true;
@@ -870,6 +878,7 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
 
   return (
     <div className="term-instance" hidden={!active}>
+      <div className="term-frame">
       <div
         className={`term-host${touchSelecting ? " selecting" : ""}`}
         ref={hostRef}
@@ -879,6 +888,7 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
         onPointerUp={finishTouchSelection}
         onPointerCancel={finishTouchSelection}
       />
+      </div>
       {menu && (
         <div className="term-ctx" style={{ left: menu.x, top: menu.y }} role="menu">
           <button

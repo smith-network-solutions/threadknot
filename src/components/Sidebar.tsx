@@ -1087,7 +1087,7 @@ function ThreadRow({
   });
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(thread.title);
-  // "kebab" tracks the button; a point comes from a long-press or right-click
+  // "kebab" tracks the button; a point comes from a right-click
   // and is already in viewport coordinates. Touch needs the point mode: the
   // kebab is a 24px target that only appears on hover.
   const [menuAnchor, setMenuAnchor] = useState<"kebab" | MenuPoint | null>(
@@ -1114,7 +1114,7 @@ function ThreadRow({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuOpen = menuAnchor !== null;
-  const longPressRef = useRef<{ disarm: () => void } | null>(null);
+  const rowPointerType = useRef<string>("mouse");
 
   // Floating log preview on hover. Suppressed while the kebab menu is open, a
   // rename is in progress, or a workspace drag is underway (state.dragProject),
@@ -1141,21 +1141,7 @@ function ThreadRow({
     setMenuAnchor(null);
     setConfirmDelete(false);
     setChoosingFolder(false);
-    // The press has been consumed by the menu it opened, so the click guard
-    // has no ghost left to swallow. Disarming here is what stops it eating
-    // the user's NEXT tap — typically the settle tick on this very row,
-    // about a finger-width from where they just pressed.
-    longPressRef.current?.disarm();
   }
-
-  // Long-press anywhere on the row opens the same menu the kebab does. This
-  // is the only discoverable route to thread actions on a phone, and it
-  // reuses the primitive the workspace headers already ship.
-  const { disarm: disarmLongPress, ...longPress } = useLongPressMenu((point) => {
-    if (editing) return;
-    setMenuAnchor(point);
-  }, !editing);
-  longPressRef.current = { disarm: disarmLongPress };
 
   // Pull the menu back on screen once it has a real height. Runs on mount of
   // the portaled menu (ref callback) rather than in the positioning effect,
@@ -1703,33 +1689,20 @@ function ThreadRow({
   const rowLabel = `${thread.title || "Untitled thread"}${
     needsAttention ? ", unread" : ""
   }${settled ? ", settled" : ""}`;
-  // Long-press opens the same menu the kebab does, and a right-click opens it
-  // where the pointer is. Both are the row's own gesture, so the card variant
-  // carries them too.
+  // Touch holds reorder active chats; actions remain on the kebab. Mouse
+  // dragging and right-click retain their existing behavior.
   const rowGestures = {
     role: "button" as const,
     tabIndex: 0,
     "aria-label": rowLabel,
-    ...longPress,
-    // The row is its own drag handle — there is no grip, because a chat row is
-    // mostly title and a grip would cost more width than it earns. Both
-    // gestures get the press:
-    //
-    // - Mouse only. On touch the hold already belongs to the long-press menu,
-    //   and the reorder hook arms its own 300ms hold on the same press, so
-    //   attaching both would make one gesture mean two things. Touch keeps the
-    //   menu; reordering is a pointer gesture until the menu grows a "move"
-    //   entry of its own.
-    // - The click guard still has to run on every device: it is what stops the
-    //   click that ends a drag from also opening the chat.
-    "data-reorder-id": thread.id,
+    "data-reorder-id": reorder && !editing ? thread.id : undefined,
     "data-drop": reorder?.drop,
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
-      longPress.onPointerDown(e);
-      if (e.pointerType === "mouse") reorder?.handle.onPointerDown?.(e);
+      rowPointerType.current = e.pointerType;
+      if (editing) return;
+      reorder?.handle.onPointerDown?.(e);
     },
     onClickCapture: (e: React.MouseEvent<HTMLElement>) => {
-      longPress.onClickCapture(e);
       reorder?.handle.onClickCapture?.(e);
     },
     onClick: () => void actions.selectThread(thread.id),
@@ -1737,7 +1710,7 @@ function ThreadRow({
       e.key === "Enter" && void actions.selectThread(thread.id),
     onContextMenu: (e: React.MouseEvent) => {
       e.preventDefault();
-      setMenuAnchor({ x: e.clientX, y: e.clientY });
+      if (rowPointerType.current !== "touch") setMenuAnchor({ x: e.clientX, y: e.clientY });
     },
   };
 

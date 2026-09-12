@@ -1,3 +1,5 @@
+import { HtmlPreview } from "../artifacts/HtmlPreview";
+import { ArtifactPreview } from "../artifacts/ArtifactPreview";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import hljs from "highlight.js/lib/common";
 import "highlight.js/styles/github-dark.css";
@@ -339,9 +341,9 @@ export function FileViewer({
         {error && <div className="files-empty files-error">{error}</div>}
 
         {isImage && http && (
-          <div className="files-media">
-            <img src={fileUrl(http, project.id, path, { machineId })} alt={path} />
-          </div>
+          <ArtifactPreview key={path} mode="full"
+            artifact={{ id: path, name: path, relPath: path, mimeType: "image/*", sizeBytes: 0, op: "created" }}
+            url={fileUrl(http, project.id, path, { machineId })} />
         )}
         {isVideo && http && (
           <div className="files-media">
@@ -379,11 +381,9 @@ export function FileViewer({
               <Markdown text={data.contents} />
             </div>
           ) : isHtml && rendered ? (
-            <iframe
+            <HtmlPreview
               className="files-html-preview"
-              srcDoc={data.contents}
-              sandbox=""
-              referrerPolicy="no-referrer"
+              url={fileUrl(http!, project.id, path, { machineId })}
               title={`Rendered preview of ${path}`}
             />
           ) : (

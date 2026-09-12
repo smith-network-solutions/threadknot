@@ -55,9 +55,11 @@ function ActionButton({
 export function ViewerClipboardActions({
   absolutePath,
   fileTarget,
+  pathOnly = false,
 }: {
   absolutePath: string;
   fileTarget: FileTarget;
+  pathOnly?: boolean;
 }) {
   const { state: appState } = useStore();
   const [fileState, setFileState] = useState<CopyState>("idle");
@@ -118,7 +120,7 @@ export function ViewerClipboardActions({
 
   return (
     <>
-      <ActionButton
+      {!pathOnly && <ActionButton
         action="file"
         state={fileState}
         disabled={!appState.isTauri}
@@ -129,7 +131,7 @@ export function ViewerClipboardActions({
             : "Copy file is available in the Threadknot desktop app")
         }
         onClick={() => void copyFile()}
-      />
+      />}
       <ActionButton
         action="path"
         state={pathState}

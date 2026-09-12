@@ -461,6 +461,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/ws", any(ws_handler))
         .route("/attachment", get(attachment_handler))
         .route("/artifact-file", get(artifact_file_handler))
+        .route("/html-preview", get(html_preview_shell))
         .route("/file", get(crate::files::file_handler))
         .route("/term", any(crate::term::ws_handler))
         .route("/browser", any(crate::browser::ws_handler))
@@ -543,7 +544,39 @@ pub fn build_router(state: ServerState) -> Router {
     } else {
         app.layer(tower_http::cors::CorsLayer::permissive())
     };
-    app.with_state(state)
+    app.layer(axum::middleware::from_fn(html_preview_headers)).with_state(state)
+}
+
+/// A content-free bootstrap document. The authorized parent fetches file bytes
+/// and posts them here, so the rendered document never sees a credential-bearing
+/// file URL. Its HTTP sandbox applies even if this shell is opened directly.
+const HTML_PREVIEW_CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts; frame-ancestors 'self' http://localhost:1430 http://127.0.0.1:1430 tauri://localhost http://tauri.localhost";
+
+async fn html_preview_shell() -> axum::response::Html<&'static str> {
+    axum::response::Html(r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>Loading HTML preview…<script>
+addEventListener('message', function receive(event) {
+  if (event.source !== parent || !event.data || event.data.type !== 'threadknot.html-preview' || typeof event.data.html !== 'string') return;
+  removeEventListener('message', receive);
+  document.open(); document.write(event.data.html); document.close();
+});
+</script></body></html>"#)
+}
+
+async fn html_preview_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+    let preview = req.uri().path() == "/html-preview";
+    let mut response = next.run(req).await;
+    if preview && response.status().is_success() {
+        let headers = response.headers_mut();
+        headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(HTML_PREVIEW_CSP));
+        headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+        headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
 }
 
 /// Refuse everything on the strict ingress while remote access is off.

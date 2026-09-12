@@ -1,3 +1,4 @@
+import { ArtifactNavigation } from "./artifacts/ArtifactNavigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactRecord, Project } from "../lib/protocol";
 import { useStore } from "../state/store";
@@ -223,8 +224,12 @@ export function ArtifactsPane({
 
   const selected = selectedId ? (all ?? []).find((a) => a.id === selectedId) ?? null : null;
   if (selected) {
+    const gallery = shown.some(a => a.id === selected.id) ? shown : [selected, ...shown];
     return (
-      <ArtifactViewer artifact={selected} project={project} machineId={machineId} onBack={() => setSelectedId(null)} />
+      <ArtifactNavigation index={gallery.findIndex(a => a.id === selected.id)} count={gallery.length}
+        onSelect={index => { if (gallery[index]) setSelectedId(gallery[index].id); }}>
+        <ArtifactViewer key={selected.id} artifact={selected} project={project} machineId={machineId} onBack={() => setSelectedId(null)} />
+      </ArtifactNavigation>
     );
   }
 

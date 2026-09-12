@@ -1,3 +1,6 @@
+import { useFeedStore } from "../state/store";
+import { ArtifactNavigation } from "./artifacts/ArtifactNavigation";
+import { absoluteProjectPath, ViewerClipboardActions } from "./files/ViewerActions";
 import { memo, useEffect, useState, type Dispatch, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { FeedItem } from "../state/feed";
@@ -197,18 +200,27 @@ function formatBytes(n: number): string {
 /** A deliverable the agent produced this turn. Its durable snapshot is shown
  * right in the log; a larger viewer is portaled above the feed so conversation
  * zoom and narrow workspace panes cannot constrain it. */
-function ArtifactCard({
-  item,
-  render,
-}: {
-  item: Extract<FeedItem, { type: "artifact" }>;
+function ArtifactGallery({ initial, render, onClose }: {
+  initial: Extract<FeedItem, { type: "artifact" }>;
   render: FeedRenderContext;
+  onClose: () => void;
 }) {
-  const [viewerOpen, setViewerOpen] = useState(false);
+  const { state, actions } = useFeedStore();
+  const [selectedId, setSelectedId] = useState(initial.artifactId);
+  const records = (state.artifacts[render.projectId ?? ""] ?? [])
+    .filter(record => record.threadId === render.threadId)
+    .map(record => ({ ...record, type: "artifact" as const, artifactId: record.id }));
+  const loaded = state.feed.filter((row): row is Extract<FeedItem, { type: "artifact" }> => row.type === "artifact");
+  const items = [...new Map([...records, ...loaded, initial].map(row => [row.artifactId, row])).values()];
+  const index = Math.max(0, items.findIndex(row => row.artifactId === selectedId));
+  const item = items[index];
+  const setViewerOpen = (_open: boolean) => onClose();
+  useEffect(() => {
+    if (render.projectId) void actions.listArtifacts(render.projectId).catch(() => undefined);
+  }, [actions, render.projectId]);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const machineId = render.machineId;
   const url = render.http ? artifactFileUrl(render.http, item.artifactId, { machineId }) : null;
-  const kind = artifactKind({ ...item, id: item.artifactId });
   const typeLabel = artifactTypeLabel({ ...item, id: item.artifactId });
 
   const openArtifacts = () => {
@@ -235,7 +247,6 @@ function ArtifactCard({
   };
 
   useEffect(() => {
-    if (!viewerOpen) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
@@ -246,7 +257,71 @@ function ArtifactCard({
       document.body.style.overflow = previous;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [viewerOpen]);
+  }, []);
+  return createPortal(
+        <div
+          className="artifact-lightbox-backdrop"
+          onMouseDown={(event) => event.target === event.currentTarget && setViewerOpen(false)}
+        >
+          <section className="artifact-lightbox" role="dialog" aria-modal="true" aria-label={`Preview ${item.name}`}>
+            <header className="artifact-lightbox-head">
+              <button
+                type="button"
+                className="artifact-lightbox-close"
+                onClick={() => setViewerOpen(false)}
+                aria-label="Close preview"
+                autoFocus
+              >
+                <XIcon size={17} />
+              </button>
+              <span className="artifact-type-badge">{typeLabel}</span>
+              <div className="artifact-lightbox-title">
+                <strong>{item.name}</strong>
+                <span>{formatBytes(item.sizeBytes)}{item.description ? ` · ${item.description}` : ""}</span>
+              </div>
+              <div className="artifact-lightbox-actions">
+                <ViewerClipboardActions key={item.artifactId} pathOnly
+                  absolutePath={render.project ? absoluteProjectPath(render.project.path, item.relPath) : item.relPath}
+                  fileTarget={{ kind: "artifact", artifactId: item.artifactId }} />
+                <button type="button" onClick={openArtifacts} title="Open in Artifacts">
+                  <ArchiveIcon size={14} /><span>Artifacts</span>
+                </button>
+                  <button type="button" onClick={download} disabled={!render.http} title="Download file">
+                  <DownloadIcon size={14} /><span>Download</span>
+                </button>
+                <button type="button" onClick={() => setViewerOpen(false)} title="Close preview">
+                  <XIcon size={15} /><span>Close</span>
+                </button>
+              </div>
+            </header>
+            {downloadError && <div className="artifact-lightbox-error">{downloadError}</div>}
+            <ArtifactNavigation index={index} count={items.length} onSelect={i => setSelectedId(items[i].artifactId)}>
+              <div className="artifact-lightbox-body">
+                <ArtifactPreview key={item.artifactId} artifact={{ ...item, id: item.artifactId }} url={url} mode="full" />
+              </div>
+            </ArtifactNavigation>
+            <footer className="artifact-lightbox-mobile-actions">
+              <ViewerClipboardActions key={item.artifactId} pathOnly
+                  absolutePath={render.project ? absoluteProjectPath(render.project.path, item.relPath) : item.relPath}
+                  fileTarget={{ kind: "artifact", artifactId: item.artifactId }} />
+              <button type="button" onClick={openArtifacts}><PopoutIcon size={15} /> Artifacts</button>
+              <button type="button" onClick={download} disabled={!render.http}><DownloadIcon size={15} /> Download</button>
+            </footer>
+          </section>
+        </div>, document.body);
+}
+
+function ArtifactCard({
+  item,
+  render,
+}: {
+  item: Extract<FeedItem, { type: "artifact" }>;
+  render: FeedRenderContext;
+}) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const url = render.http ? artifactFileUrl(render.http, item.artifactId, { machineId: render.machineId }) : null;
+  const kind = artifactKind({ ...item, id: item.artifactId });
+  const typeLabel = artifactTypeLabel({ ...item, id: item.artifactId });
 
   return (
     <>
@@ -278,51 +353,7 @@ function ArtifactCard({
         </div>
       </article>
 
-      {viewerOpen && createPortal(
-        <div
-          className="artifact-lightbox-backdrop"
-          onMouseDown={(event) => event.target === event.currentTarget && setViewerOpen(false)}
-        >
-          <section className="artifact-lightbox" role="dialog" aria-modal="true" aria-label={`Preview ${item.name}`}>
-            <header className="artifact-lightbox-head">
-              <button
-                type="button"
-                className="artifact-lightbox-close"
-                onClick={() => setViewerOpen(false)}
-                aria-label="Close preview"
-                autoFocus
-              >
-                <XIcon size={17} />
-              </button>
-              <span className="artifact-type-badge">{typeLabel}</span>
-              <div className="artifact-lightbox-title">
-                <strong>{item.name}</strong>
-                <span>{formatBytes(item.sizeBytes)}{item.description ? ` · ${item.description}` : ""}</span>
-              </div>
-              <div className="artifact-lightbox-actions">
-                <button type="button" onClick={openArtifacts} title="Open in Artifacts">
-                  <ArchiveIcon size={14} /><span>Artifacts</span>
-                </button>
-                  <button type="button" onClick={download} disabled={!render.http} title="Download file">
-                  <DownloadIcon size={14} /><span>Download</span>
-                </button>
-                <button type="button" onClick={() => setViewerOpen(false)} title="Close preview">
-                  <XIcon size={15} /><span>Close</span>
-                </button>
-              </div>
-            </header>
-            {downloadError && <div className="artifact-lightbox-error">{downloadError}</div>}
-            <div className="artifact-lightbox-body">
-              <ArtifactPreview artifact={{ ...item, id: item.artifactId }} url={url} mode="full" />
-            </div>
-            <footer className="artifact-lightbox-mobile-actions">
-              <button type="button" onClick={openArtifacts}><PopoutIcon size={15} /> Artifacts</button>
-              <button type="button" onClick={download} disabled={!render.http}><DownloadIcon size={15} /> Download</button>
-            </footer>
-          </section>
-        </div>,
-        document.body,
-      )}
+      {viewerOpen && <ArtifactGallery initial={item} render={render} onClose={() => setViewerOpen(false)} />}
     </>
   );
 }
