@@ -38,6 +38,12 @@ import {
   subscribeSidebarView,
   type SidebarView,
 } from "../lib/sidebarView";
+import {
+  clampSearchWidth,
+  loadSearchWidth,
+  persistSearchWidth,
+  SEARCH_WIDTH_DEFAULT,
+} from "../lib/sidebarLayout";
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
@@ -2916,10 +2922,13 @@ function SidebarViewPopover({
  *  resets. Hidden at the mobile breakpoint (the sidebar is an overlay there). */
 function SidebarResizeHandle({
   width,
+  defaultWidth = SIDEBAR_WIDTH_DEFAULT,
   setWidthLive,
   onCommit,
 }: {
   width: number;
+  /** What a double-click resets to. */
+  defaultWidth?: number;
   setWidthLive: (w: number) => void;
   onCommit: (w: number) => void;
 }) {
@@ -2967,7 +2976,7 @@ function SidebarResizeHandle({
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
-      onDoubleClick={() => onCommit(SIDEBAR_WIDTH_DEFAULT)}
+      onDoubleClick={() => onCommit(defaultWidth)}
     />
   );
 }
@@ -3603,6 +3612,22 @@ export const Sidebar = memo(function Sidebar({
     [],
   );
   const closeSearch = useCallback(() => setSearch(null), []);
+  // Search mode borrows the sidebar's drag handle but keeps its own width
+  // (see sidebarLayout.ts), mirrored onto --sidebar-w only while the panel
+  // is up; the everyday width comes back the moment it closes.
+  const searchPanelUp = search?.stage === "panel";
+  const [searchWidth, setSearchWidth] = useState<number>(loadSearchWidth);
+  const setSearchWidthLive = useCallback(
+    (w: number) => setSearchWidth((prev) => (prev === clampSearchWidth(w) ? prev : clampSearchWidth(w))),
+    [],
+  );
+  useEffect(() => {
+    if (!searchPanelUp) return;
+    document.documentElement.style.setProperty("--sidebar-w", `${searchWidth}px`);
+    return () => {
+      document.documentElement.style.setProperty("--sidebar-w", `${layout.width}px`);
+    };
+  }, [searchPanelUp, searchWidth, layout.width]);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
   const storedView = useSyncExternalStore(subscribeSidebarView, getSidebarView);
   // A stored "agents" only takes effect once the Hermes surfaces are eligible;
@@ -4331,14 +4356,28 @@ export const Sidebar = memo(function Sidebar({
         layout.view === "cards" ? " cards-view" : ""
       }${layout.view === "compact" ? " compact-view" : ""}${
         layout.bigNames ? " big-names" : ""
-      }${layout.showTimes ? "" : " no-times"}${layout.showAgents ? "" : " hide-agents"}`}
+      }${layout.showTimes ? "" : " no-times"}${layout.showAgents ? "" : " hide-agents"}${
+        searchPanelUp ? " search-mode" : ""
+      }`}
       data-zoom-pane="sidebar"
     >
-      <SidebarResizeHandle
-        width={layout.width}
-        setWidthLive={setWidthLive}
-        onCommit={(w) => updateLayout({ width: w })}
-      />
+      {searchPanelUp ? (
+        <SidebarResizeHandle
+          width={searchWidth}
+          defaultWidth={SEARCH_WIDTH_DEFAULT}
+          setWidthLive={setSearchWidthLive}
+          onCommit={(w) => {
+            setSearchWidthLive(w);
+            persistSearchWidth(w);
+          }}
+        />
+      ) : (
+        <SidebarResizeHandle
+          width={layout.width}
+          setWidthLive={setWidthLive}
+          onCommit={(w) => updateLayout({ width: w })}
+        />
+      )}
       {/* Absolutely positioned rather than a flex sibling: the sidebar keeps
           its existing single-column structure (and every modal/portal already
           hanging off it) and just gains a gutter. */}

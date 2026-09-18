@@ -283,6 +283,11 @@ body.sidebar-resizing .sidebar { transition: none; }
 }
 .sidebar-resize:hover::after { opacity: 0.5; }
 body.sidebar-resizing .sidebar-resize::after { opacity: 0.9; }
+/* In search mode the edge is a real control (results want room), so show it
+   and give it a fatter grab target. */
+.sidebar.search-mode .sidebar-resize { width: 9px; right: -4px; }
+.sidebar.search-mode .sidebar-resize::after { opacity: 0.35; right: 4px; }
+.sidebar.search-mode .sidebar-resize:hover::after { opacity: 0.8; }
 /* Kill text selection + set the resize cursor everywhere during a drag. */
 body.sidebar-resizing { cursor: col-resize; user-select: none; }
 
