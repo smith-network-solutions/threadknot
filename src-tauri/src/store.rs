@@ -133,6 +133,7 @@ pub struct Store {
     /// at startup so thread creation can stamp records without every call
     /// site threading the id through.
     machine_id: std::sync::OnceLock<String>,
+    search: std::sync::OnceLock<std::result::Result<crate::search_index::SearchIndex, String>>,
 }
 
 impl Store {
@@ -140,7 +141,7 @@ impl Store {
         Self::open_at(data_dir())
     }
 
-    fn open_at(dir: PathBuf) -> Result<Self> {
+    pub(crate) fn open_at(dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(dir.join("threads"))?;
         // The data dir holds the master token, paired-device hashes, peer master
         // tokens and signed-in browser profiles. Its mode otherwise depends on
@@ -158,12 +159,50 @@ impl Store {
             data: Mutex::new(data),
             seqs: Mutex::new(HashMap::new()),
             machine_id: std::sync::OnceLock::new(),
+            search: std::sync::OnceLock::new(),
         };
         if migrated_models {
             let data = store.data.lock().unwrap();
             store.flush(&data)?;
         }
         Ok(store)
+    }
+
+    pub fn start_search_index(&self) {
+        // Hold the catalog lock through installation: a simultaneous create or
+        // rename must not fall between the initial snapshot and notifications.
+        let data = self.data.lock().unwrap();
+        self.search.get_or_init(|| {
+            crate::search_index::SearchIndex::open(&self.dir, &data.threads).map_err(|error| {
+                tracing::warn!(%error, "conversation search index unavailable");
+                error.to_string()
+            })
+        });
+    }
+
+    pub fn indexed_search(&self, ids: &[String], query: &str, limit: usize, messages_only: bool)
+        -> Result<crate::search_index::IndexedResults>
+    {
+        if self.search.get().is_none() { self.start_search_index(); }
+        match self.search.get().unwrap() {
+            Ok(index) => index.search(ids, query, limit, messages_only),
+            Err(error) => anyhow::bail!("conversation index unavailable: {error}"),
+        }
+    }
+
+    pub fn conversation_thread_ids(&self, project_id: Option<&str>) -> Vec<String> {
+        self.data.lock().unwrap().threads.iter()
+            .filter(|t| project_id.is_none_or(|id| t.project_id == id))
+            .map(|t| t.id.clone()).collect()
+    }
+
+    pub(crate) fn conversation_file(&self, id: &str) -> Result<Option<std::fs::File>> {
+        anyhow::ensure!(self.thread(id).is_some(), "unknown local threadId");
+        match std::fs::File::open(self.events_path(id)) {
+            Ok(file) => Ok(Some(file)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// This machine's id, or "" before [`Store::migrate_mesh`] has run.
@@ -310,6 +349,7 @@ impl Store {
         let tmp = self.dir.join("projects.json.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(data)?)?;
         std::fs::rename(&tmp, self.dir.join("projects.json"))?;
+        if let Some(Ok(index)) = self.search.get() { index.catalog_changed(&data.threads); }
         Ok(())
     }
 
@@ -1288,6 +1328,8 @@ impl Store {
             .lock()
             .unwrap()
             .insert(thread.id.clone(), next_seq);
+        drop(file);
+        if let Some(Ok(index)) = self.search.get() { index.reset_thread(&thread.id); }
         Ok(thread)
     }
 
@@ -1545,6 +1587,7 @@ impl Store {
             .append(true)
             .open(self.events_path(thread_id))?;
         writeln!(file, "{}", serde_json::to_string(&persisted)?)?;
+        if let Some(Ok(index)) = self.search.get() { index.notify(); }
         Ok((seq, ts))
     }
 
@@ -1818,6 +1861,33 @@ fn text_contains(text: &str, lowercase_needle: &str) -> bool {
     text.to_lowercase().contains(lowercase_needle)
 }
 
+/// Visible transcript text only; protocol ids and JSON field names are not content.
+pub(crate) fn event_search_text(event: &AgentEvent) -> String {
+    match event {
+        AgentEvent::UserMessage { text, attachments, .. } => std::iter::once(text.as_str())
+            .chain(attachments.iter().map(|a| a.name.as_str())).collect::<Vec<_>>().join("\n"),
+        AgentEvent::AssistantDelta { text } | AgentEvent::AssistantMessage { text }
+        | AgentEvent::ThinkingDelta { text } | AgentEvent::Thinking { text }
+        | AgentEvent::ToolOutputDelta { text, .. } | AgentEvent::Status { text }
+        | AgentEvent::SubagentProgress { text, .. } => text.clone(),
+        AgentEvent::ToolStart { name, detail, .. } => format!("{name}\n{detail}"),
+        AgentEvent::ToolEnd { name, output, .. } => format!("{name}\n{}", output.as_deref().unwrap_or_default()),
+        AgentEvent::FileDiff { path, unified } => format!("{path}\n{unified}"),
+        AgentEvent::Artifact { name, rel_path, description, .. } => format!("{name}\n{rel_path}\n{}", description.as_deref().unwrap_or_default()),
+        AgentEvent::ApprovalRequest { title, detail, options, .. } => format!("{title}\n{detail}\n{}", options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>().join("\n")),
+        AgentEvent::QuestionRequest { questions, .. } => questions.iter().map(|q| format!("{}\n{}\n{}", q.header, q.question,
+            q.options.iter().map(|o| format!("{}\n{}", o.label, o.description)).collect::<Vec<_>>().join("\n"))).collect::<Vec<_>>().join("\n"),
+        AgentEvent::QuestionResolved { answers, .. } => answers.as_ref().map(|a| a.values().flatten().cloned().collect::<Vec<_>>().join("\n")).unwrap_or_default(),
+        AgentEvent::TurnStarted { model, .. } => model.clone().unwrap_or_default(),
+        AgentEvent::SessionStarted { model, .. } => model.clone(),
+        AgentEvent::SubagentStarted { description, subagent_type, .. } => format!("{description}\n{subagent_type}"),
+        AgentEvent::SubagentCompleted { status, summary, .. } => format!("{status}\n{}", summary.as_deref().unwrap_or_default()),
+        AgentEvent::Error { message } => message.clone(),
+        AgentEvent::ApprovalResolved { option_id, .. } => option_id.clone(),
+        AgentEvent::TurnCompleted { .. } | AgentEvent::TurnAborted | AgentEvent::ContextUsage { .. } => String::new(),
+    }
+}
+
 /// Search every textual field that can be rendered as transcript content.
 /// Transient delta variants are included for completeness even though the
 /// store never persists them.
@@ -1884,7 +1954,7 @@ fn event_contains(event: &AgentEvent, needle: &str) -> bool {
     }
 }
 
-fn safe_segment(s: &str) -> String {
+pub(crate) fn safe_segment(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
         .collect()

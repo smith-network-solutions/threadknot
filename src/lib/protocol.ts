@@ -533,6 +533,11 @@ export interface SmartSearchResult {
   score: number;
 }
 
+export interface IndexedSearchResponse {
+  results: (SmartSearchResult & { messageSeq?: number | null })[];
+  index: { ready: boolean; indexedThreads: number; totalThreads: number; error?: string | null };
+}
+
 /** Ranking models the server accepts for `thread.smartSearch`, grouped by
  *  the CLI that runs them, cheapest first within each. Mirrors
  *  `agents/search.rs` MODELS; the default is Opus. */
@@ -1986,6 +1991,10 @@ export interface RequestMap {
   "thread.search": {
     payload: { query: string; threadIds: string[]; machineId?: string };
     data: { threadIds: string[] };
+  };
+  "thread.indexedSearch": {
+    payload: { query: string; threadIds: string[]; machineId?: string };
+    data: IndexedSearchResponse;
   };
   /** AI-ranked content search: `query` is a description of the conversation
    *  ("the one where we voided a duplicate invoice"), `model` one of the

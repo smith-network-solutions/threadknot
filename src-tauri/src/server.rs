@@ -2281,6 +2281,7 @@ const ROUTABLE: &[&str] = &[
     "thread.list",
     "thread.get",
     "thread.search",
+    "thread.indexedSearch",
     "thread.smartSearch",
     "thread.toolOutput",
     "thread.preview",
@@ -4085,11 +4086,23 @@ pub async fn handle_request(
             anyhow::ensure!(thread_ids.len() <= 10_000, "too many threads to search");
             let store = Arc::clone(&hub.store);
             let thread_ids = tokio::task::spawn_blocking(move || {
-                store.search_thread_content(&thread_ids, &query)
+                match store.indexed_search(&thread_ids, &query, 10_000, false) {
+                    Ok(outcome) if outcome.index.ready => outcome.results.into_iter().map(|hit| hit.thread_id).collect(),
+                    _ => store.search_thread_content(&thread_ids, &query),
+                }
             })
             .await
             .context("thread search task failed")?;
             Ok(json!({ "threadIds": thread_ids }))
+        }
+        "thread.indexedSearch" => {
+            let query = field(&p, "query")?.trim().to_owned();
+            anyhow::ensure!(query.chars().count() <= 400, "search query is too long");
+            let ids = string_list(&p, "threadIds");
+            anyhow::ensure!(ids.len() <= 10_000, "too many threads to search");
+            let store = Arc::clone(&hub.store);
+            let outcome = tokio::task::spawn_blocking(move || store.indexed_search(&ids, &query, 60, true)).await??;
+            Ok(serde_json::to_value(outcome)?)
         }
         "thread.smartSearch" => {
             // AI-ranked content search: describe the conversation, get back

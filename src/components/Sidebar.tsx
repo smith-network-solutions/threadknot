@@ -2997,14 +2997,15 @@ function loadSearchModel(): string {
  *  answer to an earlier query apart from the current one. */
 type AiSearch =
   | { status: "idle" }
-  | { status: "loading"; query: string; count: number; run: number }
+  | { status: "loading"; query: string; count: number; run: number; scopeKey: string }
   | {
       status: "done";
       query: string;
       results: SmartSearchResult[];
       rankedByModel: boolean;
+      scopeKey: string;
     }
-  | { status: "error"; query: string; message: string };
+  | { status: "error"; query: string; message: string; scopeKey: string };
 
 /** One search, from the first keystroke to the last click: the query, the
  *  scope and model chips, and the AI run (if any). */
@@ -3068,8 +3069,48 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
   }, [scoped, q]);
 
   const submitted = session.query.trim();
+  const scopeKey = scoped.map((t) => t.id).sort().join(",");
+  const liveKey = `${scopeKey}\n${submitted}`;
+  const [live, setLive] = useState<{
+    key: string;
+    response?: import("../lib/protocol").IndexedSearchResponse;
+    error?: string;
+  }>({ key: "" });
+  const searchActions = useRef(actions);
+  searchActions.current = actions;
+  useEffect(() => {
+    if (!submitted) return;
+    if (submitted.length > 400) {
+      setLive({ key: liveKey, error: "Use a search of 400 characters or fewer." });
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try {
+        const response = await searchActions.current.indexedSearchThreads(submitted, scopeKey ? scopeKey.split(",") : []);
+        if (!cancelled) setLive({ key: liveKey, response });
+      } catch (error) {
+        if (!cancelled) setLive({ key: liveKey, error: error instanceof Error ? error.message : String(error) });
+      }
+      // Refresh while open so backfill and newly completed messages appear
+      // without changing the user's query or selection.
+      if (!cancelled) timer = setTimeout(refresh, 2000);
+    }
+    timer = setTimeout(refresh, 180);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [liveKey, submitted, scopeKey]);
+  const currentLive = live.key === liveKey ? live : undefined;
+  const indexedRows = (currentLive?.response?.results ?? [])
+    .map((result) => ({ result, thread: scoped.find((t) => t.id === result.threadId) }))
+    .filter((row): row is { result: SmartSearchResult; thread: Thread } => row.thread != null);
+  const normalRows: { thread: Thread; result?: SmartSearchResult }[] = [
+    ...indexedRows,
+    ...titleRows.filter((t) => !indexedRows.some((row) => row.thread.id === t.id)).map((thread) => ({ thread })),
+  ].slice(0, 60);
+  const aiScopeKey = `${scopeKey}\n${session.model}`;
   const ai = session.ai;
-  const showAi = ai.status !== "idle" && ai.query === submitted;
+  const showAi = ai.status !== "idle" && ai.query === submitted && ai.scopeKey === aiScopeKey;
   const loading = ai.status === "loading" && showAi;
   const modelLabel =
     SMART_SEARCH_MODELS.find((m) => m.id === session.model)?.label ?? session.model;
@@ -3079,14 +3120,14 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
     ai.status === "done"
       ? ai.results
           .map((r) => ({ result: r, thread: findThread(state, r.threadId) }))
-          .filter((row): row is { result: SmartSearchResult; thread: Thread } => row.thread != null)
+          .filter((row): row is { result: SmartSearchResult; thread: Thread } => row.thread != null && scoped.some((t) => t.id === row.thread!.id))
       : [];
 
   async function runAi() {
     if (!submitted || scoped.length === 0) return;
     const run = ++searchRunCounter;
     const query = submitted;
-    setSession((s) => ({ ...s, ai: { status: "loading", query, count: scoped.length, run } }));
+    setSession((s) => ({ ...s, ai: { status: "loading", query, count: scoped.length, run, scopeKey: aiScopeKey } }));
     const stillMine = (s: SearchSession) => s.ai.status === "loading" && s.ai.run === run;
     try {
       const { results, rankedByModel } = await actions.smartSearchThreads(
@@ -3095,11 +3136,11 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
         session.model,
       );
       setSession((s) =>
-        stillMine(s) ? { ...s, ai: { status: "done", query, results, rankedByModel } } : s,
+        stillMine(s) ? { ...s, ai: { status: "done", query, results, rankedByModel, scopeKey: aiScopeKey } } : s,
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      setSession((s) => (stillMine(s) ? { ...s, ai: { status: "error", query, message } } : s));
+      setSession((s) => (stillMine(s) ? { ...s, ai: { status: "error", query, message, scopeKey: aiScopeKey } } : s));
     }
   }
 
@@ -3114,12 +3155,19 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
               ai.rankedByModel ? `ranked by ${modelLabel}` : "keyword hits only"
             }`
         : submitted
-          ? "Press Enter or Search Threads to read inside them"
+          ? currentLive?.error || currentLive?.response?.index.error
+            ? { error: currentLive.error || currentLive.response?.index.error || "Search unavailable" }
+            : !currentLive?.response
+              ? "Searching conversations…"
+              : !currentLive.response.index.ready
+                ? `Indexing conversations · ${currentLive.response.index.indexedThreads} of ${currentLive.response.index.totalThreads}`
+                : `${normalRows.length} matches · Enter to refine with ${modelLabel}`
           : "Describe the thread you remember, or dictate it";
 
   return {
     scoped,
     titleRows,
+    normalRows,
     aiRows,
     showAi: showAi && ai.status === "done",
     loading,
@@ -3272,7 +3320,7 @@ function SearchResultRow({
 }
 
 /** Conversation search, laid over the sidebar's own box the moment Search
- *  is pressed. Typing filters titles instantly; Enter hands the same words
+ *  is pressed. Typing searches the local index; Enter hands the same words
  *  to a model as a description of the conversation. Every row click opens
  *  that thread on the right (highlighted here) while the list stays for the
  *  next one; the X or Escape brings the normal sidebar back with that thread
@@ -3413,7 +3461,7 @@ function ThreadSearchPanel({
   const submitted = session.query.trim();
   const rows: { thread: Thread; result?: SmartSearchResult }[] = search.showAi
     ? search.aiRows
-    : search.titleRows.map((thread) => ({ thread }));
+    : search.normalRows;
   const activeIndex = rows.findIndex((r) => r.thread.id === search.activeThreadId);
   const canRun = !!submitted && search.scoped.length > 0 && !search.loading;
 
@@ -3565,7 +3613,7 @@ function ThreadSearchPanel({
             {search.showAi
               ? "No threads matched. Try other words, or widen the scope."
               : submitted
-                ? "No titles match. Press Enter to search inside the threads."
+                ? "No matches yet. Try other words, or press Enter for AI search."
                 : "No threads yet."}
           </div>
         ) : (

@@ -1505,6 +1505,32 @@ function makeActions(
       return results.flat();
     },
 
+    async indexedSearchThreads(query: string, threadIds: string[]) {
+      const grouped = new Map<string | undefined, string[]>();
+      for (const id of threadIds) {
+        const machine = routeFor(id);
+        const ids = grouped.get(machine) ?? [];
+        ids.push(id);
+        grouped.set(machine, ids);
+      }
+      const replies = await Promise.allSettled([...grouped].map(([machineId, ids]) =>
+        client.request("thread.indexedSearch", { query, threadIds: ids, ...(machineId ? { machineId } : {}) }),
+      ));
+      const answered = replies.flatMap((r) => r.status === "fulfilled" ? [r.value] : []);
+      if (replies.length && !answered.length) throw new Error("Conversation search is unavailable. Showing title matches.");
+      const errors = answered.flatMap((r) => r.index.error ? [r.index.error] : []);
+      if (answered.length < replies.length) errors.push("Some machines could not be searched");
+      return {
+        results: answered.flatMap((r) => r.results).sort((a, b) => b.score - a.score).slice(0, 60),
+        index: {
+          ready: answered.every((r) => r.index.ready),
+          indexedThreads: answered.reduce((n, r) => n + r.index.indexedThreads, 0),
+          totalThreads: answered.reduce((n, r) => n + r.index.totalThreads, 0),
+          error: errors.join("; ") || null,
+        },
+      };
+    },
+
     async smartSearchThreads(query: string, threadIds: string[], model: string) {
       // Same fan-out as searchThreads: each owning Threadknot ranks its own
       // transcripts, and the lists are merged by score here.

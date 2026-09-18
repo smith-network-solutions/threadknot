@@ -151,6 +151,7 @@ async fn handle_message(state: &ServerState, thread_id: &str, msg: &Value) -> Op
         "tools/list" => {
             let mut tools = tool_specs();
             if let Some(list) = tools.as_array_mut() {
+                list.extend(crate::mcp_search::tool_specs());
                 list.extend(crate::mcp_fleet::tool_specs_for(state, thread_id));
             }
             json!({ "tools": tools })
@@ -219,6 +220,21 @@ async fn call_tool(
     name: &str,
     args: &Value,
 ) -> Value {
+    if matches!(name, "conversation_search" | "conversation_read") {
+        if state.hub.store.thread(thread_id).is_none() {
+            return tool_text_result(id, "error: caller thread no longer exists".into(), true);
+        }
+        let store = std::sync::Arc::clone(&state.hub.store);
+        let name = name.to_owned();
+        let args = args.clone();
+        return match tokio::task::spawn_blocking(move || crate::mcp_search::execute(&store, &name, &args)).await {
+            Ok(Ok(data)) => json!({ "jsonrpc": "2.0", "id": id, "result": {
+                "content": [{ "type": "text", "text": data.to_string() }], "structuredContent": data, "isError": false
+            } }),
+            Ok(Err(error)) => tool_text_result(id, format!("error: {error}"), true),
+            Err(error) => tool_text_result(id, format!("error: {error}"), true),
+        };
+    }
     if name == "publish_artifact" {
         return match publish_artifact(state, thread_id, args) {
             Ok(text) => tool_text_result(id, text, false),

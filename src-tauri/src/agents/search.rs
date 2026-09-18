@@ -1,23 +1,16 @@
 //! AI-ranked conversation search (`thread.smartSearch`).
 //!
-//! Title search is instant but only finds what you happened to name well.
-//! This is the other half: describe the conversation you remember ("the one
-//! where we voided a duplicate invoice") and a cheap model reads compact
-//! digests of the candidate transcripts and says which ones match, and why.
+//! Describe the conversation you remember and the selected model reads compact
+//! digests of candidate transcripts, returning matching threads and reasons.
 //!
-//! Two stages keep it fast and cheap:
+//! The local Tantivy index supplies up to 40 matching threads. Up to 20 recent
+//! threads are added for descriptions that share few keywords with the history.
+//! Only those transcripts are opened to build digests. Until the index is ready,
+//! candidate selection falls back to the original lexical transcript scan.
 //!
-//! 1. **Lexical pass, no model.** Every requested transcript is scanned once
-//!    for the query's terms. Threads with hits are ranked by how many distinct
-//!    terms they contain (title hits weigh more) and the best excerpt around
-//!    each hit is kept. The most recent threads are added as well, so a
-//!    purely semantic description with no shared words still has a chance.
-//! 2. **Model pass.** The candidates' digests — title, first/last user
-//!    message, last reply, excerpts — go to an ephemeral `claude -p` run with
-//!    a JSON schema, the same subscription-login path `title.rs` uses. The
-//!    model returns thread ids, a reason, and a score. Nothing it says is
-//!    trusted beyond that: ids are intersected with the candidates, and the
-//!    excerpt shown next to a result is ours, not the model's.
+//! Digests go to an ephemeral Claude or Codex CLI run with a JSON schema, using
+//! the installed CLI login. Returned ids are intersected with the candidates;
+//! excerpts come from the persisted transcript, never from model-generated text.
 //!
 //! If the CLI is missing, times out, or answers nonsense, the lexical ranking
 //! is returned as-is (`ranked_by_model: false`), so the search still works
@@ -140,8 +133,23 @@ pub async fn run(
         let terms = terms.clone();
         let phrase = phrase.clone();
         tokio::task::spawn_blocking(move || {
+            // Retrieve candidates from the persistent index, then read only
+            // those transcripts for the model's compact digests. Keep recent
+            // threads as a semantic fallback when wording shares no keywords.
+            let candidates = match store.indexed_search(&thread_ids, &terms.join(" "), MAX_LEXICAL_CANDIDATES, true) {
+                Ok(outcome) if outcome.index.ready => {
+                    let mut ids: Vec<String> = outcome.results.into_iter().map(|h| h.thread_id).collect();
+                    let mut recent: Vec<_> = thread_ids.iter().filter_map(|id| store.thread(id)).collect();
+                    recent.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                    for thread in recent.into_iter().filter(|t| !ids.contains(&t.id)).take(RECENT_PAD).collect::<Vec<_>>() {
+                        ids.push(thread.id);
+                    }
+                    ids
+                }
+                _ => thread_ids,
+            };
             let mut digests: Vec<Digest> = store
-                .thread_transcripts(&thread_ids)
+                .thread_transcripts(&candidates)
                 .iter()
                 .map(|(thread, messages)| build_digest(thread, messages, &terms, &phrase))
                 .collect();
