@@ -77,7 +77,6 @@ import {
 import { Sidebar } from "./components/Sidebar";
 import { ThemeSync } from "./components/ThemeStudio";
 import { MainSplit } from "./components/MainSplit";
-import { SearchDock } from "./components/SearchDock";
 import { DirPicker } from "./components/DirPicker";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
@@ -2707,9 +2706,8 @@ export default function App() {
             onClick={() => dispatch({ type: "sidebar", open: false })}
           />
         )}
-        <div className={`work-pane${state.searchDock ? " with-search-dock" : ""}`}>
+        <div className="work-pane">
           <MainSplit />
-          {state.searchDock && <SearchDock />}
         </div>
         {/* "Where should this link open?" chooser for clicked http(s) links. */}
         <LinkOpenModal />
