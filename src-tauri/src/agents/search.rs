@@ -24,7 +24,7 @@
 //! offline and the UI can say which kind of result it is showing.
 
 use super::{agent_path, no_console, resolve_bin};
-use crate::protocol::Thread;
+use crate::protocol::{Agent, Thread};
 use crate::store::{Store, ThreadMessage};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -39,9 +39,18 @@ use tokio::process::Command;
 /// The ranking model when the client does not name one. Opus reads a page of
 /// digests in a few seconds; the per-search cost is a few cents.
 pub const DEFAULT_MODEL: &str = "claude-opus-5";
-/// Models a client may ask for. Anything else is refused rather than passed
-/// to the CLI, so the request cannot smuggle an arbitrary `--model` argument.
-pub const MODELS: &[&str] = &["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"];
+/// Models a client may ask for, each with the CLI that runs it. Anything else
+/// is refused rather than passed to a CLI, so the request cannot smuggle an
+/// arbitrary `--model` argument. Mirrored by `SMART_SEARCH_MODELS` in
+/// `src/lib/protocol.ts`.
+pub const MODELS: &[(&str, Agent)] = &[
+    ("claude-haiku-4-5", Agent::Claude),
+    ("claude-sonnet-5", Agent::Claude),
+    ("claude-opus-5", Agent::Claude),
+    ("gpt-5.6-luna", Agent::Codex),
+    ("gpt-5.6-sol", Agent::Codex),
+    ("gpt-6-astra", Agent::Codex),
+];
 
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(120);
 /// Lexical hits kept for the model pass, best first.
@@ -103,15 +112,17 @@ pub struct Digest {
     pub matched_terms: Vec<String>,
 }
 
-/// Validate a client-supplied model name against [`MODELS`].
-pub fn resolve_model(requested: Option<&str>) -> Result<String> {
+/// Validate a client-supplied model name against [`MODELS`]; the agent that
+/// runs it comes back with it.
+pub fn resolve_model(requested: Option<&str>) -> Result<(Agent, String)> {
     let model = requested.map(str::trim).filter(|m| !m.is_empty()).unwrap_or(DEFAULT_MODEL);
-    anyhow::ensure!(
-        MODELS.contains(&model),
-        "unsupported search model: {model} (one of {})",
-        MODELS.join(", ")
-    );
-    Ok(model.to_string())
+    match MODELS.iter().find(|(id, _)| *id == model) {
+        Some((id, agent)) => Ok((*agent, id.to_string())),
+        None => anyhow::bail!(
+            "unsupported search model: {model} (one of {})",
+            MODELS.iter().map(|(id, _)| *id).collect::<Vec<_>>().join(", ")
+        ),
+    }
 }
 
 /// Run the whole search: read transcripts, rank lexically, ask the model.
@@ -119,6 +130,7 @@ pub async fn run(
     store: Arc<Store>,
     thread_ids: Vec<String>,
     query: String,
+    agent: Agent,
     model: String,
 ) -> Result<SearchOutcome> {
     let terms = query_terms(&query);
@@ -151,7 +163,11 @@ pub async fn run(
     }
 
     let prompt = build_prompt(&query, &digests);
-    match rank_with_claude(&prompt, &model).await {
+    let ranked = match agent {
+        Agent::Codex => rank_with_codex(&prompt, &model).await,
+        _ => rank_with_claude(&prompt, &model).await,
+    };
+    match ranked {
         Ok(raw) => {
             let results = merge_model_results(&raw, &digests);
             if results.is_empty() && !lexical.is_empty() {
@@ -450,6 +466,66 @@ async fn rank_with_claude(prompt: &str, model: &str) -> Result<Value> {
         .context("Claude output omitted structured_output")
 }
 
+/// Same job on the Codex CLI: an ephemeral `codex exec` with the schema and
+/// the last message written to temp files, exactly as thread titles do.
+async fn rank_with_codex(prompt: &str, model: &str) -> Result<Value> {
+    let bin = resolve_bin("codex").ok_or_else(|| anyhow::anyhow!("codex CLI not found on PATH"))?;
+    let suffix = uuid::Uuid::new_v4();
+    let schema_path = std::env::temp_dir().join(format!("threadknot-search-{suffix}.schema.json"));
+    let output_path = std::env::temp_dir().join(format!("threadknot-search-{suffix}.output.json"));
+    std::fs::write(&schema_path, results_schema().to_string()).context("write search schema")?;
+    std::fs::write(&output_path, "").context("create search output file")?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("PATH", agent_path())
+        .arg("exec")
+        .arg("--ephemeral")
+        .arg("--skip-git-repo-check")
+        .arg("--ignore-user-config")
+        .arg("--ignore-rules")
+        .arg("-s")
+        .arg("read-only")
+        .arg("--model")
+        .arg(model)
+        .arg("--config")
+        .arg("model_reasoning_effort=\"low\"")
+        .arg("--output-schema")
+        .arg(&schema_path)
+        .arg("--output-last-message")
+        .arg(&output_path)
+        .arg("-")
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    no_console(&mut cmd);
+
+    let result = async {
+        let mut child = cmd.spawn().context("spawn smart search CLI")?;
+        let mut stdin = child.stdin.take().context("open smart search stdin")?;
+        stdin.write_all(prompt.as_bytes()).await.context("write smart search prompt")?;
+        drop(stdin);
+        let output = tokio::time::timeout(SEARCH_TIMEOUT, child.wait_with_output())
+            .await
+            .context("smart search timed out")?
+            .context("wait for smart search CLI")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "codex exited with {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        let raw = std::fs::read_to_string(&output_path).context("read Codex search output")?;
+        serde_json::from_str::<Value>(&raw).context("parse Codex search output")
+    }
+    .await;
+    let _ = std::fs::remove_file(schema_path);
+    let _ = std::fs::remove_file(output_path);
+    result
+}
+
 fn results_schema() -> Value {
     json!({
         "type": "object",
@@ -616,8 +692,15 @@ mod tests {
 
     #[test]
     fn only_known_models_are_accepted() {
-        assert_eq!(resolve_model(None).unwrap(), DEFAULT_MODEL);
-        assert_eq!(resolve_model(Some(" claude-haiku-4-5 ")).unwrap(), "claude-haiku-4-5");
+        assert_eq!(resolve_model(None).unwrap(), (Agent::Claude, DEFAULT_MODEL.to_string()));
+        assert_eq!(
+            resolve_model(Some(" claude-haiku-4-5 ")).unwrap(),
+            (Agent::Claude, "claude-haiku-4-5".to_string())
+        );
+        assert_eq!(
+            resolve_model(Some("gpt-5.6-luna")).unwrap(),
+            (Agent::Codex, "gpt-5.6-luna".to_string())
+        );
         assert!(resolve_model(Some("--dangerous")).is_err());
     }
 }

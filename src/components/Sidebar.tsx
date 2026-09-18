@@ -3004,7 +3004,9 @@ type AiSearch =
 function ThreadSearchModal({ onClose }: { onClose: () => void }) {
   const { state, actions, dispatch } = useStore();
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState<"project" | "all">("project");
+  // Everything by default; narrow to the open project when you know where
+  // the chat lives.
+  const [scope, setScope] = useState<"project" | "all">("all");
   const [scopeOpen, setScopeOpen] = useState(false);
   const [model, setModel] = useState<string>(loadSearchModel);
   const [modelOpen, setModelOpen] = useState(false);
@@ -3249,19 +3251,27 @@ function ThreadSearchModal({ onClose }: { onClose: () => void }) {
               <ChevronIcon size={12} open={modelOpen} className="row-chevron" />
             </button>
             {modelOpen && (
-              <div className="search-scope-menu" role="menu">
-                {SMART_SEARCH_MODELS.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    className={model === m.id ? "on" : ""}
-                    onClick={() => {
-                      setModel(m.id);
-                      setModelOpen(false);
-                    }}
-                  >
-                    {m.label}
-                  </button>
+              <div className="search-scope-menu search-model-menu" role="menu">
+                {(["claude", "codex"] as const).map((agent) => (
+                  <div key={agent} className="search-model-group">
+                    <div className="search-model-group-head">
+                      <AgentMark agent={agent} size={14} />
+                      <span>{agent === "claude" ? "Claude" : "Codex"}</span>
+                    </div>
+                    {SMART_SEARCH_MODELS.filter((m) => m.agent === agent).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        className={model === m.id ? "on" : ""}
+                        onClick={() => {
+                          setModel(m.id);
+                          setModelOpen(false);
+                        }}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}

@@ -758,6 +758,23 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 }
 .search-modal-ai-run:disabled { opacity: 0.45; cursor: default; }
 .search-model { margin-left: 0; }
+.search-model-menu { min-width: 176px; }
+.search-model-group { display: flex; flex-direction: column; gap: 2px; }
+.search-model-group + .search-model-group {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.search-model-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
 
 /* AI results carry a reason and an excerpt under the title line. */
 .search-result.ai {

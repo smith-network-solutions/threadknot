@@ -4102,12 +4102,17 @@ pub async fn handle_request(
             anyhow::ensure!(query.chars().count() <= 400, "search query is too long");
             let thread_ids = string_list(&p, "threadIds");
             anyhow::ensure!(thread_ids.len() <= 10_000, "too many threads to search");
-            let model = crate::agents::search::resolve_model(
+            let (agent, model) = crate::agents::search::resolve_model(
                 p.get("model").and_then(Value::as_str),
             )?;
-            let outcome =
-                crate::agents::search::run(Arc::clone(&hub.store), thread_ids, query, model)
-                    .await?;
+            let outcome = crate::agents::search::run(
+                Arc::clone(&hub.store),
+                thread_ids,
+                query,
+                agent,
+                model,
+            )
+            .await?;
             Ok(serde_json::to_value(outcome)?)
         }
         "thread.toolOutput" => {
