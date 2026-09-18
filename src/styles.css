@@ -587,7 +587,9 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--line-2);
   border-radius: 18px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
+  /* Not clipped: the scope and model menus hang below the card. The results
+     list below rounds its own bottom corners instead. */
+  overflow: visible;
   animation: searchPop 0.16s ease-out;
 }
 .search-modal-backdrop.closing .search-modal {
@@ -643,7 +645,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 2;
+  z-index: 30;
   min-width: 152px;
   display: flex;
   flex-direction: column;
@@ -670,6 +672,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   min-height: 0;
   overflow-y: auto;
   padding: 8px;
+  border-radius: 0 0 18px 18px;
 }
 .search-modal-empty {
   padding: 28px 16px;
