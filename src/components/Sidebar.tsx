@@ -98,6 +98,8 @@ import {
   FolderPlusIcon,
   GearIcon,
   LoaderIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
   PanelLeftIcon,
   GripIcon,
   MoreIcon,
@@ -2979,12 +2981,13 @@ function loadSearchModel(): string {
     : SMART_SEARCH_DEFAULT_MODEL;
 }
 
-/** The AI half of the search modal: one run per submitted query. `query` is
- *  the text it ran on, so a later edit of the field falls back to title
- *  matches instead of showing stale results under new words. */
+/** The AI half of a search: one run per submitted query. `query` is the text
+ *  it ran on, so a later edit of the field falls back to title matches
+ *  instead of showing stale results under new words. `run` tells a slow
+ *  answer to an earlier query apart from the current one. */
 type AiSearch =
   | { status: "idle" }
-  | { status: "loading"; query: string; count: number }
+  | { status: "loading"; query: string; count: number; run: number }
   | {
       status: "done";
       query: string;
@@ -2993,51 +2996,35 @@ type AiSearch =
     }
   | { status: "error"; query: string; message: string };
 
-/** Full-screen conversation search, opened from the sidebar's Search button.
- *  A blurred backdrop over a clean field; typing filters titles instantly
- *  (across the current project or all projects), each rendered with its
- *  agent mark. Enter hands the same words to a cheap model as a description
- *  of the conversation — it reads digests of the transcripts and answers
- *  with the threads that match and why. Picking one of those opens it AND
- *  docks the result list beside the chat (SearchDock), so the rest can be
- *  stepped through without searching again. */
-function ThreadSearchModal({ onClose }: { onClose: () => void }) {
-  const { state, actions, dispatch } = useStore();
-  const [query, setQuery] = useState("");
+/** One search, from the first keystroke in the centered box to the last
+ *  click in the sidebar. The box and the sidebar panel render the SAME
+ *  session, so handing off from one to the other loses nothing: the query
+ *  stays editable, the chips keep their values, the results stay ranked. */
+export interface SearchSession {
+  query: string;
+  scope: "project" | "all";
+  model: string;
+  ai: AiSearch;
+}
+
+export function newSearchSession(): SearchSession {
   // Everything by default; narrow to the open project when you know where
   // the chat lives.
-  const [scope, setScope] = useState<"project" | "all">("all");
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const [model, setModel] = useState<string>(loadSearchModel);
-  const [modelOpen, setModelOpen] = useState(false);
-  const [ai, setAi] = useState<AiSearch>({ status: "idle" });
-  const [closing, setClosing] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  // Bumped per run so a slow answer to an earlier query cannot land on top
-  // of a newer one.
-  const runRef = useRef(0);
+  return { query: "", scope: "all", model: loadSearchModel(), ai: { status: "idle" } };
+}
 
-  // Play the exit animation, then actually unmount. 160ms matches the CSS.
-  const close = () => {
-    setClosing(true);
-    window.setTimeout(onClose, 160);
-  };
+type SetSession = (update: (s: SearchSession) => SearchSession) => void;
+
+let searchRunCounter = 0;
+
+/** Everything both search surfaces derive from a session: the threads in
+ *  scope, the instant title matches, the AI rows, and the run trigger. */
+function useSearchSession(session: SearchSession, setSession: SetSession) {
+  const { state, actions } = useStore();
 
   useEffect(() => {
-    inputRef.current?.focus();
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setClosing(true);
-        window.setTimeout(onClose, 160);
-      }
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  useEffect(() => {
-    localStorage.setItem(LS_SEARCH_MODEL, model);
-  }, [model]);
+    localStorage.setItem(LS_SEARCH_MODEL, session.model);
+  }, [session.model]);
 
   // "Current project" is wherever the open chat lives, else the pending draft's
   // home, else the first project in the fleet.
@@ -3058,69 +3045,26 @@ function ThreadSearchModal({ onClose }: { onClose: () => void }) {
   const scoped = useMemo(() => {
     const all: Thread[] = [];
     for (const pid of Object.keys(state.threads)) {
-      if (scope === "project" && pid !== currentProjectId) continue;
+      if (session.scope === "project" && pid !== currentProjectId) continue;
       for (const t of state.threads[pid]) all.push(t);
     }
     return all.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-  }, [state.threads, scope, currentProjectId]);
+  }, [state.threads, session.scope, currentProjectId]);
 
-  const q = query.trim().toLowerCase();
-  const results = useMemo(() => {
+  const q = session.query.trim().toLowerCase();
+  const titleRows = useMemo(() => {
     const matched = q
       ? scoped.filter((t) => (t.title || "untitled thread").toLowerCase().includes(q))
       : scoped;
     return matched.slice(0, 60);
   }, [scoped, q]);
 
-  const submitted = query.trim();
+  const submitted = session.query.trim();
+  const ai = session.ai;
   const showAi = ai.status !== "idle" && ai.query === submitted;
-  const modelLabel = SMART_SEARCH_MODELS.find((m) => m.id === model)?.label ?? model;
-
-  async function runAi() {
-    if (!submitted || scoped.length === 0) return;
-    const run = ++runRef.current;
-    setAi({ status: "loading", query: submitted, count: scoped.length });
-    try {
-      const { results, rankedByModel } = await actions.smartSearchThreads(
-        submitted,
-        scoped.map((t) => t.id),
-        model,
-      );
-      if (run !== runRef.current) return;
-      setAi({ status: "done", query: submitted, results, rankedByModel });
-    } catch (e) {
-      if (run !== runRef.current) return;
-      setAi({
-        status: "error",
-        query: submitted,
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
-  function openThread(id: string) {
-    void actions.selectThread(id);
-    close();
-  }
-
-  /** Open an AI result and park the whole list beside the chat. */
-  function openAiResult(id: string) {
-    if (ai.status === "done") {
-      dispatch({
-        type: "searchDock",
-        dock: {
-          query: ai.query,
-          model,
-          rankedByModel: ai.rankedByModel,
-          results: ai.results,
-          activeId: id,
-        },
-      });
-    }
-    openThread(id);
-  }
-
-  const scopeLabel = scope === "project" ? "This project" : "All projects";
+  const loading = ai.status === "loading" && showAi;
+  const modelLabel =
+    SMART_SEARCH_MODELS.find((m) => m.id === session.model)?.label ?? session.model;
 
   // Results whose thread has vanished since the run drop out here.
   const aiRows =
@@ -3129,6 +3073,237 @@ function ThreadSearchModal({ onClose }: { onClose: () => void }) {
           .map((r) => ({ result: r, thread: findThread(state, r.threadId) }))
           .filter((row): row is { result: SmartSearchResult; thread: Thread } => row.thread != null)
       : [];
+
+  async function runAi() {
+    if (!submitted || scoped.length === 0) return;
+    const run = ++searchRunCounter;
+    const query = submitted;
+    setSession((s) => ({ ...s, ai: { status: "loading", query, count: scoped.length, run } }));
+    const stillMine = (s: SearchSession) => s.ai.status === "loading" && s.ai.run === run;
+    try {
+      const { results, rankedByModel } = await actions.smartSearchThreads(
+        query,
+        scoped.map((t) => t.id),
+        session.model,
+      );
+      setSession((s) =>
+        stillMine(s) ? { ...s, ai: { status: "done", query, results, rankedByModel } } : s,
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setSession((s) => (stillMine(s) ? { ...s, ai: { status: "error", query, message } } : s));
+    }
+  }
+
+  const statusText = loading
+    ? null
+    : ai.status === "error" && showAi
+      ? { error: ai.message }
+      : ai.status === "done" && showAi
+        ? aiRows.length === 0
+          ? "Nothing matched inside the conversations."
+          : `${aiRows.length} match${aiRows.length === 1 ? "" : "es"} · ${
+              ai.rankedByModel ? `ranked by ${modelLabel}` : "keyword hits only"
+            }`
+        : submitted
+          ? "Press Enter to search inside the conversations"
+          : "Describe what you remember, then press Enter";
+
+  return {
+    scoped,
+    titleRows,
+    aiRows,
+    showAi: showAi && ai.status === "done",
+    loading,
+    loadingCount: loading && ai.status === "loading" ? ai.count : 0,
+    modelLabel,
+    statusText,
+    projectName,
+    runAi,
+    activeThreadId: state.activeThreadId,
+  };
+}
+
+/** A chip with a dropdown, for the scope and model pickers. */
+function SearchChip({
+  className,
+  label,
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  className?: string;
+  label: string;
+  title?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`search-scope${className ? ` ${className}` : ""}`}>
+      <button
+        type="button"
+        className="search-scope-toggle"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={title}
+        onClick={onToggle}
+      >
+        <span>{label}</span>
+        <ChevronIcon size={12} open={open} className="row-chevron" />
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
+/** The scope and model chips, shared by the box and the sidebar panel. */
+function SearchChips({
+  session,
+  setSession,
+  menu,
+  setMenu,
+  modelLabel,
+}: {
+  session: SearchSession;
+  setSession: SetSession;
+  menu: "scope" | "model" | null;
+  setMenu: (m: "scope" | "model" | null) => void;
+  modelLabel: string;
+}) {
+  return (
+    <>
+      <SearchChip
+        label={session.scope === "project" ? "This project" : "All projects"}
+        open={menu === "scope"}
+        onToggle={() => setMenu(menu === "scope" ? null : "scope")}
+      >
+        <div className="search-scope-menu" role="menu">
+          {(["all", "project"] as const).map((scope) => (
+            <button
+              key={scope}
+              type="button"
+              className={session.scope === scope ? "on" : ""}
+              onClick={() => {
+                setSession((s) => ({ ...s, scope }));
+                setMenu(null);
+              }}
+            >
+              {scope === "project" ? "This project" : "All projects"}
+            </button>
+          ))}
+        </div>
+      </SearchChip>
+      <SearchChip
+        className="search-model"
+        label={modelLabel}
+        title="Model that reads the conversations"
+        open={menu === "model"}
+        onToggle={() => setMenu(menu === "model" ? null : "model")}
+      >
+        <div className="search-scope-menu search-model-menu" role="menu">
+          {(["claude", "codex"] as const).map((agent) => (
+            <div key={agent} className="search-model-group">
+              <div className="search-model-group-head">
+                <AgentMark agent={agent} size={14} />
+                <span>{agent === "claude" ? "Claude" : "Codex"}</span>
+              </div>
+              {SMART_SEARCH_MODELS.filter((m) => m.agent === agent).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={session.model === m.id ? "on" : ""}
+                  onClick={() => {
+                    setSession((s) => ({ ...s, model: m.id }));
+                    setMenu(null);
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </SearchChip>
+    </>
+  );
+}
+
+/** One result row, in either surface. AI rows carry a reason and an excerpt
+ *  under the title line; title rows are just the line. */
+function SearchResultRow({
+  thread,
+  result,
+  project,
+  active,
+  onClick,
+}: {
+  thread: Thread;
+  result?: SmartSearchResult;
+  project?: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`search-result${result ? " ai" : ""}${active ? " active" : ""}`}
+      onClick={onClick}
+    >
+      <div className="search-result-line">
+        <AgentMark agent={thread.agent} size={18} className="search-result-mark" />
+        <span className="search-result-title">{thread.title || "Untitled thread"}</span>
+        {project && <span className="search-result-project">{project}</span>}
+        <span className="search-result-time">{timeAgo(thread.updatedAt)}</span>
+      </div>
+      {result?.reason && <div className="search-result-reason">{result.reason}</div>}
+      {result?.snippet && <div className="search-result-snippet">{result.snippet}</div>}
+    </button>
+  );
+}
+
+/** The centered search box, opened from the sidebar's Search button. A
+ *  blurred backdrop over a clean field; typing filters titles instantly and
+ *  Enter hands the same words to a model as a description of the
+ *  conversation. Picking ANY row hands the whole session to the sidebar
+ *  panel below (`onPick`), which opens the thread on the right and keeps the
+ *  list on the left for the next pick. Escape or the backdrop just closes. */
+function ThreadSearchModal({
+  session,
+  setSession,
+  onPick,
+  onClose,
+}: {
+  session: SearchSession;
+  setSession: SetSession;
+  onPick: (threadId: string) => void;
+  onClose: () => void;
+}) {
+  const [menu, setMenu] = useState<"scope" | "model" | null>(null);
+  const [closing, setClosing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const search = useSearchSession(session, setSession);
+
+  // Play the exit animation, then actually unmount. 160ms matches the CSS.
+  const close = () => {
+    setClosing(true);
+    window.setTimeout(onClose, 160);
+  };
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setClosing(true);
+        window.setTimeout(onClose, 160);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const submitted = session.query.trim();
 
   return createPortal(
     <div
@@ -3147,212 +3322,256 @@ function ThreadSearchModal({ onClose }: { onClose: () => void }) {
             ref={inputRef}
             type="text"
             placeholder="Search conversations…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => {
-              setScopeOpen(false);
-              setModelOpen(false);
+            value={session.query}
+            onChange={(e) => {
+              const query = e.target.value;
+              setSession((s) => ({ ...s, query }));
             }}
+            onFocus={() => setMenu(null)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                void runAi();
+                void search.runAi();
               }
             }}
           />
-          <div className="search-scope">
-            <button
-              type="button"
-              className="search-scope-toggle"
-              aria-haspopup="menu"
-              aria-expanded={scopeOpen}
-              onClick={() => {
-                setModelOpen(false);
-                setScopeOpen((v) => !v);
-              }}
-            >
-              <span>{scopeLabel}</span>
-              <ChevronIcon size={12} open={scopeOpen} className="row-chevron" />
-            </button>
-            {scopeOpen && (
-              <div className="search-scope-menu" role="menu">
-                <button
-                  type="button"
-                  className={scope === "project" ? "on" : ""}
-                  onClick={() => {
-                    setScope("project");
-                    setScopeOpen(false);
-                  }}
-                >
-                  This project
-                </button>
-                <button
-                  type="button"
-                  className={scope === "all" ? "on" : ""}
-                  onClick={() => {
-                    setScope("all");
-                    setScopeOpen(false);
-                  }}
-                >
-                  All projects
-                </button>
-              </div>
-            )}
-          </div>
         </div>
         <div className="search-modal-ai">
-          {ai.status === "loading" && showAi ? (
-            <span className="search-modal-ai-status">
-              <span className="sidebar-loader search-modal-ai-loader">
-                <LoaderIcon size={13} />
-              </span>
-              Reading {ai.count} conversation{ai.count === 1 ? "" : "s"} with {modelLabel}…
-            </span>
-          ) : ai.status === "error" && showAi ? (
-            <span className="search-modal-ai-status error" title={ai.message}>
-              Search failed: {ai.message}
-            </span>
-          ) : ai.status === "done" && showAi ? (
-            <span className="search-modal-ai-status">
-              {aiRows.length === 0
-                ? "Nothing matched inside the conversations."
-                : `${aiRows.length} match${aiRows.length === 1 ? "" : "es"} · ${
-                    ai.rankedByModel ? `ranked by ${modelLabel}` : "keyword hits only"
-                  }`}
-            </span>
-          ) : (
-            <span className="search-modal-ai-status">
-              {submitted
-                ? "Press Enter to search inside the conversations"
-                : "Describe what you remember, then press Enter"}
-            </span>
-          )}
+          <span className={`search-modal-ai-status${search.statusText && typeof search.statusText === "object" ? " error" : ""}`}>
+            {search.loading ? (
+              <>
+                <span className="sidebar-loader search-modal-ai-loader">
+                  <LoaderIcon size={13} />
+                </span>
+                Reading {search.loadingCount} conversation{search.loadingCount === 1 ? "" : "s"} with {search.modelLabel}…
+              </>
+            ) : typeof search.statusText === "object" && search.statusText ? (
+              <span title={search.statusText.error}>Search failed: {search.statusText.error}</span>
+            ) : (
+              search.statusText
+            )}
+          </span>
           <button
             type="button"
             className="search-modal-ai-run"
-            disabled={!submitted || scoped.length === 0 || (ai.status === "loading" && showAi)}
-            onClick={() => void runAi()}
+            disabled={!submitted || search.scoped.length === 0 || search.loading}
+            onClick={() => void search.runAi()}
           >
             Search inside
           </button>
-          <div className="search-scope search-model">
-            <button
-              type="button"
-              className="search-scope-toggle"
-              aria-haspopup="menu"
-              aria-expanded={modelOpen}
-              title="Model that reads the conversations"
-              onClick={() => {
-                setScopeOpen(false);
-                setModelOpen((v) => !v);
-              }}
-            >
-              <span>{modelLabel}</span>
-              <ChevronIcon size={12} open={modelOpen} className="row-chevron" />
-            </button>
-            {modelOpen && (
-              <div className="search-scope-menu search-model-menu" role="menu">
-                {(["claude", "codex"] as const).map((agent) => (
-                  <div key={agent} className="search-model-group">
-                    <div className="search-model-group-head">
-                      <AgentMark agent={agent} size={14} />
-                      <span>{agent === "claude" ? "Claude" : "Codex"}</span>
-                    </div>
-                    {SMART_SEARCH_MODELS.filter((m) => m.agent === agent).map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        className={model === m.id ? "on" : ""}
-                        onClick={() => {
-                          setModel(m.id);
-                          setModelOpen(false);
-                        }}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <SearchChips
+            session={session}
+            setSession={setSession}
+            menu={menu}
+            setMenu={setMenu}
+            modelLabel={search.modelLabel}
+          />
         </div>
-        <div
-          className="search-modal-results"
-          onMouseDown={() => {
-            setScopeOpen(false);
-            setModelOpen(false);
-          }}
-        >
-          {showAi && ai.status === "done" ? (
-            aiRows.length === 0 ? (
+        <div className="search-modal-results" onMouseDown={() => setMenu(null)}>
+          {search.showAi ? (
+            search.aiRows.length === 0 ? (
               <div className="search-modal-empty">
                 No conversations matched. Try other words, or widen the scope.
               </div>
             ) : (
-              aiRows.map(({ result, thread: t }) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className="search-result ai"
-                  onClick={() => openAiResult(t.id)}
-                >
-                  <div className="search-result-line">
-                    <AgentMark
-                      agent={t.agent}
-                      size={18}
-                      className="search-result-mark"
-                    />
-                    <span className="search-result-title">
-                      {t.title || "Untitled thread"}
-                    </span>
-                    <span className="search-result-project">
-                      {projectName(t.projectId)}
-                    </span>
-                    <span className="search-result-time">{timeAgo(t.updatedAt)}</span>
-                  </div>
-                  {result.reason && (
-                    <div className="search-result-reason">{result.reason}</div>
-                  )}
-                  {result.snippet && (
-                    <div className="search-result-snippet">{result.snippet}</div>
-                  )}
-                </button>
+              search.aiRows.map(({ result, thread }) => (
+                <SearchResultRow
+                  key={thread.id}
+                  thread={thread}
+                  result={result}
+                  project={search.projectName(thread.projectId)}
+                  active={false}
+                  onClick={() => onPick(thread.id)}
+                />
               ))
             )
-          ) : results.length === 0 ? (
+          ) : search.titleRows.length === 0 ? (
             <div className="search-modal-empty">
-              {q
+              {submitted
                 ? "No titles match. Press Enter to search inside the conversations."
                 : "No conversations yet."}
             </div>
           ) : (
-            results.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className="search-result"
-                onClick={() => openThread(t.id)}
-              >
-                <AgentMark
-                  agent={t.agent}
-                  size={18}
-                  className="search-result-mark"
-                />
-                <span className="search-result-title">
-                  {t.title || "Untitled thread"}
-                </span>
-                <span className="search-result-project">
-                  {projectName(t.projectId)}
-                </span>
-                <span className="search-result-time">{timeAgo(t.updatedAt)}</span>
-              </button>
+            search.titleRows.map((thread) => (
+              <SearchResultRow
+                key={thread.id}
+                thread={thread}
+                project={search.projectName(thread.projectId)}
+                active={false}
+                onClick={() => onPick(thread.id)}
+              />
             ))
           )}
         </div>
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** The search once a result has been picked: the same session laid over
+ *  the sidebar's own box. The chat pane on the right shows whichever row
+ *  was clicked last (highlighted here), the list stays for the next one,
+ *  the query is still editable (Enter re-runs), and the X or Escape brings
+ *  the normal sidebar back with that thread still open. */
+function ThreadSearchPanel({
+  session,
+  setSession,
+  onClose,
+}: {
+  session: SearchSession;
+  setSession: SetSession;
+  onClose: () => void;
+}) {
+  const { actions } = useStore();
+  const [menu, setMenu] = useState<"scope" | "model" | null>(null);
+  const search = useSearchSession(session, setSession);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // Keep the open thread's row in view.
+  useEffect(() => {
+    if (!search.activeThreadId) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-thread-id="${CSS.escape(search.activeThreadId)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [search.activeThreadId]);
+
+  const submitted = session.query.trim();
+  const rows: { thread: Thread; result?: SmartSearchResult }[] = search.showAi
+    ? search.aiRows
+    : search.titleRows.map((thread) => ({ thread }));
+  const activeIndex = rows.findIndex((r) => r.thread.id === search.activeThreadId);
+
+  function open(id: string) {
+    setMenu(null);
+    void actions.selectThread(id);
+  }
+  function step(delta: number) {
+    if (rows.length === 0) return;
+    const next = activeIndex < 0 ? 0 : (activeIndex + delta + rows.length) % rows.length;
+    open(rows[next].thread.id);
+  }
+
+  return (
+    <div className="search-panel" role="search" aria-label="Search results">
+      <div className="search-panel-head">
+        <SearchIcon size={16} className="search-panel-glyph" />
+        <input
+          type="text"
+          placeholder="Search conversations…"
+          value={session.query}
+          onChange={(e) => {
+            const query = e.target.value;
+            setSession((s) => ({ ...s, query }));
+          }}
+          onFocus={() => setMenu(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void search.runAi();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="icon-btn search-panel-close"
+          aria-label="Close search"
+          title="Close search (keeps the open chat)"
+          onClick={onClose}
+        >
+          <XIcon size={16} />
+        </button>
+      </div>
+      <div className="search-panel-chips">
+        <SearchChips
+          session={session}
+          setSession={setSession}
+          menu={menu}
+          setMenu={setMenu}
+          modelLabel={search.modelLabel}
+        />
+        <button
+          type="button"
+          className="search-panel-run"
+          disabled={!submitted || search.scoped.length === 0 || search.loading}
+          onClick={() => void search.runAi()}
+        >
+          Search inside
+        </button>
+      </div>
+      <div className="search-panel-status">
+        <span className="search-panel-status-text">
+          {search.loading ? (
+            <>
+              <span className="sidebar-loader search-panel-loader">
+                <LoaderIcon size={13} />
+              </span>
+              Reading {search.loadingCount} with {search.modelLabel}…
+            </>
+          ) : typeof search.statusText === "object" && search.statusText ? (
+            <span className="error" title={search.statusText.error}>
+              Search failed: {search.statusText.error}
+            </span>
+          ) : (
+            search.statusText
+          )}
+        </span>
+        <span className="search-panel-count">
+          {rows.length === 0 ? "" : `${activeIndex >= 0 ? activeIndex + 1 : "–"} of ${rows.length}`}
+        </span>
+        <button
+          type="button"
+          className="icon-btn search-panel-step"
+          aria-label="Previous result"
+          title="Previous result"
+          disabled={rows.length < 2}
+          onClick={() => step(-1)}
+        >
+          <ArrowUpIcon size={14} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn search-panel-step"
+          aria-label="Next result"
+          title="Next result"
+          disabled={rows.length < 2}
+          onClick={() => step(1)}
+        >
+          <ArrowDownIcon size={14} />
+        </button>
+      </div>
+      <div className="search-panel-list" ref={listRef} onMouseDown={() => setMenu(null)}>
+        {rows.length === 0 ? (
+          <div className="search-panel-empty">
+            {search.showAi
+              ? "No conversations matched. Try other words, or widen the scope."
+              : submitted
+                ? "No titles match. Press Enter to search inside the conversations."
+                : "No conversations yet."}
+          </div>
+        ) : (
+          rows.map(({ thread, result }) => (
+            <div key={thread.id} data-thread-id={thread.id}>
+              <SearchResultRow
+                thread={thread}
+                result={result}
+                project={session.scope === "all" ? search.projectName(thread.projectId) : undefined}
+                active={thread.id === search.activeThreadId}
+                onClick={() => open(thread.id)}
+              />
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -3372,7 +3591,18 @@ export const Sidebar = memo(function Sidebar({
   // here and threaded down; the width also drives the --sidebar-w CSS var.
   const { layout, update: updateLayout, setWidthLive } = useSidebarLayout();
   const [filterOpen, setFilterOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  // The conversation search: null when closed, else the surface it is on
+  // and the session both surfaces share (see SearchSession).
+  const [search, setSearch] = useState<{
+    stage: "modal" | "panel";
+    session: SearchSession;
+  } | null>(null);
+  const setSearchSession = useCallback(
+    (update: (s: SearchSession) => SearchSession) =>
+      setSearch((cur) => (cur ? { ...cur, session: update(cur.session) } : cur)),
+    [],
+  );
+  const closeSearch = useCallback(() => setSearch(null), []);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
   const storedView = useSyncExternalStore(subscribeSidebarView, getSidebarView);
   // A stored "agents" only takes effect once the Hermes surfaces are eligible;
@@ -4187,7 +4417,7 @@ export const Sidebar = memo(function Sidebar({
         <button
           type="button"
           className="sidebar-action search-open"
-          onClick={() => setSearchOpen(true)}
+          onClick={() => setSearch({ stage: "modal", session: newSearchSession() })}
         >
           <SearchIcon size={18} />
           <span>Search</span>
@@ -4254,7 +4484,26 @@ export const Sidebar = memo(function Sidebar({
           onClose={() => setFilterOpen(false)}
         />
       )}
-      {searchOpen && <ThreadSearchModal onClose={() => setSearchOpen(false)} />}
+      {search?.stage === "modal" && (
+        <ThreadSearchModal
+          session={search.session}
+          setSession={setSearchSession}
+          onPick={(threadId) => {
+            // The first pick moves the search into this sidebar and opens
+            // the thread on the right; the list stays for the next pick.
+            setSearch((cur) => (cur ? { ...cur, stage: "panel" } : cur));
+            void actions.selectThread(threadId);
+          }}
+          onClose={closeSearch}
+        />
+      )}
+      {search?.stage === "panel" && (
+        <ThreadSearchPanel
+          session={search.session}
+          setSession={setSearchSession}
+          onClose={closeSearch}
+        />
+      )}
 
       <div className="sidebar-scroll" ref={scrollRef} onScroll={onSidebarScroll}>
         {quickView && (

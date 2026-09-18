@@ -406,21 +406,6 @@ export interface AppState {
    *  on this; without the gate it wins the race on every load and the restore
    *  arrives to find a destination it never chose already on screen. */
   restored: boolean;
-  /** AI search results docked beside the chat after picking one from the
-   *  search modal: the query, what came back, and which result is open. The
-   *  dock stays up while you step through the candidates and closes on its
-   *  own X, leaving the thread you landed on open. Null = no dock. */
-  searchDock: SearchDock | null;
-}
-
-export interface SearchDock {
-  query: string;
-  /** Model id the ranking ran on (`claude-opus-5` …). */
-  model: string;
-  /** False when the model pass failed and these are keyword hits only. */
-  rankedByModel: boolean;
-  results: SmartSearchResult[];
-  activeId: string | null;
 }
 
 export const initialState: AppState = {
@@ -472,15 +457,12 @@ export const initialState: AppState = {
   queuedMessages: {},
   pendingHermes: {},
   restored: false,
-  searchDock: null,
 };
 
 export type Action =
   | { type: "conn"; conn: ConnState }
   | { type: "isTauri"; value: boolean }
   | { type: "solo"; projectId: string | null }
-  | { type: "searchDock"; dock: SearchDock | null }
-  | { type: "searchDockActive"; threadId: string }
   | { type: "dragProject"; project: Project | null }
   | { type: "http"; value: { base: string; token: string; csrf?: string } }
   | { type: "hello"; data: HelloData }
@@ -811,12 +793,6 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, isTauri: action.value };
     case "solo":
       return { ...state, solo: action.projectId };
-    case "searchDock":
-      return { ...state, searchDock: action.dock };
-    case "searchDockActive":
-      return state.searchDock
-        ? { ...state, searchDock: { ...state.searchDock, activeId: action.threadId } }
-        : state;
     case "dragProject":
       return { ...state, dragProject: action.project };
     case "http":

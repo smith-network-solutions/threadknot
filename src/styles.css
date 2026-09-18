@@ -681,17 +681,27 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   font-size: 13px;
 }
 .search-result {
-  display: flex;
-  align-items: center;
-  gap: 11px;
+  display: block;
   width: 100%;
   padding: 9px 12px;
   border-radius: 11px;
+  border: 1px solid transparent;
   text-align: left;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background 0.12s, border-color 0.12s;
 }
+.search-result + .search-result { margin-top: 1px; }
 .search-result:hover { background: var(--panel-3); }
+.search-result.active {
+  background: var(--brass-dim);
+  border-color: color-mix(in srgb, var(--brass) 45%, transparent);
+}
+.search-result-line {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
 .search-result-mark { flex: none; }
 .search-result-title {
   flex: 1;
@@ -702,6 +712,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.search-result.active .search-result-title { color: var(--brass-hi); }
 .search-result-project {
   flex: none;
   max-width: 130px;
@@ -716,13 +727,29 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   font-size: 11.5px;
   color: var(--faint);
 }
+.search-result-reason {
+  margin: 5px 0 0 29px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--dim);
+}
+.search-result-snippet {
+  margin: 4px 0 0 29px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--faint);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
-/* AI row under the field: status text on the left, run button and the model
-   chip on the right. The chip reuses the scope dropdown's look. */
+/* AI row under the field: status text on the left, run button and the two
+   chips on the right. */
 .search-modal-ai {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--line);
 }
@@ -740,7 +767,8 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 }
 .search-modal-ai-status.error { color: var(--danger, #e0706a); }
 .search-modal-ai-loader { display: inline-flex; color: var(--brass); }
-.search-modal-ai-run {
+.search-modal-ai-run,
+.search-panel-run {
   flex: none;
   padding: 6px 11px;
   border-radius: 9px;
@@ -752,11 +780,13 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, opacity 0.12s;
 }
-.search-modal-ai-run:hover:not(:disabled) {
+.search-modal-ai-run:hover:not(:disabled),
+.search-panel-run:hover:not(:disabled) {
   background: color-mix(in srgb, var(--brass) 24%, transparent);
   border-color: var(--brass);
 }
-.search-modal-ai-run:disabled { opacity: 0.45; cursor: default; }
+.search-modal-ai-run:disabled,
+.search-panel-run:disabled { opacity: 0.45; cursor: default; }
 .search-model { margin-left: 0; }
 .search-model-menu { min-width: 176px; }
 .search-model-group { display: flex; flex-direction: column; gap: 2px; }
@@ -776,33 +806,99 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   color: var(--faint);
 }
 
-/* AI results carry a reason and an excerpt under the title line. */
-.search-result.ai {
+/* ---- Search panel: the same search laid over the sidebar's own box once a
+   result has been picked. The chat pane on the right is untouched, so each
+   click loads a thread there and the list stays for the next one. Nothing
+   here clips: the chip menus hang over the list, which is the only
+   scrolling part. ---- */
+.search-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  background: inherit;
+  padding-left: 0 !important; /* exempt from the rail inset: it covers the rail */
+  animation: fadeIn 0.14s ease-out;
 }
-.search-result-line {
+.search-panel-head {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 8px;
+  padding: 14px 8px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.search-panel-glyph { flex: none; color: var(--faint); }
+.search-panel-head input {
+  flex: 1;
   min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  font-size: 14px;
+  color: var(--text);
 }
-.search-result-reason {
-  margin-left: 29px;
-  font-size: 12.5px;
-  line-height: 1.35;
-  color: var(--dim);
+.search-panel-head input::placeholder { color: var(--faint); }
+.search-panel-close { flex: none; }
+.search-panel-chips {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px 0 14px;
 }
-.search-result-snippet {
-  margin-left: 29px;
+.search-panel-chips .search-scope-toggle { padding: 5px 8px; font-size: 12px; }
+.search-panel-chips .search-scope-menu { left: 0; right: auto; }
+.search-panel-run { margin-left: auto; padding: 5px 9px; font-size: 12px; }
+.search-panel-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 8px 14px;
   font-size: 11.5px;
-  line-height: 1.35;
   color: var(--faint);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  border-bottom: 1px solid var(--line);
+}
+.search-panel-status-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-panel-status .error { color: var(--danger, #e0706a); }
+.search-panel-loader { display: inline-flex; color: var(--brass); }
+.search-panel-count { flex: none; margin-left: 6px; }
+.search-panel-step { flex: none; width: 24px; height: 24px; }
+.search-panel-step:disabled { opacity: 0.35; cursor: default; }
+.search-panel-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 12px;
+}
+.search-panel-list .search-result { padding: 8px 10px; border-radius: 10px; }
+.search-panel-list .search-result-title { font-size: 13.5px; }
+/* Narrow column: the project name drops under the title instead of
+   squeezing it. */
+.search-panel-list .search-result-line { flex-wrap: wrap; }
+.search-panel-list .search-result-project {
+  order: 3;
+  flex-basis: 100%;
+  max-width: none;
+  margin: 2px 0 0 29px;
+}
+.search-panel-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 12.5px;
 }
 
 .sidebar-scroll {

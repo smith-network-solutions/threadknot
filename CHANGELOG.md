@@ -19,7 +19,7 @@ to the old line.
 ## v0.2.167 · 2026-09-18
 
 - **Search inside your conversations, not just their titles.** Open Search from the sidebar, describe the chat you remember ("the one where we voided a duplicate invoice") and press Enter. A small model reads through the conversations in scope and lists the ones that match, each with a line on why and an excerpt from the chat. Typing still filters titles instantly as before; Enter is what asks the model. The model chip next to the field picks who reads: Opus 5 by default, Haiku 4.5 or Sonnet 5 if you want it cheaper, or a Codex model (Luna, Sol, Astra) if you would rather spend that subscription. It runs on your own CLI logins like thread titles do. Search starts across all projects; the scope chip narrows it to the open one.
-- **Results stay docked while you look.** Pick a result and it opens in the main pane with the list parked on the right, so you can step through the candidates (arrows or click) until you recognise the right one, then close the list with its X and stay on that chat.
+- **The search moves into the sidebar once you pick a result.** Click any result and it opens on the right while the whole search (your words, the chips, the ranked list) takes the sidebar's place on the left. Click through the candidates or use the arrows; the open one is highlighted and the query stays editable. The X (or Escape) brings the chat list back and leaves that conversation open.
 
 ## v0.2.160 · 2026-09-09
 
