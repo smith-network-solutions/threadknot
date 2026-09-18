@@ -3553,23 +3553,28 @@ function ThreadSearchPanel({
           )}
           <button
             type="button"
-            className="search-panel-run"
+            className={`search-panel-run${search.loading ? " searching" : ""}`}
             disabled={!canRun}
+            aria-busy={search.loading}
             title="Read inside the threads in scope (Enter)"
             onClick={() => void search.runAi()}
           >
-            Search Threads
+            {search.loading && <span className="search-panel-spinner" aria-hidden="true" />}
+            {search.loading ? "Searching…" : "Search Threads"}
           </button>
         </div>
       </div>
+      {search.loading && (
+        <div className="search-panel-progress" role="progressbar" aria-label="Searching threads">
+          <span />
+        </div>
+      )}
       <div className="search-panel-status">
-        <span className="search-panel-status-text">
+        <span className="search-panel-status-text" role="status" aria-live="polite">
           {search.loading ? (
             <>
-              <span className="sidebar-loader search-panel-loader">
-                <LoaderIcon size={13} />
-              </span>
-              Reading {search.loadingCount} with {search.modelLabel}…
+              <span className="search-panel-spinner" aria-hidden="true" />
+              Searching {search.loadingCount} threads with {search.modelLabel}…
             </>
           ) : micError ? (
             <span className="error" title={micError}>
@@ -3607,10 +3612,12 @@ function ThreadSearchPanel({
           <ArrowDownIcon size={14} />
         </button>
       </div>
-      <div className="search-panel-list" ref={listRef} onMouseDown={() => setMenu(null)}>
+      <div className="search-panel-list" ref={listRef} aria-busy={search.loading} onMouseDown={() => setMenu(null)}>
         {rows.length === 0 ? (
           <div className="search-panel-empty">
-            {search.showAi
+            {search.loading
+              ? "Searching your conversations…"
+              : search.showAi
               ? "No threads matched. Try other words, or widen the scope."
               : submitted
                 ? "No matches yet. Try other words, or press Enter for AI search."

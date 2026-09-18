@@ -757,6 +757,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .search-panel-card-spacer { flex: 1; min-width: 4px; }
 .search-panel-mic { height: 30px; min-width: 30px; padding: 0 8px; }
 .search-panel-run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   flex: none;
   padding: 6px 12px;
   border-radius: 999px;
@@ -775,6 +779,42 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   color: #14100a;
 }
 .search-panel-run:disabled { opacity: 0.45; cursor: default; }
+.search-panel-run.searching:disabled { opacity: 1; cursor: progress; }
+.search-panel-spinner {
+  display: inline-block;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.search-panel-progress {
+  flex: none;
+  height: 3px;
+  margin: 2px 14px 0;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--brass-dim);
+  color: var(--brass-hi);
+}
+.search-panel-progress > span {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: inherit;
+  background: currentColor;
+  animation: search-progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes search-progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-panel-spinner,
+  .search-panel-progress > span { animation: none; }
+}
 
 .search-panel-status {
   flex: none;
@@ -797,7 +837,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   text-overflow: ellipsis;
 }
 .search-panel-status .error { color: var(--danger, #e0706a); }
-.search-panel-loader { display: inline-flex; color: var(--brass); }
+.search-panel-status .search-panel-spinner { color: var(--brass-hi); }
 .search-panel-count { flex: none; margin-left: 6px; }
 .search-panel-step { flex: none; width: 24px; height: 24px; }
 .search-panel-step:disabled { opacity: 0.35; cursor: default; }
