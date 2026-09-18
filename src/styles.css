@@ -568,66 +568,6 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 }
 
 /* ---- Conversation search modal ---- */
-.search-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 16px;
-  background: rgba(4, 6, 10, 0.5);
-  backdrop-filter: blur(10px) saturate(120%);
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  animation: fadeIn 0.16s ease-out;
-}
-.search-modal-backdrop.closing { animation: fadeOut 0.16s ease-in forwards; }
-.search-modal {
-  width: 100%;
-  max-width: 560px;
-  max-height: 72vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--panel-2);
-  border: 1px solid var(--line-2);
-  border-radius: 18px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
-  /* Not clipped: the scope and model menus hang below the card. The results
-     list below rounds its own bottom corners instead. */
-  overflow: visible;
-  animation: searchPop 0.16s ease-out;
-}
-.search-modal-backdrop.closing .search-modal {
-  animation: searchPop 0.16s ease-in reverse forwards;
-}
-@keyframes searchPop {
-  from { opacity: 0; transform: translateY(10px) scale(0.97); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes fadeOut {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-.search-modal-field {
-  position: relative;
-  display: flex;
-  align-items: center;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.search-modal-glyph { flex: none; color: var(--faint); }
-.search-modal-field input {
-  flex: 1;
-  min-width: 0;
-  margin-left: 12px;
-  background: none;
-  border: 0;
-  outline: none;
-  font-size: 17px;
-  color: var(--text);
-}
-.search-modal-field input::placeholder { color: var(--faint); }
-
 /* Scope selector: a compact dropdown pinned to the right of the search field. */
 .search-scope { position: relative; flex: none; margin-left: 10px; }
 .search-scope-toggle {
@@ -649,7 +589,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .search-scope-menu {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   z-index: 30;
   min-width: 152px;
   display: flex;
@@ -672,19 +612,6 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 }
 .search-scope-menu button:hover { background: var(--panel-3); }
 .search-scope-menu button.on { color: var(--brass-hi); }
-.search-modal-results {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
-  border-radius: 0 0 18px 18px;
-}
-.search-modal-empty {
-  padding: 28px 16px;
-  text-align: center;
-  color: var(--faint);
-  font-size: 13px;
-}
 .search-result {
   display: block;
   width: 100%;
@@ -749,30 +676,6 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   overflow: hidden;
 }
 
-/* AI row under the field: status text on the left, run button and the two
-   chips on the right. */
-.search-modal-ai {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.search-modal-ai-status {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.search-modal-ai-status.error { color: var(--danger, #e0706a); }
-.search-modal-ai-loader { display: inline-flex; color: var(--brass); }
-.search-modal-ai-run,
 .search-panel-run {
   flex: none;
   padding: 6px 11px;
@@ -785,12 +688,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, opacity 0.12s;
 }
-.search-modal-ai-run:hover:not(:disabled),
 .search-panel-run:hover:not(:disabled) {
   background: color-mix(in srgb, var(--brass) 24%, transparent);
   border-color: var(--brass);
 }
-.search-modal-ai-run:disabled,
 .search-panel-run:disabled { opacity: 0.45; cursor: default; }
 .search-model { margin-left: 0; }
 .search-model-menu { min-width: 176px; }
@@ -13558,7 +13459,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 /* Backdrops move as one layer, so the content feels attached to the opening
    gesture rather than appearing after an already-dark screen. */
 .modal-backdrop,
-.search-modal-backdrop,
 .artifact-lightbox-backdrop,
 .browser-dialog-shade,
 .settings-screen-backdrop {
@@ -13567,7 +13467,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 
 /* Shared popup surfaces. */
 .modal,
-.search-modal,
 .artifact-lightbox,
 .settings-pop,
 .thread-menu,
@@ -13631,14 +13530,12 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 }
 
 .modal,
-.search-modal,
 .artifact-lightbox,
 .browser-dialog-card {
   border-radius: 20px;
 }
 
 .modal-backdrop,
-.search-modal-backdrop,
 .artifact-lightbox-backdrop,
 .browser-dialog-shade {
   backdrop-filter: blur(12px) saturate(115%);
@@ -13646,7 +13543,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 }
 
 :root[data-family="light"] .modal,
-:root[data-family="light"] .search-modal,
 :root[data-family="light"] .artifact-lightbox,
 :root[data-family="light"] .settings-pop,
 :root[data-family="light"] .thread-menu,
@@ -13786,12 +13682,10 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 
 @media (prefers-reduced-motion: reduce) {
   .modal-backdrop,
-  .search-modal-backdrop,
   .artifact-lightbox-backdrop,
   .browser-dialog-shade,
   .settings-screen-backdrop,
   .modal,
-  .search-modal,
   .artifact-lightbox,
   .settings-pop,
   .thread-menu,

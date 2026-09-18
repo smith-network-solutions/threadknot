@@ -3005,10 +3005,8 @@ type AiSearch =
     }
   | { status: "error"; query: string; message: string };
 
-/** One search, from the first keystroke in the centered box to the last
- *  click in the sidebar. The box and the sidebar panel render the SAME
- *  session, so handing off from one to the other loses nothing: the query
- *  stays editable, the chips keep their values, the results stay ranked. */
+/** One search, from the first keystroke to the last click: the query, the
+ *  scope and model chips, and the AI run (if any). */
 export interface SearchSession {
   query: string;
   scope: "project" | "all";
@@ -3272,157 +3270,12 @@ function SearchResultRow({
   );
 }
 
-/** The centered search box, opened from the sidebar's Search button. A
- *  blurred backdrop over a clean field; typing filters titles instantly and
- *  Enter hands the same words to a model as a description of the
- *  conversation. Picking ANY row hands the whole session to the sidebar
- *  panel below (`onPick`), which opens the thread on the right and keeps the
- *  list on the left for the next pick. Escape or the backdrop just closes. */
-function ThreadSearchModal({
-  session,
-  setSession,
-  onPick,
-  onClose,
-}: {
-  session: SearchSession;
-  setSession: SetSession;
-  onPick: (threadId: string) => void;
-  onClose: () => void;
-}) {
-  const [menu, setMenu] = useState<"scope" | "model" | null>(null);
-  const [closing, setClosing] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const search = useSearchSession(session, setSession);
-
-  // Play the exit animation, then actually unmount. 160ms matches the CSS.
-  const close = () => {
-    setClosing(true);
-    window.setTimeout(onClose, 160);
-  };
-
-  useEffect(() => {
-    inputRef.current?.focus();
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setClosing(true);
-        window.setTimeout(onClose, 160);
-      }
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const submitted = session.query.trim();
-
-  return createPortal(
-    <div
-      className={`search-modal-backdrop${closing ? " closing" : ""}`}
-      onMouseDown={close}
-    >
-      <div
-        className="search-modal"
-        role="dialog"
-        aria-label="Search conversations"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="search-modal-field">
-          <SearchIcon size={18} className="search-modal-glyph" />
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Search conversations…"
-            value={session.query}
-            onChange={(e) => {
-              const query = e.target.value;
-              setSession((s) => ({ ...s, query }));
-            }}
-            onFocus={() => setMenu(null)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void search.runAi();
-              }
-            }}
-          />
-        </div>
-        <div className="search-modal-ai">
-          <span className={`search-modal-ai-status${search.statusText && typeof search.statusText === "object" ? " error" : ""}`}>
-            {search.loading ? (
-              <>
-                <span className="sidebar-loader search-modal-ai-loader">
-                  <LoaderIcon size={13} />
-                </span>
-                Reading {search.loadingCount} conversation{search.loadingCount === 1 ? "" : "s"} with {search.modelLabel}…
-              </>
-            ) : typeof search.statusText === "object" && search.statusText ? (
-              <span title={search.statusText.error}>Search failed: {search.statusText.error}</span>
-            ) : (
-              search.statusText
-            )}
-          </span>
-          <button
-            type="button"
-            className="search-modal-ai-run"
-            disabled={!submitted || search.scoped.length === 0 || search.loading}
-            onClick={() => void search.runAi()}
-          >
-            Search inside
-          </button>
-          <SearchChips
-            session={session}
-            setSession={setSession}
-            menu={menu}
-            setMenu={setMenu}
-            modelLabel={search.modelLabel}
-          />
-        </div>
-        <div className="search-modal-results" onMouseDown={() => setMenu(null)}>
-          {search.showAi ? (
-            search.aiRows.length === 0 ? (
-              <div className="search-modal-empty">
-                No conversations matched. Try other words, or widen the scope.
-              </div>
-            ) : (
-              search.aiRows.map(({ result, thread }) => (
-                <SearchResultRow
-                  key={thread.id}
-                  thread={thread}
-                  result={result}
-                  project={search.projectName(thread.projectId)}
-                  active={false}
-                  onClick={() => onPick(thread.id)}
-                />
-              ))
-            )
-          ) : search.titleRows.length === 0 ? (
-            <div className="search-modal-empty">
-              {submitted
-                ? "No titles match. Press Enter to search inside the conversations."
-                : "No conversations yet."}
-            </div>
-          ) : (
-            search.titleRows.map((thread) => (
-              <SearchResultRow
-                key={thread.id}
-                thread={thread}
-                project={search.projectName(thread.projectId)}
-                active={false}
-                onClick={() => onPick(thread.id)}
-              />
-            ))
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-/** The search once a result has been picked: the same session laid over
- *  the sidebar's own box. The chat pane on the right shows whichever row
- *  was clicked last (highlighted here), the list stays for the next one,
- *  the query is still editable (Enter re-runs), and the X or Escape brings
- *  the normal sidebar back with that thread still open. */
+/** Conversation search, laid over the sidebar's own box the moment Search
+ *  is pressed. Typing filters titles instantly; Enter hands the same words
+ *  to a model as a description of the conversation. Every row click opens
+ *  that thread on the right (highlighted here) while the list stays for the
+ *  next one; the X or Escape brings the normal sidebar back with that thread
+ *  still open. */
 function ThreadSearchPanel({
   session,
   setSession,
@@ -3436,8 +3289,10 @@ function ThreadSearchPanel({
   const [menu, setMenu] = useState<"scope" | "model" | null>(null);
   const search = useSearchSession(session, setSession);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    inputRef.current?.focus();
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
@@ -3474,6 +3329,7 @@ function ThreadSearchPanel({
       <div className="search-panel-head">
         <SearchIcon size={16} className="search-panel-glyph" />
         <input
+          ref={inputRef}
           type="text"
           placeholder="Search conversations…"
           value={session.query}
@@ -3600,22 +3456,19 @@ export const Sidebar = memo(function Sidebar({
   // here and threaded down; the width also drives the --sidebar-w CSS var.
   const { layout, update: updateLayout, setWidthLive } = useSidebarLayout();
   const [filterOpen, setFilterOpen] = useState(false);
-  // The conversation search: null when closed, else the surface it is on
-  // and the session both surfaces share (see SearchSession).
-  const [search, setSearch] = useState<{
-    stage: "modal" | "panel";
-    session: SearchSession;
-  } | null>(null);
+  // The conversation search laid over this sidebar: null when closed, else
+  // its session (see SearchSession).
+  const [search, setSearch] = useState<SearchSession | null>(null);
   const setSearchSession = useCallback(
     (update: (s: SearchSession) => SearchSession) =>
-      setSearch((cur) => (cur ? { ...cur, session: update(cur.session) } : cur)),
+      setSearch((cur) => (cur ? update(cur) : cur)),
     [],
   );
   const closeSearch = useCallback(() => setSearch(null), []);
   // Search mode borrows the sidebar's drag handle but keeps its own width
   // (see sidebarLayout.ts), mirrored onto --sidebar-w only while the panel
   // is up; the everyday width comes back the moment it closes.
-  const searchPanelUp = search?.stage === "panel";
+  const searchPanelUp = search != null;
   const [searchWidth, setSearchWidth] = useState<number>(loadSearchWidth);
   const setSearchWidthLive = useCallback(
     (w: number) => setSearchWidth((prev) => (prev === clampSearchWidth(w) ? prev : clampSearchWidth(w))),
@@ -4456,7 +4309,7 @@ export const Sidebar = memo(function Sidebar({
         <button
           type="button"
           className="sidebar-action search-open"
-          onClick={() => setSearch({ stage: "modal", session: newSearchSession() })}
+          onClick={() => setSearch(newSearchSession())}
         >
           <SearchIcon size={18} />
           <span>Search</span>
@@ -4523,25 +4376,8 @@ export const Sidebar = memo(function Sidebar({
           onClose={() => setFilterOpen(false)}
         />
       )}
-      {search?.stage === "modal" && (
-        <ThreadSearchModal
-          session={search.session}
-          setSession={setSearchSession}
-          onPick={(threadId) => {
-            // The first pick moves the search into this sidebar and opens
-            // the thread on the right; the list stays for the next pick.
-            setSearch((cur) => (cur ? { ...cur, stage: "panel" } : cur));
-            void actions.selectThread(threadId);
-          }}
-          onClose={closeSearch}
-        />
-      )}
-      {search?.stage === "panel" && (
-        <ThreadSearchPanel
-          session={search.session}
-          setSession={setSearchSession}
-          onClose={closeSearch}
-        />
+      {search && (
+        <ThreadSearchPanel session={search} setSession={setSearchSession} onClose={closeSearch} />
       )}
 
       <div className="sidebar-scroll" ref={scrollRef} onScroll={onSidebarScroll}>
