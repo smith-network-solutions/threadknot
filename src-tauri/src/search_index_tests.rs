@@ -44,13 +44,125 @@ fn await_hits(
             return out;
         }
         assert!(
-            start.elapsed() < Duration::from_secs(15),
-            "query {query}: {} results, error {:?}",
+            // Background commits can be delayed by the full suite's disk I/O
+            // on Windows. Keep polling readiness, not a fixed sleep, and still
+            // fail if the requested index state never arrives.
+            start.elapsed() < Duration::from_secs(60),
+            "query {query}: {} results, ready {}, indexed {}/{}, error {:?}",
             out.results.len(),
+            out.index.ready,
+            out.index.indexed_threads,
+            out.index.total_threads,
             out.index.error
         );
         std::thread::sleep(Duration::from_millis(30));
     }
+}
+
+#[test]
+fn prefixes_find_message_words_urls_and_titles_with_matching_excerpts() {
+    let (store, dir, thread) = fixture();
+    say(
+        &store,
+        &thread.id,
+        &format!(
+            "{} The link is https://butterfly-effect-calendar.example.app. Café planning.",
+            "Earlier unrelated discussion. ".repeat(80)
+        ),
+    );
+    await_hits(&store, &thread.id, "butterfly", 1);
+    for query in [
+        "butter",
+        "butterf",
+        "butterfl",
+        "BUTTERFL",
+        "butterf cal",
+        "café",
+        "CAF",
+    ] {
+        let found = await_hits(&store, &thread.id, query, 1);
+        assert!(
+            found.results[0].snippet.contains("butterfly")
+                || found.results[0].snippet.contains("Café"),
+            "{query}: {}",
+            found.results[0].snippet
+        );
+        assert_eq!(found.results[0].message_seq, Some(0));
+    }
+    // Search syntax remains literal, and starts-with is not an infix search.
+    await_hits(&store, &thread.id, "butterf*", 1);
+    await_hits(&store, &thread.id, "utterfl", 0);
+    await_hits(&store, &thread.id, "b", 0);
+    store
+        .update_thread(&thread.id, |t| t.title = "Dragonfly project".into())
+        .unwrap();
+    await_hits(&store, &thread.id, "dragonf", 1);
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn exact_and_multiple_words_rank_above_broad_completions() {
+    let (store, dir, thread) = fixture();
+    let other = store
+        .create_thread(
+            thread.project_id.clone(),
+            Agent::Claude,
+            thread.settings.clone(),
+            None,
+        )
+        .unwrap();
+    say(&store, &thread.id, "butter calendar notes");
+    say(&store, &other.id, "butterfly report");
+    await_hits(&store, &thread.id, "butter", 1);
+    await_hits(&store, &other.id, "butterfly", 1);
+    let ids = [other.id, thread.id.clone()];
+    for (query, count) in [("butter", 2), ("but cal", 1)] {
+        let found = store.indexed_search(&ids, query, 20, true).unwrap();
+        assert_eq!(found.results.len(), count);
+        assert_eq!(found.results[0].thread_id, thread.id, "{query}");
+        if count > 1 {
+            assert!(found.results[0].score > found.results[1].score);
+        }
+    }
+    let broad = store
+        .indexed_search(&ids, "butterf zzzunmatched", 20, true)
+        .unwrap();
+    assert_eq!(broad.results.len(), 1);
+    assert_eq!(broad.results[0].reason, "Matched some search words");
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn typo_fallback_is_scoped_conservative_and_keeps_matching_context() {
+    let (store, dir, thread) = fixture();
+    say(
+        &store,
+        &thread.id,
+        &format!("{} butterfly résumé", "Unrelated introduction. ".repeat(80)),
+    );
+    await_hits(&store, &thread.id, "butterfly", 1);
+    for query in ["butterfy", "buttefrly", "butterflx", "buutterfly", "résumè"] {
+        let found = await_hits(&store, &thread.id, query, 1);
+        assert_eq!(found.results[0].reason, "Similar spelling match");
+        assert!(
+            found.results[0].snippet.contains("butterfly")
+                || found.results[0].snippet.contains("résumé")
+        );
+    }
+    await_hits(&store, &thread.id, "bxtterflx", 0);
+    await_hits(&store, &thread.id, "bute", 0);
+    assert!(store
+        .indexed_search(&["not-in-scope".into()], "butterfy", 20, true)
+        .unwrap()
+        .results
+        .is_empty());
+    assert!(await_hits(&store, &thread.id, "butter", 1).results[0]
+        .reason
+        .is_empty());
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

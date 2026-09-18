@@ -56,14 +56,27 @@ During initial backfill or an index outage, AI search retains its previous scan
 fallback. Indexed search itself does not invoke an AI provider.
 
 `thread.indexedSearch` accepts `{query, threadIds, machineId?}` and returns
-`{results, index}`. Results contain `threadId`, a plain-text `snippet`, BM25 `score`,
-an empty `reason`, and nullable `messageSeq`. At most 60 distinct threads are
+`{results, index}`. Results contain `threadId`, a plain-text `snippet`, a relevance
+`score` combining BM25 and match bonuses, a `reason` when matching a spelling
+variant or only some query words (otherwise empty), and nullable `messageSeq`.
+At most 60 distinct threads are
 returned. Queries are limited to 400 characters and 10,000 supplied thread IDs.
 Words are searched literally without exposing Tantivy's query language.
+Two or more typed characters also match the beginnings of indexed words, so
+`butter`, `butterf`, and `butterfl` find `butterfly` in titles, messages and URLs.
+Exact words receive an additional score bonus. Multiple-word searches first
+look for messages containing every query word. If none do, search broadens to
+partial matches and labels them "Matched some search words".
+If there are no exact or prefix hits in the selected scope, words of five or
+more characters allow one insertion, deletion, substitution or adjacent letter
+swap. Those results say "Similar spelling match". Excerpts use the matched
+completion or corrected word, even when it occurs late in a message.
+This query behavior works with existing indexes and needs no backfill.
 
 `thread.search` retains its `{threadIds}` response for older callers. It uses
 the index when ready and the previous content scan during backfill or failure.
-Indexed matching is token-based, rather than an arbitrary substring scan.
+Indexed matching is token-based with word-prefix completion, rather than an
+arbitrary substring scan. For example, `utterfl` does not match `butterfly`.
 
 ## Agent tools
 
@@ -87,4 +100,6 @@ their selected excerpts enter the calling agent's context.
 
 `cargo test --lib search_index_tests` covers backfill, live appends, restart
 catch-up, document deduplication, rename/delete/restore, project scope, Unicode,
-tool-text inclusion, bounded agent context, incomplete JSONL records and corrupt-cache recovery.
+tool-text inclusion, bounded agent context, incomplete JSONL records, corrupt-cache
+recovery, prefix completion, exact/multiple-word ranking, scoped typo fallback
+and matching excerpts far into messages.
