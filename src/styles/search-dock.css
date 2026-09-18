@@ -1,0 +1,148 @@
+/* AI search results docked to the right of the chat (SearchDock.tsx).
+   The work pane becomes a flex row while the dock is up; the split keeps the
+   leftover width. Desktop only: on a phone the modal is the whole story. */
+
+.work-pane.with-search-dock {
+  display: flex;
+  flex-direction: row;
+}
+.work-pane.with-search-dock > .main-split {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.search-dock {
+  flex: 0 0 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  animation: searchDockIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes searchDockIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.search-dock-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.search-dock-glyph { flex: none; color: var(--faint); }
+.search-dock-title {
+  flex: 1;
+  min-width: 0;
+  margin-left: 4px;
+}
+.search-dock-query {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-dock-meta {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-dock-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: var(--dim);
+  background: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.search-dock-btn:hover:not(:disabled) { background: var(--panel-3); color: var(--text); }
+.search-dock-btn:disabled { opacity: 0.35; cursor: default; }
+.search-dock-close { margin-left: 2px; }
+
+.search-dock-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+.search-dock-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.search-dock-row {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.search-dock-row + .search-dock-row { margin-top: 2px; }
+.search-dock-row:hover { background: var(--panel-3); }
+.search-dock-row.active {
+  background: var(--brass-dim);
+  border-color: color-mix(in srgb, var(--brass) 45%, transparent);
+}
+.search-dock-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-dock-mark { flex: none; }
+.search-dock-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-dock-row.active .search-dock-row-title { color: var(--brass-hi); }
+.search-dock-row-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--faint);
+}
+.search-dock-row-project {
+  margin: 2px 0 0 24px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.search-dock-row-reason {
+  margin: 5px 0 0 24px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--dim);
+}
+.search-dock-row-snippet {
+  margin: 4px 0 0 24px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--faint);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 1023px) {
+  .search-dock { display: none; }
+  .work-pane.with-search-dock { display: block; }
+}
