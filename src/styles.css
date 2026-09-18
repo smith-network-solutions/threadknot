@@ -676,23 +676,6 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   overflow: hidden;
 }
 
-.search-panel-run {
-  flex: none;
-  padding: 6px 11px;
-  border-radius: 9px;
-  border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
-  background: var(--brass-dim);
-  color: var(--brass-hi);
-  font-size: 12.5px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
-}
-.search-panel-run:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--brass) 24%, transparent);
-  border-color: var(--brass);
-}
-.search-panel-run:disabled { opacity: 0.45; cursor: default; }
 .search-model { margin-left: 0; }
 .search-model-menu { min-width: 176px; }
 .search-model-group { display: flex; flex-direction: column; gap: 2px; }
@@ -732,32 +715,67 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 8px 10px 14px;
-  border-bottom: 1px solid var(--line);
+  padding: 14px 8px 4px 14px;
 }
 .search-panel-glyph { flex: none; color: var(--faint); }
-.search-panel-head input {
+.search-panel-heading {
   flex: 1;
   min-width: 0;
-  background: none;
-  border: 0;
-  outline: none;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--text);
 }
-.search-panel-head input::placeholder { color: var(--faint); }
 .search-panel-close { flex: none; }
-.search-panel-chips {
+
+/* The query box: the chat composer's card, sized for a sidebar. Chips, mic
+   and the run button sit in its bottom row the way the composer's own
+   controls do. Menus hang out of the card; nothing here clips. */
+.search-panel-card {
   flex: none;
+  margin: 6px 10px 0;
+  padding: 12px 14px 10px;
+  border-radius: 22px;
+  z-index: 8; /* menus above the status row and list */
+}
+.search-panel-card textarea {
+  font-size: 14.5px;
+  padding: 2px 4px 8px;
+  min-height: 24px;
+  max-height: 160px;
+}
+.search-panel-card-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 10px 0 14px;
+  padding-top: 2px;
 }
-.search-panel-chips .search-scope-toggle { padding: 5px 8px; font-size: 12px; }
-.search-panel-chips .search-scope-menu { left: 0; right: auto; }
-.search-panel-run { margin-left: auto; padding: 5px 9px; font-size: 12px; }
+.search-panel-card-row.actions { padding-top: 8px; }
+.search-panel-card-row .search-scope { margin-left: 0; }
+.search-panel-card-row .search-scope-toggle { padding: 5px 8px; font-size: 12px; }
+.search-panel-card-row .search-scope-menu { left: 0; right: auto; }
+.search-panel-card-spacer { flex: 1; min-width: 4px; }
+.search-panel-mic { height: 30px; min-width: 30px; padding: 0 8px; }
+.search-panel-run {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
+  background: var(--brass-dim);
+  color: var(--brass-hi);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s, color 0.12s;
+}
+.search-panel-run:hover:not(:disabled) {
+  background: var(--brass);
+  border-color: var(--brass);
+  color: #14100a;
+}
+.search-panel-run:disabled { opacity: 0.45; cursor: default; }
+
 .search-panel-status {
   flex: none;
   display: flex;

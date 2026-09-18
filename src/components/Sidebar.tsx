@@ -104,6 +104,7 @@ import {
   FolderPlusIcon,
   GearIcon,
   LoaderIcon,
+  MicIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   PanelLeftIcon,
@@ -3108,13 +3109,13 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
       ? { error: ai.message }
       : ai.status === "done" && showAi
         ? aiRows.length === 0
-          ? "Nothing matched inside the conversations."
+          ? "Nothing matched inside the threads."
           : `${aiRows.length} match${aiRows.length === 1 ? "" : "es"} · ${
               ai.rankedByModel ? `ranked by ${modelLabel}` : "keyword hits only"
             }`
         : submitted
-          ? "Press Enter to search inside the conversations"
-          : "Describe what you remember, then press Enter";
+          ? "Press Enter or Search Threads to read inside them"
+          : "Describe the thread you remember, or dictate it";
 
   return {
     scoped,
@@ -3276,6 +3277,9 @@ function SearchResultRow({
  *  that thread on the right (highlighted here) while the list stays for the
  *  next one; the X or Escape brings the normal sidebar back with that thread
  *  still open. */
+const MAX_SEARCH_DICTATION_SECONDS = 120;
+type SearchMicState = "idle" | "starting" | "recording" | "transcribing";
+
 function ThreadSearchPanel({
   session,
   setSession,
@@ -3285,20 +3289,118 @@ function ThreadSearchPanel({
   setSession: SetSession;
   onClose: () => void;
 }) {
-  const { actions } = useStore();
+  const { state, actions } = useStore();
   const [menu, setMenu] = useState<"scope" | "model" | null>(null);
   const search = useSearchSession(session, setSession);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Dictation, the same server path the chat composer uses: record on the
+  // server, transcribe on stop, drop the words at the end of the query.
+  const dictation = state.hello?.dictation;
+  const [mic, setMic] = useState<SearchMicState>("idle");
+  const [micSeconds, setMicSeconds] = useState(0);
+  const [micError, setMicError] = useState<string | null>(null);
+  const recordingRef = useRef<string | null>(null);
+  const micBusy = mic === "starting" || mic === "transcribing";
+
+  const setQuery = (query: string) => setSession((s) => ({ ...s, query }));
+
+  function insertDictated(spoken: string) {
+    setSession((s) => {
+      const lead = s.query && !/\s$/.test(s.query) ? " " : "";
+      return { ...s, query: `${s.query}${lead}${spoken}` };
+    });
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    });
+  }
+  async function startDictating() {
+    setMicError(null);
+    setMic("starting");
+    try {
+      recordingRef.current = await actions.startDictation();
+      setMic("recording");
+    } catch (e) {
+      recordingRef.current = null;
+      setMic("idle");
+      setMicError(e instanceof Error ? e.message : String(e));
+    }
+  }
+  async function stopDictating() {
+    const id = recordingRef.current;
+    if (!id) return;
+    recordingRef.current = null;
+    setMic("transcribing");
+    try {
+      const spoken = await actions.stopDictation(id);
+      if (spoken) insertDictated(spoken);
+      else setMicError("Didn't catch that — nothing was said.");
+    } catch (e) {
+      setMicError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMic("idle");
+    }
+  }
+  function cancelDictating() {
+    const id = recordingRef.current;
+    recordingRef.current = null;
+    setMic("idle");
+    if (id) void actions.cancelDictation(id).catch(() => undefined);
+  }
+  // Recording clock; the server caps the clip too.
+  useEffect(() => {
+    if (mic !== "recording") return;
+    const startedAt = Date.now();
+    setMicSeconds(0);
+    const timer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      setMicSeconds(elapsed);
+      if (elapsed >= MAX_SEARCH_DICTATION_SECONDS) void stopDictating();
+    }, 250);
+    return () => clearInterval(timer);
+  }, [mic]);
+  // Closing the panel must release the mic.
+  useEffect(
+    () => () => {
+      const id = recordingRef.current;
+      recordingRef.current = null;
+      if (id) void actions.cancelDictation(id).catch(() => undefined);
+    },
+    [],
+  );
 
   useEffect(() => {
-    inputRef.current?.focus();
+    taRef.current?.focus();
+  }, []);
+
+  // Escape: throw a recording away first; otherwise close the search.
+  const micRef = useRef(mic);
+  micRef.current = mic;
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (micRef.current === "recording") {
+        e.preventDefault();
+        cancelDictating();
+        return;
+      }
+      onClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // The box grows with the text like the chat composer, up to a cap.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(160, ta.scrollHeight)}px`;
+  }, [session.query]);
 
   // Keep the open thread's row in view.
   useEffect(() => {
@@ -3313,6 +3415,7 @@ function ThreadSearchPanel({
     ? search.aiRows
     : search.titleRows.map((thread) => ({ thread }));
   const activeIndex = rows.findIndex((r) => r.thread.id === search.activeThreadId);
+  const canRun = !!submitted && search.scoped.length > 0 && !search.loading;
 
   function open(id: string) {
     setMenu(null);
@@ -3325,26 +3428,10 @@ function ThreadSearchPanel({
   }
 
   return (
-    <div className="search-panel" role="search" aria-label="Search results">
+    <div className="search-panel" role="search" aria-label="Search threads">
       <div className="search-panel-head">
         <SearchIcon size={16} className="search-panel-glyph" />
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Search conversations…"
-          value={session.query}
-          onChange={(e) => {
-            const query = e.target.value;
-            setSession((s) => ({ ...s, query }));
-          }}
-          onFocus={() => setMenu(null)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              void search.runAi();
-            }
-          }}
-        />
+        <span className="search-panel-heading">Search threads</span>
         <button
           type="button"
           className="icon-btn search-panel-close"
@@ -3355,22 +3442,77 @@ function ThreadSearchPanel({
           <XIcon size={16} />
         </button>
       </div>
-      <div className="search-panel-chips">
-        <SearchChips
-          session={session}
-          setSession={setSession}
-          menu={menu}
-          setMenu={setMenu}
-          modelLabel={search.modelLabel}
+      <div className="composer-card search-panel-card" onMouseDown={() => setMenu(null)}>
+        {mic === "transcribing" && (
+          <div className="dictation-busy" role="status">
+            <span className="dictation-spinner" aria-hidden="true" />
+            <span>Transcribing…</span>
+          </div>
+        )}
+        <textarea
+          ref={taRef}
+          rows={1}
+          value={session.query}
+          placeholder="Describe the thread you remember…"
+          autoCorrect="on"
+          autoCapitalize="sentences"
+          spellCheck={true}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setMenu(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              if (canRun) void search.runAi();
+            }
+          }}
         />
-        <button
-          type="button"
-          className="search-panel-run"
-          disabled={!submitted || search.scoped.length === 0 || search.loading}
-          onClick={() => void search.runAi()}
-        >
-          Search inside
-        </button>
+        <div className="search-panel-card-row" onMouseDown={(e) => e.stopPropagation()}>
+          <SearchChips
+            session={session}
+            setSession={setSession}
+            menu={menu}
+            setMenu={setMenu}
+            modelLabel={search.modelLabel}
+          />
+        </div>
+        <div className="search-panel-card-row actions" onMouseDown={(e) => e.stopPropagation()}>
+          <span className="search-panel-card-spacer" />
+          {dictation?.available && (
+            <button
+              type="button"
+              className={`mic-btn search-panel-mic${mic === "recording" ? " recording" : micBusy ? " working" : ""}`}
+              disabled={micBusy}
+              aria-pressed={mic === "recording"}
+              aria-label="Dictate"
+              title={
+                mic === "recording"
+                  ? "Stop and transcribe (Esc discards)"
+                  : mic === "transcribing"
+                    ? "Turning your words into text…"
+                    : mic === "starting"
+                      ? "Opening the microphone…"
+                      : "Dictate: click to record, click again to transcribe"
+              }
+              onClick={() => (mic === "recording" ? void stopDictating() : void startDictating())}
+            >
+              <MicIcon size={16} />
+              {mic === "recording" && (
+                <span className="mic-time">
+                  {Math.floor(micSeconds / 60)}:{String(micSeconds % 60).padStart(2, "0")}
+                </span>
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            className="search-panel-run"
+            disabled={!canRun}
+            title="Read inside the threads in scope (Enter)"
+            onClick={() => void search.runAi()}
+          >
+            Search Threads
+          </button>
+        </div>
       </div>
       <div className="search-panel-status">
         <span className="search-panel-status-text">
@@ -3381,6 +3523,10 @@ function ThreadSearchPanel({
               </span>
               Reading {search.loadingCount} with {search.modelLabel}…
             </>
+          ) : micError ? (
+            <span className="error" title={micError}>
+              {micError}
+            </span>
           ) : typeof search.statusText === "object" && search.statusText ? (
             <span className="error" title={search.statusText.error}>
               Search failed: {search.statusText.error}
@@ -3417,10 +3563,10 @@ function ThreadSearchPanel({
         {rows.length === 0 ? (
           <div className="search-panel-empty">
             {search.showAi
-              ? "No conversations matched. Try other words, or widen the scope."
+              ? "No threads matched. Try other words, or widen the scope."
               : submitted
-                ? "No titles match. Press Enter to search inside the conversations."
-                : "No conversations yet."}
+                ? "No titles match. Press Enter to search inside the threads."
+                : "No threads yet."}
           </div>
         ) : (
           rows.map(({ thread, result }) => (
