@@ -77,6 +77,7 @@ import {
 import { Sidebar } from "./components/Sidebar";
 import { ThemeSync } from "./components/ThemeStudio";
 import { MainSplit } from "./components/MainSplit";
+import { SearchDock } from "./components/SearchDock";
 import { DirPicker } from "./components/DirPicker";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
@@ -1505,6 +1506,45 @@ function makeActions(
       return results.flat();
     },
 
+    async smartSearchThreads(query: string, threadIds: string[], model: string) {
+      // Same fan-out as searchThreads: each owning Threadknot ranks its own
+      // transcripts, and the lists are merged by score here.
+      const grouped = new Map<string | undefined, string[]>();
+      for (const threadId of threadIds) {
+        const machineId = routeFor(threadId);
+        const group = grouped.get(machineId) ?? [];
+        group.push(threadId);
+        grouped.set(machineId, group);
+      }
+      const settled = await Promise.all(
+        [...grouped].map(async ([machineId, ids]) => {
+          try {
+            const result = await client.request("thread.smartSearch", {
+              query,
+              threadIds: ids,
+              model,
+              ...(machineId ? { machineId } : {}),
+            });
+            return { ok: true as const, ...result };
+          } catch (e) {
+            return { ok: false as const, error: e };
+          }
+        }),
+      );
+      const answered = settled.filter((r) => r.ok);
+      if (answered.length === 0) {
+        const first = settled.find((r) => !r.ok);
+        throw first && "error" in first ? first.error : new Error("search failed");
+      }
+      const results = answered
+        .flatMap((r) => r.results)
+        .sort((a, b) => b.score - a.score);
+      return {
+        results,
+        rankedByModel: answered.some((r) => r.rankedByModel),
+      };
+    },
+
     listDir(path?: string, machineId?: string) {
       return client.request("fs.listDir", {
         ...(path ? { path } : {}),
@@ -2667,8 +2707,9 @@ export default function App() {
             onClick={() => dispatch({ type: "sidebar", open: false })}
           />
         )}
-        <div className="work-pane">
+        <div className={`work-pane${state.searchDock ? " with-search-dock" : ""}`}>
           <MainSplit />
+          {state.searchDock && <SearchDock />}
         </div>
         {/* "Where should this link open?" chooser for clicked http(s) links. */}
         <LinkOpenModal />

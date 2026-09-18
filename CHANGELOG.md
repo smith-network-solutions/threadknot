@@ -16,6 +16,11 @@ histories. Releases moved to 0.2.x afterwards so no number is ever issued
 twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
 to the old line.
 
+## v0.2.167 · 2026-09-18
+
+- **Search inside your conversations, not just their titles.** Open Search from the sidebar, describe the chat you remember ("the one where we voided a duplicate invoice") and press Enter. A small model reads through the conversations in scope and lists the ones that match, each with a line on why and an excerpt from the chat. Typing still filters titles instantly as before; Enter is what asks the model. The model chip next to the field picks who reads: Opus 5 by default, Haiku 4.5 or Sonnet 5 if you want it cheaper. It runs on your Claude login like thread titles do.
+- **Results stay docked while you look.** Pick a result and it opens in the main pane with the list parked on the right, so you can step through the candidates (arrows or click) until you recognise the right one, then close the list with its X and stay on that chat.
+
 ## v0.2.160 · 2026-09-09
 
 - **The Git tab has a history.** Open a repo and switch from Changes to History for the commit log: a branch graph down the left, who made each commit and when, and the branches and tags sitting on each one, with the branch you have checked out marked. Click a commit to read its message and see every file it touched; click a file for the patch. Search by message text or paste a hash, or narrow the list to one branch (click any branch chip) or one author. On a wide panel the list and the commit sit side by side; on a phone they open one at a time.

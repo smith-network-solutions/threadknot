@@ -522,6 +522,26 @@ export function threadParticipant(
 /** A hover-card summary of a thread's persisted log (`thread.preview`).
  *  Derived by scanning the event log; an unknown or empty thread yields
  *  `turnCount: 0` with no text. */
+/** One `thread.smartSearch` hit. `snippet` is an excerpt the server cut
+ *  around a keyword hit (or the last user message); `reason` is the model's
+ *  one-line explanation, or a keyword note in the fallback. */
+export interface SmartSearchResult {
+  threadId: string;
+  snippet: string;
+  reason: string;
+  /** 0-100 confidence, best first. */
+  score: number;
+}
+
+/** Ranking models the server accepts for `thread.smartSearch`, cheapest
+ *  first. Mirrors `agents/search.rs` MODELS; the default is Opus. */
+export const SMART_SEARCH_MODELS: { id: string; label: string }[] = [
+  { id: "claude-haiku-4-5", label: "Haiku 4.5" },
+  { id: "claude-sonnet-5", label: "Sonnet 5" },
+  { id: "claude-opus-5", label: "Opus 5" },
+];
+export const SMART_SEARCH_DEFAULT_MODEL = "claude-opus-5";
+
 export interface ThreadPreview {
   threadId: string;
   /** Last assistant reply in the log, trimmed to about 300 chars. */
@@ -1962,6 +1982,19 @@ export interface RequestMap {
   "thread.search": {
     payload: { query: string; threadIds: string[]; machineId?: string };
     data: { threadIds: string[] };
+  };
+  /** AI-ranked content search: `query` is a description of the conversation
+   *  ("the one where we voided a duplicate invoice"), `model` one of the
+   *  ids the server allows (see `SMART_SEARCH_MODELS`). Routes by `machineId`
+   *  like `thread.search`; each owner ranks its own transcripts. */
+  "thread.smartSearch": {
+    payload: { query: string; threadIds: string[]; model?: string; machineId?: string };
+    data: {
+      results: SmartSearchResult[];
+      model: string;
+      rankedByModel: boolean;
+      candidates: number;
+    };
   };
   "thread.toolOutput": {
     payload: { threadId: string; callId: string; machineId?: string; includeDetail?: boolean };

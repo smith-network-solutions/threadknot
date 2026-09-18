@@ -2281,6 +2281,7 @@ const ROUTABLE: &[&str] = &[
     "thread.list",
     "thread.get",
     "thread.search",
+    "thread.smartSearch",
     "thread.toolOutput",
     "thread.preview",
     "thread.create",
@@ -4089,6 +4090,25 @@ pub async fn handle_request(
             .await
             .context("thread search task failed")?;
             Ok(json!({ "threadIds": thread_ids }))
+        }
+        "thread.smartSearch" => {
+            // AI-ranked content search: describe the conversation, get back
+            // the threads that match with a reason each. Digests are built
+            // here; the model call is an ephemeral `claude -p` like titles.
+            // Routes by machineId like thread.search so transcripts stay on
+            // their owning machine.
+            let query = field(&p, "query")?.trim().to_string();
+            anyhow::ensure!(!query.is_empty(), "search query is empty");
+            anyhow::ensure!(query.chars().count() <= 400, "search query is too long");
+            let thread_ids = string_list(&p, "threadIds");
+            anyhow::ensure!(thread_ids.len() <= 10_000, "too many threads to search");
+            let model = crate::agents::search::resolve_model(
+                p.get("model").and_then(Value::as_str),
+            )?;
+            let outcome =
+                crate::agents::search::run(Arc::clone(&hub.store), thread_ids, query, model)
+                    .await?;
+            Ok(serde_json::to_value(outcome)?)
         }
         "thread.toolOutput" => {
             let thread_id = field(&p, "threadId")?;

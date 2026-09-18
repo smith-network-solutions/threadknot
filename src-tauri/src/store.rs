@@ -14,6 +14,15 @@ pub const HERMES_HOME_PROJECT_ID: &str = "hermes-home";
 /// thread gets an isolated directory beneath the project's private root.
 pub const QUICK_HOME_PROJECT_PREFIX: &str = "quick-home:";
 
+/// One user-visible message from a persisted transcript, as fed to
+/// AI-ranked search digests (`Store::thread_transcripts`).
+#[derive(Debug, Clone)]
+pub struct ThreadMessage {
+    /// `true` for a user message, `false` for an assistant reply.
+    pub user: bool,
+    pub text: String,
+}
+
 pub fn quick_home_project_id(machine_id: &str) -> String {
     format!("{QUICK_HOME_PROJECT_PREFIX}{machine_id}")
 }
@@ -1447,6 +1456,53 @@ impl Store {
                     }
                 }
                 false
+            })
+            .collect()
+    }
+
+    /// The requested threads, intersected with this store's catalog, each
+    /// with the user-visible messages of its persisted transcript. This is
+    /// the raw material for AI-ranked search (`thread.smartSearch`): only
+    /// user and assistant messages, in order, never tool output or diffs, so
+    /// a digest of a long chat stays a few hundred characters. Same catalog
+    /// intersection as `search_thread_content`, for the same reason.
+    pub fn thread_transcripts(&self, thread_ids: &[String]) -> Vec<(Thread, Vec<ThreadMessage>)> {
+        use std::collections::HashSet;
+        use std::io::BufRead as _;
+
+        let requested: HashSet<&str> = thread_ids.iter().map(String::as_str).collect();
+        let allowed: Vec<Thread> = self
+            .data
+            .lock()
+            .unwrap()
+            .threads
+            .iter()
+            .filter(|thread| requested.contains(thread.id.as_str()))
+            .cloned()
+            .collect();
+
+        allowed
+            .into_iter()
+            .map(|thread| {
+                let mut messages = Vec::new();
+                if let Ok(file) = std::fs::File::open(self.events_path(&thread.id)) {
+                    for line in std::io::BufReader::new(file).lines() {
+                        let Ok(line) = line else { break };
+                        let Ok(persisted) = serde_json::from_str::<PersistedEvent>(&line) else {
+                            continue;
+                        };
+                        match persisted.event {
+                            AgentEvent::UserMessage { text, .. } => {
+                                messages.push(ThreadMessage { user: true, text })
+                            }
+                            AgentEvent::AssistantMessage { text } => {
+                                messages.push(ThreadMessage { user: false, text })
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                (thread, messages)
             })
             .collect()
     }

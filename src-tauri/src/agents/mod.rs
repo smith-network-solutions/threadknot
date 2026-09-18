@@ -7,6 +7,7 @@ pub mod hermes;
 pub mod kimi;
 pub mod organize;
 pub mod repair;
+pub mod search;
 mod title;
 pub mod transcript;
 
