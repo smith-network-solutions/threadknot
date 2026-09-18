@@ -16,7 +16,7 @@ histories. Releases moved to 0.2.x afterwards so no number is ever issued
 twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
 to the old line.
 
-## v0.2.167 · 2026-09-18
+## v0.2.183 · 2026-09-18
 
 - **Search inside your conversations, not just their titles.** Click Search and the search takes the sidebar's place, wider than the chat list and draggable to any width. The box works like the chat composer: type or dictate with the mic button, and it grows with your words. Typing searches titles and conversation content, with matching excerpts. Describe the thread you remember ("the one where we voided a duplicate invoice") and click AI Search: a small model reads through the conversations in scope and lists the ones that match, each with a line on why and an excerpt. The model chip picks who reads: Opus 5 by default, Haiku 4.5 or Sonnet 5 if you want it cheaper, or a Codex model (Luna, Sol, Astra). It runs on your own CLI logins like thread titles do. Search starts across all projects; the scope chip narrows it to the open one.
 - **Conversation search stays up to date.** Existing conversations are indexed automatically in the background, and new messages become searchable as they are saved. Search runs locally inside Threadknot. Agents can search past conversations and read the messages around a match.
