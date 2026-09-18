@@ -659,6 +659,12 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   text-overflow: ellipsis;
 }
 .search-result.active .search-result-title { color: var(--brass-hi); }
+.search-result-highlight {
+  color: inherit;
+  background: color-mix(in srgb, var(--brass) 22%, transparent);
+  border-radius: 3px;
+  padding: 0;
+}
 .search-result-project {
   flex: none;
   max-width: 130px;

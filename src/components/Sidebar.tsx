@@ -62,6 +62,7 @@ import {
   type ProjectActivity,
 } from "../state/store";
 import { SettingsScreen } from "./SettingsPopover";
+import { SearchHighlight, searchHighlightWords } from "./SearchHighlight";
 import { PeopleRow, PersonAvatar } from "./PeopleRow";
 import { CrestBadge } from "./legacy/Crest";
 import { UsageMeter } from "./UsageMeter";
@@ -3302,12 +3303,14 @@ function SearchChips({
 function SearchResultRow({
   thread,
   result,
+  highlightWords,
   project,
   active,
   onClick,
 }: {
   thread: Thread;
   result?: SmartSearchResult;
+  highlightWords: readonly string[];
   project?: string;
   active: boolean;
   onClick: () => void;
@@ -3320,12 +3323,18 @@ function SearchResultRow({
     >
       <div className="search-result-line">
         <AgentMark agent={thread.agent} size={18} className="search-result-mark" />
-        <span className="search-result-title">{thread.title || "Untitled thread"}</span>
+        <span className="search-result-title">
+          <SearchHighlight text={thread.title || "Untitled thread"} words={highlightWords}
+            fuzzy={result?.reason === "Similar spelling match"} substring={!result} />
+        </span>
         {project && <span className="search-result-project">{project}</span>}
         <span className="search-result-time">{timeAgo(thread.updatedAt)}</span>
       </div>
       {result?.reason && <div className="search-result-reason">{result.reason}</div>}
-      {result?.snippet && <div className="search-result-snippet">{result.snippet}</div>}
+      {result?.snippet && <div className="search-result-snippet">
+        <SearchHighlight text={result.snippet} words={highlightWords}
+          fuzzy={result.reason === "Similar spelling match"} />
+      </div>}
     </button>
   );
 }
@@ -3351,6 +3360,7 @@ function ThreadSearchPanel({
   const { state, actions } = useStore();
   const [menu, setMenu] = useState<"scope" | "model" | null>(null);
   const search = useSearchSession(session, setSession);
+  const highlightWords = useMemo(() => searchHighlightWords(session.query), [session.query]);
   const listRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -3661,6 +3671,7 @@ function ThreadSearchPanel({
               <SearchResultRow
                 thread={thread}
                 result={result}
+                highlightWords={highlightWords}
                 project={session.scope === "all" ? search.projectName(thread.projectId) : undefined}
                 active={thread.id === search.activeThreadId}
                 onClick={() => open(thread.id)}
