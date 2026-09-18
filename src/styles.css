@@ -745,10 +745,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 /* The query box: the chat composer's card, sized for a sidebar. Chips, mic
    and the run button sit in its bottom row the way the composer's own
    controls do. Menus hang out of the card; nothing here clips. */
-.search-panel-card {
+.composer-card.search-panel-card {
   flex: none;
   margin: 6px 10px 0;
-  padding: 12px 14px 10px;
+  padding: 12px 10px 10px;
   border-radius: 22px;
   z-index: 8; /* menus above the status row and list */
 }
@@ -761,27 +761,29 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .search-panel-card-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
   padding-top: 2px;
 }
-.search-panel-card-row.actions { padding-top: 8px; }
 .search-panel-card-row .search-scope { margin-left: 0; }
-.search-panel-card-row .search-scope-toggle { padding: 5px 8px; font-size: 12px; }
+.search-panel-card-row .search-scope-toggle { padding: 5px 3px; font-size: 11px; height: 30px; gap: 3px; }
+.search-panel-card-row .search-scope-toggle span { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-panel-card-row .search-scope-menu { left: 0; right: auto; }
-.search-panel-card-spacer { flex: 1; min-width: 4px; }
-.search-panel-mic { height: 30px; min-width: 30px; padding: 0 8px; }
+.search-panel-card-spacer { flex: 1; }
+.search-panel-card .search-panel-mic { height: 30px; min-width: 30px; padding: 0 6px; }
 .search-panel-run {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
   flex: none;
-  padding: 6px 12px;
+  padding: 6px;
+  height: 30px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
   background: var(--brass-dim);
   color: var(--brass-hi);
-  font-size: 12.5px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -793,6 +795,8 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   color: #14100a;
 }
 .search-panel-run:disabled { opacity: 0.45; cursor: default; }
+.search-panel-run.global { background: transparent; color: var(--text); border-color: var(--line-2); }
+.search-panel-run.global:hover:not(:disabled) { background: var(--line); }
 .search-panel-run.searching:disabled { opacity: 1; cursor: progress; }
 .search-panel-spinner {
   display: inline-block;

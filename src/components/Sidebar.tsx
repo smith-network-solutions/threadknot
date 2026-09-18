@@ -3071,6 +3071,7 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
   const submitted = session.query.trim();
   const scopeKey = scoped.map((t) => t.id).sort().join(",");
   const liveKey = `${scopeKey}\n${submitted}`;
+  const [globalRun, setGlobalRun] = useState(0);
   const [live, setLive] = useState<{
     key: string;
     response?: import("../lib/protocol").IndexedSearchResponse;
@@ -3099,7 +3100,7 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
     }
     timer = setTimeout(refresh, 180);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [liveKey, submitted, scopeKey]);
+  }, [liveKey, submitted, scopeKey, globalRun]);
   const currentLive = live.key === liveKey ? live : undefined;
   const indexedRows = (currentLive?.response?.results ?? [])
     .map((result) => ({ result, thread: scoped.find((t) => t.id === result.threadId) }))
@@ -3112,6 +3113,7 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
   const ai = session.ai;
   const showAi = ai.status !== "idle" && ai.query === submitted && ai.scopeKey === aiScopeKey;
   const loading = ai.status === "loading" && showAi;
+  const globalLoading = !!submitted && submitted.length <= 400 && !showAi && !currentLive;
   const modelLabel =
     SMART_SEARCH_MODELS.find((m) => m.id === session.model)?.label ?? session.model;
 
@@ -3144,6 +3146,13 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
     }
   }
 
+  function runGlobal() {
+    // Switching back also invalidates any outstanding AI response.
+    setSession((s) => ({ ...s, ai: { status: "idle" } }));
+    setLive({ key: "" });
+    setGlobalRun((run) => run + 1);
+  }
+
   const statusText = loading
     ? null
     : ai.status === "error" && showAi
@@ -3161,8 +3170,8 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
               ? "Searching conversations…"
               : !currentLive.response.index.ready
                 ? `Indexing conversations · ${currentLive.response.index.indexedThreads} of ${currentLive.response.index.totalThreads}`
-                : `${normalRows.length} matches · Enter to refine with ${modelLabel}`
-          : "Describe the thread you remember, or dictate it";
+                : `${normalRows.length} keyword matches · Global Search`
+          : "Search by words, or describe a thread for AI Search";
 
   return {
     scoped,
@@ -3171,11 +3180,13 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
     aiRows,
     showAi: showAi && ai.status === "done",
     loading,
+    globalLoading,
     loadingCount: loading && ai.status === "loading" ? ai.count : 0,
     modelLabel,
     statusText,
     projectName,
     runAi,
+    runGlobal,
     activeThreadId: state.activeThreadId,
   };
 }
@@ -3320,8 +3331,8 @@ function SearchResultRow({
 }
 
 /** Conversation search, laid over the sidebar's own box the moment Search
- *  is pressed. Typing searches the local index; Enter hands the same words
- *  to a model as a description of the conversation. Every row click opens
+ *  is pressed. Global Search looks up words in the local index; AI Search
+ *  hands the text to a model as a description of the conversation. Every row click opens
  *  that thread on the right (highlighted here) while the list stays for the
  *  next one; the X or Escape brings the normal sidebar back with that thread
  *  still open. */
@@ -3463,7 +3474,8 @@ function ThreadSearchPanel({
     ? search.aiRows
     : search.normalRows;
   const activeIndex = rows.findIndex((r) => r.thread.id === search.activeThreadId);
-  const canRun = !!submitted && search.scoped.length > 0 && !search.loading;
+  const canRun = !!submitted && submitted.length <= 400 && search.scoped.length > 0;
+  const searching = search.loading || search.globalLoading;
 
   function open(id: string) {
     setMenu(null);
@@ -3501,7 +3513,7 @@ function ThreadSearchPanel({
           ref={taRef}
           rows={1}
           value={session.query}
-          placeholder="Describe the thread you remember…"
+          placeholder="Search words or describe what to find…"
           autoCorrect="on"
           autoCapitalize="sentences"
           spellCheck={true}
@@ -3510,7 +3522,13 @@ function ThreadSearchPanel({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              if (canRun) void search.runAi();
+              if (canRun) {
+                if (e.ctrlKey || e.metaKey) {
+                  if (!search.loading) void search.runAi();
+                } else {
+                  search.runGlobal();
+                }
+              }
             }
           }}
         />
@@ -3522,8 +3540,6 @@ function ThreadSearchPanel({
             setMenu={setMenu}
             modelLabel={search.modelLabel}
           />
-        </div>
-        <div className="search-panel-card-row actions" onMouseDown={(e) => e.stopPropagation()}>
           <span className="search-panel-card-spacer" />
           {dictation?.available && (
             <button
@@ -3553,18 +3569,29 @@ function ThreadSearchPanel({
           )}
           <button
             type="button"
+            className={`search-panel-run global${search.globalLoading ? " searching" : ""}`}
+            disabled={!canRun || search.globalLoading}
+            aria-busy={search.globalLoading}
+            title="Search titles and conversation text by words (Enter)"
+            onClick={search.runGlobal}
+          >
+            {search.globalLoading && <span className="search-panel-spinner" aria-hidden="true" />}
+            Global Search
+          </button>
+          <button
+            type="button"
             className={`search-panel-run${search.loading ? " searching" : ""}`}
-            disabled={!canRun}
+            disabled={!canRun || search.loading}
             aria-busy={search.loading}
-            title="Read inside the threads in scope (Enter)"
+            title="Use your prompt to find matching conversations with the selected model (Ctrl/Cmd+Enter)"
             onClick={() => void search.runAi()}
           >
             {search.loading && <span className="search-panel-spinner" aria-hidden="true" />}
-            {search.loading ? "Searching…" : "Search Threads"}
+            AI Search
           </button>
         </div>
       </div>
-      {search.loading && (
+      {searching && (
         <div className="search-panel-progress" role="progressbar" aria-label="Searching threads">
           <span />
         </div>
@@ -3575,6 +3602,11 @@ function ThreadSearchPanel({
             <>
               <span className="search-panel-spinner" aria-hidden="true" />
               Searching {search.loadingCount} threads with {search.modelLabel}…
+            </>
+          ) : search.globalLoading ? (
+            <>
+              <span className="search-panel-spinner" aria-hidden="true" />
+              Searching conversation text…
             </>
           ) : micError ? (
             <span className="error" title={micError}>
@@ -3612,15 +3644,15 @@ function ThreadSearchPanel({
           <ArrowDownIcon size={14} />
         </button>
       </div>
-      <div className="search-panel-list" ref={listRef} aria-busy={search.loading} onMouseDown={() => setMenu(null)}>
+      <div className="search-panel-list" ref={listRef} aria-busy={searching} onMouseDown={() => setMenu(null)}>
         {rows.length === 0 ? (
           <div className="search-panel-empty">
-            {search.loading
+            {searching
               ? "Searching your conversations…"
               : search.showAi
               ? "No threads matched. Try other words, or widen the scope."
               : submitted
-                ? "No matches yet. Try other words, or press Enter for AI search."
+                ? "No keyword matches. Try other words, or use AI Search to describe what you need."
                 : "No threads yet."}
           </div>
         ) : (

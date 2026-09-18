@@ -45,7 +45,11 @@ the project chip restricts the submitted thread IDs. Requests fan out to each
 thread's owning machine. Offline or outdated peers produce a partial-results
 notice instead of silently appearing to have no matches.
 
-Enter or **Search Threads** runs the selected model. Tantivy supplies up to 40
+**Global Search** or Enter refreshes word matches from the local index, without
+calling a model. Switching to Global Search discards any pending AI result.
+
+**AI Search** or Ctrl/Cmd+Enter runs the selected model, using the entered text
+as a description of the conversations to find. Tantivy supplies up to 40
 matching threads and the server adds up to 20 recent threads for descriptions
 with little keyword overlap. Only those transcripts are read into model digests.
 During initial backfill or an index outage, AI search retains its previous scan
