@@ -665,6 +665,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
   border-radius: 3px;
   padding: 0;
 }
+:root:not([data-family="light"]) .search-result-highlight {
+  color: #211800;
+  background: #f3c76a;
+}
 .search-result-project {
   flex: none;
   max-width: 130px;
