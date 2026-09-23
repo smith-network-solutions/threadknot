@@ -343,6 +343,7 @@ pub fn builtin_models() -> Vec<ModelInfo> {
     let mut models = vec![
         m("claude-fable-5-1", "Claude Fable 5.1", true, None),
         m("claude-fable-5", "Claude Fable 5", true, None),
+        m("claude-opus-5-5", "Claude Opus 5.5", false, Some(1_000_000)),
         m("claude-opus-5", "Claude Opus 5", false, Some(1_000_000)),
         m("claude-sonnet-5", "Claude Sonnet 5", true, None),
     ];
@@ -384,7 +385,12 @@ fn context_window(api_model: &str, profile: Option<&ClaudexProfile>) -> u64 {
     if let Some(window) = profile.and_then(|p| p.context_window) {
         return window;
     }
-    if api_model.ends_with("[1m]") || matches!(api_model, "claude-opus-5" | "claude-opus-4-8") {
+    if api_model.ends_with("[1m]")
+        || matches!(
+            api_model,
+            "claude-opus-5-5" | "claude-opus-5" | "claude-opus-4-8"
+        )
+    {
         1_000_000
     } else {
         200_000
@@ -2567,6 +2573,37 @@ mod tests {
         assert_eq!(api_model_id(&settings, None), "claude-fable-5-1[1m]");
         assert_eq!(context_window("claude-fable-5-1[1m]", None), 1_000_000);
         assert_eq!(context_window("claude-fable-5-1", None), 200_000);
+    }
+
+    #[test]
+    fn opus_55_is_offered_alongside_opus_5_and_is_natively_1m() {
+        let models = builtin_models();
+        let opus = models
+            .iter()
+            .find(|model| model.id == "claude-opus-5-5")
+            .expect("Opus 5.5 model");
+        assert_eq!(opus.name, "Claude Opus 5.5");
+        // Same shape as Opus 5: 1M is the native window, so there is no `[1m]`
+        // suffix to opt into and no wide-context toggle to show.
+        assert_eq!(opus.fixed_context_window, Some(1_000_000));
+        assert_eq!(opus.supports_wide_context, None);
+        assert!(!WIDE_CONTEXT_MODELS.contains(&"claude-opus-5-5"));
+
+        // Adding it displaces nothing: Opus 5 stays selectable and default.
+        assert!(models.iter().any(|model| model.id == "claude-opus-5"));
+        assert_eq!(DEFAULT_MODEL, "claude-opus-5");
+
+        let mut settings = settings(Access::Full);
+        settings.model = "claude-opus-5-5".into();
+        settings.wide_context = true;
+        assert_eq!(api_model_id(&settings, None), "claude-opus-5-5");
+        assert_eq!(context_window("claude-opus-5-5", None), 1_000_000);
+
+        // A point release is its own model, not a dated snapshot of Opus 5 —
+        // otherwise 5.5's context reading lands on an Opus 5 thread.
+        assert!(!same_model("claude-opus-5-5", "claude-opus-5"));
+        assert!(!same_model("claude-opus-5", "claude-opus-5-5"));
+        assert!(same_model("claude-opus-5-5", "claude-opus-5-5"));
     }
 
     #[test]

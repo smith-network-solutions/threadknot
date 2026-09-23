@@ -50,3 +50,10 @@ export function subscribeSidebarView(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
+
+/** Notification navigation follows the opened chat instead of a pinned list. */
+export const REVEAL_THREAD_WORKSPACE_EVENT = "threadknot:reveal-thread-workspace";
+export function revealThreadWorkspace(): void {
+  setSidebarView("fleet");
+  window.dispatchEvent(new Event(REVEAL_THREAD_WORKSPACE_EVENT));
+}

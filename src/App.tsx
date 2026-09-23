@@ -1,3 +1,4 @@
+import { revealThreadWorkspace } from "./lib/sidebarView";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { discoverServer, pickDirectoryNative } from "./lib/discovery";
 import {
@@ -2068,7 +2069,10 @@ function maybeNotify(
   if (!native) {
     void showSystemNotification(title, body, {
       isTauri: state.isTauri,
-      onClick: () => void actions.selectThread(frame.threadId),
+      onClick: () => {
+        revealThreadWorkspace();
+        void actions.selectThread(frame.threadId);
+      },
     });
   }
   const id = noticeSeq++;
@@ -2460,6 +2464,7 @@ export default function App() {
     // navigation (queued until this handler exists, so cold starts work).
     initNativeBridge();
     setNativeNavigationHandler((nav) => {
+      revealThreadWorkspace();
       void actionsRef.current.selectThread(nav.threadId);
     });
     // A suspended mobile WebView may wake with a dead transport that never
@@ -2689,6 +2694,7 @@ export default function App() {
                 className="toast"
                 onClick={() => {
                   dispatch({ type: "noticeDismiss", id: n.id });
+                  revealThreadWorkspace();
                   void actions.selectThread(n.threadId);
                 }}
               >

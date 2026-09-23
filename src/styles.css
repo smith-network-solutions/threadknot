@@ -2185,117 +2185,60 @@ body.reordering { cursor: grabbing; user-select: none; }
   50% { opacity: 0.5; transform: scale(1.18); }
 }
 
-/* Rail: no room for a separate light, so the AVATAR carries the state —
-   a running light for working, the badge for attention.
-
-   A workspace with an agent in it is a ship under way, so it shows a running
-   light: one teal point with a short wake, tracing the hull once every few
-   seconds. What travels is the LIGHT, not the ring — the angle of a conic
-   gradient animates while the box holds still. Rotating the box instead (the
-   obvious `transform: rotate()` spinner) swings a rounded RECTANGLE's corners
-   out past the avatar, where `.project-rail`'s overflow crops them; that read
-   as a stray arc drifting toward the next avatar. Because the light rides the
-   border radius rather than a transform, it hugs the avatar's squircle for
-   free. */
-@property --rail-sweep {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
-}
+/* Northern Lights: one soft emerald halo behind the 34px workspace face.
+   Size from the face, not the button: the mobile rail has a narrower hit area. */
+.rail-item { isolation: isolate; }
 .rail-ring {
   position: absolute;
-  /* The item's own 44px box, so the light rides 3px off the 38px avatar and
-     stays inside the rail — nothing to crop. */
-  inset: 0;
-  border-radius: 17px; /* the avatar's 14px, grown by the 3px standoff */
-  padding: 1.5px; /* the light's thickness */
-  --rail-sweep: 0deg; /* also a plain value, so the gradient still resolves
-                         where @property is unsupported (static arc, no motion) */
-  /* Two layers on one rim: a dim standing rim so the state is legible in a
-     still frame, and the light itself riding over it. */
-  background:
-    conic-gradient(
-      from var(--rail-sweep),
-      rgba(67, 201, 165, 0) 0deg,
-      rgba(67, 201, 165, 0) 248deg,
-      rgba(67, 201, 165, 0.16) 274deg,
-      rgba(67, 201, 165, 0.5) 322deg,
-      rgba(67, 201, 165, 1) 354deg,
-      rgba(67, 201, 165, 0) 360deg
-    ),
-    linear-gradient(rgba(67, 201, 165, 0.2) 0 0);
-  /* Punch out the middle so the gradient survives only as the rim above.
-     A radial mask cannot do this — it would not follow the squircle. */
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  filter: drop-shadow(0 0 5px rgba(67, 201, 165, 0.5));
+  width: 38px;
+  height: 38px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   pointer-events: none;
-  /* Resting state: the light is off, but the element stays in the tree (see
-     the note in Sidebar.tsx). `will-change` holds its compositing layer open
-     so switching the light on repaints the tile instead of the window. */
   opacity: 0;
-  will-change: opacity;
-  transition: opacity 0.18s ease;
+  z-index: 0;
+  transition: opacity 180ms ease;
 }
-.rail-ring.underway {
+.rail-ring.underway { opacity: 1; }
+.rail-aurora {
+  position: absolute;
+  inset: 0;
+  border-radius: 11px;
+  background: conic-gradient(#c8ffe0, #42ffc0, #126951, #8affd5, #c8ffe0);
+  filter: blur(2px);
+  box-shadow: 0 0 19px #48ffb94d;
+}
+.underway .rail-aurora { animation: rail-northern-lights 6s ease-in-out infinite; }
+.rail-item.rail-running {
   opacity: 1;
-  animation: rail-underway 2.4s linear infinite;
-}
-@keyframes rail-underway {
-  to { --rail-sweep: 360deg; }
-}
-.rail-dot.lit { animation: project-throb 1.1s ease-in-out infinite; }
-
-/* Motion off: keep the states apart by shape instead. The running light stops
-   travelling and settles into a full teal rim — still the only teal on the
-   rail; the attention badge stops throbbing but is the only filled amber
-   circle. */
-@media (prefers-reduced-motion: reduce) {
-  .project-pulse.pulse-working::after { opacity: 0.5; }
-  /* Matches `.rail-ring.underway`'s specificity so the animation it turns on
-     is the one this turns back off. */
-  .rail-ring.underway {
-    background: rgba(67, 201, 165, 0.55);
-    animation: none;
-  }
-}
-
-/* The rail's activity cue is deliberately quieter than the feed's motion:
-   one thin teal frame is enough to say "this project is working". Keep the
-   indicator geometric and local to the tile instead of adding another glow. */
-.rail-ring {
-  inset: 3px;
-  border: 1px solid rgba(67, 201, 165, 0.72);
-  border-radius: 12px;
-  padding: 0;
-  background: none;
-  -webkit-mask: none;
-  mask: none;
   filter: none;
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
 }
-.rail-ring.underway {
-  animation: rail-activity 1.8s ease-in-out infinite;
+/* Keep the image opaque over the halo; eliminate the old selected-avatar
+   rings and the button frame that produced the extra box on touch browsers. */
+.rail-item > .machine-avatar,
+.rail-item > .rail-quick-face,
+.rail-item > .rail-stash-face { position: relative; z-index: 1; }
+.rail-item.rail-running > .machine-avatar,
+.rail-item.rail-running > .rail-quick-face,
+.rail-item.rail-running > .rail-stash-face {
+  border-color: transparent;
+  box-shadow: none;
+  background-color: var(--panel-2);
 }
-@keyframes rail-activity {
-  0%, 100% { opacity: 0.9; }
-  50% { opacity: 0.42; }
-}
-.rail-item.on .machine-avatar.has-color {
-  box-shadow:
-    0 0 0 1px var(--brass),
-    0 0 0 3px color-mix(in srgb, var(--brass) 12%, transparent);
+.rail-item.on { border-color: transparent; }
+.rail-dot { z-index: 2; }
+.rail-dot.lit { animation: project-throb 1.1s ease-in-out infinite; }
+@keyframes rail-northern-lights {
+  0%, 100% { transform: scale(.98) rotate(-3deg); filter: blur(2px); }
+  50% { transform: scale(1.07) rotate(3deg); filter: blur(4px); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rail-ring.underway {
-    background: none;
-    animation: none;
-  }
+  .underway .rail-aurora, .rail-dot.lit { animation: none; }
+  .project-pulse.pulse-working::after { opacity: .5; }
 }
 
 .settled-shelf {

@@ -33,6 +33,7 @@ import { hermesActive, hermesDormant, hermesGatewayId } from "../lib/hermesBindi
 import {
   getSidebarView,
   setSidebarView,
+  REVEAL_THREAD_WORKSPACE_EVENT,
   subscribeSidebarView,
   type SidebarView,
 } from "../lib/sidebarView";
@@ -516,6 +517,12 @@ function QuickChatsSection({
  *  ring, attention a larger amber dot with a halo. Under
  *  prefers-reduced-motion the animations stop and the two stay
  *  distinguishable by colour and size. */
+function RailActivity({ count }: { count: number }) {
+  return <span className={`rail-ring${count > 0 ? " underway" : ""}`} aria-hidden="true">
+    <span className="rail-aurora" />
+  </span>;
+}
+
 function ProjectPulse({
   activity,
   count,
@@ -640,6 +647,8 @@ function ProjectRail({
     null,
   );
   const quickActivity = projectActivity(state, quickThreads);
+  const quickRunning = quickThreads.filter(t => t.status === "running").length;
+  const stashRunning = hidden.reduce((n, w) => n + (threadsByWorkspace.get(w.id) ?? []).filter(t => t.status === "running").length, 0);
   return (
     <nav className="project-rail" aria-label="Destinations" ref={railRef}>
       <div className="rail-home">
@@ -647,7 +656,7 @@ function ProjectRail({
           type="button"
           className={`rail-item rail-quick${quickOn ? " on" : ""}${
             quickActivity ? ` rail-${quickActivity}` : ""
-          }`}
+          }${quickRunning ? " rail-running" : ""}`}
           aria-current={quickOn ? "true" : undefined}
           aria-label={`Quick threads${
             quickActivity === "attention"
@@ -655,18 +664,15 @@ function ProjectRail({
               : quickActivity === "working"
                 ? " — working"
                 : ""
-          }`}
-          title="Quick threads"
+          }${quickRunning && quickActivity === "attention" ? ` — ${quickRunning} running` : ""}`}
+          title={`Quick threads${quickRunning ? ` — ${quickRunning} running` : ""}`}
           onClick={onPickQuick}
         >
           <span className="rail-pip" aria-hidden />
           <span className="rail-quick-face" aria-hidden>
             <PlusIcon size={21} />
           </span>
-          <span
-            className={`rail-ring${quickActivity === "working" ? " underway" : ""}`}
-            aria-hidden
-          />
+          <RailActivity count={quickRunning} />
           <span
             className={`rail-dot${quickActivity === "attention" ? " lit" : ""}`}
             aria-hidden
@@ -677,6 +683,7 @@ function ProjectRail({
       {workspaces.map((w) => {
         const threads = threadsByWorkspace.get(w.id) ?? [];
         const activity = projectActivity(state, threads);
+        const running = threads.filter(t => t.status === "running").length;
         const on = w.id === shownId;
         return (
           <button
@@ -686,7 +693,7 @@ function ProjectRail({
             data-drop={drag.dropId === w.id ? drag.dropSide : undefined}
             className={`rail-item${on ? " on" : ""}${
               activity ? ` rail-${activity}` : ""
-            }${drag.draggingId === w.id ? " dragging" : ""}${
+            }${running ? " rail-running" : ""}${drag.draggingId === w.id ? " dragging" : ""}${
               w.hidden ? " hidden-ws" : ""
             }`}
             {...drag.handleProps(w.id)}
@@ -697,8 +704,8 @@ function ProjectRail({
                 : activity === "working"
                   ? " — working"
                   : ""
-            }`}
-            title={w.hidden ? `${w.name} (hidden)` : w.name}
+            }${running && activity === "attention" ? ` — ${running} running` : ""}`}
+            title={`${w.name}${w.hidden ? " (hidden)" : ""}${running ? ` — ${running} thread${running === 1 ? "" : "s"} running` : ""}`}
             aria-haspopup="menu"
             onClick={() => onPick(w.id)}
             onContextMenu={(e) => {
@@ -720,21 +727,8 @@ function ProjectRail({
               size={34}
               preview={false}
             />
-            {/* The ring rides OUTSIDE the avatar so an image-backed project
-                shows it as clearly as an initials one.
-
-                Both indicators stay MOUNTED and switch on a class rather than
-                entering and leaving the tree. The ring is masked, filtered and
-                animates a registered custom property, so WebKitGTK gives it its
-                own render surface — and inserting or removing one of those
-                rebuilds the layer tree, which the webview pays for with a
-                full-window repaint. That landed on exactly the frame a turn
-                started or finished somewhere in the fleet: the screen-wide
-                flicker when another chat completed. */}
-            <span
-              className={`rail-ring${activity === "working" ? " underway" : ""}`}
-              aria-hidden
-            />
+            {/* Keep the effect mounted to avoid WebKit layer churn on status changes. */}
+            <RailActivity count={running} />
             <span
               className={`rail-dot${activity === "attention" ? " lit" : ""}`}
               aria-hidden
@@ -755,14 +749,14 @@ function ProjectRail({
           type="button"
           className={`rail-item rail-stash${
             stashActivity ? ` rail-${stashActivity}` : ""
-          }`}
+          }${stashRunning ? " rail-running" : ""}`}
           aria-haspopup="menu"
           aria-label={`${hidden.length} hidden project${
             hidden.length === 1 ? "" : "s"
-          }${stashActivity === "attention" ? " — one needs you" : ""}`}
+          }${stashActivity === "attention" ? " — one needs you" : ""}${stashRunning ? ` — ${stashRunning} running` : ""}`}
           title={`${hidden.length} hidden project${
             hidden.length === 1 ? "" : "s"
-          }`}
+          }${stashRunning ? ` — ${stashRunning} running` : ""}`}
           // Anchored to the tile, not the pointer, like the picker bar's menu:
           // the list flies out beside the button it came from, and a keyboard
           // activation (clientX/clientY of 0) doesn't drop it in the corner.
@@ -776,6 +770,7 @@ function ProjectRail({
             <EyeIcon size={15} off />
             <span className="rail-stash-count">{hidden.length}</span>
           </span>
+          <RailActivity count={stashRunning} />
           <span
             className={`rail-dot${stashActivity === "attention" ? " lit" : ""}`}
             aria-hidden
@@ -3671,6 +3666,17 @@ export const Sidebar = memo(function Sidebar({
   // chosen yet", which resolves to the project holding the open chat — so
   // opening Threadknot lands you where you were working, not on an arbitrary one.
   const [pickedId, setPickedId] = useState<string | null>(null);
+  useEffect(() => {
+    const reveal = () => {
+      // Null follows activeWorkspaceId, including metadata arriving after a
+      // remote thread.get. It also works when reopening the same active chat.
+      setPickedId(null);
+      setQuery("");
+    };
+    window.addEventListener(REVEAL_THREAD_WORKSPACE_EVENT, reveal);
+    return () => window.removeEventListener(REVEAL_THREAD_WORKSPACE_EVENT, reveal);
+  }, []);
+
   const [pickerMenu, setPickerMenu] = useState<MenuPoint | null>(null);
   const [folderDialog, setFolderDialog] = useState<{
     workspaceId: string;
