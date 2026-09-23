@@ -16,6 +16,17 @@ histories. Releases moved to 0.2.x afterwards so no number is ever issued
 twice again; entries at 0.1.108 and below, dated 2026-07-28 or earlier, belong
 to the old line.
 
+## v0.2.183 · 2026-09-18
+
+- **Search inside your conversations, not just their titles.** Click Search and the search takes the sidebar's place, wider than the chat list and draggable to any width. The box works like the chat composer: type or dictate with the mic button, and it grows with your words. Typing searches titles and conversation content, with matching excerpts. Describe the thread you remember ("the one where we voided a duplicate invoice") and click AI Search: a small model reads through the conversations in scope and lists the ones that match, each with a line on why and an excerpt. The model chip picks who reads: Opus 5 by default, Haiku 4.5 or Sonnet 5 if you want it cheaper, or a Codex model (Luna, Sol, Astra). It runs on your own CLI logins like thread titles do. Search starts across all projects; the scope chip narrows it to the open one.
+- **Conversation search stays up to date.** Existing conversations are indexed automatically in the background, and new messages become searchable as they are saved. Search runs locally inside Threadknot. Agents can search past conversations and read the messages around a match.
+- **Choose Global Search or AI Search.** Global Search matches words in titles and conversation text. AI Search uses your description as a prompt for the selected model. The scope, model, mic, and both search buttons sit on one row when the column has room. Enter runs Global Search; Ctrl/Cmd+Enter runs AI Search.
+- **Find threads before finishing the word.** Global Search now finds "butterfly" when you type "butter" or "butterf", including matches inside messages and links. Exact words and matches containing more of your search words get priority. If nothing matches, search tries a one-letter correction for longer words and labels those results as similar spelling matches.
+- **See what matched.** Search results highlight matching words in titles and excerpts, including word completions and spelling corrections. Dark mode uses a clear amber highlight with dark text. Highlights update as you type.
+- **See when thread search is running.** The active search button shows a spinner, with an animated progress bar underneath. The results area shows a searching message until the search finishes.
+- **Resize the search column.** Grab the visible grip on its right edge and drag left or right to narrow or widen it. The wider grab area makes the divider easier to catch, and your search width is remembered separately from the chat list.
+- **Click through the results without losing them.** Each result you click opens on the right while the list stays on the left with the open one highlighted; the arrows step through them. The X (or Escape) brings the chat list back at its usual width and leaves that conversation open.
+
 ## v0.2.160 · 2026-09-09
 
 - **The Git tab has a history.** Open a repo and switch from Changes to History for the commit log: a branch graph down the left, who made each commit and when, and the branches and tags sitting on each one, with the branch you have checked out marked. Click a commit to read its message and see every file it touched; click a file for the patch. Search by message text or paste a hash, or narrow the list to one branch (click any branch chip) or one author. On a wide panel the list and the commit sit side by side; on a phone they open one at a time.

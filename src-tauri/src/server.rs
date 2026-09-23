@@ -2281,6 +2281,8 @@ const ROUTABLE: &[&str] = &[
     "thread.list",
     "thread.get",
     "thread.search",
+    "thread.indexedSearch",
+    "thread.smartSearch",
     "thread.toolOutput",
     "thread.preview",
     "thread.create",
@@ -4084,11 +4086,47 @@ pub async fn handle_request(
             anyhow::ensure!(thread_ids.len() <= 10_000, "too many threads to search");
             let store = Arc::clone(&hub.store);
             let thread_ids = tokio::task::spawn_blocking(move || {
-                store.search_thread_content(&thread_ids, &query)
+                match store.indexed_search(&thread_ids, &query, 10_000, false) {
+                    Ok(outcome) if outcome.index.ready => outcome.results.into_iter().map(|hit| hit.thread_id).collect(),
+                    _ => store.search_thread_content(&thread_ids, &query),
+                }
             })
             .await
             .context("thread search task failed")?;
             Ok(json!({ "threadIds": thread_ids }))
+        }
+        "thread.indexedSearch" => {
+            let query = field(&p, "query")?.trim().to_owned();
+            anyhow::ensure!(query.chars().count() <= 400, "search query is too long");
+            let ids = string_list(&p, "threadIds");
+            anyhow::ensure!(ids.len() <= 10_000, "too many threads to search");
+            let store = Arc::clone(&hub.store);
+            let outcome = tokio::task::spawn_blocking(move || store.indexed_search(&ids, &query, 60, true)).await??;
+            Ok(serde_json::to_value(outcome)?)
+        }
+        "thread.smartSearch" => {
+            // AI-ranked content search: describe the conversation, get back
+            // the threads that match with a reason each. Digests are built
+            // here; the model call is an ephemeral `claude -p` like titles.
+            // Routes by machineId like thread.search so transcripts stay on
+            // their owning machine.
+            let query = field(&p, "query")?.trim().to_string();
+            anyhow::ensure!(!query.is_empty(), "search query is empty");
+            anyhow::ensure!(query.chars().count() <= 400, "search query is too long");
+            let thread_ids = string_list(&p, "threadIds");
+            anyhow::ensure!(thread_ids.len() <= 10_000, "too many threads to search");
+            let (agent, model) = crate::agents::search::resolve_model(
+                p.get("model").and_then(Value::as_str),
+            )?;
+            let outcome = crate::agents::search::run(
+                Arc::clone(&hub.store),
+                thread_ids,
+                query,
+                agent,
+                model,
+            )
+            .await?;
+            Ok(serde_json::to_value(outcome)?)
         }
         "thread.toolOutput" => {
             let thread_id = field(&p, "threadId")?;

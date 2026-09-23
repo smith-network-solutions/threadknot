@@ -1506,6 +1506,71 @@ function makeActions(
       return results.flat();
     },
 
+    async indexedSearchThreads(query: string, threadIds: string[]) {
+      const grouped = new Map<string | undefined, string[]>();
+      for (const id of threadIds) {
+        const machine = routeFor(id);
+        const ids = grouped.get(machine) ?? [];
+        ids.push(id);
+        grouped.set(machine, ids);
+      }
+      const replies = await Promise.allSettled([...grouped].map(([machineId, ids]) =>
+        client.request("thread.indexedSearch", { query, threadIds: ids, ...(machineId ? { machineId } : {}) }),
+      ));
+      const answered = replies.flatMap((r) => r.status === "fulfilled" ? [r.value] : []);
+      if (replies.length && !answered.length) throw new Error("Conversation search is unavailable. Showing title matches.");
+      const errors = answered.flatMap((r) => r.index.error ? [r.index.error] : []);
+      if (answered.length < replies.length) errors.push("Some machines could not be searched");
+      return {
+        results: answered.flatMap((r) => r.results).sort((a, b) => b.score - a.score).slice(0, 60),
+        index: {
+          ready: answered.every((r) => r.index.ready),
+          indexedThreads: answered.reduce((n, r) => n + r.index.indexedThreads, 0),
+          totalThreads: answered.reduce((n, r) => n + r.index.totalThreads, 0),
+          error: errors.join("; ") || null,
+        },
+      };
+    },
+
+    async smartSearchThreads(query: string, threadIds: string[], model: string) {
+      // Same fan-out as searchThreads: each owning Threadknot ranks its own
+      // transcripts, and the lists are merged by score here.
+      const grouped = new Map<string | undefined, string[]>();
+      for (const threadId of threadIds) {
+        const machineId = routeFor(threadId);
+        const group = grouped.get(machineId) ?? [];
+        group.push(threadId);
+        grouped.set(machineId, group);
+      }
+      const settled = await Promise.all(
+        [...grouped].map(async ([machineId, ids]) => {
+          try {
+            const result = await client.request("thread.smartSearch", {
+              query,
+              threadIds: ids,
+              model,
+              ...(machineId ? { machineId } : {}),
+            });
+            return { ok: true as const, ...result };
+          } catch (e) {
+            return { ok: false as const, error: e };
+          }
+        }),
+      );
+      const answered = settled.filter((r) => r.ok);
+      if (answered.length === 0) {
+        const first = settled.find((r) => !r.ok);
+        throw first && "error" in first ? first.error : new Error("search failed");
+      }
+      const results = answered
+        .flatMap((r) => r.results)
+        .sort((a, b) => b.score - a.score);
+      return {
+        results,
+        rankedByModel: answered.some((r) => r.rankedByModel),
+      };
+    },
+
     listDir(path?: string, machineId?: string) {
       return client.request("fs.listDir", {
         ...(path ? { path } : {}),

@@ -25,6 +25,7 @@ pub mod ingress;
 pub mod library;
 pub mod limits;
 pub mod mcp;
+pub mod mcp_search;
 pub mod mcp_fleet;
 pub mod mesh;
 pub mod mobile;
@@ -47,6 +48,9 @@ pub mod server;
 pub mod servers;
 pub mod sessions;
 pub mod store;
+pub mod search_index;
+#[cfg(test)]
+mod search_index_tests;
 pub mod term;
 pub mod themes;
 pub mod update;
@@ -473,6 +477,7 @@ pub fn build_server_state() -> anyhow::Result<(server::ServerState, ServerInfo)>
     // Mesh identity + one-time migration (thread stamping, workspace
     // wrapping) before anything reads the store.
     store.migrate_mesh(&config.server_id)?;
+    store.start_search_index();
     let device = Arc::new(device::Device::load(store.dir(), &config.server_id)?);
     let hub = agents::Hub::new(store, config.port);
     let peer_registry = Arc::new(peers::PeerRegistry::open(hub.store.dir())?);

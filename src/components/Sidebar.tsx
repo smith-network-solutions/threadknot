@@ -22,11 +22,13 @@ import {
   type SidebarPrefs,
 } from "../lib/appearance";
 import { createPortal } from "react-dom";
-import type { Project, Thread, Workspace } from "../lib/protocol";
+import type { Project, SmartSearchResult, Thread, Workspace } from "../lib/protocol";
 import {
   HERMES_HOME_PROJECT_ID,
   isQuickHomeProjectId,
   OWNER_PERSON_ID,
+  SMART_SEARCH_DEFAULT_MODEL,
+  SMART_SEARCH_MODELS,
 } from "../lib/protocol";
 import { showHermesAgents } from "../lib/agentVisibility";
 import { hermesActive, hermesDormant, hermesGatewayId } from "../lib/hermesBinding";
@@ -37,6 +39,12 @@ import {
   subscribeSidebarView,
   type SidebarView,
 } from "../lib/sidebarView";
+import {
+  clampSearchWidth,
+  loadSearchWidth,
+  persistSearchWidth,
+  SEARCH_WIDTH_DEFAULT,
+} from "../lib/sidebarLayout";
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
@@ -55,6 +63,7 @@ import {
   type ProjectActivity,
 } from "../state/store";
 import { SettingsScreen } from "./SettingsPopover";
+import { SearchHighlight, searchHighlightWords } from "./SearchHighlight";
 import { PeopleRow, PersonAvatar } from "./PeopleRow";
 import { CrestBadge } from "./legacy/Crest";
 import { UsageMeter } from "./UsageMeter";
@@ -97,6 +106,9 @@ import {
   FolderPlusIcon,
   GearIcon,
   LoaderIcon,
+  MicIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
   PanelLeftIcon,
   GripIcon,
   MoreIcon,
@@ -2907,10 +2919,13 @@ function SidebarViewPopover({
  *  resets. Hidden at the mobile breakpoint (the sidebar is an overlay there). */
 function SidebarResizeHandle({
   width,
+  defaultWidth = SIDEBAR_WIDTH_DEFAULT,
   setWidthLive,
   onCommit,
 }: {
   width: number;
+  /** What a double-click resets to. */
+  defaultWidth?: number;
   setWidthLive: (w: number) => void;
   onCommit: (w: number) => void;
 }) {
@@ -2958,39 +2973,63 @@ function SidebarResizeHandle({
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
-      onDoubleClick={() => onCommit(SIDEBAR_WIDTH_DEFAULT)}
+      onDoubleClick={() => onCommit(defaultWidth)}
     />
   );
 }
 
-/** Full-screen conversation search, opened from the sidebar's Search button.
- *  A blurred backdrop over a clean field; results are threads (across the
- *  current project or all projects) each rendered with its agent mark. */
-function ThreadSearchModal({ onClose }: { onClose: () => void }) {
-  const { state, actions } = useStore();
-  const [query, setQuery] = useState("");
-  const [scope, setScope] = useState<"project" | "all">("project");
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+const LS_SEARCH_MODEL = "threadknot.search.model";
 
-  // Play the exit animation, then actually unmount. 160ms matches the CSS.
-  const close = () => {
-    setClosing(true);
-    window.setTimeout(onClose, 160);
-  };
+function loadSearchModel(): string {
+  const stored = localStorage.getItem(LS_SEARCH_MODEL);
+  return SMART_SEARCH_MODELS.some((m) => m.id === stored)
+    ? (stored as string)
+    : SMART_SEARCH_DEFAULT_MODEL;
+}
+
+/** The AI half of a search: one run per submitted query. `query` is the text
+ *  it ran on, so a later edit of the field falls back to title matches
+ *  instead of showing stale results under new words. `run` tells a slow
+ *  answer to an earlier query apart from the current one. */
+type AiSearch =
+  | { status: "idle" }
+  | { status: "loading"; query: string; count: number; run: number; scopeKey: string }
+  | {
+      status: "done";
+      query: string;
+      results: SmartSearchResult[];
+      rankedByModel: boolean;
+      scopeKey: string;
+    }
+  | { status: "error"; query: string; message: string; scopeKey: string };
+
+/** One search, from the first keystroke to the last click: the query, the
+ *  scope and model chips, and the AI run (if any). */
+export interface SearchSession {
+  query: string;
+  scope: "project" | "all";
+  model: string;
+  ai: AiSearch;
+}
+
+export function newSearchSession(): SearchSession {
+  // Everything by default; narrow to the open project when you know where
+  // the chat lives.
+  return { query: "", scope: "all", model: loadSearchModel(), ai: { status: "idle" } };
+}
+
+type SetSession = (update: (s: SearchSession) => SearchSession) => void;
+
+let searchRunCounter = 0;
+
+/** Everything both search surfaces derive from a session: the threads in
+ *  scope, the instant title matches, the AI rows, and the run trigger. */
+function useSearchSession(session: SearchSession, setSession: SetSession) {
+  const { state, actions } = useStore();
 
   useEffect(() => {
-    inputRef.current?.focus();
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setClosing(true);
-        window.setTimeout(onClose, 160);
-      }
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    localStorage.setItem(LS_SEARCH_MODEL, session.model);
+  }, [session.model]);
 
   // "Current project" is wherever the open chat lives, else the pending draft's
   // home, else the first project in the fleet.
@@ -3006,122 +3045,637 @@ function ThreadSearchModal({ onClose }: { onClose: () => void }) {
     return state.projects.find((p) => p.id === id)?.name ?? "Project";
   };
 
-  const q = query.trim().toLowerCase();
-  const results = useMemo(() => {
+  // Every thread the scope covers, newest first. Title matches filter this;
+  // the AI run is handed all of its ids.
+  const scoped = useMemo(() => {
     const all: Thread[] = [];
     for (const pid of Object.keys(state.threads)) {
-      if (scope === "project" && pid !== currentProjectId) continue;
+      if (session.scope === "project" && pid !== currentProjectId) continue;
       for (const t of state.threads[pid]) all.push(t);
     }
-    const matched = q
-      ? all.filter((t) => (t.title || "untitled thread").toLowerCase().includes(q))
-      : all;
-    return matched
-      .slice()
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-      .slice(0, 60);
-  }, [state.threads, scope, currentProjectId, q]);
+    return all.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  }, [state.threads, session.scope, currentProjectId]);
 
-  function openThread(id: string) {
-    void actions.selectThread(id);
-    close();
+  const q = session.query.trim().toLowerCase();
+  const titleRows = useMemo(() => {
+    const matched = q
+      ? scoped.filter((t) => (t.title || "untitled thread").toLowerCase().includes(q))
+      : scoped;
+    return matched.slice(0, 60);
+  }, [scoped, q]);
+
+  const submitted = session.query.trim();
+  const scopeKey = scoped.map((t) => t.id).sort().join(",");
+  const liveKey = `${scopeKey}\n${submitted}`;
+  const [globalRun, setGlobalRun] = useState(0);
+  const [live, setLive] = useState<{
+    key: string;
+    response?: import("../lib/protocol").IndexedSearchResponse;
+    error?: string;
+  }>({ key: "" });
+  const searchActions = useRef(actions);
+  searchActions.current = actions;
+  useEffect(() => {
+    if (!submitted) return;
+    if (submitted.length > 400) {
+      setLive({ key: liveKey, error: "Use a search of 400 characters or fewer." });
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try {
+        const response = await searchActions.current.indexedSearchThreads(submitted, scopeKey ? scopeKey.split(",") : []);
+        if (!cancelled) setLive({ key: liveKey, response });
+      } catch (error) {
+        if (!cancelled) setLive({ key: liveKey, error: error instanceof Error ? error.message : String(error) });
+      }
+      // Refresh while open so backfill and newly completed messages appear
+      // without changing the user's query or selection.
+      if (!cancelled) timer = setTimeout(refresh, 2000);
+    }
+    timer = setTimeout(refresh, 180);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [liveKey, submitted, scopeKey, globalRun]);
+  const currentLive = live.key === liveKey ? live : undefined;
+  const indexedRows = (currentLive?.response?.results ?? [])
+    .map((result) => ({ result, thread: scoped.find((t) => t.id === result.threadId) }))
+    .filter((row): row is { result: SmartSearchResult; thread: Thread } => row.thread != null);
+  const normalRows: { thread: Thread; result?: SmartSearchResult }[] = [
+    ...indexedRows,
+    ...titleRows.filter((t) => !indexedRows.some((row) => row.thread.id === t.id)).map((thread) => ({ thread })),
+  ].slice(0, 60);
+  const aiScopeKey = `${scopeKey}\n${session.model}`;
+  const ai = session.ai;
+  const showAi = ai.status !== "idle" && ai.query === submitted && ai.scopeKey === aiScopeKey;
+  const loading = ai.status === "loading" && showAi;
+  const globalLoading = !!submitted && submitted.length <= 400 && !showAi && !currentLive;
+  const modelLabel =
+    SMART_SEARCH_MODELS.find((m) => m.id === session.model)?.label ?? session.model;
+
+  // Results whose thread has vanished since the run drop out here.
+  const aiRows =
+    ai.status === "done"
+      ? ai.results
+          .map((r) => ({ result: r, thread: findThread(state, r.threadId) }))
+          .filter((row): row is { result: SmartSearchResult; thread: Thread } => row.thread != null && scoped.some((t) => t.id === row.thread!.id))
+      : [];
+
+  async function runAi() {
+    if (!submitted || scoped.length === 0) return;
+    const run = ++searchRunCounter;
+    const query = submitted;
+    setSession((s) => ({ ...s, ai: { status: "loading", query, count: scoped.length, run, scopeKey: aiScopeKey } }));
+    const stillMine = (s: SearchSession) => s.ai.status === "loading" && s.ai.run === run;
+    try {
+      const { results, rankedByModel } = await actions.smartSearchThreads(
+        query,
+        scoped.map((t) => t.id),
+        session.model,
+      );
+      setSession((s) =>
+        stillMine(s) ? { ...s, ai: { status: "done", query, results, rankedByModel, scopeKey: aiScopeKey } } : s,
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setSession((s) => (stillMine(s) ? { ...s, ai: { status: "error", query, message, scopeKey: aiScopeKey } } : s));
+    }
   }
 
-  const scopeLabel = scope === "project" ? "This project" : "All projects";
+  function runGlobal() {
+    // Switching back also invalidates any outstanding AI response.
+    setSession((s) => ({ ...s, ai: { status: "idle" } }));
+    setLive({ key: "" });
+    setGlobalRun((run) => run + 1);
+  }
 
-  return createPortal(
-    <div
-      className={`search-modal-backdrop${closing ? " closing" : ""}`}
-      onMouseDown={close}
-    >
-      <div
-        className="search-modal"
-        role="dialog"
-        aria-label="Search conversations"
-        onMouseDown={(e) => e.stopPropagation()}
+  const statusText = loading
+    ? null
+    : ai.status === "error" && showAi
+      ? { error: ai.message }
+      : ai.status === "done" && showAi
+        ? aiRows.length === 0
+          ? "Nothing matched inside the threads."
+          : `${aiRows.length} match${aiRows.length === 1 ? "" : "es"} · ${
+              ai.rankedByModel ? `ranked by ${modelLabel}` : "keyword hits only"
+            }`
+        : submitted
+          ? currentLive?.error || currentLive?.response?.index.error
+            ? { error: currentLive.error || currentLive.response?.index.error || "Search unavailable" }
+            : !currentLive?.response
+              ? "Searching conversations…"
+              : !currentLive.response.index.ready
+                ? `Indexing conversations · ${currentLive.response.index.indexedThreads} of ${currentLive.response.index.totalThreads}`
+                : `${normalRows.length} keyword matches · Global Search`
+          : "Search by words, or describe a thread for AI Search";
+
+  return {
+    scoped,
+    titleRows,
+    normalRows,
+    aiRows,
+    showAi: showAi && ai.status === "done",
+    loading,
+    globalLoading,
+    loadingCount: loading && ai.status === "loading" ? ai.count : 0,
+    modelLabel,
+    statusText,
+    projectName,
+    runAi,
+    runGlobal,
+    activeThreadId: state.activeThreadId,
+  };
+}
+
+/** A chip with a dropdown, for the scope and model pickers. */
+function SearchChip({
+  className,
+  label,
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  className?: string;
+  label: string;
+  title?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`search-scope${className ? ` ${className}` : ""}`}>
+      <button
+        type="button"
+        className="search-scope-toggle"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={title}
+        onClick={onToggle}
       >
-        <div className="search-modal-field">
-          <SearchIcon size={18} className="search-modal-glyph" />
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Search conversations…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setScopeOpen(false)}
+        <span>{label}</span>
+        <ChevronIcon size={12} open={open} className="row-chevron" />
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
+/** The scope and model chips, shared by the box and the sidebar panel. */
+function SearchChips({
+  session,
+  setSession,
+  menu,
+  setMenu,
+  modelLabel,
+}: {
+  session: SearchSession;
+  setSession: SetSession;
+  menu: "scope" | "model" | null;
+  setMenu: (m: "scope" | "model" | null) => void;
+  modelLabel: string;
+}) {
+  return (
+    <>
+      <SearchChip
+        label={session.scope === "project" ? "This project" : "All projects"}
+        open={menu === "scope"}
+        onToggle={() => setMenu(menu === "scope" ? null : "scope")}
+      >
+        <div className="search-scope-menu" role="menu">
+          {(["all", "project"] as const).map((scope) => (
+            <button
+              key={scope}
+              type="button"
+              className={session.scope === scope ? "on" : ""}
+              onClick={() => {
+                setSession((s) => ({ ...s, scope }));
+                setMenu(null);
+              }}
+            >
+              {scope === "project" ? "This project" : "All projects"}
+            </button>
+          ))}
+        </div>
+      </SearchChip>
+      <SearchChip
+        className="search-model"
+        label={modelLabel}
+        title="Model that reads the conversations"
+        open={menu === "model"}
+        onToggle={() => setMenu(menu === "model" ? null : "model")}
+      >
+        <div className="search-scope-menu search-model-menu" role="menu">
+          {(["claude", "codex"] as const).map((agent) => (
+            <div key={agent} className="search-model-group">
+              <div className="search-model-group-head">
+                <AgentMark agent={agent} size={14} />
+                <span>{agent === "claude" ? "Claude" : "Codex"}</span>
+              </div>
+              {SMART_SEARCH_MODELS.filter((m) => m.agent === agent).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={session.model === m.id ? "on" : ""}
+                  onClick={() => {
+                    setSession((s) => ({ ...s, model: m.id }));
+                    setMenu(null);
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </SearchChip>
+    </>
+  );
+}
+
+/** One result row, in either surface. AI rows carry a reason and an excerpt
+ *  under the title line; title rows are just the line. */
+function SearchResultRow({
+  thread,
+  result,
+  highlightWords,
+  project,
+  active,
+  onClick,
+}: {
+  thread: Thread;
+  result?: SmartSearchResult;
+  highlightWords: readonly string[];
+  project?: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`search-result${result ? " ai" : ""}${active ? " active" : ""}`}
+      onClick={onClick}
+    >
+      <div className="search-result-line">
+        <AgentMark agent={thread.agent} size={18} className="search-result-mark" />
+        <span className="search-result-title">
+          <SearchHighlight text={thread.title || "Untitled thread"} words={highlightWords}
+            fuzzy={result?.reason === "Similar spelling match"} substring={!result} />
+        </span>
+        {project && <span className="search-result-project">{project}</span>}
+        <span className="search-result-time">{timeAgo(thread.updatedAt)}</span>
+      </div>
+      {result?.reason && <div className="search-result-reason">{result.reason}</div>}
+      {result?.snippet && <div className="search-result-snippet">
+        <SearchHighlight text={result.snippet} words={highlightWords}
+          fuzzy={result.reason === "Similar spelling match"} />
+      </div>}
+    </button>
+  );
+}
+
+/** Conversation search, laid over the sidebar's own box the moment Search
+ *  is pressed. Global Search looks up words in the local index; AI Search
+ *  hands the text to a model as a description of the conversation. Every row click opens
+ *  that thread on the right (highlighted here) while the list stays for the
+ *  next one; the X or Escape brings the normal sidebar back with that thread
+ *  still open. */
+const MAX_SEARCH_DICTATION_SECONDS = 120;
+type SearchMicState = "idle" | "starting" | "recording" | "transcribing";
+
+function ThreadSearchPanel({
+  session,
+  setSession,
+  onClose,
+}: {
+  session: SearchSession;
+  setSession: SetSession;
+  onClose: () => void;
+}) {
+  const { state, actions } = useStore();
+  const [menu, setMenu] = useState<"scope" | "model" | null>(null);
+  const search = useSearchSession(session, setSession);
+  const highlightWords = useMemo(() => searchHighlightWords(session.query), [session.query]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Dictation, the same server path the chat composer uses: record on the
+  // server, transcribe on stop, drop the words at the end of the query.
+  const dictation = state.hello?.dictation;
+  const [mic, setMic] = useState<SearchMicState>("idle");
+  const [micSeconds, setMicSeconds] = useState(0);
+  const [micError, setMicError] = useState<string | null>(null);
+  const recordingRef = useRef<string | null>(null);
+  const micBusy = mic === "starting" || mic === "transcribing";
+
+  const setQuery = (query: string) => setSession((s) => ({ ...s, query }));
+
+  function insertDictated(spoken: string) {
+    setSession((s) => {
+      const lead = s.query && !/\s$/.test(s.query) ? " " : "";
+      return { ...s, query: `${s.query}${lead}${spoken}` };
+    });
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    });
+  }
+  async function startDictating() {
+    setMicError(null);
+    setMic("starting");
+    try {
+      recordingRef.current = await actions.startDictation();
+      setMic("recording");
+    } catch (e) {
+      recordingRef.current = null;
+      setMic("idle");
+      setMicError(e instanceof Error ? e.message : String(e));
+    }
+  }
+  async function stopDictating() {
+    const id = recordingRef.current;
+    if (!id) return;
+    recordingRef.current = null;
+    setMic("transcribing");
+    try {
+      const spoken = await actions.stopDictation(id);
+      if (spoken) insertDictated(spoken);
+      else setMicError("Didn't catch that — nothing was said.");
+    } catch (e) {
+      setMicError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMic("idle");
+    }
+  }
+  function cancelDictating() {
+    const id = recordingRef.current;
+    recordingRef.current = null;
+    setMic("idle");
+    if (id) void actions.cancelDictation(id).catch(() => undefined);
+  }
+  // Recording clock; the server caps the clip too.
+  useEffect(() => {
+    if (mic !== "recording") return;
+    const startedAt = Date.now();
+    setMicSeconds(0);
+    const timer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      setMicSeconds(elapsed);
+      if (elapsed >= MAX_SEARCH_DICTATION_SECONDS) void stopDictating();
+    }, 250);
+    return () => clearInterval(timer);
+  }, [mic]);
+  // Closing the panel must release the mic.
+  useEffect(
+    () => () => {
+      const id = recordingRef.current;
+      recordingRef.current = null;
+      if (id) void actions.cancelDictation(id).catch(() => undefined);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    taRef.current?.focus();
+  }, []);
+
+  // Escape: throw a recording away first; otherwise close the search.
+  const micRef = useRef(mic);
+  micRef.current = mic;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (micRef.current === "recording") {
+        e.preventDefault();
+        cancelDictating();
+        return;
+      }
+      onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // The box grows with the text like the chat composer, up to a cap.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(160, ta.scrollHeight)}px`;
+  }, [session.query]);
+
+  // Keep the open thread's row in view.
+  useEffect(() => {
+    if (!search.activeThreadId) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-thread-id="${CSS.escape(search.activeThreadId)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [search.activeThreadId]);
+
+  const submitted = session.query.trim();
+  const rows: { thread: Thread; result?: SmartSearchResult }[] = search.showAi
+    ? search.aiRows
+    : search.normalRows;
+  const activeIndex = rows.findIndex((r) => r.thread.id === search.activeThreadId);
+  const canRun = !!submitted && submitted.length <= 400 && search.scoped.length > 0;
+  const searching = search.loading || search.globalLoading;
+
+  function open(id: string) {
+    setMenu(null);
+    void actions.selectThread(id);
+  }
+  function step(delta: number) {
+    if (rows.length === 0) return;
+    const next = activeIndex < 0 ? 0 : (activeIndex + delta + rows.length) % rows.length;
+    open(rows[next].thread.id);
+  }
+
+  return (
+    <div className="search-panel" role="search" aria-label="Search threads">
+      <div className="search-panel-head">
+        <SearchIcon size={16} className="search-panel-glyph" />
+        <span className="search-panel-heading">Search threads</span>
+        <button
+          type="button"
+          className="icon-btn search-panel-close"
+          aria-label="Close search"
+          title="Close search (keeps the open chat)"
+          onClick={onClose}
+        >
+          <XIcon size={16} />
+        </button>
+      </div>
+      <div className="composer-card search-panel-card" onMouseDown={() => setMenu(null)}>
+        {mic === "transcribing" && (
+          <div className="dictation-busy" role="status">
+            <span className="dictation-spinner" aria-hidden="true" />
+            <span>Transcribing…</span>
+          </div>
+        )}
+        <textarea
+          ref={taRef}
+          rows={1}
+          value={session.query}
+          placeholder="Search words or describe what to find…"
+          autoCorrect="on"
+          autoCapitalize="sentences"
+          spellCheck={true}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setMenu(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              if (canRun) {
+                if (e.ctrlKey || e.metaKey) {
+                  if (!search.loading) void search.runAi();
+                } else {
+                  search.runGlobal();
+                }
+              }
+            }
+          }}
+        />
+        <div className="search-panel-card-row" onMouseDown={(e) => e.stopPropagation()}>
+          <SearchChips
+            session={session}
+            setSession={setSession}
+            menu={menu}
+            setMenu={setMenu}
+            modelLabel={search.modelLabel}
           />
-          <div className="search-scope">
+          <span className="search-panel-card-spacer" />
+          {dictation?.available && (
             <button
               type="button"
-              className="search-scope-toggle"
-              aria-haspopup="menu"
-              aria-expanded={scopeOpen}
-              onClick={() => setScopeOpen((v) => !v)}
+              className={`mic-btn search-panel-mic${mic === "recording" ? " recording" : micBusy ? " working" : ""}`}
+              disabled={micBusy}
+              aria-pressed={mic === "recording"}
+              aria-label="Dictate"
+              title={
+                mic === "recording"
+                  ? "Stop and transcribe (Esc discards)"
+                  : mic === "transcribing"
+                    ? "Turning your words into text…"
+                    : mic === "starting"
+                      ? "Opening the microphone…"
+                      : "Dictate: click to record, click again to transcribe"
+              }
+              onClick={() => (mic === "recording" ? void stopDictating() : void startDictating())}
             >
-              <span>{scopeLabel}</span>
-              <ChevronIcon size={12} open={scopeOpen} className="row-chevron" />
+              <MicIcon size={16} />
+              {mic === "recording" && (
+                <span className="mic-time">
+                  {Math.floor(micSeconds / 60)}:{String(micSeconds % 60).padStart(2, "0")}
+                </span>
+              )}
             </button>
-            {scopeOpen && (
-              <div className="search-scope-menu" role="menu">
-                <button
-                  type="button"
-                  className={scope === "project" ? "on" : ""}
-                  onClick={() => {
-                    setScope("project");
-                    setScopeOpen(false);
-                  }}
-                >
-                  This project
-                </button>
-                <button
-                  type="button"
-                  className={scope === "all" ? "on" : ""}
-                  onClick={() => {
-                    setScope("all");
-                    setScopeOpen(false);
-                  }}
-                >
-                  All projects
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        <div
-          className="search-modal-results"
-          onMouseDown={() => setScopeOpen(false)}
-        >
-          {results.length === 0 ? (
-            <div className="search-modal-empty">
-              {q ? "No conversations found." : "No conversations yet."}
-            </div>
-          ) : (
-            results.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className="search-result"
-                onClick={() => openThread(t.id)}
-              >
-                <AgentMark
-                  agent={t.agent}
-                  size={18}
-                  className="search-result-mark"
-                />
-                <span className="search-result-title">
-                  {t.title || "Untitled thread"}
-                </span>
-                <span className="search-result-project">
-                  {projectName(t.projectId)}
-                </span>
-                <span className="search-result-time">{timeAgo(t.updatedAt)}</span>
-              </button>
-            ))
           )}
+          <button
+            type="button"
+            className={`search-panel-run global${search.globalLoading ? " searching" : ""}`}
+            disabled={!canRun || search.globalLoading}
+            aria-busy={search.globalLoading}
+            title="Search titles and conversation text by words (Enter)"
+            onClick={search.runGlobal}
+          >
+            {search.globalLoading && <span className="search-panel-spinner" aria-hidden="true" />}
+            Global Search
+          </button>
+          <button
+            type="button"
+            className={`search-panel-run${search.loading ? " searching" : ""}`}
+            disabled={!canRun || search.loading}
+            aria-busy={search.loading}
+            title="Use your prompt to find matching conversations with the selected model (Ctrl/Cmd+Enter)"
+            onClick={() => void search.runAi()}
+          >
+            {search.loading && <span className="search-panel-spinner" aria-hidden="true" />}
+            AI Search
+          </button>
         </div>
       </div>
-    </div>,
-    document.body,
+      {searching && (
+        <div className="search-panel-progress" role="progressbar" aria-label="Searching threads">
+          <span />
+        </div>
+      )}
+      <div className="search-panel-status">
+        <span className="search-panel-status-text" role="status" aria-live="polite">
+          {search.loading ? (
+            <>
+              <span className="search-panel-spinner" aria-hidden="true" />
+              Searching {search.loadingCount} threads with {search.modelLabel}…
+            </>
+          ) : search.globalLoading ? (
+            <>
+              <span className="search-panel-spinner" aria-hidden="true" />
+              Searching conversation text…
+            </>
+          ) : micError ? (
+            <span className="error" title={micError}>
+              {micError}
+            </span>
+          ) : typeof search.statusText === "object" && search.statusText ? (
+            <span className="error" title={search.statusText.error}>
+              Search failed: {search.statusText.error}
+            </span>
+          ) : (
+            search.statusText
+          )}
+        </span>
+        <span className="search-panel-count">
+          {rows.length === 0 ? "" : `${activeIndex >= 0 ? activeIndex + 1 : "–"} of ${rows.length}`}
+        </span>
+        <button
+          type="button"
+          className="icon-btn search-panel-step"
+          aria-label="Previous result"
+          title="Previous result"
+          disabled={rows.length < 2}
+          onClick={() => step(-1)}
+        >
+          <ArrowUpIcon size={14} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn search-panel-step"
+          aria-label="Next result"
+          title="Next result"
+          disabled={rows.length < 2}
+          onClick={() => step(1)}
+        >
+          <ArrowDownIcon size={14} />
+        </button>
+      </div>
+      <div className="search-panel-list" ref={listRef} aria-busy={searching} onMouseDown={() => setMenu(null)}>
+        {rows.length === 0 ? (
+          <div className="search-panel-empty">
+            {searching
+              ? "Searching your conversations…"
+              : search.showAi
+              ? "No threads matched. Try other words, or widen the scope."
+              : submitted
+                ? "No keyword matches. Try other words, or use AI Search to describe what you need."
+                : "No threads yet."}
+          </div>
+        ) : (
+          rows.map(({ thread, result }) => (
+            <div key={thread.id} data-thread-id={thread.id}>
+              <SearchResultRow
+                thread={thread}
+                result={result}
+                highlightWords={highlightWords}
+                project={session.scope === "all" ? search.projectName(thread.projectId) : undefined}
+                active={thread.id === search.activeThreadId}
+                onClick={() => open(thread.id)}
+              />
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -3141,7 +3695,31 @@ export const Sidebar = memo(function Sidebar({
   // here and threaded down; the width also drives the --sidebar-w CSS var.
   const { layout, update: updateLayout, setWidthLive } = useSidebarLayout();
   const [filterOpen, setFilterOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  // The conversation search laid over this sidebar: null when closed, else
+  // its session (see SearchSession).
+  const [search, setSearch] = useState<SearchSession | null>(null);
+  const setSearchSession = useCallback(
+    (update: (s: SearchSession) => SearchSession) =>
+      setSearch((cur) => (cur ? update(cur) : cur)),
+    [],
+  );
+  const closeSearch = useCallback(() => setSearch(null), []);
+  // Search mode borrows the sidebar's drag handle but keeps its own width
+  // (see sidebarLayout.ts), mirrored onto --sidebar-w only while the panel
+  // is up; the everyday width comes back the moment it closes.
+  const searchPanelUp = search != null;
+  const [searchWidth, setSearchWidth] = useState<number>(loadSearchWidth);
+  const setSearchWidthLive = useCallback(
+    (w: number) => setSearchWidth((prev) => (prev === clampSearchWidth(w) ? prev : clampSearchWidth(w))),
+    [],
+  );
+  useEffect(() => {
+    if (!searchPanelUp) return;
+    document.documentElement.style.setProperty("--sidebar-w", `${searchWidth}px`);
+    return () => {
+      document.documentElement.style.setProperty("--sidebar-w", `${layout.width}px`);
+    };
+  }, [searchPanelUp, searchWidth, layout.width]);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
   const storedView = useSyncExternalStore(subscribeSidebarView, getSidebarView);
   // A stored "agents" only takes effect once the Hermes surfaces are eligible;
@@ -3881,14 +4459,28 @@ export const Sidebar = memo(function Sidebar({
         layout.view === "cards" ? " cards-view" : ""
       }${layout.view === "compact" ? " compact-view" : ""}${
         layout.bigNames ? " big-names" : ""
-      }${layout.showTimes ? "" : " no-times"}${layout.showAgents ? "" : " hide-agents"}`}
+      }${layout.showTimes ? "" : " no-times"}${layout.showAgents ? "" : " hide-agents"}${
+        searchPanelUp ? " search-mode" : ""
+      }`}
       data-zoom-pane="sidebar"
     >
-      <SidebarResizeHandle
-        width={layout.width}
-        setWidthLive={setWidthLive}
-        onCommit={(w) => updateLayout({ width: w })}
-      />
+      {searchPanelUp ? (
+        <SidebarResizeHandle
+          width={searchWidth}
+          defaultWidth={SEARCH_WIDTH_DEFAULT}
+          setWidthLive={setSearchWidthLive}
+          onCommit={(w) => {
+            setSearchWidthLive(w);
+            persistSearchWidth(w);
+          }}
+        />
+      ) : (
+        <SidebarResizeHandle
+          width={layout.width}
+          setWidthLive={setWidthLive}
+          onCommit={(w) => updateLayout({ width: w })}
+        />
+      )}
       {/* Absolutely positioned rather than a flex sibling: the sidebar keeps
           its existing single-column structure (and every modal/portal already
           hanging off it) and just gains a gutter. */}
@@ -3967,7 +4559,7 @@ export const Sidebar = memo(function Sidebar({
         <button
           type="button"
           className="sidebar-action search-open"
-          onClick={() => setSearchOpen(true)}
+          onClick={() => setSearch(newSearchSession())}
         >
           <SearchIcon size={18} />
           <span>Search</span>
@@ -4034,7 +4626,9 @@ export const Sidebar = memo(function Sidebar({
           onClose={() => setFilterOpen(false)}
         />
       )}
-      {searchOpen && <ThreadSearchModal onClose={() => setSearchOpen(false)} />}
+      {search && (
+        <ThreadSearchPanel session={search} setSession={setSearchSession} onClose={closeSearch} />
+      )}
 
       <div className="sidebar-scroll" ref={scrollRef} onScroll={onSidebarScroll}>
         {quickView && (

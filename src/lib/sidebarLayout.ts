@@ -149,6 +149,38 @@ export function clampWidth(w: number): number {
   return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(w)));
 }
 
+/* ---- Search mode ----
+ * While the conversation search is laid over the sidebar, it gets its OWN
+ * width: results carry a reason and an excerpt, which want more room than a
+ * chat list, and reading them should not leave the everyday sidebar wide.
+ * Same drag handle, separate number, separate persistence. The ceiling is
+ * relative to the window so a wide search still leaves the chat readable. */
+export const SEARCH_WIDTH_DEFAULT = 400;
+export const SEARCH_WIDTH_MIN = 240;
+const LS_SEARCH_WIDTH = "threadknot.search.width";
+
+export function searchWidthMax(): number {
+  return Math.max(SEARCH_WIDTH_MIN, Math.round(window.innerWidth * 0.6));
+}
+
+export function clampSearchWidth(w: number): number {
+  if (!Number.isFinite(w)) return SEARCH_WIDTH_DEFAULT;
+  return Math.min(searchWidthMax(), Math.max(SEARCH_WIDTH_MIN, Math.round(w)));
+}
+
+export function loadSearchWidth(): number {
+  const v = parseFloat(localStorage.getItem(LS_SEARCH_WIDTH) ?? "");
+  return Number.isFinite(v) ? clampSearchWidth(v) : SEARCH_WIDTH_DEFAULT;
+}
+
+export function persistSearchWidth(w: number): void {
+  try {
+    localStorage.setItem(LS_SEARCH_WIDTH, String(clampSearchWidth(w)));
+  } catch {
+    // Persistence is a convenience only.
+  }
+}
+
 export interface UseSidebarLayout {
   layout: SidebarLayout;
   /** Merge a patch into the layout and persist the whole object. */

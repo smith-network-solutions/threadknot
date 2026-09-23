@@ -21,6 +21,7 @@ import type {
   ProviderUsage,
   ReviewerPersona,
   Schedule,
+  SmartSearchResult,
   TermInfo,
   Thread,
   ThreadSettings,
@@ -1588,6 +1589,16 @@ export interface ThreadknotActions {
   /** Search persisted transcript content across the supplied threads. Requests
    *  are grouped and routed to each thread's owning machine. */
   searchThreads: (query: string, threadIds: string[]) => Promise<string[]>;
+  indexedSearchThreads: (query: string, threadIds: string[]) => Promise<import("../lib/protocol").IndexedSearchResponse>;
+  /** AI-ranked content search (`thread.smartSearch`): describe the chat you
+   *  remember and get back matching threads with a reason each, merged across
+   *  every owning machine. `rankedByModel` is false when every machine fell
+   *  back to keyword hits. Rejects only when no machine could search at all. */
+  smartSearchThreads: (
+    query: string,
+    threadIds: string[],
+    model: string,
+  ) => Promise<{ results: SmartSearchResult[]; rankedByModel: boolean }>;
   listDir: (
     path?: string,
     machineId?: string,
