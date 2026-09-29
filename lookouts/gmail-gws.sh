@@ -29,7 +29,26 @@
 # Exit codes: 0 ok (including "nothing new"); 2 auth failure; 1 other
 # API/network failure (no watermark is printed, so the next run retries).
 #
+# Sweep mode (--sweep): no watermark. Lists inbox threads (in:inbox
+# newer_than:GMAIL_SWEEP_DAYS d) whose newest message is from someone else and
+# older than GMAIL_SWEEP_MIN_AGE_HOURS, grouped "Waiting on you" (allow-listed
+# domain, or a person with the account in To/Cc) and "Probably a task"
+# (notifications about a failed build, form submission, security alert,
+# signature request, ...). Bulk, auto-replies and calendar mail are skipped.
+# Prints ONE signal (kind "sweep", id gmail:sweep:<account>:<YYYY-MM-DDTHH>
+# local) when the list is non-empty; nothing when empty or outside the window.
+#   SWEEP_HOURS                local window, default 08:00-18:00 (end exclusive)
+#   SWEEP_DAYS                 default mon-fri (also "mon,wed", "all")
+#   SWEEP_ALWAYS=1             ignore the window (--sweep --now sets it)
+#   GMAIL_SWEEP_MIN_AGE_HOURS  default 20
+#   GMAIL_SWEEP_DAYS           default 14
+#   GMAIL_WORKSPACE_HINT       optional; copied to hints.workspace
+#   Snooze: BOSUN_STATE_DIR/snooze.json, {"<threadId>": "<ISO date|datetime>"};
+#   hidden until then, expired entries pruned on read. Sweep uses
+#   users.threads.list and users.threads.get (metadata) only.
+#
 # By hand:   BOSUN_WATERMARK= ./lookouts/gmail-gws.sh | jq
+# Sweep:     BOSUN_STATE_DIR=$(mktemp -d) ./lookouts/gmail-gws.sh --sweep --now | jq -r .body
 # Self-test: ./lookouts/gmail-gws.sh --selftest   (offline, no gws calls)
 
 set -uo pipefail
@@ -94,6 +113,148 @@ rfc3339_of() {
   printf '%s' "$out"
 }
 
+# ---------- sweep helpers (pure; covered by --selftest) ----------
+
+SWEEP_BODY_CAP=32768
+
+# "08:00" -> minutes since midnight. Nonzero on junk.
+hhmm_min() {
+  [[ "$1" =~ ^([0-9]{1,2}):([0-9]{2})$ ]] || return 1
+  local h=$((10#${BASH_REMATCH[1]})) m=$((10#${BASH_REMATCH[2]}))
+  (( h <= 24 && m < 60 )) || return 1
+  printf '%s' $((h * 60 + m))
+}
+
+# Day spec ("mon-fri", "mon,wed", "fri-mon", "all") -> space list of ISO weekdays (Mon=1).
+parse_days() {
+  local spec="${1,,}" part a b i out=" " names=(mon tue wed thu fri sat sun)
+  spec="${spec//[[:space:]]/}"
+  case "$spec" in ""|all|"*"|daily) printf ' 1 2 3 4 5 6 7 '; return 0 ;; esac
+  day_num() { local n; for n in 0 1 2 3 4 5 6; do [[ "${1:0:3}" == "${names[$n]}" ]] && { printf '%s' $((n + 1)); return 0; }; done; return 1; }
+  IFS=, read -ra parts <<<"$spec"
+  for part in "${parts[@]}"; do
+    if [[ "$part" == *-* ]]; then
+      a="$(day_num "${part%%-*}")" || return 1; b="$(day_num "${part#*-}")" || return 1
+      i=$a
+      while :; do out+="$i "; [[ $i -eq $b ]] && break; i=$(( i % 7 + 1 )); done
+    elif [[ -n "$part" ]]; then
+      a="$(day_num "$part")" || return 1; out+="$a "
+    fi
+  done
+  printf '%s' "$out"
+}
+
+# in_window <hours "HH:MM-HH:MM"> <days spec> <now "HH:MM"> <ISO weekday 1-7>
+# 0 inside, 1 outside, 2 bad spec. End exclusive; end < start wraps midnight.
+in_window() {
+  local s e m days
+  s="$(hhmm_min "${1%%-*}")" || return 2; e="$(hhmm_min "${1#*-}")" || return 2
+  m="$(hhmm_min "$3")" || return 2
+  days="$(parse_days "$2")" || return 2
+  [[ "$days" == *" $4 "* ]] || return 1
+  if (( s <= e )); then (( s <= m && m < e )) && return 0; return 1; fi
+  (( m >= s || m < e )) && return 0; return 1
+}
+
+# snooze_active <file> <now epoch>: prints active snoozed ids, one per line.
+# Expired or unparseable entries are pruned from the file (rewritten only if
+# something changed). Bare dates mean local midnight of that day.
+snooze_active() {
+  local f="$1" now="$2" k v until keep="{}" pruned=0
+  [[ -r "$f" ]] || return 0
+  if ! jq -e 'type == "object"' "$f" >/dev/null 2>&1; then log "snooze file is not a JSON object; ignoring it"; return 0; fi
+  while IFS=$'\t' read -r k v; do
+    until="$(date -d "$v" +%s 2>/dev/null)"
+    if [[ -n "$until" && "$until" -gt "$now" ]]; then
+      printf '%s\n' "$k"
+      keep="$(jq -c --arg k "$k" --arg v "$v" '. + {($k): $v}' <<<"$keep")"
+    else
+      pruned=$((pruned + 1))
+    fi
+  done < <(jq -r 'to_entries[] | [.key, (.value | tostring)] | @tsv' "$f")
+  if (( pruned > 0 )); then
+    jq . <<<"$keep" > "$f.tmp" && mv "$f.tmp" "$f" && log "snooze: pruned $pruned expired entr$([[ $pruned -eq 1 ]] && echo y || echo ies)"
+  fi
+}
+
+# Machine sender: bulk-ish local part, a sending subdomain, or Gmail's non-personal category.
+is_machine() { # from category autosubmitted
+  local a d local_part; a="$(addr_of "$1")"; local_part="${a%@*}"; d="${a##*@}"
+  [[ "$local_part" =~ ^(.*[-_.])?(no-?reply|do-?not-?reply|donotreply|notifications?|notify|alerts?|mailer-daemon|postmaster|bounces?|automated|system|forms?|builds?|calendar-notification|dse|security|accounts?|updates?|news|newsletter|info|hello|team|support|billing|receipts?|invoices?|reports?|leads?)([-_.+].*)?$ ]] && return 0
+  [[ "$d" =~ ^(notify|notifications?|mail|email|send|bounces?|mailer|em|e|news|mg|sg)\. ]] && return 0
+  [[ -n "$2" && "$2" != "CATEGORY_PERSONAL" ]] && return 0
+  [[ "${3,,}" == auto-generated* ]] && return 0
+  return 1
+}
+
+TASK_RE='(new|form|contact|web(site)?) (form )?(submission|entry|lead|inquiry|enquiry|request)|contact form|submitted|(build|deploy(ment)?|job|workflow|run|crawl|backup|sync|payment|charge|renewal) (has )?(failed|failure|error)|failed|failing|security alert|sign-?in|login attempt|suspicious|password (reset|changed)|verify your|docusign|e-?signature|please (sign|review)|signature (requested|required|needed)|awaiting your signature|waiting for (your )?signature|action (required|requested|needed)|requires your (attention|action)|past due|overdue|payment (declined|due)|expir(es|ing|ed)|run payroll|approval (needed|required)|needs your approval|disk (space|full)|is down|outage'
+
+# sweep_class <from> <to+cc> <subject> <list-unsubscribe> <precedence> <auto-submitted>
+#             <x-autoreply> <category> <content-class/type> <snippet> <allow file> <me>
+# -> waiting | task | skip-self | skip-auto | skip-calendar | skip-bulk | skip-other
+sweep_class() {
+  local from="$1" to="${2,,}" subj="${3,,}" unsub="$4" prec="$5" autos="${6,,}" xauto="$7" cat="$8"
+  local ctype="${9,,}" snip="${10,,}" allow="${11}" me="${12,,}" fa
+  fa="$(addr_of "$from")"
+  [[ -n "$me" && "$fa" == "$me" ]] && { echo skip-self; return; }
+  if [[ "$autos" == auto-replied* || -n "$xauto" \
+     || "$subj" =~ ^(automatic\ reply|auto(matic)?[\ -]?reply|autoreply|auto:|out\ of\ (the\ )?office|ooo[:\ ]) ]]; then
+    echo skip-auto; return
+  fi
+  if [[ "$fa" == calendar-notification@google.com || "$ctype" == *calendar* \
+     || "$subj" =~ ^(invitation|updated\ invitation|accepted|declined|tentative(ly\ accepted)?|canceled|cancelled|new\ event|event\ canceled|invitation\ from\ google\ calendar)[:\ ] ]]; then
+    echo skip-calendar; return
+  fi
+  is_bulk_skip "$from" "$unsub" "$prec" "$allow" && { echo skip-bulk; return; }
+  # A person: allow-listed domain, or addressed to the account. Allow-listed
+  # machine senders (a bank's alerts) fall through to the task check. Gmail's
+  # category is not trusted for client domains (it files some clients under Updates).
+  if domain_allowed "$(domain_of "$from")" "$allow"; then
+    is_machine "$from" "" "$autos" || { echo waiting; return; }
+  elif ! is_machine "$from" "$cat" "$autos" && [[ -n "$me" && "$to" == *"$me"* ]]; then
+    echo waiting; return
+  fi
+  local text="$subj $snip"
+  text="${text//no action needed/}"; text="${text//no action required/}"
+  if [[ "$text" =~ $TASK_RE ]]; then echo task; return; fi
+  echo skip-other
+}
+
+# Snippet tidy: entities, zero-width padding, whitespace; capped.
+tidy_snippet() {
+  jq -rn --arg s "$1" '$s | gsub("&#39;"; [39] | implode) | gsub("&quot;"; [34] | implode) | gsub("&lt;";"<")
+    | gsub("&gt;";">") | gsub("&amp;";"&")
+    | gsub("[" + ([8203, 8204, 8205, 8206, 8207, 8288, 6158, 847, 173, 65279, 8199, 160] | implode) + "]"; " ") | gsub("\\s+";" ")
+    | ltrimstr(" ") | rtrimstr(" ") | if length > 140 then .[0:140] + "..." else . end'
+}
+
+# sweep_line <age h> <from header> <subject> <snippet> <threadId>
+sweep_line() {
+  local who addr subj="${3:-(no subject)}"
+  who="$(name_of "$2")"; addr="$(addr_of "$2")"
+  [[ "$who" == "$addr" ]] && who="" || who="$who "
+  printf -- '- %sh · %s<%s> · %s — %s · https://mail.google.com/mail/u/0/#inbox/%s (id %s)' \
+    "$1" "$who" "$addr" "$subj" "$(tidy_snippet "$4")" "$5" "$5"
+}
+
+# sweep_id <account> [YYYY-MM-DDTHH]: the per-hour signal id.
+sweep_id() { printf 'gmail:sweep:%s:%s' "$1" "${2:-$(date +%Y-%m-%dT%H)}"; }
+
+# cap_lines <cap bytes> <footer> < body: drops trailing lines to fit; footer always kept.
+cap_lines() {
+  local cap="$1" footer="$2" body dropped=0
+  body="$(cat)"
+  local tail=$'\n\n'"$footer"
+  if (( $(printf '%s%s' "$body" "$tail" | wc -c) <= cap )); then printf '%s%s' "$body" "$tail"; return; fi
+  mapfile -t L <<<"$body"
+  while (( ${#L[@]} > 0 )); do
+    unset 'L[${#L[@]}-1]'; dropped=$((dropped + 1))
+    local cand; cand="$(printf '%s\n' "${L[@]}")…$dropped more lines not shown$tail"
+    (( $(printf '%s' "$cand" | wc -c) <= cap )) && { printf '%s' "$cand"; return; }
+  done
+  printf '%s' "…$dropped more lines not shown$tail"
+}
+
 selftest() {
   local pass=0 fail=0 allow
   allow="$(mktemp)"; trap 'rm -f "$allow"' RETURN
@@ -128,11 +289,82 @@ selftest() {
   check "no allow file -> skipped"     0 is_bulk_skip 'x@acme.com' '<u>' '' ''
   check "missing allow file -> skipped" 0 is_bulk_skip 'x@acme.com' '<u>' '' '/nonexistent'
 
+  # -- sweep: window
+  eq "hhmm"            "$(hhmm_min 08:30)" "510"
+  check "hhmm junk"    1 hhmm_min 8am
+  eq "days mon-fri"    "$(parse_days mon-fri)" " 1 2 3 4 5 "
+  eq "days list"       "$(parse_days 'Mon, wed')" " 1 3 "
+  eq "days wrap"       "$(parse_days fri-mon)" " 5 6 7 1 "
+  eq "days all"        "$(parse_days all)" " 1 2 3 4 5 6 7 "
+  check "in window"          0 in_window 08:00-18:00 mon-fri 09:00 1
+  check "end exclusive"      1 in_window 08:00-18:00 mon-fri 18:00 1
+  check "before start"       1 in_window 08:00-18:00 mon-fri 07:59 1
+  check "weekend out"        1 in_window 08:00-18:00 mon-fri 12:00 7
+  check "overnight wrap"     0 in_window 22:00-06:00 all 23:30 3
+  check "tiny window"        1 in_window 00:00-00:01 all 09:00 1
+  check "bad spec"           2 in_window 8-6 mon-fri 09:00 1
+
+  # -- sweep: snooze filter + prune (now = 2026-09-28 09:00 local)
+  local sn now9; sn="$(mktemp)"; now9="$(date -d '2026-09-28 09:00' +%s)"
+  printf '{"a":"2026-09-29","b":"2026-09-28T08:00:00","c":"2026-09-28T12:00","d":"2026-09-28","e":"garbage"}' > "$sn"
+  eq "snooze keeps future" "$(snooze_active "$sn" "$now9" 2>/dev/null | sort | tr '\n' ' ')" "a c "
+  eq "snooze pruned on disk" "$(jq -r 'keys | join(" ")' "$sn")" "a c"
+  eq "snooze missing file" "$(snooze_active /nonexistent "$now9")" ""
+  rm -f "$sn"
+
+  # -- sweep: classification  (from to subject unsub prec autos xauto category ctype snippet allow me)
+  local me=spencer@example.com
+  eq "person to me"      "$(sweep_class 'Bob <bob@random.com>' "Spencer <$me>, " 'Question' '' '' '' '' CATEGORY_PERSONAL 'text/plain' 'hi' "$allow" "$me")" waiting
+  eq "client domain"     "$(sweep_class 'x@acme.com' 'group@acme.com, ' 'FYI' '' '' '' '' CATEGORY_UPDATES '' '' "$allow" "$me")" waiting
+  eq "from me"           "$(sweep_class "Me <$me>" 'a@b.com' 'Re: x' '' '' '' '' '' '' '' "$allow" "$me")" skip-self
+  eq "auto-reply hdr"    "$(sweep_class 'bob@random.com' "$me" 'Re: x' '' '' 'auto-replied' '' '' '' '' "$allow" "$me")" skip-auto
+  eq "ooo subject"       "$(sweep_class 'bob@random.com' "$me" 'Out of Office: back Monday' '' '' '' '' '' '' '' "$allow" "$me")" skip-auto
+  eq "calendar invite"   "$(sweep_class 'bob@random.com' "$me" 'Invitation: Sync @ Tue' '' '' '' '' '' '' '' "$allow" "$me")" skip-calendar
+  eq "outlook invite"    "$(sweep_class 'bob@random.com' "$me" '3:00 meeting' '' '' '' '' '' 'urn:content-classes:calendarmessage' '' "$allow" "$me")" skip-calendar
+  eq "bulk skipped"      "$(sweep_class 'News <n@shop.com>' "$me" 'Sale' '<u>' '' '' '' '' '' '' "$allow" "$me")" skip-bulk
+  eq "build failed"      "$(sweep_class 'Railway <hello@notify.railway.app>' "$me" 'Build failed for g5' '' '' '' '' CATEGORY_PERSONAL '' '' "$allow" "$me")" task
+  eq "docusign"          "$(sweep_class 'DocuSign <dse@docusign.net>' "$me" 'Please DocuSign: Contract' '' '' '' '' CATEGORY_UPDATES '' '' "$allow" "$me")" task
+  eq "form submission"   "$(sweep_class 'forms@site.io' 'x@site.io' 'New form submission' '' '' '' '' '' '' '' "$allow" "$me")" task
+  eq "security alert"    "$(sweep_class 'Google <no-reply@accounts.google.com>' "$me" 'Security alert' '' '' 'auto-generated' '' CATEGORY_UPDATES '' '' "$allow" "$me")" task
+  eq "category notice"   "$(sweep_class 'Ahrefs <sa@ahrefs.com>' "$me" 'Site Audit crawl failed' '' '' '' '' CATEGORY_UPDATES '' '' "$allow" "$me")" task
+  eq "allow-listed notifier" "$(sweep_class 'Mercury <hello@mercury.com>' "$me" 'Card charged' '' '' '' '' CATEGORY_PERSONAL '' '' <(echo mercury.com) "$me")" skip-other
+  eq "allow-listed person"   "$(sweep_class 'Ann <ann@mercury.com>' 'x@y.com' 'Hi' '' '' '' '' CATEGORY_PERSONAL '' '' <(echo mercury.com) "$me")" waiting
+  eq "no action needed"   "$(sweep_class 'Bank <no-reply@bank.com>' "$me" 'Role renamed' '' '' '' '' CATEGORY_UPDATES '' 'No action needed - nothing changed' "$allow" "$me")" skip-other
+  eq "plain notification" "$(sweep_class 'Mercury <hello@mercury.com>' "$me" 'You received $10' '' '' '' '' CATEGORY_UPDATES '' 'deposit' "$allow" "$me")" skip-other
+
+  # -- sweep: line + id
+  eq "sweep line" "$(sweep_line 26 '"Bob Jones" <bob@acme.com>' 'Quote' 'Can you send it&#39;s   price?' 't1')" \
+    "- 26h · Bob Jones <bob@acme.com> · Quote — Can you send it's price? · https://mail.google.com/mail/u/0/#inbox/t1 (id t1)"
+  eq "sweep line bare" "$(sweep_line 3 'x@y.com' '' 's' 't2')" "- 3h · <x@y.com> · (no subject) — s · https://mail.google.com/mail/u/0/#inbox/t2 (id t2)"
+  eq "sweep id"   "$(sweep_id spencer@example.com 2026-09-28T09)" "gmail:sweep:spencer@example.com:2026-09-28T09"
+  [[ "$(sweep_id a@b.c)" =~ ^gmail:sweep:a@b\.c:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$ ]]; check "sweep id format now" 0 test $? -eq 0
+  local capped; capped="$(for i in $(seq 1 300); do printf -- '- %0200d\n' "$i"; done | cap_lines 32768 $'---\nfooter')"
+  check "cap under 32 KiB"   0 test "$(printf '%s' "$capped" | wc -c)" -le 32768
+  eq "cap keeps footer"      "${capped: -10}" $'---\nfooter'
+  check "cap notes dropped"  0 grep -q 'more lines not shown' <<<"$capped"
+
   echo "gmail-gws selftest: $pass passed, $fail failed"
   [[ $fail -eq 0 ]]
 }
 
 if [[ "${1:-}" == "--selftest" ]]; then selftest; exit $?; fi
+
+SWEEP=0
+for arg in "$@"; do
+  case "$arg" in
+    --sweep) SWEEP=1 ;;
+    --now) export SWEEP_ALWAYS=1 ;;
+  esac
+done
+# Outside the sweep window: print nothing, touch nothing.
+if (( SWEEP )) && [[ "${SWEEP_ALWAYS:-}" != "1" ]]; then
+  in_window "${SWEEP_HOURS:-08:00-18:00}" "${SWEEP_DAYS:-mon-fri}" "$(date +%H:%M)" "$(date +%u)"
+  case $? in
+    0) ;;
+    1) exit 0 ;;
+    *) log "bad SWEEP_HOURS/SWEEP_DAYS ('${SWEEP_HOURS:-}' / '${SWEEP_DAYS:-}')"; exit 1 ;;
+  esac
+fi
 
 # ---------- gws wrapper ----------
 
@@ -164,6 +396,126 @@ gws_call getProfile '{"userId":"me"}' || die_gws "getProfile"
 ME="$(jq -r '.emailAddress // empty' <<<"$GWS_OUT")"; ME="${ME,,}"
 PROFILE_HID="$(jq -r '.historyId // empty' <<<"$GWS_OUT")"
 [[ -n "$PROFILE_HID" ]] || { log "getProfile returned no historyId"; exit 1; }
+
+# ---------- sweep mode ----------
+
+SWEEP_HEADERS='["From","To","Cc","Subject","List-Unsubscribe","Precedence","Auto-Submitted","X-Autoreply","X-Autorespond","Content-Class","Content-Type"]'
+
+# One thread -> one compact JSON line describing its newest real message
+# (drafts, spam and trash ignored), or {"threadId":…,"error":…}. Runs in xargs.
+sweep_fetch_one() {
+  local id="$1" dir="$2" out rc params
+  params="$(jq -nc --arg id "$id" --argjson h "$SWEEP_HEADERS" '{userId:"me", id:$id, format:"metadata", metadataHeaders:$h}')"
+  out="$(gws gmail users threads get --params "$params" 2>/dev/null)"; rc=$?
+  if [[ $rc -ne 0 ]] || ! jq -e '.messages' <<<"$out" >/dev/null 2>&1; then
+    jq -nc --arg id "$id" --arg c "$(jq -r '.error.code // empty' <<<"$out" 2>/dev/null)" --arg rc "$rc" \
+      '{threadId:$id, error:(if $c == "" then ("rc " + $rc) else $c end)}' > "$dir/$id"
+    return 0
+  fi
+  jq -c --arg id "$id" '
+    [.messages[]? | select((.labelIds // []) | (index("DRAFT") or index("SPAM") or index("TRASH")) | not)]
+    | sort_by(.internalDate | tonumber) | last as $m
+    | if $m == null then {threadId:$id, empty:true} else
+      def h($n): [$m.payload.headers[]? | select((.name | ascii_downcase) == $n) | .value][0] // "";
+      {threadId:$id, internalDate:$m.internalDate, from:h("from"), to:(h("to") + ", " + h("cc")),
+       subject:h("subject"), unsub:h("list-unsubscribe"), prec:h("precedence"), autos:h("auto-submitted"),
+       xauto:(h("x-autoreply") + h("x-autorespond")), ctype:(h("content-class") + " " + h("content-type")),
+       category:([($m.labelIds // [])[] | select(startswith("CATEGORY_"))][0] // ""), snippet:($m.snippet // "")}
+      end' <<<"$out" > "$dir/$id"
+}
+
+run_sweep() {
+  local min_age="${GMAIL_SWEEP_MIN_AGE_HOURS:-20}" days="${GMAIL_SWEEP_DAYS:-14}" now page params tmp
+  local state="${BOSUN_STATE_DIR:-${TMPDIR:-/tmp}/gmail-gws-sweep}"
+  [[ "$min_age" =~ ^[0-9]+$ ]] || min_age=20
+  [[ "$days" =~ ^[0-9]+$ ]] || days=14
+  mkdir -p "$state"
+  local snooze_file; snooze_file="$(cd "$state" && pwd)/snooze.json"
+  now="$(date +%s)"
+  declare -A SNOOZED=()
+  local sid; while IFS= read -r sid; do [[ -n "$sid" ]] && SNOOZED[$sid]=1; done < <(snooze_active "$snooze_file" "$now")
+
+  local ids=()
+  page=""
+  while :; do
+    params="$(jq -nc --arg q "in:inbox newer_than:${days}d" --arg p "$page" \
+      '{userId:"me", q:$q, maxResults:500} + (if $p == "" then {} else {pageToken:$p} end)')"
+    gws_call threads list "$params" || die_gws "threads.list"
+    while IFS= read -r sid; do [[ -n "$sid" ]] && ids+=("$sid"); done < <(jq -r '.threads[]?.id' <<<"$GWS_OUT")
+    page="$(jq -r '.nextPageToken // empty' <<<"$GWS_OUT")"
+    [[ -n "$page" ]] || break
+  done
+
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  export -f sweep_fetch_one; export SWEEP_HEADERS
+  (( ${#ids[@]} )) && printf '%s\n' "${ids[@]}" | xargs -P 8 -I{} bash -c 'sweep_fetch_one "$1" "$2"' _ {} "$tmp"
+
+  local wait_lines=() task_lines=() snoozed=0 young=0 errs=0 authfail=0
+  declare -A why=()
+  local rec f tid ms age cls
+  for f in "$tmp"/*; do
+    [[ -e "$f" ]] || continue
+    rec="$(cat "$f")"
+    tid="$(jq -r '.threadId' <<<"$rec")"
+    if jq -e '.error' <<<"$rec" >/dev/null; then
+      case "$(jq -r '.error' <<<"$rec")" in
+        404) ;;                                  # deleted since the list call
+        401|403|"rc 2") authfail=1 ;;
+        *) errs=$((errs + 1)) ;;
+      esac
+      continue
+    fi
+    jq -e '.empty' <<<"$rec" >/dev/null && continue
+    if [[ -n "${SNOOZED[$tid]:-}" ]]; then snoozed=$((snoozed + 1)); continue; fi
+    ms="$(jq -r '.internalDate // "0"' <<<"$rec")"
+    age=$(( (now - ms / 1000) / 3600 ))
+    local from to subject unsub prec autos xauto category ctype snippet
+    { IFS= read -r from; IFS= read -r to; IFS= read -r subject; IFS= read -r unsub; IFS= read -r prec
+      IFS= read -r autos; IFS= read -r xauto; IFS= read -r category; IFS= read -r ctype; IFS= read -r snippet; } < <(
+      jq -r '.from, .to, .subject, .unsub, .prec, .autos, .xauto, .category, .ctype, .snippet | gsub("[\r\n]+"; " ")' <<<"$rec")
+    cls="$(sweep_class "$from" "$to" "$subject" "$unsub" "$prec" "$autos" "$xauto" "$category" "$ctype" "$snippet" \
+      "${GMAIL_ALLOW_DOMAINS_FILE:-}" "$ME")"
+    if [[ "$cls" == waiting || "$cls" == task ]] && (( age < min_age )); then young=$((young + 1)); continue; fi
+    case "$cls" in
+      waiting) wait_lines+=("$(printf '%06d' "$age")"$'\t'"$(sweep_line "$age" "$from" "$subject" "$snippet" "$tid")") ;;
+      task)    task_lines+=("$(printf '%06d' "$age")"$'\t'"$(sweep_line "$age" "$from" "$subject" "$snippet" "$tid")") ;;
+      *)       why[$cls]=$(( ${why[$cls]:-0} + 1 )) ;;
+    esac
+  done
+  (( authfail )) && { log "threads.get: auth failed"; exit 2; }
+  (( errs )) && { log "threads.get failed for $errs thread(s); not signalling a partial list"; exit 1; }
+
+  local nw=${#wait_lines[@]} nt=${#task_lines[@]} total
+  total=$((nw + nt))
+  local skipped=""; for cls in "${!why[@]}"; do skipped+=" ${cls#skip-} ${why[$cls]},"; done
+  log "sweep: ${#ids[@]} inbox threads, waiting $nw, task $nt, snoozed $snoozed, younger than ${min_age}h $young, skipped:${skipped%,}"
+  (( total > 0 )) || return 0
+
+  local body="" sorted
+  if (( nw )); then
+    sorted="$(printf '%s\n' "${wait_lines[@]}" | sort -r | cut -f2-)"
+    body+="### Waiting on you ($nw)"$'\n'"$sorted"
+  fi
+  if (( nt )); then
+    sorted="$(printf '%s\n' "${task_lines[@]}" | sort -r | cut -f2-)"
+    [[ -n "$body" ]] && body+=$'\n\n'
+    body+="### Probably a task ($nt)"$'\n'"$sorted"
+  fi
+  local footer="---"$'\n'"waiting on you $nw · probably a task $nt · snoozed $snoozed"$'\n'
+  footer+="Snooze: add \"<threadId>\": \"<YYYY-MM-DD or ISO datetime>\" to the JSON object in $snooze_file (hidden until then; a bare date means local midnight)."
+  body="$(printf '%s' "$body" | cap_lines "$SWEEP_BODY_CAP" "$footer")"
+
+  jq -nc --arg id "$(sweep_id "$ME")" --arg body "$body" --arg me "$ME" \
+    --arg n "$total" --arg snooze "$snooze_file" --arg observed "$(date '+%Y-%m-%dT%H:%M:%S%:z')" \
+    --arg hint "${GMAIL_WORKSPACE_HINT:-}" '
+    {id: $id, kind: "sweep",
+     title: ("Inbox sweep: " + $n + " thread" + (if $n == "1" then "" else "s" end) + " waiting on you"),
+     body: $body, observedAt: $observed,
+     refs: {url: "https://mail.google.com/mail/u/0/#inbox", account: $me, snoozeFile: $snooze, count: $n}}
+    + (if $hint == "" then {} else {hints: {workspace: $hint}} end)'
+}
+
+if (( SWEEP )); then run_sweep; exit 0; fi
 
 emit_watermark() { jq -nc --arg w "$1" '{watermark: $w}'; }
 

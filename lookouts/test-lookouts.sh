@@ -5,6 +5,10 @@
 # only a watermark, (b) an older watermark -> real signals. Every stdout line
 # must be JSON with a "title" or a "watermark"; the last line must be a
 # watermark. Each run gets a fresh BOSUN_STATE_DIR from mktemp.
+# Sweep mode (gmail, orbit; when credentials are present): --sweep --now must
+# print at most one kind:"sweep" signal with an hourly id and no watermark;
+# snoozing a listed Orbit task must hide it and count it, an expired snooze
+# entry must be pruned, and a run outside SWEEP_DAYS must print nothing.
 #
 # Env (defaults are Spencer's machine; override for yours):
 #   GOOGLE_WORKSPACE_CLI_CONFIG_DIR   default ~/.config/gws-sns
@@ -13,6 +17,7 @@
 #   ORBIT_ENV_FILE                    default ~/.config/orbit-mcp/service-storm.env
 #   ORBIT_ORG_SLUG                    default oscar-edge-817a467
 #   ORBIT_TEST_SINCE                  ISO watermark for (b) (default 2 days ago)
+#   ORBIT_ME_EMAIL                    passed through to the Orbit sweep ("Mine and stale")
 #   TEAMS_CDP_URL                     default http://127.0.0.1:9222
 #   TEAMS_TEST_SINCE                  ISO watermark for (b) (default 2 days ago)
 #   SKIP_GMAIL=1 / SKIP_ORBIT=1 / SKIP_TEAMS=1   skip one side
@@ -51,6 +56,27 @@ validate() {
   [[ $bad -eq 0 ]] && ok "$label: $n lines, $sig signals, $wm watermark line(s)"
 }
 
+# validate_sweep <file> <label> <id prefix>: zero or one line; if one, a
+# kind:"sweep" signal whose id starts <prefix> and ends :<YYYY-MM-DDTHH>, string refs incl.
+# snoozeFile and count, and no watermark line anywhere.
+validate_sweep() {
+  local f="$1" label="$2" prefix="$3" n
+  n="$(grep -c . "$f")"
+  LAST_SIGNALS=$n
+  if [[ $n -eq 0 ]]; then ok "$label: empty (nothing waiting)"; return; fi
+  [[ $n -eq 1 ]] || { fail "$label: $n lines (want at most 1)"; return; }
+  jq -e --arg p "$prefix" '
+    .kind == "sweep" and (.watermark == null) and (.title | type) == "string" and (.body | type) == "string"
+    and (.id | startswith($p)) and (.id | test(":[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$"))
+    and ((.refs // {}) | to_entries | all(.value | type == "string"))
+    and (.refs.snoozeFile | startswith("/")) and (.refs.count | test("^[0-9]+$"))
+    and (.body | utf8bytelength) <= 32768' "$f" >/dev/null \
+    && ok "$label: $(jq -r .title "$f")" || fail "$label: bad sweep signal: $(head -c 300 "$f")"
+}
+
+# not_today: a SWEEP_DAYS value that excludes today, for the outside-window check.
+not_today() { date -d tomorrow +%a | tr '[:upper:]' '[:lower:]'; }
+
 # run <label> <out> <cmd...> ; captures stdout to <out>, stderr shown indented.
 run() {
   local label="$1" out="$2"; shift 2
@@ -86,12 +112,28 @@ if [[ "${SKIP_GMAIL:-}" != "1" ]]; then
     run "gmail stale" "$out" env BOSUN_STATE_DIR="$(newstate)" BOSUN_WATERMARK=1 "$HERE/gmail-gws.sh" \
       && validate "$out" "gmail stale historyId re-seeds"
   fi
+  if [[ -d "$GOOGLE_WORKSPACE_CLI_CONFIG_DIR" ]]; then
+    st="$(newstate)"
+    if run "gmail sweep" "$out" env BOSUN_STATE_DIR="$st" "$HERE/gmail-gws.sh" --sweep --now; then
+      validate_sweep "$out" "gmail sweep --now" "gmail:sweep:"
+      [[ $LAST_SIGNALS -eq 1 ]] && jq -r .body "$out" | head -4 | cut -c1-160 | sed 's/^/    /'
+    fi
+    run "gmail sweep outside window" "$out" env BOSUN_STATE_DIR="$st" SWEEP_DAYS="$(not_today)" "$HERE/gmail-gws.sh" --sweep \
+      && { [[ ! -s "$out" ]] && ok "gmail sweep outside the window prints nothing" || fail "gmail sweep printed outside the window"; }
+  else
+    echo "  skip gmail sweep: no $GOOGLE_WORKSPACE_CLI_CONFIG_DIR"
+  fi
 fi
 
+ORBIT_ENV_FILE="${ORBIT_ENV_FILE:-$HOME/.config/orbit-mcp/service-storm.env}"
+if [[ "${SKIP_ORBIT:-}" != "1" && -z "${ORBIT_API_KEY:-}" && ! -r "$ORBIT_ENV_FILE" ]]; then
+  echo "== orbit-tasks.py: skip (no ORBIT_API_KEY and no $ORBIT_ENV_FILE)"
+  SKIP_ORBIT=1
+fi
 if [[ "${SKIP_ORBIT:-}" != "1" ]]; then
   echo "== orbit-tasks.py (live, GET only)"
   if [[ -z "${ORBIT_API_KEY:-}" ]]; then
-    set -a; source "${ORBIT_ENV_FILE:-$HOME/.config/orbit-mcp/service-storm.env}"; set +a
+    set -a; source "$ORBIT_ENV_FILE"; set +a
   fi
   export ORBIT_ORG_SLUG="${ORBIT_ORG_SLUG:-oscar-edge-817a467}" ORBIT_WORKSPACE_HINT="${ORBIT_WORKSPACE_HINT:-Service Storm}"
   out="$(mktemp)"; TMPS+=("$out")
@@ -115,6 +157,29 @@ PY
     [[ "$(python3 -c "import json;print(json.load(open('$st/token.json'))['accessToken'] != 'expired.invalid.token')")" == "True" ]] \
       && ok "token.json rewritten after refresh" || fail "token.json not refreshed"
   fi
+
+  # Sweep: signal shape, snooze (one id hidden + counted, an expired entry
+  # pruned), and silence outside the window.
+  st="$(newstate)"
+  if run "orbit sweep" "$out" env BOSUN_STATE_DIR="$st" "$HERE/orbit-tasks.py" --sweep --now; then
+    validate_sweep "$out" "orbit sweep --now" "orbit:sweep:$ORBIT_ORG_SLUG:"
+    if [[ $LAST_SIGNALS -eq 1 ]]; then
+      jq -r .body "$out" | head -4 | cut -c1-160 | sed 's/^/    /'
+      sid="$(jq -r .body "$out" | grep -o '(id [a-z0-9]*)' | head -1 | tr -d '()' | cut -d' ' -f2)"
+      jq -n --arg id "$sid" --arg t "$(date -d tomorrow +%F)" '{($id): $t, "expired-test-id": "2020-01-01"}' > "$st/snooze.json"
+      if run "orbit sweep snoozed" "$out" env BOSUN_STATE_DIR="$st" "$HERE/orbit-tasks.py" --sweep --now; then
+        if [[ -s "$out" ]]; then
+          jq -r .body "$out" | grep -q "(id $sid)" && fail "snoozed task $sid still listed" || ok "snoozed task $sid left out"
+          jq -r .body "$out" | grep -q "snoozed 1" && ok "footer counts it (snoozed 1)" || fail "footer does not say snoozed 1"
+        else
+          ok "snoozed the only item: nothing printed"
+        fi
+        [[ "$(jq -r 'keys | join(",")' "$st/snooze.json")" == "$sid" ]] && ok "expired snooze pruned" || fail "snooze.json not pruned: $(cat "$st/snooze.json")"
+      fi
+    fi
+  fi
+  run "orbit sweep outside window" "$out" env BOSUN_STATE_DIR="$st" SWEEP_DAYS="$(not_today)" "$HERE/orbit-tasks.py" --sweep \
+    && { [[ ! -s "$out" ]] && ok "orbit sweep outside the window prints nothing" || fail "orbit sweep printed outside the window"; }
 fi
 
 if [[ "${SKIP_TEAMS:-}" != "1" ]]; then

@@ -33,7 +33,26 @@ Read-only: only GET requests plus the auth exchange/refresh POSTs.
 Exit codes: 0 ok; 2 auth failure; 1 network/API failure (no watermark is
 printed, so the next run retries from the same point).
 
+Sweep mode (--sweep): no watermark. Lists open tasks still waiting on you and
+prints ONE signal (kind "sweep", id orbit:sweep:<slug>:<YYYY-MM-DDTHH> local)
+when the list is non-empty, nothing when it is empty or outside the window.
+Groups, first match wins: client replied and nobody answered (status
+response_received or lastActivityType EXTERNAL_REPLY/NEW_INBOUND, newest task
+email inbound and no later non-internal staff comment); overdue; nudged and
+not acknowledged; unassigned; mine and stale.
+  SWEEP_HOURS          local window, default 08:00-18:00 (end exclusive)
+  SWEEP_DAYS           default mon-fri (also "mon,wed", "all")
+  SWEEP_ALWAYS=1       ignore the window (--sweep --now sets it)
+  ORBIT_ME_EMAIL       comma list of your member emails (or userIds);
+                       default spencer@smithnetworksolutions.com
+  ORBIT_STALE_DAYS     default 3
+  ORBIT_SWEEP_IGNORE   comma list of title substrings to skip,
+                       default "Marketing Touchpoint"
+  Snooze: BOSUN_STATE_DIR/snooze.json, {"<task id>": "<ISO date|datetime>"};
+  hidden until then, expired entries pruned on read.
+
 By hand:   BOSUN_WATERMARK= ./lookouts/orbit-tasks.py | jq
+Sweep:     BOSUN_STATE_DIR=$(mktemp -d) ./lookouts/orbit-tasks.py --sweep --now | jq -r .body
 Self-test: ./lookouts/orbit-tasks.py --selftest   (offline)
 One task:  ./lookouts/orbit-tasks.py --task <id>[,<id>] | ./lookouts/hail.sh   (re-feed a ticket as new)
 """
@@ -47,7 +66,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 PAGE_LIMIT = 100          # API max is 200
 MAX_PAGES = 20
@@ -331,9 +350,349 @@ def selftest():
     check("body has comment", "Latest comment — Oscar" in sig["body"] and "(internal)" in sig["body"], True)
     check("no hint when unset", "hints" in build_signal(task, slug="s", web_url="u", hint="",
                                                         members={}, clients={}, comment=None), False)
+    # -- sweep: window
+    from datetime import timedelta as _td
+    local = timezone(_td(hours=-4))
+    mon9 = datetime(2026, 9, 28, 9, 0, tzinfo=local)  # a Monday
+    check("hours parse", parse_hours("08:00-18:00"), (480, 1080))
+    check("days mon-fri", parse_days("mon-fri"), {0, 1, 2, 3, 4})
+    check("days list", parse_days("Mon,wed"), {0, 2})
+    check("days wrap", parse_days("fri-mon"), {4, 5, 6, 0})
+    check("days all", parse_days("all"), set(range(7)))
+    check("in window", in_window(mon9, "08:00-18:00", "mon-fri"), True)
+    check("end exclusive", in_window(mon9.replace(hour=18), "08:00-18:00", "mon-fri"), False)
+    check("before start", in_window(mon9.replace(hour=7, minute=59), "08:00-18:00", "mon-fri"), False)
+    check("weekend out", in_window(mon9 - _td(days=1), "08:00-18:00", "mon-fri"), False)
+    check("overnight wrap", in_window(mon9.replace(hour=23), "22:00-06:00", "all"), True)
+    check("tiny window", in_window(mon9, "00:00-00:01", "all"), False)
+    try:
+        parse_hours("8am-6pm")
+        check("bad hours raises", False, True)
+    except ValueError:
+        check("bad hours raises", True, True)
+
+    # -- sweep: snooze filter + prune
+    sd = tempfile.mkdtemp()
+    sp = os.path.join(sd, "snooze.json")
+    check("no snooze file", load_snooze(sp, mon9), {})
+    with open(sp, "w") as f:
+        json.dump({"a": "2026-09-29", "b": "2026-09-28T08:00:00-04:00", "c": "2026-09-28T12:00",
+                   "d": "2026-09-28", "e": "garbage"}, f)
+    active = load_snooze(sp, mon9)
+    check("snooze keeps future", sorted(active), ["a", "c"])
+    with open(sp) as f:
+        check("snooze pruned on disk", sorted(json.load(f)), ["a", "c"])
+    check("bare date = local midnight", snooze_until("2026-09-29", local), datetime(2026, 9, 29, tzinfo=local))
+
+    # -- sweep: grouping
+    stale = mon9 - _td(days=3)
+    g = lambda t, ans=False: sweep_group(t, today="2026-09-28", me={"me"}, stale_before=stale, answered=ans)
+    check("response_received -> replied", g({"status": "response_received", "assigneeId": "x"}), "replied")
+    check("EXTERNAL_REPLY -> replied", g({"status": "todo", "lastActivityType": "EXTERNAL_REPLY", "assigneeId": "x"}), "replied")
+    check("answered falls through", g({"status": "response_received", "assigneeId": "x"}, True), None)
+    check("overdue", g({"status": "todo", "dueDate": "2026-09-27T00:00:00.000Z", "assigneeId": "x"}), "overdue")
+    check("due today not overdue", g({"status": "todo", "dueDate": "2026-09-28T00:00:00.000Z", "assigneeId": "x"}), None)
+    check("nudged", g({"status": "todo", "nudgedAt": "2026-09-27T00:00:00Z", "acknowledgedNudge": False, "assigneeId": "x"}), "nudged")
+    check("nudge acked", g({"status": "todo", "nudgedAt": "2026-09-27T00:00:00Z", "acknowledgedNudge": True, "assigneeId": "x"}), None)
+    check("unassigned", g({"status": "todo"}), "unassigned")
+    check("assignments count as assigned", g({"status": "todo", "assignments": [{"userId": "x", "role": "assignee"}]}), None)
+    check("mine stale", g({"status": "todo", "assigneeId": "me", "updatedAt": "2026-09-20T00:00:00Z"}), "stale")
+    check("mine via assignments", g({"status": "todo", "assignments": [{"userId": "me", "role": "assignee"}],
+                                     "lastActivityAt": "2026-09-20T00:00:00Z", "updatedAt": "2026-09-28T00:00:00Z"}), "stale")
+    check("mine fresh", g({"status": "todo", "assigneeId": "me", "updatedAt": "2026-09-27T00:00:00Z"}), None)
+    check("first match wins", g({"status": "response_received", "dueDate": "2026-09-01"}), "replied")
+    check("ignore substring", ignored({"title": "Weekly marketing touchpoint - Acme"}, ["marketing touchpoint"]), True)
+
+    # -- sweep: inbound vs outbound
+    e_in = {"direction": "inbound", "receivedAt": "2026-09-26T15:44:36Z"}
+    e_out = {"direction": "outbound", "sentAt": "2026-09-26T15:35:32Z", "receivedAt": "2026-09-26T15:35:32Z"}
+    staff = lambda ts, internal=False: {"userId": "u1", "createdAt": ts, "isInternal": internal}
+    check("newest inbound unanswered", answered_after_inbound([e_out, e_in], []), False)
+    check("newest outbound answered", answered_after_inbound([e_in, dict(e_out, receivedAt="2026-09-27T00:00:00Z")], []), True)
+    check("staff comment after inbound", answered_after_inbound([e_in], [staff("2026-09-27T00:00:00Z")]), True)
+    check("internal comment is not an answer", answered_after_inbound([e_in], [staff("2026-09-27T00:00:00Z", True)]), False)
+    check("staff comment before inbound", answered_after_inbound([e_in], [staff("2026-09-25T00:00:00Z")]), False)
+    check("portal comment is inbound", answered_after_inbound([], [{"portalUserId": "p", "createdAt": "2026-09-27T00:00:00Z"}]), False)
+    check("no mail, staff last", answered_after_inbound([], [staff("2026-09-27T00:00:00Z")]), True)
+
+    # -- sweep: signal + id format + cap
+    tasks_g = {"replied": [{"id": "t9", "title": "Help", "ticketNumber": 7, "status": "response_received",
+                            "clientId": "cl1", "assigneeId": "u1", "lastActivitySummary": "Reply from a@b.co"}],
+               "unassigned": [{"id": "t8", "title": "New lead", "status": "todo", "dueDate": "2026-10-01T00:00:00.000Z"}]}
+    sw = build_sweep(tasks_g, slug="acme-1", label="Acme", web_url="https://o.x", hint="Acme", snoozed=2,
+                     snooze_path="/s/snooze.json", now=mon9, members={"u1": "Oscar"}, clients={"cl1": "Acme Co"})
+    check("sweep id", sw["id"], "orbit:sweep:acme-1:2026-09-28T09")
+    check("sweep kind", sw["kind"], "sweep")
+    check("sweep title", sw["title"], "Orbit sweep · Acme: 2 items need you")
+    check("sweep refs", sw["refs"], {"url": "https://o.x/acme-1/tasks", "org": "acme-1",
+                                     "snoozeFile": "/s/snooze.json", "count": "2"})
+    check("sweep line", sw["body"].split("\n")[1],
+          "- [#7] Help — Acme Co · response_received · no due · Oscar · Reply from a@b.co · https://o.x/acme-1/tasks/t9 (id t9)")
+    check("groups in order", sw["body"].index("### Client replied") < sw["body"].index("### Unassigned"), True)
+    check("footer counts", "overdue 0" in sw["body"] and "unassigned 1" in sw["body"] and "snoozed 2" in sw["body"], True)
+    check("footer snooze path", "/s/snooze.json" in sw["body"].split("---")[-1], True)
+    check("empty -> no signal", build_sweep({}, slug="s", label="s", web_url="u", hint="", snoozed=0,
+                                            snooze_path="p", now=mon9, members={}, clients={}), None)
+    check("one item title", build_sweep({"overdue": [{"id": "z"}]}, slug="s", label="S", web_url="u", hint="",
+                                        snoozed=0, snooze_path="p", now=mon9, members={}, clients={})["title"],
+          "Orbit sweep · S: 1 item needs you")
+    big = cap_body(["### G\n" + "\n".join("- " + "x" * 200 for _ in range(400))], "---\nfooter", 32 * 1024)
+    check("cap under 32 KiB", len(big.encode()) <= 32 * 1024, True)
+    check("cap keeps footer", big.endswith("---\nfooter"), True)
+    check("cap notes dropped", "more lines not shown" in big, True)
+
     json.dumps(sig)
     print(f"orbit-tasks selftest: {ok} passed, {fail} failed")
     return 0 if fail == 0 else 1
+
+
+# ---------------------------------------------------------------- sweep mode
+#
+# `--sweep`: a model-free "what is still waiting on me" check. No watermark;
+# one signal per run, only when the list is non-empty; the id carries the
+# local hour so the engine sees a fresh signal each run while anything is open.
+
+SWEEP_BODY_CAP = 32 * 1024
+SWEEP_WORKERS = 6
+INBOUND_ACTIVITY = ("EXTERNAL_REPLY", "NEW_INBOUND")
+INBOUND_SUMMARY = ("reply from ", "new ticket from ")
+SWEEP_GROUPS = (
+    ("replied", "Client replied, nobody answered"),
+    ("overdue", "Overdue"),
+    ("nudged", "Nudged, not acknowledged"),
+    ("unassigned", "Unassigned"),
+    ("stale", "Mine and stale"),
+)
+DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def parse_hours(spec):
+    """'08:00-18:00' -> (480, 1080) minutes since midnight. Raises ValueError."""
+    a, b = spec.strip().split("-", 1)
+
+    def mins(x):
+        h, m = x.strip().split(":")
+        h, m = int(h), int(m)
+        if not (0 <= h <= 24 and 0 <= m < 60):
+            raise ValueError(x)
+        return h * 60 + m
+    return mins(a), mins(b)
+
+
+def parse_days(spec):
+    """'mon-fri' / 'mon,wed,fri' / 'fri-mon' / 'all' -> set of weekday ints (Mon=0)."""
+    spec = (spec or "").strip().lower()
+    if spec in ("", "all", "*", "daily"):
+        return set(range(7))
+    out = set()
+    for part in spec.split(","):
+        part = part.strip()[:7]
+        if "-" in part:
+            a, b = (DAY_NAMES.index(p.strip()[:3]) for p in part.split("-", 1))
+            i = a
+            while True:
+                out.add(i)
+                if i == b:
+                    break
+                i = (i + 1) % 7
+        elif part:
+            out.add(DAY_NAMES.index(part[:3]))
+    return out
+
+
+def in_window(now, hours, days):
+    """now: aware or naive local datetime. End of the hours range is exclusive;
+    a range that ends before it starts wraps past midnight."""
+    start, end = parse_hours(hours)
+    m = now.hour * 60 + now.minute
+    if now.weekday() not in parse_days(days):
+        return False
+    if start <= end:
+        return start <= m < end
+    return m >= start or m < end
+
+
+def snooze_until(value, tz):
+    """Snooze value -> aware datetime. Bare dates mean local midnight of that day."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=tz)
+
+
+def load_snooze(path, now):
+    """Active snoozes {id: until}. Expired or unparseable entries are pruned
+    from the file (rewritten only if something changed)."""
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        log(f"snooze file unreadable ({e}); ignoring it")
+        return {}
+    if not isinstance(raw, dict):
+        log("snooze file is not a JSON object; ignoring it")
+        return {}
+    keep = {k: v for k, v in raw.items() if (snooze_until(v, now.tzinfo) or now) > now}
+    if len(keep) != len(raw):
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(keep, f, indent=2)
+            os.replace(tmp, path)
+            log(f"snooze: pruned {len(raw) - len(keep)} expired entr{'y' if len(raw) - len(keep) == 1 else 'ies'}")
+        except OSError as e:
+            log(f"snooze prune not written: {e}")
+    return keep
+
+
+def looks_inbound(task):
+    if task.get("status") == "response_received":
+        return True
+    if (task.get("lastActivityType") or "") in INBOUND_ACTIVITY:
+        return True
+    return (task.get("lastActivitySummary") or "").lower().startswith(INBOUND_SUMMARY)
+
+
+def mail_time(mail):
+    return parse_ts(mail.get("receivedAt") or mail.get("sentAt") or mail.get("createdAt"))
+
+
+def answered_after_inbound(emails, comments):
+    """True when the newest email is outbound, or a non-internal staff comment
+    is newer than the newest inbound email (or, with no email, is the newest
+    comment). Portal comments are the client talking, so they are inbound."""
+    mails = [m for m in emails or [] if mail_time(m)]
+    last_in = None
+    if mails:
+        newest = max(mails, key=mail_time)
+        if (newest.get("direction") or "").lower() == "outbound":
+            return True
+        ins = [mail_time(m) for m in mails if (m.get("direction") or "").lower() == "inbound"]
+        last_in = max(ins) if ins else None
+    flat = []
+    for c in comments or []:
+        flat.append(c)
+        flat.extend(c.get("replies") or [])
+    flat = [c for c in flat if parse_ts(c.get("createdAt"))]
+    if not flat:
+        return False
+    if last_in is None:
+        newest_c = max(flat, key=lambda c: parse_ts(c["createdAt"]))
+        return staff_reply(newest_c)
+    return any(staff_reply(c) and parse_ts(c["createdAt"]) > last_in for c in flat)
+
+
+def staff_reply(c):
+    return bool(c.get("userId") or c.get("user")) and not c.get("portalUserId") \
+        and not c.get("portalUser") and not c.get("isInternal")
+
+
+def is_mine(task, me):
+    if not me:
+        return False
+    if task.get("assigneeId") in me:
+        return True
+    return any(a.get("userId") in me and (a.get("role") or "assignee") == "assignee"
+               for a in task.get("assignments") or [])
+
+
+def is_unassigned(task):
+    return not task.get("assigneeId") and not any(
+        (a.get("role") or "assignee") == "assignee" for a in task.get("assignments") or [])
+
+
+def sweep_group(task, *, today, me, stale_before, answered):
+    """First matching group key, or None. `answered` is the answered_after_inbound
+    verdict (only consulted for inbound-looking tasks)."""
+    if looks_inbound(task) and not answered:
+        return "replied"
+    due = fmt_day(task.get("dueDate")) if task.get("dueDate") else ""
+    if due and due < today:
+        return "overdue"
+    if task.get("nudgedAt") and not task.get("acknowledgedNudge"):
+        return "nudged"
+    if is_unassigned(task):
+        return "unassigned"
+    last = parse_ts(task.get("lastActivityAt")) or parse_ts(task.get("updatedAt"))
+    if is_mine(task, me) and last and last < stale_before:
+        return "stale"
+    return None
+
+
+def ignored(task, patterns):
+    title = (task.get("title") or "").lower()
+    return any(p in title for p in patterns)
+
+
+def sweep_line(task, *, slug, web_url, members, clients):
+    tid = task["id"]
+    client = (task.get("client") or {}).get("name") or clients.get(task.get("clientId") or "", "") or "no client"
+    assignee = members.get(task.get("assigneeId") or "", "") or task.get("assigneeId") or ""
+    if not assignee:
+        names = [((a.get("user") or {}).get("displayName") or members.get(a.get("userId") or "", ""))
+                 for a in task.get("assignments") or [] if (a.get("role") or "assignee") == "assignee"]
+        assignee = ", ".join(n for n in names if n) or "unassigned"
+    due = f"due {fmt_day(task['dueDate'])}" if task.get("dueDate") else "no due"
+    parts = [client, task.get("status") or "", due, assignee]
+    if task.get("lastActivitySummary"):
+        parts.append(task["lastActivitySummary"].strip())
+    parts.append(f"{web_url.rstrip('/')}/{slug}/tasks/{tid}")
+    num = f"[#{task['ticketNumber']}] " if task.get("ticketNumber") else ""
+    title = clean_title(task.get("title")) or f"Task {tid}"
+    return f"- {num}{title} — {' · '.join(parts)} (id {tid})"
+
+
+def snooze_footer(path):
+    return (f"Snooze: add \"<id>\": \"<YYYY-MM-DD or ISO datetime>\" to the JSON object in {path} "
+            "(hidden until then; a bare date means local midnight).")
+
+
+def cap_body(sections, footer, cap):
+    """Join group sections, dropping trailing lines to stay under `cap` bytes
+    (UTF-8); the footer is always kept."""
+    body = "\n\n".join(sections)
+    tail = "\n\n" + footer
+    if len((body + tail).encode()) <= cap:
+        return body + tail
+    lines = body.split("\n")
+    dropped = 0
+    while lines and len(("\n".join(lines) + f"\n…{dropped} more lines not shown" + tail).encode()) > cap:
+        lines.pop()
+        dropped += 1
+    return "\n".join(lines) + f"\n…{dropped} more lines not shown" + tail
+
+
+def build_sweep(grouped, *, slug, label, web_url, hint, snoozed, snooze_path, now, members, clients):
+    """grouped: {group key: [task, ...]}. Returns the signal dict, or None if empty."""
+    total = sum(len(v) for v in grouped.values())
+    if not total:
+        return None
+    sections, counts = [], []
+    for key, name in SWEEP_GROUPS:
+        items = grouped.get(key) or []
+        counts.append(f"{name.lower()} {len(items)}")
+        if items:
+            lines = [f"### {name} ({len(items)})"]
+            lines += [sweep_line(t, slug=slug, web_url=web_url, members=members, clients=clients) for t in items]
+            sections.append("\n".join(lines))
+    footer = "---\n" + " · ".join(counts) + f" · snoozed {snoozed}\n" + snooze_footer(snooze_path)
+    sig = {
+        "id": f"orbit:sweep:{slug}:{now.strftime('%Y-%m-%dT%H')}",
+        "kind": "sweep",
+        "title": f"Orbit sweep · {label}: {total} item{'s' if total != 1 else ''} need{'s' if total == 1 else ''} you",
+        "body": cap_body(sections, footer, SWEEP_BODY_CAP),
+        "observedAt": now.isoformat(timespec="seconds"),
+        "refs": {"url": f"{web_url.rstrip('/')}/{slug}/tasks", "org": slug,
+                 "snoozeFile": snooze_path, "count": str(total)},
+    }
+    if hint:
+        sig["hints"] = {"workspace": hint}
+    return sig
 
 
 # ---------------------------------------------------------------- API client
@@ -452,6 +811,106 @@ def cached_map(orbit, state_dir, name, path, key_fn, val_fn):
     return out
 
 
+def run_sweep(orbit, env, *, org, slug, web_url, hint, state_dir):
+    now = datetime.now().astimezone()
+    if env.get("SWEEP_ALWAYS") != "1":
+        hours, days = env.get("SWEEP_HOURS") or "08:00-18:00", env.get("SWEEP_DAYS") or "mon-fri"
+        try:
+            inside = in_window(now, hours, days)
+        except ValueError:
+            log(f"bad SWEEP_HOURS/SWEEP_DAYS ({hours!r} / {days!r})")
+            return 1
+        if not inside:
+            return 0
+    try:
+        stale_days = float(env.get("ORBIT_STALE_DAYS") or 3)
+    except ValueError:
+        stale_days = 3.0
+    ignore = [p.strip().lower() for p in env.get("ORBIT_SWEEP_IGNORE", "Marketing Touchpoint").split(",") if p.strip()]
+    wanted_me = [e.strip().lower() for e in (env.get("ORBIT_ME_EMAIL") or "spencer@smithnetworksolutions.com").split(",") if e.strip()]
+    base = f"/api/orgs/{org}"
+    snooze_path = os.path.abspath(os.path.join(state_dir, "snooze.json"))
+    snoozes = load_snooze(snooze_path, now)
+
+    members = cached_map(orbit, state_dir, "members", base + "/members",
+                         lambda m: m.get("userId") or (m.get("user") or {}).get("id"),
+                         lambda m: (m.get("user") or {}).get("displayName"))
+    clients = cached_map(orbit, state_dir, "clients", base + "/clients",
+                         lambda c: c.get("id"), lambda c: c.get("name"))
+    emails_map = cached_map(orbit, state_dir, "member-emails", base + "/members",
+                            lambda m: ((m.get("user") or {}).get("email") or "").lower(),
+                            lambda m: m.get("userId") or (m.get("user") or {}).get("id"))
+    me = {emails_map[e] for e in wanted_me if e in emails_map} | {e for e in wanted_me if e in members}
+    if not me:
+        log(f"ORBIT_ME_EMAIL {','.join(wanted_me)} is not a member of this org; 'Mine and stale' is empty")
+
+    tasks, page = [], 1
+    params = {"statusNotIn": ",".join(DEFAULT_EXCLUDED), "sortBy": "updatedAt", "sortOrder": "desc", "limit": PAGE_LIMIT}
+    while page <= MAX_PAGES:
+        res = orbit.get(base + "/tasks", dict(params, page=page))
+        batch = res.get("data") or []
+        tasks.extend(batch)
+        if not batch or page >= ((res.get("pagination") or {}).get("totalPages") or 1):
+            break
+        page += 1
+    else:
+        log(f"stopped after {MAX_PAGES} pages")
+
+    open_tasks, snoozed, skipped = [], 0, 0
+    for t in tasks:
+        if t.get("archivedAt") or t.get("status") in DEFAULT_EXCLUDED or ignored(t, ignore):
+            skipped += 1
+        elif t.get("id") in snoozes:
+            snoozed += 1
+        else:
+            open_tasks.append(t)
+
+    # The list endpoint omits nudgedAt/acknowledgedNudge/taskInboxes; the
+    # single-task GET has them. Inbound-looking tasks also need their email
+    # thread (direction of the newest message) and comments.
+    def detail(t):
+        tid = t["id"]
+        try:
+            full = orbit.get(f"{base}/tasks/{tid}").get("data") or {}
+        except ApiError as e:
+            log(f"task {tid} detail unavailable ({e}); grouping from the list row")
+            full = {}
+        merged = dict(t, **{k: full.get(k) for k in ("nudgedAt", "acknowledgedNudge", "taskInboxes") if k in full})
+        answered = False
+        if looks_inbound(merged):
+            emails = task_emails(orbit, base, tid) if merged.get("taskInboxes") else []
+            comments = []
+            if ((t.get("_count") or {}).get("comments") or 0) > 0:
+                try:
+                    comments = orbit.get(f"{base}/tasks/{tid}/comments").get("data") or []
+                except ApiError as e:
+                    log(f"comments for {tid} unavailable: {e}")
+            answered = answered_after_inbound(emails, comments)
+        return merged, answered
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=SWEEP_WORKERS) as pool:
+        detailed = list(pool.map(detail, open_tasks))
+
+    today = now.strftime("%Y-%m-%d")
+    stale_before = now - timedelta(days=stale_days)
+    grouped = {k: [] for k, _ in SWEEP_GROUPS}
+    for t, answered in detailed:
+        g = sweep_group(t, today=today, me=me, stale_before=stale_before, answered=answered)
+        if g:
+            grouped[g].append(t)
+    for items in grouped.values():  # oldest activity first: longest-waiting on top
+        items.sort(key=lambda t: parse_ts(t.get("lastActivityAt")) or parse_ts(t.get("updatedAt"))
+                   or datetime.min.replace(tzinfo=timezone.utc))
+    sig = build_sweep(grouped, slug=slug, label=hint or slug, web_url=web_url, hint=hint,
+                      snoozed=snoozed, snooze_path=snooze_path, now=now, members=members, clients=clients)
+    log(f"sweep: {len(tasks)} open fetched, {skipped} ignored, {snoozed} snoozed, "
+        + ", ".join(f"{k} {len(v)}" for k, v in grouped.items()))
+    if sig:
+        print(json.dumps(sig, ensure_ascii=False))
+    return 0
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -475,6 +934,10 @@ def main():
     os.makedirs(state_dir, exist_ok=True)
 
     orbit = Orbit(env["ORBIT_API_URL"], env["ORBIT_API_KEY"], state_dir)
+    if "--sweep" in sys.argv:
+        if "--now" in sys.argv:
+            env["SWEEP_ALWAYS"] = "1"
+        return run_sweep(orbit, env, org=org, slug=slug, web_url=web_url, hint=hint, state_dir=state_dir)
     base = f"/api/orgs/{org}"
     list_params = {"sortBy": "updatedAt", "sortOrder": "desc", "limit": PAGE_LIMIT}
 
