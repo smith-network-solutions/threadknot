@@ -8,7 +8,7 @@ pub mod kimi;
 pub mod organize;
 pub mod repair;
 pub mod search;
-mod title;
+pub(crate) mod title;
 pub mod transcript;
 
 use crate::protocol::*;
@@ -749,6 +749,8 @@ pub struct Hub {
     /// The dispatch ledger (dispatches.json) — every worker this machine sent
     /// out and every one it is running for somebody else.
     pub dispatch: Arc<crate::dispatch::DispatchLedger>,
+    /// Always-on Bosun agents (bosuns.json), their pending signals and ledger.
+    pub bosuns: Arc<crate::bosun::BosunRegistry>,
     /// What a dispatched worker passed to `report_result`, keyed by its thread,
     /// waiting for that turn to end. Held here rather than on the record so a
     /// worker that reports and then keeps talking still ends with its own
@@ -824,6 +826,9 @@ impl Hub {
         let dispatch = Arc::new(
             crate::dispatch::DispatchLedger::open(store.dir()).expect("open dispatch ledger"),
         );
+        let bosuns = Arc::new(
+            crate::bosun::BosunRegistry::open(store.dir()).expect("open bosun registry"),
+        );
         Arc::new_cyclic(|self_weak| Self {
             self_weak: self_weak.clone(),
             store,
@@ -837,6 +842,7 @@ impl Hub {
             library,
             themes,
             dispatch,
+            bosuns,
             dispatch_reports: Mutex::new(HashMap::new()),
             dispatch_progress_at: Mutex::new(HashMap::new()),
             dispatch_activity: Mutex::new(HashMap::new()),
@@ -875,6 +881,13 @@ impl Hub {
     /// prompt, and the transcript should not claim a human typed it.
     pub fn start_dispatch_turn(self: &Arc<Self>, thread_id: &str, brief: String) -> Result<()> {
         self.start_turn_as(thread_id, None, brief, Vec::new(), true, None)
+    }
+
+    /// Start a turn whose prompt is machine-issued — a Bosun's work brief —
+    /// persisted as an `injected` user message for the same reason a
+    /// dispatch brief is: nobody typed it.
+    pub fn start_injected_turn(self: &Arc<Self>, thread_id: &str, text: String) -> Result<()> {
+        self.start_turn_as(thread_id, None, text, Vec::new(), true, None)
     }
 
     /// Record what a worker passed to `report_result`. Kept until its turn ends
@@ -1011,6 +1024,14 @@ impl Hub {
             _ => return,
         };
         let Some(thread) = self.store.thread(thread_id) else { return };
+        // A Bosun's thread finishing is the whole point of having one, and it
+        // finished with nobody watching; its own kind lets the phone say so.
+        let kind = match (kind, &thread.origin) {
+            (crate::push::PushKind::TurnCompleted, Some(origin)) if origin.kind == "bosun" => {
+                crate::push::PushKind::Bosun
+            }
+            (kind, _) => kind,
+        };
         let project_name = self
             .store
             .project(&thread.project_id)
@@ -1061,12 +1082,26 @@ impl Hub {
             .unwrap_or_default();
         let completion = matches!(event, AgentEvent::TurnCompleted { .. })
             .then(|| self.store.completion_notice_context(thread_id));
-        crate::notices::for_event(
+        let mut notice = crate::notices::for_event(
             &thread.title,
             &project_name,
             event,
             completion.as_ref(),
-        )
+        )?;
+        // Nobody asked for a Bosun's thread, so its title says little on a
+        // lock screen; who woke and where it worked says what it is.
+        if let (AgentEvent::TurnCompleted { .. }, Some(origin)) = (event, &thread.origin) {
+            if origin.kind == "bosun" {
+                let workspace = self
+                    .store
+                    .workspace_for_project(&thread.project_id)
+                    .and_then(|id| self.store.workspace(&id))
+                    .map(|w| w.name)
+                    .unwrap_or(project_name);
+                notice.title = format!("{} · {}", origin.bosun_name, workspace);
+            }
+        }
+        Some(notice)
     }
 
     /// Classify and close work orphaned by the previous Threadknot process.

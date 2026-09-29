@@ -6,6 +6,8 @@ import type {
   AgentModel,
   AiPalette,
   ArtifactRecord,
+  Bosun,
+  Wake,
   ArchiveHeader,
   CustomTheme,
   DiscoveredPeer,
@@ -360,6 +362,10 @@ export interface AppState {
    *  a project absent from the map has its panel closed. */
   workspace: Record<string, WorkspaceTab>;
   schedules: Schedule[];
+  /** Bosuns hosted by this machine (docs/BOSUN.md). */
+  bosuns: Bosun[];
+  /** Ledger tail across every bosun, newest first. */
+  bosunLedger: Wake[];
   /** Persisted terminal tabs, keyed by projectId (loaded on demand). */
   terminals: Record<string, TermInfo[]>;
   /** Produced artifacts per project (loaded on demand for the Artifacts tab). */
@@ -446,6 +452,8 @@ export const initialState: AppState = {
   notices: [],
   workspace: {},
   schedules: [],
+  bosuns: [],
+  bosunLedger: [],
   terminals: {},
   artifacts: {},
   artifactFocus: null,
@@ -505,6 +513,8 @@ export type Action =
   | { type: "noticeDismiss"; id: number }
   | { type: "workspace"; projectId: string; tab: WorkspaceTab | null }
   | { type: "schedules"; schedules: Schedule[] }
+  | { type: "bosuns"; bosuns: Bosun[] }
+  | { type: "bosunLedger"; wakes: Wake[] }
   | { type: "terminals"; projectId: string; terminals: TermInfo[] }
   | { type: "artifacts"; projectId: string; artifacts: ArtifactRecord[] }
   | { type: "artifactFocus"; artifactId: string | null }
@@ -1227,6 +1237,10 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "schedules":
       return { ...state, schedules: action.schedules };
+    case "bosuns":
+      return { ...state, bosuns: action.bosuns };
+    case "bosunLedger":
+      return { ...state, bosunLedger: action.wakes };
     case "terminals":
       return {
         ...state,
@@ -1741,6 +1755,26 @@ export interface ThreadknotActions {
   deleteSchedule: (scheduleId: string) => Promise<void>;
   /** Fires the schedule immediately; resolves with the new thread's id. */
   runSchedule: (scheduleId: string) => Promise<string>;
+  refreshBosuns: () => Promise<void>;
+  createBosun: (
+    payload: import("../lib/protocol").RequestMap["bosun.create"]["payload"],
+  ) => Promise<Bosun>;
+  updateBosun: (
+    payload: import("../lib/protocol").RequestMap["bosun.update"]["payload"],
+  ) => Promise<Bosun>;
+  deleteBosun: (bosunId: string) => Promise<void>;
+  /** Run every enabled lookout now, then wake. */
+  runBosun: (
+    bosunId: string,
+  ) => Promise<import("../lib/protocol").RequestMap["bosun.run"]["data"]>;
+  /** Run one lookout once; nothing is enqueued and the watermark stays put. */
+  testLookout: (
+    bosunId: string,
+    lookout: import("../lib/protocol").Lookout,
+  ) => Promise<import("../lib/protocol").RequestMap["bosun.lookout.test"]["data"]>;
+  /** Load the ledger tail into `state.bosunLedger` (all bosuns). */
+  loadBosunLedger: (limit?: number) => Promise<Wake[]>;
+  bosunWebhookUrl: (bosunId: string, lookoutId: string) => Promise<string>;
   /** Export a thread to the archive dir and remove it from the live list. */
   archiveThread: (threadId: string, projectId: string) => Promise<void>;
   /** Reload one machine's archive list into `state.archives[machineId]`.

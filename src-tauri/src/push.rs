@@ -87,6 +87,8 @@ pub enum PushKind {
     /// can act on. An older mobile build that doesn't know the string falls
     /// through to just showing the notification, which is the right default.
     DispatchFinished,
+    /// A thread a Bosun opened finished its turn (see `bosun.rs`).
+    Bosun,
     Error,
     Test,
 }
@@ -98,6 +100,7 @@ impl PushKind {
             PushKind::ApprovalRequest => "Approval needed",
             PushKind::QuestionRequest => "Question waiting",
             PushKind::DispatchFinished => "Dispatch finished",
+            PushKind::Bosun => "Bosun",
             PushKind::Error => "Agent error",
             PushKind::Test => "Test notification",
         }
@@ -110,6 +113,7 @@ impl PushKind {
             PushKind::ApprovalRequest => "approval_request",
             PushKind::QuestionRequest => "question_request",
             PushKind::DispatchFinished => "dispatch_finished",
+            PushKind::Bosun => "bosun",
             PushKind::Error => "error",
             PushKind::Test => "test",
         }

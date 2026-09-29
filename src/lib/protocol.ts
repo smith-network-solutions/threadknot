@@ -417,6 +417,9 @@ export interface Thread {
    *  thread handing it a brief, and it belongs under that thread rather than
    *  beside it. */
   dispatch?: DispatchOrigin;
+  /** Set when a Bosun opened this thread (docs/BOSUN.md §2). Absent on every
+   *  thread a person started. */
+  origin?: ThreadOrigin;
   createdAt: string;
   updatedAt: string;
 }
@@ -1074,6 +1077,146 @@ export interface Schedule {
   lastError?: string;
   nextRunAt?: string;
   dispatch?: ScheduleDispatch;
+}
+
+// ---- Bosun (docs/BOSUN.md) ------------------------------------------------
+
+export interface TriageSettings {
+  agent: Agent;
+  /** Default "haiku". */
+  model: string;
+}
+
+export interface WorkDefaults {
+  agent: Agent;
+  settings: ThreadSettings;
+}
+
+/** Local "HH:MM" window; may wrap midnight. */
+export interface QuietHours {
+  start: string;
+  end: string;
+}
+
+export interface WakeBudget {
+  /** Counts work+ask decisions executed. Default 6. */
+  maxTurnsPerHour: number;
+  /** Running threads this bosun opened. Default 2. */
+  maxConcurrent: number;
+}
+
+/** What a lookout watches, discriminated on `type`. */
+export type LookoutKind =
+  | {
+      type: "command";
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      cwd?: string | null;
+    }
+  | { type: "folder"; path: string; pattern: string; maxAgeDays: number }
+  | { type: "webhook"; secret: string }
+  | { type: "timer"; cadence: Cadence; prompt: string; nextRunAt?: string | null };
+
+export type LookoutType = LookoutKind["type"];
+
+export interface Lookout {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: LookoutKind;
+  /** command/folder poll cadence in seconds; min 30. Ignored for webhook/timer. */
+  intervalSecs: number;
+  watermark?: string | null;
+  lastRunAt?: string | null;
+  lastError?: string | null;
+  lastSignalCount: number;
+}
+
+/** The Bosun's rules for one workspace. */
+export interface Charter {
+  workspaceId: string;
+  summary: string;
+  routeHints: string[];
+  standingOrders: string;
+  /** Ceiling; absent inherits `work.settings.access`. */
+  access?: Access | null;
+  /** Which root to work in; absent = the workspace's member on this machine. */
+  member?: WorkspaceMember | null;
+  logThread: boolean;
+  allowWork: boolean;
+}
+
+export interface SignalHints {
+  workspace?: string | null;
+}
+
+export interface Signal {
+  id: string;
+  lookoutId: string;
+  bosunId: string;
+  /** "ticket" | "call" | "email" | "time" | "webhook" | free text. */
+  kind: string;
+  observedAt: string;
+  title: string;
+  body: string;
+  refs: Record<string, string>;
+  hints: SignalHints;
+}
+
+/** Carried on a thread a Bosun opened. */
+export interface ThreadOrigin {
+  kind: "bosun" | (string & {});
+  bosunId: string;
+  bosunName: string;
+  signalId: string;
+  lookoutId: string;
+  signalKind: string;
+  refs: Record<string, string>;
+  /** True for the per-day log thread `log` decisions append to. */
+  dayLog: boolean;
+}
+
+export type DecisionKind = "ignore" | "log" | "work" | "ask";
+
+export interface Decision {
+  signalId: string;
+  title: string;
+  decision: DecisionKind;
+  workspaceId?: string | null;
+  threadId?: string | null;
+  reason: string;
+  error?: string | null;
+}
+
+/** One engine pass: one line of bosun-ledger.jsonl. */
+export interface Wake {
+  id: string;
+  bosunId: string;
+  at: string;
+  signals: number;
+  decisions: Decision[];
+  skipped?: string | null;
+  triageMs: number;
+}
+
+export interface Bosun {
+  id: string;
+  name: string;
+  image?: string | null;
+  author?: string | null;
+  enabled: boolean;
+  homeWorkspaceId: string;
+  triage: TriageSettings;
+  work: WorkDefaults;
+  quietHours?: QuietHours | null;
+  budget: WakeBudget;
+  lookouts: Lookout[];
+  charters: Charter[];
+  createdAt: string;
+  updatedAt: string;
+  lastWakeAt?: string | null;
+  lastError?: string | null;
 }
 
 /** One entry in the recursive project tree (fs.tree). Paths are
@@ -2153,6 +2296,48 @@ export interface RequestMap {
   };
   "schedule.delete": { payload: { scheduleId: string }; data: Record<string, never> };
   "schedule.run": { payload: { scheduleId: string }; data: { threadId: string } };
+  "bosun.list": { payload: Record<string, never>; data: { bosuns: Bosun[] } };
+  "bosun.create": {
+    payload: {
+      name: string;
+      homeWorkspaceId: string;
+      image?: string | null;
+      triage?: TriageSettings;
+      work?: WorkDefaults;
+      quietHours?: QuietHours | null;
+      budget?: WakeBudget;
+      lookouts?: Lookout[];
+      charters?: Charter[];
+      enabled?: boolean;
+    };
+    data: Bosun;
+  };
+  /** `lookouts`/`charters` replace whole; `quietHours: null` clears. */
+  "bosun.update": {
+    payload: {
+      bosunId: string;
+      name?: string;
+      homeWorkspaceId?: string;
+      image?: string | null;
+      triage?: TriageSettings;
+      work?: WorkDefaults;
+      quietHours?: QuietHours | null;
+      budget?: WakeBudget;
+      lookouts?: Lookout[];
+      charters?: Charter[];
+      enabled?: boolean;
+    };
+    data: Bosun;
+  };
+  "bosun.delete": { payload: { bosunId: string }; data: Record<string, never> };
+  "bosun.run": { payload: { bosunId: string }; data: { wakeId?: string | null; signals: number } };
+  /** Runs a lookout once without enqueuing or moving its watermark. */
+  "bosun.lookout.test": {
+    payload: { bosunId: string; lookout: Lookout };
+    data: { signals: Signal[]; watermark?: string | null; stderr?: string | null; ms: number };
+  };
+  "bosun.ledger": { payload: { bosunId?: string; limit?: number }; data: { wakes: Wake[] } };
+  "bosun.webhook.url": { payload: { bosunId: string; lookoutId: string }; data: { url: string } };
   "usage.get": { payload: Record<string, never>; data: { usage: ProviderUsage[] } };
   "usage.refresh": { payload: Record<string, never>; data: Record<string, never> };
   "dictation.settings.get": { payload: Record<string, never>; data: DictationSettings };
@@ -2360,6 +2545,7 @@ export interface StateChangedFrame {
     | "servers"
     | "threads"
     | "schedules"
+    | "bosuns"
     | "terminals"
     | "artifacts"
     | "git"

@@ -7,6 +7,7 @@ pub mod agents;
 pub mod ai_palette;
 pub mod artifacts;
 pub mod bitwarden;
+pub mod bosun;
 pub mod browser;
 pub mod browser_profiles;
 pub mod bundled;

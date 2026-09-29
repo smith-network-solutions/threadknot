@@ -17,7 +17,7 @@ import {
   type ThreadSettings,
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
-import { elidePathMiddle } from "../lib/format";
+import { copyText, elidePathMiddle } from "../lib/format";
 import type { ReplyTarget } from "../lib/reply";
 import type { FeedItem } from "../state/feed";
 import {
@@ -1329,6 +1329,7 @@ export function ThreadView() {
               </span>
             </div>
           )}
+          {thread?.origin?.kind === "bosun" && <BosunOriginChip thread={thread} />}
           {chipPreview.portal}
         </div>
         {quickHome && (
@@ -1641,5 +1642,45 @@ export function ThreadView() {
         />
       </div>
     </section>
+  );
+}
+
+/** `⚓ <bosunName> · <signalKind>` under the title of a thread a Bosun opened,
+ *  with the signal's source: its URL as a link, or its file path (click to
+ *  copy). */
+function BosunOriginChip({ thread }: { thread: Thread }) {
+  const origin = thread.origin!;
+  const [copied, setCopied] = useState(false);
+  const url = origin.refs?.url;
+  const path = origin.refs?.path;
+  return (
+    <div className="bosun-origin">
+      <span
+        className="bosun-origin-chip"
+        title={origin.dayLog ? `${origin.bosunName}'s day log` : `opened by ${origin.bosunName}`}
+      >
+        ⚓ {origin.bosunName} · {origin.dayLog ? "log" : origin.signalKind}
+      </span>
+      {url ? (
+        <a className="bosun-origin-ref" href={url} target="_blank" rel="noreferrer" title={url}>
+          {url}
+        </a>
+      ) : path ? (
+        <button
+          type="button"
+          className="bosun-origin-ref"
+          title={copied ? "Copied" : `Copy ${path}`}
+          onClick={() =>
+            void copyText(path).then((ok) => {
+              if (!ok) return;
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1400);
+            })
+          }
+        >
+          {copied ? "copied" : elidePathMiddle(path)}
+        </button>
+      ) : null}
+    </div>
   );
 }

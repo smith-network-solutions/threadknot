@@ -949,6 +949,7 @@ impl Store {
             settings,
             provider_session_id: None,
             dispatch: None,
+            origin: None,
             session_anchors: HashMap::new(),
             provider_run_id: None,
             status: ThreadStatus::Idle,
@@ -968,6 +969,13 @@ impl Store {
         data.threads.insert(0, thread.clone());
         self.flush(&data)?;
         Ok(thread)
+    }
+
+    /// Every thread on this machine, across projects. For the few callers that
+    /// ask about threads by something other than their project (a Bosun
+    /// counting the threads it has running).
+    pub fn all_threads(&self) -> Vec<Thread> {
+        self.data.lock().unwrap().threads.clone()
     }
 
     pub fn list_threads(&self, project_id: &str) -> Vec<Thread> {

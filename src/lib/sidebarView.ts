@@ -1,6 +1,6 @@
 /**
  * Which list the sidebar is showing: the workspace fleet, the folderless Quick
- * Threads home, or the dedicated Hermes-agents view. Persisted so the choice
+ * Threads home, the dedicated Hermes-agents view, or the Bosun timeline. Persisted so the choice
  * survives restarts.
  *
  * This lives outside React because it is no longer only the sidebar's business.
@@ -11,7 +11,7 @@
  * `useSyncExternalStore`.
  */
 
-export type SidebarView = "fleet" | "agents" | "quick";
+export type SidebarView = "fleet" | "agents" | "quick" | "bosun";
 
 const LS_KEY = "threadknot.sidebarView";
 
@@ -20,7 +20,7 @@ const listeners = new Set<() => void>();
 function read(): SidebarView {
   try {
     const stored = localStorage.getItem(LS_KEY);
-    if (stored === "quick" || stored === "agents") return stored;
+    if (stored === "quick" || stored === "agents" || stored === "bosun") return stored;
   } catch {
     // Locked-down storage: the fleet is the right thing to fall back to.
   }

@@ -422,6 +422,8 @@ async fn sec004_request_kinds_require_their_capability() {
         ("turn.start", Capability::Threads, serde_json::json!({ "threadId": "no-such-thread", "text": "hi" })),
         ("approval.respond", Capability::Threads, serde_json::json!({ "threadId": "no-such-thread", "requestId": "r", "decision": "deny" })),
         ("schedule.list", Capability::Threads, serde_json::json!({})),
+        ("bosun.list", Capability::Threads, serde_json::json!({})),
+        ("bosun.ledger", Capability::Threads, serde_json::json!({})),
     ];
 
     for (kind, capability, payload) in rows {
@@ -586,6 +588,33 @@ async fn a_dispatching_schedule_also_needs_the_terminal_grant() {
     let mut plain = create.clone();
     plain.as_object_mut().unwrap().remove("dispatch");
     assert_passes_gate(&no_terminal, "schedule.create", plain, Capability::Terminal).await;
+}
+
+/// A Bosun's command lookout runs arbitrary code on a timer, so saving one —
+/// or test-running one — needs `Terminal`, exactly like a dispatching
+/// schedule. A folder lookout stays on `Threads`.
+#[tokio::test]
+async fn a_bosun_command_lookout_needs_the_terminal_grant() {
+    let no_terminal = device_with_all_but(Capability::Terminal);
+    let all = device(&Capability::ALL);
+    let command = serde_json::json!({ "kind": { "type": "command", "command": "true" } });
+    let create = serde_json::json!({
+        "name": "B",
+        "homeWorkspaceId": "no-such-workspace",
+        "lookouts": [command],
+    });
+    let update = serde_json::json!({ "bosunId": "no-such-bosun", "lookouts": [command] });
+    let test = serde_json::json!({ "bosunId": "no-such-bosun", "lookout": command });
+    for (kind, payload) in [("bosun.create", &create), ("bosun.update", &update), ("bosun.lookout.test", &test)] {
+        assert_denied(&no_terminal, kind, payload.clone(), Capability::Terminal).await;
+        assert_passes_gate(&all, kind, payload.clone(), Capability::Terminal).await;
+    }
+    let folder = serde_json::json!({
+        "name": "B",
+        "homeWorkspaceId": "no-such-workspace",
+        "lookouts": [{ "kind": { "type": "folder", "path": "/tmp", "pattern": "*.md" } }],
+    });
+    assert_passes_gate(&no_terminal, "bosun.create", folder, Capability::Terminal).await;
 }
 
 /// Firing a saved dispatching schedule is the same authority as saving one:

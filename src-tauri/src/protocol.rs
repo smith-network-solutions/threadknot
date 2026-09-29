@@ -485,6 +485,11 @@ pub struct Thread {
     /// them. See [`DispatchOrigin`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatch: Option<DispatchOrigin>,
+    /// Set when something other than a person opened this thread — today only
+    /// a Bosun (see `bosun.rs`). Absent on every thread written before Bosun
+    /// existed, which is why it must stay optional and skipped when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<ThreadOrigin>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1123,6 +1128,326 @@ pub struct Schedule {
     pub dispatch: Option<ScheduleDispatch>,
 }
 
+// ---- Bosun (docs/BOSUN.md) ----
+//
+// Every field a client may omit carries a serde default, so a minimal
+// `bosun.create` payload deserializes straight into a complete record and an
+// older `bosuns.json` keeps loading as fields are added.
+
+fn yes() -> bool {
+    true
+}
+
+fn default_triage_model() -> String {
+    "haiku".into()
+}
+
+fn default_lookout_interval() -> u32 {
+    300
+}
+
+fn default_max_age_days() -> u32 {
+    3
+}
+
+fn default_max_turns_per_hour() -> u32 {
+    6
+}
+
+fn default_max_concurrent() -> u32 {
+    2
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageSettings {
+    /// Only Claude is exercised in v1; the field exists so a later triage
+    /// backend is a value change rather than a schema change.
+    #[serde(default = "default_claude")]
+    pub agent: Agent,
+    #[serde(default = "default_triage_model")]
+    pub model: String,
+}
+
+fn default_claude() -> Agent {
+    Agent::Claude
+}
+
+impl Default for TriageSettings {
+    fn default() -> Self {
+        Self {
+            agent: Agent::Claude,
+            model: default_triage_model(),
+        }
+    }
+}
+
+fn default_work_settings() -> ThreadSettings {
+    ThreadSettings {
+        model: crate::agents::claude::DEFAULT_MODEL.to_string(),
+        effort: None,
+        wide_context: false,
+        claude_chrome: false,
+        access: Access::Edits,
+        mode: Mode::Build,
+        browser_profile_id: None,
+        hermes_agent_id: None,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkDefaults {
+    #[serde(default = "default_claude")]
+    pub agent: Agent,
+    #[serde(default = "default_work_settings")]
+    pub settings: ThreadSettings,
+}
+
+impl Default for WorkDefaults {
+    fn default() -> Self {
+        Self {
+            agent: Agent::Claude,
+            settings: default_work_settings(),
+        }
+    }
+}
+
+/// Local "HH:MM" window during which the Bosun holds its signals. `start`
+/// after `end` wraps midnight ("22:00"–"07:00").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuietHours {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeBudget {
+    /// Work + ask decisions executed per rolling hour.
+    #[serde(default = "default_max_turns_per_hour")]
+    pub max_turns_per_hour: u32,
+    /// Threads this Bosun opened that are still running.
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent: u32,
+}
+
+impl Default for WakeBudget {
+    fn default() -> Self {
+        Self {
+            max_turns_per_hour: default_max_turns_per_hour(),
+            max_concurrent: default_max_concurrent(),
+        }
+    }
+}
+
+/// Where a lookout's signals come from. Variant fields are camelCase on the
+/// wire like everything else; the tag alone is lowercase.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", rename_all_fields = "camelCase")]
+pub enum LookoutKind {
+    /// Run an executable; stdout is NDJSON signals (BOSUN.md §4).
+    Command {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: std::collections::BTreeMap<String, String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+    },
+    /// New files under `path` whose NAME matches the `*`/`?` glob `pattern`.
+    Folder {
+        path: String,
+        pattern: String,
+        #[serde(default = "default_max_age_days")]
+        max_age_days: u32,
+    },
+    /// `POST /api/hail/<lookoutId>` with `Authorization: Bearer <secret>`.
+    Webhook {
+        #[serde(default)]
+        secret: String,
+    },
+    /// A `kind: "time"` signal on a cadence, `prompt` as its body.
+    Timer {
+        cadence: Cadence,
+        #[serde(default)]
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_run_at: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Lookout {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    pub kind: LookoutKind,
+    /// Poll cadence for command/folder lookouts. Minimum 30.
+    #[serde(default = "default_lookout_interval")]
+    pub interval_secs: u32,
+    /// Opaque, owned by the lookout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub last_signal_count: u32,
+}
+
+/// The Bosun's rules for one workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Charter {
+    pub workspace_id: String,
+    /// What this workspace is; the triage model routes on it.
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub route_hints: Vec<String>,
+    /// Markdown prepended to every work turn in this workspace.
+    #[serde(default)]
+    pub standing_orders: String,
+    /// Ceiling; `None` inherits `work.settings.access`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<Access>,
+    /// Which root to work in; `None` is the workspace's root on this machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<WorkspaceMember>,
+    #[serde(default = "yes")]
+    pub log_thread: bool,
+    #[serde(default = "yes")]
+    pub allow_work: bool,
+}
+
+/// One always-on agent (BOSUN.md §2). Machine-local, like a schedule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bosun {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// A `people.rs` person id; `None` is the owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    pub home_workspace_id: String,
+    #[serde(default)]
+    pub triage: TriageSettings,
+    #[serde(default)]
+    pub work: WorkDefaults,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet_hours: Option<QuietHours>,
+    #[serde(default)]
+    pub budget: WakeBudget,
+    #[serde(default)]
+    pub lookouts: Vec<Lookout>,
+    #[serde(default)]
+    pub charters: Vec<Charter>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_wake_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalHints {
+    /// Workspace name or id, optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+}
+
+/// One normalized "something happened" record from a lookout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Signal {
+    /// Deterministic; the dedupe key.
+    pub id: String,
+    pub lookout_id: String,
+    pub bosun_id: String,
+    pub kind: String,
+    pub observed_at: String,
+    pub title: String,
+    /// Capped at 32 KiB by the engine.
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub refs: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub hints: SignalHints,
+}
+
+/// Why a Bosun opened this thread. Lives on [`Thread::origin`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadOrigin {
+    /// "bosun".
+    pub kind: String,
+    pub bosun_id: String,
+    pub bosun_name: String,
+    pub signal_id: String,
+    pub lookout_id: String,
+    pub signal_kind: String,
+    #[serde(default)]
+    pub refs: std::collections::BTreeMap<String, String>,
+    /// True for the per-day log thread `log` decisions append to.
+    #[serde(default)]
+    pub day_log: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecisionKind {
+    Ignore,
+    Log,
+    Work,
+    Ask,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Decision {
+    pub signal_id: String,
+    pub title: String,
+    pub decision: DecisionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// One engine pass over pending signals: a line in `bosun-ledger.jsonl`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Wake {
+    pub id: String,
+    pub bosun_id: String,
+    pub at: String,
+    pub signals: u32,
+    #[serde(default)]
+    pub decisions: Vec<Decision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
+    #[serde(default)]
+    pub triage_ms: u64,
+}
+
 /// A project-bound terminal tab. The record persists (so tabs survive an app
 /// restart and can be renamed); the live pty session is tracked separately in
 /// `term::TermRegistry` and keyed by `(project_id, id)`. Its scrollback is
@@ -1326,6 +1651,105 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every thread on disk predates Bosun. `origin` is optional precisely so
+    /// they keep loading: one thread that failed to deserialize would take
+    /// `projects.json` with it.
+    #[test]
+    fn a_thread_written_before_bosun_still_loads_and_stays_origin_free() {
+        let stored = serde_json::json!({
+            "id": "t1",
+            "projectId": "p1",
+            "machineId": "m1",
+            "agent": "claude",
+            "title": "Old",
+            "settings": { "model": "sonnet", "access": "edits", "mode": "build" },
+            "status": "idle",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        });
+        let thread: Thread = serde_json::from_value(stored).expect("legacy thread loads");
+        assert!(thread.origin.is_none());
+        let out = serde_json::to_value(&thread).unwrap();
+        assert!(out.get("origin").is_none(), "absent origin is not written back");
+    }
+
+    #[test]
+    fn a_bosun_round_trips_with_camel_case_fields() {
+        let raw = serde_json::json!({
+            "id": "b1",
+            "name": "Blackbeard",
+            "enabled": true,
+            "homeWorkspaceId": "w1",
+            "triage": { "agent": "claude", "model": "haiku" },
+            "work": { "agent": "claude",
+                      "settings": { "model": "claude-opus-5", "access": "edits", "mode": "build",
+                                    "wideContext": false, "claudeChrome": false } },
+            "quietHours": { "start": "22:00", "end": "07:00" },
+            "budget": { "maxTurnsPerHour": 6, "maxConcurrent": 2 },
+            "lookouts": [
+                { "id": "l1", "name": "Calls", "enabled": true, "intervalSecs": 60, "lastSignalCount": 0,
+                  "kind": { "type": "folder", "path": "~/Calls", "pattern": "triage.md", "maxAgeDays": 5 } },
+                { "id": "l2", "name": "Morning", "enabled": true, "intervalSecs": 300, "lastSignalCount": 1,
+                  "kind": { "type": "timer", "cadence": { "type": "daily", "time": "08:00" },
+                            "prompt": "plan the day", "nextRunAt": "2026-09-29T08:00:00-04:00" } },
+                { "id": "l3", "name": "Hook", "enabled": true, "intervalSecs": 300, "lastSignalCount": 0,
+                  "kind": { "type": "webhook", "secret": "abc" } },
+                { "id": "l4", "name": "Mail", "enabled": false, "intervalSecs": 120, "lastSignalCount": 0,
+                  "watermark": "123",
+                  "kind": { "type": "command", "command": "gmail.sh", "args": ["-q"], "env": { "A": "1" } } },
+            ],
+            "charters": [{ "workspaceId": "w2", "summary": "Service Storm", "routeHints": ["org ss"],
+                           "standingOrders": "be brief", "access": "read",
+                           "member": { "machineId": "m2", "projectId": "p2" },
+                           "logThread": false, "allowWork": false }],
+            "createdAt": "2026-09-28T00:00:00Z",
+            "updatedAt": "2026-09-28T00:00:00Z",
+            "lastWakeAt": "2026-09-28T01:00:00Z",
+        });
+        let bosun: Bosun = serde_json::from_value(raw.clone()).expect("bosun parses");
+        assert!(matches!(bosun.lookouts[0].kind, LookoutKind::Folder { max_age_days: 5, .. }));
+        assert!(!bosun.charters[0].allow_work && !bosun.charters[0].log_thread);
+        assert_eq!(serde_json::to_value(&bosun).unwrap(), raw, "round-trips byte-for-byte");
+    }
+
+    #[test]
+    fn thread_origin_and_wake_use_camel_case() {
+        let origin = ThreadOrigin {
+            kind: "bosun".into(),
+            bosun_id: "b1".into(),
+            bosun_name: "Blackbeard".into(),
+            signal_id: "s1".into(),
+            lookout_id: "l1".into(),
+            signal_kind: "ticket".into(),
+            refs: Default::default(),
+            day_log: true,
+        };
+        let v = serde_json::to_value(&origin).unwrap();
+        assert_eq!(v["bosunId"], "b1");
+        assert_eq!(v["dayLog"], true);
+        let wake = Wake {
+            id: "w".into(),
+            bosun_id: "b1".into(),
+            at: "now".into(),
+            signals: 1,
+            decisions: vec![Decision {
+                signal_id: "s1".into(),
+                title: "t".into(),
+                decision: DecisionKind::Ask,
+                workspace_id: Some("w1".into()),
+                thread_id: None,
+                reason: "r".into(),
+                error: None,
+            }],
+            skipped: None,
+            triage_ms: 12,
+        };
+        let v = serde_json::to_value(&wake).unwrap();
+        assert_eq!(v["triageMs"], 12);
+        assert_eq!(v["decisions"][0]["decision"], "ask");
+        assert_eq!(v["decisions"][0]["signalId"], "s1");
+    }
 
     fn rec(name: &str, rel_path: &str) -> ArtifactRecord {
         ArtifactRecord {

@@ -10482,6 +10482,278 @@ span.title-agent-mark { width: 16px; height: 16px; }
   text-transform: uppercase;
 }
 
+/* ================= bosun ================= */
+
+/* Panel: the Schedules modal's look, a little wider for the lookout cards. */
+.bosun-modal { width: 620px; }
+.bosun-form { gap: 13px; }
+.bosun-grow { flex: 1; min-width: 0; }
+.bosun-left { align-self: flex-start; }
+.bosun-identity { display: flex; align-items: flex-end; gap: 10px; }
+.bosun-avatar-btn { padding: 0; border-radius: 50%; flex: none; }
+.bosun-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--brass-dim);
+  border: 1px solid color-mix(in srgb, var(--brass) 34%, transparent);
+  color: var(--brass-hi);
+  font-size: 0.62em;
+  line-height: 1;
+}
+.bosun-avatar-btn .bosun-avatar { font-size: 20px; }
+.bosun-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.bosun-inline { display: flex; gap: 14px; flex-wrap: wrap; }
+.bosun-inline > .sched-field { flex: 1 1 180px; min-width: 0; }
+.bosun-copy-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.bosun-copy-row .sched-hint { margin-top: 0; }
+.bosun-num {
+  width: 76px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+.bosun-num:focus { border-color: color-mix(in srgb, var(--brass) 55%, transparent); }
+.bosun-small-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  min-height: 0;
+}
+.bosun-section { display: flex; flex-direction: column; gap: 8px; }
+.bosun-section-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bosun-section-head .sched-label { flex: 1; }
+.sched-form .bosun-section-head select { min-width: 0; padding: 5px 8px; font-size: 12px; }
+.bosun-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.bosun-card.off > :not(.bosun-card-head) { opacity: 0.55; }
+.bosun-card-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.bosun-card-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sched-form input.bosun-card-name { flex: 1; min-width: 0; padding: 5px 8px; font-weight: 600; }
+.bosun-cadence { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
+.bosun-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--teal);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 7px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.bosun-issues {
+  margin: 0;
+  padding: 8px 12px 8px 26px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, transparent);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.bosun-test { display: flex; flex-direction: column; gap: 6px; }
+.bosun-test-scroll { overflow-x: auto; max-height: 220px; overflow-y: auto; }
+.bosun-test-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.bosun-test-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.bosun-test-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); color: var(--dim); vertical-align: top; }
+.bosun-test-table td:nth-child(2) { color: var(--text); }
+.bosun-test-ref { font-family: var(--font-mono); font-size: 10.5px; overflow-wrap: anywhere; }
+.bosun-stderr {
+  margin: 0;
+  max-height: 140px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+.bosun-empty-mark { font-size: 24px; color: var(--brass); opacity: 0.85; line-height: 1; }
+
+/* Wake lines: shared by the panel's ledger tail and the sidebar timeline. */
+.bosun-wake { display: flex; flex-direction: column; }
+.bosun-wake-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+.bosun-wake-line:not(:disabled):hover { background: color-mix(in srgb, var(--brass) 8%, transparent); color: var(--text); }
+.bosun-wake-line:disabled { cursor: default; opacity: 1; }
+.bosun-wake.skipped .bosun-wake-line { color: var(--faint); font-style: italic; }
+.bosun-wake-line .row-chevron { flex: none; opacity: 0.7; }
+.bosun-wake-spacer { width: 10px; flex: none; }
+.bosun-wake-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bosun-wake-who { color: var(--brass); }
+.bosun-decisions {
+  list-style: none;
+  margin: 2px 0 6px 18px;
+  padding: 0 0 0 10px;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.bosun-decision { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bosun-decision-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bosun-decision-title { flex: 1; min-width: 0; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bosun-decision-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.bosun-decision-reason { font-size: 11px; color: var(--faint); line-height: 1.45; }
+.bosun-decision .sched-view:disabled { opacity: 0.45; text-decoration: none; }
+.bosun-badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.bosun-badge.d-log { color: var(--dim); border-color: var(--line-2); }
+.bosun-badge.d-work { color: var(--teal); background: var(--teal-dim); border-color: rgba(67, 201, 165, 0.35); }
+.bosun-badge.d-ask { color: var(--brass-hi); background: var(--brass-dim); border-color: color-mix(in srgb, var(--brass) 40%, transparent); }
+
+/* Sidebar view */
+.sidebar-action-glyph {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  font-style: normal;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--sidebar-muted);
+  opacity: 0.8;
+}
+.bosun-view { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; }
+.bosun-crew {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 8px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.bosun-crew-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.bosun-crew-row.off .bosun-crew-name { opacity: 0.55; }
+.bosun-crew-row .bosun-avatar { font-size: 11px; }
+.bosun-crew-name { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bosun-crew-state { flex: none; font-size: 10.5px; color: var(--teal); }
+.bosun-crew-row.off .bosun-crew-state { color: var(--faint); }
+.bosun-crew-state.err { color: var(--red); }
+.bosun-manage { align-self: flex-end; margin-top: 2px; }
+.bosun-day { display: flex; flex-direction: column; gap: 1px; }
+.bosun-day-head {
+  margin: 8px 18px 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.bosun-day .bosun-wake { margin: 0 8px; }
+.bosun-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; line-height: 1.55; }
+.bosun-empty p { margin: 0; }
+
+/* Row marks: the anchor in the agent slot, the day-log tag, the workspace chip. */
+.bosun-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--brass);
+}
+.thread-chip.bosun-log-tag {
+  color: var(--faint);
+  background: none;
+  border-style: dashed;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 9px;
+}
+.thread-chip.bosun-ws-chip {
+  color: var(--brass-hi);
+  background: var(--brass-dim);
+  border-color: color-mix(in srgb, var(--brass) 34%, transparent);
+  max-width: 110px;
+}
+
+/* Thread header: which bosun opened this, and the signal's source. */
+.bosun-origin { display: flex; align-items: center; gap: 7px; margin-top: 3px; min-width: 0; }
+.bosun-origin-chip {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--brass) 34%, transparent);
+  background: var(--brass-dim);
+  color: var(--brass-hi);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.bosun-origin-ref {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--teal);
+  text-decoration: none;
+  text-align: left;
+}
+.bosun-origin-ref:hover { text-decoration: underline; color: var(--text); }
+
+@media (max-width: 767px) {
+  .bosun-modal { width: 100%; }
+  .thread-row .thread-chip.bosun-ws-chip { display: inline-block; max-width: 72px; }
+  .thread-row .thread-chip.bosun-log-tag { display: inline-block; }
+  .bosun-wake-line { min-height: 36px; }
+}
+
 /* ---- project pop-out (drag a project into its own window) ---------------- */
 
 .project-head[draggable="true"] { cursor: grab; }

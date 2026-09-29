@@ -81,6 +81,7 @@ import { MainSplit } from "./components/MainSplit";
 import { DirPicker } from "./components/DirPicker";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
+import { BosunPanel } from "./components/BosunPanel";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
 import { PairBrowser } from "./components/PairBrowser";
@@ -1893,6 +1894,53 @@ function makeActions(
       return threadId;
     },
 
+    async refreshBosuns() {
+      const { bosuns } = await client.request("bosun.list", {});
+      dispatch({ type: "bosuns", bosuns: bosuns ?? [] });
+    },
+
+    async createBosun(payload) {
+      const bosun = await client.request("bosun.create", payload);
+      dispatch({ type: "bosuns", bosuns: [...getState().bosuns, bosun] });
+      return bosun;
+    },
+
+    async updateBosun(payload) {
+      const bosun = await client.request("bosun.update", payload);
+      dispatch({
+        type: "bosuns",
+        bosuns: getState().bosuns.map((b) => (b.id === bosun.id ? bosun : b)),
+      });
+      return bosun;
+    },
+
+    async deleteBosun(bosunId) {
+      await client.request("bosun.delete", { bosunId });
+      dispatch({
+        type: "bosuns",
+        bosuns: getState().bosuns.filter((b) => b.id !== bosunId),
+      });
+    },
+
+    async runBosun(bosunId) {
+      return client.request("bosun.run", { bosunId });
+    },
+
+    async testLookout(bosunId, lookout) {
+      return client.request("bosun.lookout.test", { bosunId, lookout });
+    },
+
+    async loadBosunLedger(limit = 200) {
+      const { wakes } = await client.request("bosun.ledger", { limit });
+      dispatch({ type: "bosunLedger", wakes: wakes ?? [] });
+      return wakes ?? [];
+    },
+
+    async bosunWebhookUrl(bosunId, lookoutId) {
+      const { url } = await client.request("bosun.webhook.url", { bosunId, lookoutId });
+      return url;
+    },
+
     async archiveThread(threadId: string, projectId: string) {
       const machineId = routeFor(threadId);
       await client
@@ -2156,6 +2204,8 @@ export default function App() {
    *  machine (machineId undefined) or on a peer. */
   const [picker, setPicker] = useState<{ machineId?: string; label?: string } | null>(null);
   const [showSchedules, setShowSchedules] = useState(false);
+  /** Null = closed; `startNew` opens straight onto the create form. */
+  const [bosunPanel, setBosunPanel] = useState<{ startNew: boolean } | null>(null);
   /** This origin needs a credential this browser does not have. Not an error
    *  state, so it is kept out of `conn` — it is the first step of setup. */
   const [needsPairing, setNeedsPairing] = useState(false);
@@ -2310,6 +2360,13 @@ export default function App() {
         return;
       }
       if (frame.scope === "schedules") void actionsRef.current.refreshSchedules();
+      else if (frame.scope === "bosuns") {
+        // Local only: a Bosun is machine-local, and a relayed frame describes
+        // the peer's bosuns, which this connection does not list.
+        if (frame.origin) return;
+        void actionsRef.current.refreshBosuns().catch(() => undefined);
+        void actionsRef.current.loadBosunLedger().catch(() => undefined);
+      }
       else if (frame.scope === "themes")
         void actionsRef.current.listThemes().catch(() => undefined);
       else if (frame.scope === "workspaces") {
@@ -2408,6 +2465,9 @@ export default function App() {
             .catch(() => undefined);
           await actionsRef.current.refreshProjects();
           void actionsRef.current.refreshSchedules().catch(() => undefined);
+          // Older servers have no bosun.* methods; an empty list is right there.
+          void actionsRef.current.refreshBosuns().catch(() => undefined);
+          void actionsRef.current.loadBosunLedger().catch(() => undefined);
           void actionsRef.current.refreshArchives().catch(() => undefined);
           void actionsRef.current.refreshUpdate().catch(() => undefined);
           void actionsRef.current.refreshPeers().catch(() => undefined);
@@ -2705,6 +2765,10 @@ export default function App() {
   }, [pickLocalDirectory, state.hello?.machineId, state.isTauri]);
 
   const onOpenSchedules = useCallback(() => setShowSchedules(true), []);
+  const onOpenBosun = useCallback(
+    (startNew?: boolean) => setBosunPanel({ startNew: !!startNew }),
+    [],
+  );
 
   useEffect(() => {
     function onCreateWorkspace() {
@@ -2730,6 +2794,7 @@ export default function App() {
         <Sidebar
           onAddProject={onAddProject}
           onOpenSchedules={onOpenSchedules}
+          onOpenBosun={onOpenBosun}
         />
         {state.sidebarOpen && (
           <div
@@ -2803,6 +2868,9 @@ export default function App() {
           />
         )}
         {showSchedules && <SchedulesPanel onClose={() => setShowSchedules(false)} />}
+        {bosunPanel && (
+          <BosunPanel startNew={bosunPanel.startNew} onClose={() => setBosunPanel(null)} />
+        )}
         <AvatarCropHost />
         {!state.isTauri && <PullToRefresh />}
         </div>

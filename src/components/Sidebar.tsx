@@ -48,6 +48,13 @@ import {
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
+  bosunAttentionThreads,
+  bosunThreads,
+  bosunTimeline,
+  dayLabel,
+} from "../lib/bosun";
+import { WakeLine } from "./BosunWake";
+import {
   findThread,
   hermesAttentionThreads,
   allProjects,
@@ -59,6 +66,7 @@ import {
   threadInView,
   threadSettled,
   useStore,
+  workspaceIdForProject,
   type AppState,
   type ProjectActivity,
 } from "../state/store";
@@ -114,6 +122,7 @@ import {
   MoreIcon,
   NotebookPenIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   PopoutIcon,
   SearchIcon,
@@ -975,6 +984,7 @@ function ThreadRow({
   lit = false,
   nested = false,
   inHermesView = false,
+  inBosunView = false,
   view,
   folders = [],
   folderId,
@@ -998,6 +1008,9 @@ function ThreadRow({
    *  gateway chip; in exchange it says which local agent has the chat when
    *  Hermes is not the one holding the next turn. */
   inHermesView?: boolean;
+  /** Rendered in the Bosun timeline, which mixes workspaces: the row names
+   *  its workspace with a chip. */
+  inBosunView?: boolean;
   /** Which sidebar presentation to render. Threaded down from the layout hook
    *  (a fresh useSidebarLayout() here would be a second, out-of-sync copy). */
   view: SidebarLayout["view"];
@@ -1318,7 +1331,25 @@ function ThreadRow({
     </span>
   );
 
-  const markVisual = hermesAvatar ? (
+  // A thread a Bosun opened wears an anchor in the agent slot, in every
+  // view, the way a dispatched worker is marked by its rail.
+  const bosunOrigin = thread.origin?.kind === "bosun" ? thread.origin : undefined;
+  const bosunWorkspaceName = inBosunView
+    ? (() => {
+        const wsId = workspaceIdForProject(state, thread.projectId);
+        return allWorkspaces(state).find((w) => w.id === wsId)?.name;
+      })()
+    : undefined;
+  const markVisual = bosunOrigin && !hermesAvatar ? (
+    <span
+      className="thread-row-mark bosun-mark"
+      role="img"
+      aria-label={`opened by ${bosunOrigin.bosunName}`}
+      title={`opened by ${bosunOrigin.bosunName} · ${thread.agent}`}
+    >
+      ⚓
+    </span>
+  ) : hermesAvatar ? (
     <span className="hermes-avatar-wrap">
       <span className="thread-row-avatar" {...hermesPreview.hoverProps}>
         <img src={hermesAvatar} alt="" />
@@ -1387,6 +1418,16 @@ function ThreadRow({
 
   const chipsEl = (
     <>
+      {bosunWorkspaceName && (
+        <span className="thread-chip bosun-ws-chip" title={`in ${bosunWorkspaceName}`}>
+          {bosunWorkspaceName}
+        </span>
+      )}
+      {bosunOrigin?.dayLog && (
+        <span className="thread-chip bosun-log-tag" title={`${bosunOrigin.bosunName}'s day log`}>
+          log
+        </span>
+      )}
       {/* Who is working this chat. In a workspace that is the gateway's name,
           so a card in the folder still reads "your agent has this". In the
           Hermes view the header already said the gateway, so the chip instead
@@ -2483,6 +2524,141 @@ function HermesGroup({
           ]}
         />
       )}
+    </div>
+  );
+}
+
+/** The sidebar's Bosun view: one timeline across every workspace answering
+ *  "what did my Bosun do today". Each day interleaves the wakes (a collapsible
+ *  ledger line) with the threads those wakes opened (normal rows, plus a
+ *  workspace chip, since this list is not scoped to one). Like the Hermes view
+ *  it is a second way to reach chats that also live in their workspace. */
+function BosunSection({
+  filter,
+  contentMatches,
+  view,
+  onOpenBosun,
+}: {
+  filter: string;
+  contentMatches: ReadonlySet<string>;
+  view: SidebarLayout["view"];
+  onOpenBosun: (startNew?: boolean) => void;
+}) {
+  const { state, actions } = useStore();
+  const [running, setRunning] = useState<Record<string, boolean>>({});
+  const threads = useMemo(() => bosunThreads(state), [state.threads]);
+  const names = useMemo(
+    () => new Map(state.bosuns.map((b) => [b.id, b.name])),
+    [state.bosuns],
+  );
+  const days = useMemo(() => {
+    const shownThreads = filter
+      ? threads.filter((t) => threadMatches(t, filter, contentMatches))
+      : threads;
+    const shownWakes = filter
+      ? state.bosunLedger.filter((w) =>
+          w.decisions.some((d) => d.title.toLowerCase().includes(filter)),
+        )
+      : state.bosunLedger;
+    return bosunTimeline(shownWakes, shownThreads);
+  }, [threads, state.bosunLedger, filter, contentMatches]);
+
+  if (state.bosuns.length === 0 && threads.length === 0) {
+    return (
+      <div className="sidebar-empty bosun-empty">
+        <span className="bosun-empty-mark" aria-hidden>
+          ⚓
+        </span>
+        <p>
+          A Bosun is an always-on agent that watches your ticket queues, inboxes,
+          folders and timers, and sorts each signal into the right workspace.
+          It opens a thread only when there is work to show or a question to ask.
+        </p>
+        <button
+          type="button"
+          className="btn tone-allow sched-new-btn"
+          onClick={() => onOpenBosun(true)}
+        >
+          <PlusIcon size={13} /> Create a Bosun
+        </button>
+      </div>
+    );
+  }
+
+  async function runNow(bosunId: string) {
+    setRunning((r) => ({ ...r, [bosunId]: true }));
+    try {
+      await actions.runBosun(bosunId);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning((r) => ({ ...r, [bosunId]: false }));
+    }
+  }
+
+  const multi = state.bosuns.length > 1;
+  const now = new Date();
+  return (
+    <div className="bosun-view">
+      <div className="bosun-crew">
+        {state.bosuns.map((b) => (
+          <div key={b.id} className={`bosun-crew-row${b.enabled ? "" : " off"}`}>
+            <span className="bosun-avatar" style={{ width: 20, height: 20 }}>
+              {b.image ? <img src={b.image} alt="" /> : <span aria-hidden>⚓</span>}
+            </span>
+            <span className="bosun-crew-name" title={b.lastError ?? b.name}>
+              {b.name}
+            </span>
+            <span className={`bosun-crew-state${b.lastError ? " err" : ""}`}>
+              {b.lastError ? "error" : b.enabled ? "on watch" : "paused"}
+            </span>
+            <button
+              type="button"
+              className="icon-btn"
+              title={`Run ${b.name} now`}
+              aria-label={`Run ${b.name} now`}
+              disabled={!!running[b.id]}
+              onClick={() => void runNow(b.id)}
+            >
+              <PlayIcon size={12} />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="btn bosun-small-btn bosun-manage"
+          onClick={() => onOpenBosun(false)}
+        >
+          Manage
+        </button>
+      </div>
+      {days.length === 0 && (
+        <div className="sidebar-empty">
+          <p>{filter ? "No matching activity." : "Nothing yet. Quiet lookouts cost nothing."}</p>
+        </div>
+      )}
+      {days.map((day) => (
+        <div key={day.key} className="bosun-day">
+          <div className="bosun-day-head">{dayLabel(day.key, now)}</div>
+          {day.items.map((item) =>
+            item.kind === "wake" ? (
+              <WakeLine
+                key={`w:${item.wake.id}`}
+                wake={item.wake}
+                bosunName={multi ? names.get(item.wake.bosunId) : undefined}
+              />
+            ) : (
+              <ThreadRow
+                key={`t:${item.thread.id}`}
+                thread={item.thread}
+                active={state.activeThreadId === item.thread.id}
+                inBosunView
+                view={view}
+              />
+            ),
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -3682,9 +3858,12 @@ function ThreadSearchPanel({
 export const Sidebar = memo(function Sidebar({
   onAddProject,
   onOpenSchedules,
+  onOpenBosun,
 }: {
   onAddProject: () => void;
   onOpenSchedules: () => void;
+  /** Open the Bosun panel; `startNew` lands on the create form. */
+  onOpenBosun: (startNew?: boolean) => void;
 }) {
   const { state, dispatch, actions } = useStore();
   const [query, setQuery] = useState("");
@@ -3752,7 +3931,13 @@ export const Sidebar = memo(function Sidebar({
                 ? (["agents"] as const)
                 : []),
             ];
-    if (v === "agents") {
+    if (v === "bosun") {
+      // The Bosun timeline mixes every workspace, so whatever is open stays
+      // open; jump to a bosun chat only when one is asking for you.
+      const needy = bosunAttentionThreads(state);
+      if (needy.length > 0 && needy[0].id !== state.activeThreadId)
+        void actions.selectThread(needy[0].id);
+    } else if (v === "agents") {
       // Jump straight to a Hermes chat that wants attention; otherwise leave a
       // Hermes chat (or nothing) in place, and clear only a workspace one — we
       // never auto-open a chat when none is asking for it.
@@ -3865,6 +4050,7 @@ export const Sidebar = memo(function Sidebar({
   // fleet window.
   const agentsView = showHermesAgents() && view === "agents" && !soloId;
   const quickView = view === "quick" && !soloId;
+  const bosunView = view === "bosun" && !soloId;
   const quickThreads = useMemo(
     () =>
       Object.values(state.threads)
@@ -3911,7 +4097,7 @@ export const Sidebar = memo(function Sidebar({
       ? "quick"
       : openProjectId === HERMES_HOME_PROJECT_ID
         ? "agents"
-        : view === "agents"
+        : view === "agents" || view === "bosun"
           ? null
           : "fleet";
     if (!destinationView || view === destinationView) return;
@@ -3923,6 +4109,7 @@ export const Sidebar = memo(function Sidebar({
     () => (showHermesAgents() ? hermesAttentionThreads(state).length : 0),
     [state],
   );
+  const bosunAttention = useMemo(() => bosunAttentionThreads(state).length, [state]);
   // A newer master exists than the build that is running. Pulses regardless of
   // whether this machine can act on it cleanly: knowing you are behind is the
   // point, and the Updates tab explains what is blocking the fix.
@@ -4238,7 +4425,7 @@ export const Sidebar = memo(function Sidebar({
   // search flattens every project into one result set below it, rather than
   // vanishing and reflowing the sidebar on the first keystroke.
   const railMode =
-    sidebarPrefs.projectLayout === "rail" && !agentsView && !soloId;
+    sidebarPrefs.projectLayout === "rail" && !agentsView && !bosunView && !soloId;
 
   // Which project the single-project layouts are showing. Null means "not
   // chosen yet", which resolves to the project holding the open chat — so
@@ -4337,6 +4524,7 @@ export const Sidebar = memo(function Sidebar({
       !state.restored ||
       quickView ||
       agentsView ||
+      bosunView ||
       state.activeThreadId ||
       state.draft ||
       !shownWorkspaceId
@@ -4349,6 +4537,7 @@ export const Sidebar = memo(function Sidebar({
   }, [
     actions,
     agentsView,
+    bosunView,
     quickView,
     sectionData,
     shownWorkspaceId,
@@ -4361,7 +4550,7 @@ export const Sidebar = memo(function Sidebar({
    *  Switching the list alone left the previous project's chat filling the
    *  screen, so the rail said one project and the pane showed another. */
   function pickRailProject(id: string) {
-    if (quickView || agentsView) switchView("fleet");
+    if (quickView || agentsView || bosunView) switchView("fleet");
     setPickedId(id);
     const threads = sectionData.get(id)?.threads ?? [];
     // Already reading something in this project (a re-tap, or the chat that
@@ -4564,7 +4753,7 @@ export const Sidebar = memo(function Sidebar({
           <SearchIcon size={18} />
           <span>Search</span>
         </button>
-        {!soloId && !agentsView && !quickView && (
+        {!soloId && !agentsView && !quickView && !bosunView && (
           <button type="button" className="sidebar-action" onClick={onAddProject}>
             <FolderPlusIcon size={18} />
             <span>Add workspace</span>
@@ -4606,7 +4795,20 @@ export const Sidebar = memo(function Sidebar({
             {hermesAttention > 0 && <span className="usermenu-dot" />}
           </button>
         )}
-        {(agentsView || quickView) && (
+        {!soloId && !bosunView && (
+          <button
+            type="button"
+            className="sidebar-action"
+            onClick={() => switchView("bosun")}
+          >
+            <i className="sidebar-action-glyph" aria-hidden>
+              ⚓
+            </i>
+            <span>Bosun</span>
+            {bosunAttention > 0 && <span className="usermenu-dot" />}
+          </button>
+        )}
+        {(agentsView || quickView || bosunView) && (
           <button
             type="button"
             className="sidebar-action"
@@ -4640,7 +4842,15 @@ export const Sidebar = memo(function Sidebar({
             view={layout.view}
           />
         )}
-        {!quickView && !agentsView && !!filter && matchingQuickThreads.length > 0 && (
+        {bosunView && (
+          <BosunSection
+            filter={filter}
+            contentMatches={contentMatches}
+            view={layout.view}
+            onOpenBosun={onOpenBosun}
+          />
+        )}
+        {!quickView && !agentsView && !bosunView && !!filter && matchingQuickThreads.length > 0 && (
           <QuickChatsSection
             threads={matchingQuickThreads}
             forceOpen
@@ -4659,18 +4869,19 @@ export const Sidebar = memo(function Sidebar({
             view={layout.view}
           />
         )}
-        {!quickView && !agentsView && !soloId && sections.length === 0 && (
+        {!quickView && !agentsView && !bosunView && !soloId && sections.length === 0 && (
           <div className="sidebar-empty">
             <p>No projects in the fleet yet.</p>
           </div>
         )}
-        {!quickView && !agentsView && soloId && visibleWorkspaces.length === 0 && !filter && (
+        {!quickView && !agentsView && !bosunView && soloId && visibleWorkspaces.length === 0 && !filter && (
           <div className="sidebar-empty">
             <p>This project was removed from the fleet.</p>
           </div>
         )}
         {!quickView &&
           !agentsView &&
+          !bosunView &&
           filter &&
           visibleWorkspaces.length === 0 &&
           matchingQuickThreads.length === 0 && (
@@ -4683,7 +4894,7 @@ export const Sidebar = memo(function Sidebar({
         {/* Rendered for exactly the layouts that pass `hideHeader` below: this
             bar IS the header there, so it has to carry the header's actions
             (new thread, workspace menu) or they are reachable from nowhere. */}
-        {!quickView && !agentsView &&
+        {!quickView && !agentsView && !bosunView &&
           (projectLayout === "picker" || projectLayout === "rail") &&
           pickedWorkspace && (
             <div className="project-picker">
@@ -4764,7 +4975,7 @@ export const Sidebar = memo(function Sidebar({
             ]}
           />
         )}
-        {!quickView && !agentsView &&
+        {!quickView && !agentsView && !bosunView &&
           laidOutWorkspaces.map((w) => {
             const data = sectionData.get(w.id) ?? {
               projects: [],

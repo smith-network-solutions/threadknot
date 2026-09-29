@@ -1624,6 +1624,7 @@ mod tests {
             active_speaker: None,
             parley: None,
             dispatch: None,
+            origin: None,
             created_at: now_iso(),
             updated_at: now_iso(),
         }

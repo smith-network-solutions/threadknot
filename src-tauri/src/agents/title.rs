@@ -186,18 +186,28 @@ async fn generate_claude(prompt: &str, model: &str, env: &[(String, String)]) ->
     parse_title_value(structured)
 }
 
-async fn run_with_input(mut cmd: Command, prompt: &str) -> Result<std::process::Output> {
-    let mut child = cmd.spawn().context("spawn title generation CLI")?;
-    let mut stdin = child.stdin.take().context("open title generation stdin")?;
+async fn run_with_input(cmd: Command, prompt: &str) -> Result<std::process::Output> {
+    run_with_input_timeout(cmd, prompt, TITLE_TIMEOUT).await
+}
+
+/// Feed `prompt` on stdin and collect the output, killing the child at
+/// `timeout`. Shared with Bosun triage, the other ephemeral `claude -p` caller.
+pub(crate) async fn run_with_input_timeout(
+    mut cmd: Command,
+    prompt: &str,
+    timeout: Duration,
+) -> Result<std::process::Output> {
+    let mut child = cmd.spawn().context("spawn ephemeral CLI")?;
+    let mut stdin = child.stdin.take().context("open ephemeral CLI stdin")?;
     stdin
         .write_all(prompt.as_bytes())
         .await
-        .context("write title prompt")?;
+        .context("write ephemeral CLI prompt")?;
     drop(stdin);
-    tokio::time::timeout(TITLE_TIMEOUT, child.wait_with_output())
+    tokio::time::timeout(timeout, child.wait_with_output())
         .await
-        .context("title generation timed out")?
-        .context("wait for title generation CLI")
+        .context("ephemeral CLI timed out")?
+        .context("wait for ephemeral CLI")
 }
 
 fn title_schema() -> Value {
@@ -262,7 +272,7 @@ fn sanitize_title(raw: &str) -> String {
     }
 }
 
-fn stderr(output: &std::process::Output) -> String {
+pub(crate) fn stderr(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().to_string()
 }
 

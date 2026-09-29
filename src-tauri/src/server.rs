@@ -324,6 +324,9 @@ pub async fn run(state: ServerState) {
     // Background scheduled-runs loop (fires recurring agent turns).
     crate::schedules::spawn_scheduler(state.clone());
 
+    // Background Bosun engine (always-on agents that wake on signals).
+    crate::bosun::spawn_bosun_engine(state.clone());
+
     // Background "is a newer master out?" poller (pulses the settings gear).
     crate::update::spawn_poller(Arc::clone(&state.hub));
 
@@ -490,6 +493,13 @@ pub fn build_router(state: ServerState) -> Router {
             // the caller has no certificate to verify against yet, which is
             // precisely what this hands them.
             .route("/api/peer/identity", get(peer_identity_handler));
+    }
+
+    // A Bosun webhook: LAN callers, and — through the relay — the external
+    // services that are the reason webhooks exist. Never the mesh listener,
+    // which speaks only to paired machines.
+    if !state.policy.is_mesh() {
+        app = app.route("/api/hail/{lookout_id}", post(crate::bosun::hail_handler));
     }
 
     // Pairing completes on the mesh listener, so the exchange is inside TLS.
@@ -2399,6 +2409,7 @@ fn required_capability(kind: &str) -> Option<Capability> {
     if kind.starts_with("thread.")
         || kind.starts_with("turn.")
         || kind.starts_with("schedule.")
+        || kind.starts_with("bosun.")
         || kind.starts_with("archive.")
         || kind == "approval.respond"
         || kind == "question.respond"
@@ -4639,6 +4650,7 @@ pub async fn handle_request(
         "fs.tree" => crate::files::tree(state, &p),
         "fs.read" => crate::files::read(state, &p),
         k if k.starts_with("exec.") => crate::exec::handle(state, k, &p).await,
+        k if k.starts_with("bosun.") => crate::bosun::handle(state, principal, k, &p).await,
         k if k.starts_with("dispatch.") || k.starts_with("mesh.dispatch") => {
             crate::dispatch::handle(state, principal, k, &p).await
         }
