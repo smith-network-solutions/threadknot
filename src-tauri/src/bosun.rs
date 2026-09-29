@@ -1607,12 +1607,16 @@ fn turns_last_hour(registry: &BosunRegistry, bosun_id: &str) -> u32 {
         .count() as u32
 }
 
+/// Threads of this Bosun with a turn actually in flight. A thread parked on a
+/// question or approval card is waiting on the person, not on a model, and
+/// costs nothing; counting it meant two unanswered cards silenced every later
+/// wake ("budget: 2/2 running") and a day of calls landed in the log.
 fn running_threads(store: &Store, bosun_id: &str) -> u32 {
     store
         .all_threads()
         .iter()
         .filter(|t| {
-            t.status != ThreadStatus::Idle
+            t.status == ThreadStatus::Running
                 && t.origin
                     .as_ref()
                     .is_some_and(|o| o.bosun_id == bosun_id && !o.day_log)
