@@ -526,3 +526,27 @@ fn related_work_lists_earlier_threads_but_not_day_logs() {
     assert!(p.find("## Triage brief").unwrap() < p.find("## Earlier work").unwrap());
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn a_newer_sweep_supersedes_the_queued_one_but_tickets_queue_up() {
+    let root = tempdir("supersede");
+    let registry = BosunRegistry::open(&root).unwrap();
+    let mut a = signal("orbit:sweep:x:T09");
+    a.kind = "sweep".into();
+    a.lookout_id = "sweep-ss".into();
+    let mut t1 = signal("orbit:task:1:v1");
+    t1.kind = "ticket".into();
+    t1.lookout_id = "orbit".into();
+    registry.enqueue("b1", vec![a.clone(), t1.clone()]);
+    let mut b = a.clone();
+    b.id = "orbit:sweep:x:T11".into();
+    let mut t2 = t1.clone();
+    t2.id = "orbit:task:2:v1".into();
+    registry.enqueue("b1", vec![b.clone(), t2.clone()]);
+    let pending = registry.pending_for("b1", 50);
+    let ids: Vec<&str> = pending.iter().map(|s| s.id.as_str()).collect();
+    assert!(!ids.contains(&"orbit:sweep:x:T09"), "stale sweep dropped: {ids:?}");
+    assert!(ids.contains(&"orbit:sweep:x:T11"));
+    assert!(ids.contains(&"orbit:task:1:v1") && ids.contains(&"orbit:task:2:v1"), "tickets both kept: {ids:?}");
+    std::fs::remove_dir_all(&root).ok();
+}

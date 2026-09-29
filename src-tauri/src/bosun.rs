@@ -40,9 +40,12 @@ const BODY_CAP: usize = 32 * 1024;
 /// Per-Bosun memory of signal ids already handled.
 const SEEN_CAP: usize = 5000;
 /// Signals handed to one triage call.
-const BATCH: usize = 25;
+const BATCH: usize = 12;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
-const TRIAGE_TIMEOUT: Duration = Duration::from_secs(90);
+const TRIAGE_TIMEOUT: Duration = Duration::from_secs(240);
+/// Triage routes; it does not need the whole ticket thread or a 60-line sweep
+/// to decide where a signal goes. The work turn receives the full body.
+const TRIAGE_BODY_CHARS: usize = 2000;
 const MIN_INTERVAL_SECS: u32 = 30;
 const FOLDER_DEPTH: usize = 6;
 /// A folder lookout pointed at `~` must not turn one tick into a disk crawl.
@@ -223,6 +226,20 @@ impl BosunRegistry {
         let fresh = dedupe(signals, &mut known);
         if fresh.is_empty() {
             return fresh;
+        }
+        // A sweep is a snapshot of "what still needs you"; a newer one from the
+        // same lookout makes the queued one stale, and triaging both just costs
+        // a second card. Only sweeps: an unprocessed ticket or email is news
+        // whether or not a newer one arrived.
+        let superseded: HashSet<String> = fresh
+            .iter()
+            .filter(|s| s.kind == "sweep")
+            .map(|s| s.lookout_id.clone())
+            .collect();
+        if !superseded.is_empty() {
+            state.pending.retain(|s| {
+                !(s.bosun_id == bosun_id && s.kind == "sweep" && superseded.contains(&s.lookout_id))
+            });
         }
         state.pending.extend(fresh.iter().cloned());
         if let Err(e) = self.flush_state(&state) {
@@ -1125,7 +1142,7 @@ pub(crate) fn triage_prompt(
             s.hints.workspace.as_deref().unwrap_or(""),
             refs_line(&s.refs),
             s.title,
-            s.body,
+            cap_chars(&s.body, TRIAGE_BODY_CHARS),
         ));
     }
     out
