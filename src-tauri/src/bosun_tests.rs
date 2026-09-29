@@ -432,7 +432,7 @@ fn terminal_is_needed_for_commands_and_remote_members() {
 fn work_prompt_carries_orders_signal_and_brief() {
     let mut s = signal("a");
     s.refs.insert("url".into(), "https://t/42".into());
-    let p = work_prompt("Summarise and stop.", "Blackbeard", "Spencer", &s, "Calls", "look at it", false);
+    let p = work_prompt("Summarise and stop.", "Blackbeard", "Spencer", &s, "Calls", "look at it", false, "");
     assert!(p.starts_with("Summarise and stop.\n\n---\nYou were woken by Blackbeard"));
     assert!(p.contains("a decision from Spencer"));
     assert!(p.contains("## Signal\nkind: ticket"));
@@ -440,7 +440,7 @@ fn work_prompt_carries_orders_signal_and_brief() {
     assert!(p.contains("refs: url=https://t/42"));
     assert!(p.contains("## Triage brief\nlook at it"));
     assert!(!p.contains("Triage chose ASK"));
-    let ask = work_prompt("", "B", "Spencer", &s, "Calls", "", true);
+    let ask = work_prompt("", "B", "Spencer", &s, "Calls", "", true, "");
     assert!(ask.contains("Triage chose ASK"));
 }
 
@@ -484,5 +484,45 @@ fn a_merge_target_in_another_workspace_is_refused() {
     let mut other = b.clone();
     other.id = "other".into();
     assert!(merge_target(&store, &other, &planned(Some(&ws_a))).is_none());
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn related_work_lists_earlier_threads_but_not_day_logs() {
+    let root = tempdir("related");
+    let dir = root.join("proj");
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = Store::open_for_test(root.join("data")).unwrap();
+    store.migrate_mesh("m1").unwrap();
+    let project = store.create_project(dir.to_string_lossy().into_owned(), Some("SS".into())).unwrap();
+    let b = minimal_bosun();
+    let fixed = store
+        .create_thread(project.id.clone(), b.work.agent, b.work.settings.clone(), None)
+        .unwrap();
+    store.update_thread(&fixed.id, |t| t.title = "QB payment sync fix for Acme".into()).unwrap();
+    let ws = store.workspace_for_project(&project.id).unwrap();
+    let (log, _) = ensure_day_log(&store, &project.id, &b, &ws, "SS", &signal("x"), Local::now().date_naive()).unwrap();
+
+    let hit = |id: &str| crate::search_index::IndexedHit {
+        thread_id: id.to_string(),
+        snippet: "matched a payment that never reached QuickBooks".into(),
+        reason: String::new(),
+        score: 1.0,
+        message_seq: Some(3),
+    };
+    let out = render_related(&project.id, &store, &[hit(&fixed.id), hit(&log.id), hit("missing")]);
+    assert!(out.contains(&format!("projectId: {}", project.id)));
+    assert!(out.contains("QB payment sync fix for Acme"), "{out}");
+    assert!(out.contains(&fixed.id));
+    assert!(!out.contains(&log.id), "day logs are noise here");
+    assert!(!out.contains("nothing indexed"));
+
+    let empty = render_related(&project.id, &store, &[]);
+    assert!(empty.contains("nothing indexed matches"));
+
+    // The prompt carries the section verbatim, after the brief.
+    let p = work_prompt("orders", "B", "Spencer", &signal("y"), "Orbit", "brief", false, &out);
+    assert!(p.contains("## Earlier work in this workspace"));
+    assert!(p.find("## Triage brief").unwrap() < p.find("## Earlier work").unwrap());
     std::fs::remove_dir_all(&root).ok();
 }
