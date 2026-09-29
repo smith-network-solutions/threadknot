@@ -129,11 +129,95 @@ Exits 2 on auth failure, 1 on other API or network failure.
 One lookout per org. For both of Spencer's orgs, add two lookouts with
 different `ORBIT_ORG_ID`, `ORBIT_ORG_SLUG` and `ORBIT_WORKSPACE_HINT`.
 
+### `teams-cdp.mjs`: a 1:1 Microsoft Teams chat
+
+Reads a one-to-one Microsoft Teams chat straight out of the **running Teams for
+Linux app** over the Chrome DevTools Protocol — no Graph API, no bot, no
+credentials of its own. Node 22+ only (uses the global `WebSocket` and `fetch`);
+zero dependencies. Watermark: an ISO 8601 timestamp (the newest message's
+arrival time). First run prints only that watermark and no signals.
+
+**How it works.** Teams for Linux is Electron, so its window is a Chromium page.
+Launched with a debugging port, that page is attachable. The script finds the
+"Microsoft Teams" page target, then runs code in the signed-in page with
+`Runtime.evaluate`. Message history is read from the client's **own IndexedDB
+caches** — `conversation-manager` (resolve the contact's display name to a 1:1
+conversation) and `replychain-manager` (the messages) — which is read-only and
+**sends no read receipts**. Inline images and file attachments are downloaded
+from the page with `fetch(url, { credentials: "include" })` (the app's cookies
+authorize them) and written under `BOSUN_STATE_DIR/attachments/<messageId>/`.
+
+Messages newer than the watermark are grouped into **bursts** (a run of
+messages ≤10 min apart); each burst that contains at least one message from the
+contact becomes one signal (Spencer's own replies are included for context).
+
+**One-time launcher change.** Teams must be started with a CDP port. Edit the
+launcher (`~/.local/share/applications/teams-for-linux.desktop`, or the
+`teams-for-linux` invocation) to add:
+
+```
+teams-for-linux --remote-debugging-port=9222
+```
+
+The port is loopback-only. Nothing else changes; the app runs normally.
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `TEAMS_CDP_URL` | `http://127.0.0.1:9222` | CDP base of the running Teams app. |
+| `TEAMS_CONTACT` | `William Hunt` | Display name of the other party; resolved to the most-recently-active 1:1 conversation. |
+| `TEAMS_WORKSPACE_HINT` | none | Copied to `hints.workspace` on every signal. |
+| `TEAMS_MAX_MESSAGES` | `200` | Max new messages per run (newest kept). |
+| `TEAMS_INCLUDE_MINE_ONLY` | unset | `1` also emits bursts that contain only your own messages. |
+| `BOSUN_WATERMARK`, `BOSUN_STATE_DIR` | set by Threadknot | Watermark is an ISO time; state dir holds `attachments/`. |
+
+Signal `id` is `teams:<conversationId>:<lastMessageId>`, `kind` is `"teams"`.
+The body is `[HH:MM] Name: text` per line (local time, HTML stripped, links kept
+as URLs, quoted replies shown as `> [reply to …]`, images inlined as
+`[image: <path>]`). `refs.attachments` is a `;`-joined list of saved paths.
+
+```json
+{"id":"teams:19:uni01_…@thread.v2:1790608949943","kind":"teams","title":"Teams · Bill: She got it","body":"[11:17] Me: can you have her try again? That should be be fixed now\n[11:22] William Hunt: She got it","observedAt":"2026-09-28T15:22:29.943Z","refs":{"conversationId":"19:uni01_…@thread.v2","lastMessageId":"1790608949943","attachments":"","url":"https://teams.live.com/v2/#/conversations/19%3Auni01_…%40thread.v2?ctx=chat"}}
+```
+
+**Extra modes.** `--dump --days N` (default 3) or `--dump --since <ISO>` prints
+the window as Markdown (newest last, attachment paths inline) for an agent to
+read on demand; it never touches the watermark. `--selftest` runs offline checks
+(HTML stripping, reply extraction, burst grouping, watermark comparison,
+filename/extension derivation).
+
+Exit codes: 0 ok (including nothing new); **3** Teams not running / CDP port
+closed (prints no watermark, so the run retries); **2** signed out (no Teams
+page or no message cache).
+
+**Caveats.**
+- Requires the running app with the debugging port; if Teams is closed the run
+  exits 3 and retries later. The URL scheme is loopback-only.
+- Reads the client's local cache, so it only sees history the app has already
+  synced. It **does not** page the server or open the chat, so it never sends a
+  read receipt or changes any state.
+- **Personal (consumer) Teams** was the live target: `teams.live.com/v2`, MSA
+  login, message ids that are millisecond timestamps, conversation ids like
+  `19:uni01_…@thread.v2`, and inline images at
+  `us-api.asm.skype.com/v1/objects/<id>/views/imgo`. Work/school Teams
+  (`teams.microsoft.com`, `teams.cloud.microsoft`) uses the same IndexedDB
+  managers and message schema, so the reader should carry over, but that path
+  is untested here.
+- What breaks on a Teams update: the IndexedDB database/store names
+  (`replychain-manager` → `replychains`, `conversation-manager` →
+  `conversations`) and the message fields (`content`, `imDisplayName`,
+  `originalArrivalTime`, `isSentByCurrentUser`, `messageType`,
+  `properties.files`). If Microsoft renames those, resolution returns "not
+  found" (exit 0, no signals) or messages come back empty — visible in the test
+  dialog's stderr — rather than crashing.
+
 ### `test-lookouts.sh`
 
-Runs both selftests, then each lookout live with a fresh `mktemp` state dir:
-empty watermark (must print only a watermark), an older watermark (real
-signals), a stale Gmail history id (must re-seed), and an expired Orbit token
-(must refresh). Checks that every stdout line is JSON with a `title` or a
+Runs all three selftests, then each lookout live with a fresh `mktemp` state
+dir: empty watermark (must print only a watermark), an older watermark (real
+signals), a stale Gmail history id (must re-seed), an expired Orbit token (must
+refresh), and — when the CDP port answers — the Teams reader through seed →
+since → caught-up. Checks that every stdout line is JSON with a `title` or a
 `watermark`, that `refs` values are strings, and that the last line is a
-watermark. Env overrides are listed in its header.
+watermark. `teams-cdp` auto-skips its live portion when Teams is not running
+with the debugging port; `SKIP_TEAMS=1` skips it outright. Env overrides are
+listed in its header.

@@ -13,7 +13,10 @@
 #   ORBIT_ENV_FILE                    default ~/.config/orbit-mcp/service-storm.env
 #   ORBIT_ORG_SLUG                    default oscar-edge-817a467
 #   ORBIT_TEST_SINCE                  ISO watermark for (b) (default 2 days ago)
-#   SKIP_GMAIL=1 / SKIP_ORBIT=1       skip one side
+#   TEAMS_CDP_URL                     default http://127.0.0.1:9222
+#   TEAMS_TEST_SINCE                  ISO watermark for (b) (default 2 days ago)
+#   SKIP_GMAIL=1 / SKIP_ORBIT=1 / SKIP_TEAMS=1   skip one side
+#     (teams live test auto-skips unless the CDP port answers)
 #
 # Usage: ./lookouts/test-lookouts.sh [--offline]
 
@@ -61,6 +64,7 @@ run() {
 echo "== selftests (offline)"
 "$HERE/gmail-gws.sh" --selftest   && ok "gmail-gws --selftest"   || fail "gmail-gws --selftest"
 "$HERE/orbit-tasks.py" --selftest && ok "orbit-tasks --selftest" || fail "orbit-tasks --selftest"
+"$HERE/teams-cdp.mjs" --selftest  && ok "teams-cdp --selftest"   || fail "teams-cdp --selftest"
 [[ "${1:-}" == "--offline" ]] && { echo "== $FAILS failure(s)"; exit $(( FAILS > 0 )); }
 
 if [[ "${SKIP_GMAIL:-}" != "1" ]]; then
@@ -110,6 +114,33 @@ PY
       && validate "$out" "orbit recovers from 401 via refresh"
     [[ "$(python3 -c "import json;print(json.load(open('$st/token.json'))['accessToken'] != 'expired.invalid.token')")" == "True" ]] \
       && ok "token.json rewritten after refresh" || fail "token.json not refreshed"
+  fi
+fi
+
+if [[ "${SKIP_TEAMS:-}" != "1" ]]; then
+  echo "== teams-cdp.mjs (live, read-only via CDP)"
+  TEAMS_CDP_URL="${TEAMS_CDP_URL:-http://127.0.0.1:9222}"
+  # Only run live if the CDP port answers /json/version; otherwise skip cleanly.
+  if curl -sf --max-time 4 "$TEAMS_CDP_URL/json/version" >/dev/null 2>&1; then
+    export TEAMS_CDP_URL
+    out="$(mktemp)"; TMPS+=("$out")
+    if run "teams seed" "$out" env BOSUN_STATE_DIR="$(newstate)" BOSUN_WATERMARK= "$HERE/teams-cdp.mjs"; then
+      validate "$out" "teams (a) seed"
+      [[ $LAST_SIGNALS -eq 0 ]] || fail "teams seed emitted $LAST_SIGNALS signals"
+      since="${TEAMS_TEST_SINCE:-$(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%SZ)}"
+      echo "  seed watermark $(jq -r .watermark < "$out"); rewinding to $since"
+      if run "teams since" "$out" env BOSUN_STATE_DIR="$(newstate)" BOSUN_WATERMARK="$since" "$HERE/teams-cdp.mjs"; then
+        validate "$out" "teams (b) since $since"
+        [[ $LAST_SIGNALS -gt 0 ]] || echo "  note: no new messages from the contact in that window"
+        jq -c 'select(.title) | {id, title}' "$out" | head -3 | sed 's/^/    /'
+        # from the fresh watermark: nothing new (watermark line only)
+        wm="$(jq -r 'select(.watermark) | .watermark' < "$out" | tail -1)"
+        run "teams caught-up" "$out" env BOSUN_STATE_DIR="$(newstate)" BOSUN_WATERMARK="$wm" "$HERE/teams-cdp.mjs" \
+          && { validate "$out" "teams (c) caught up"; [[ $LAST_SIGNALS -eq 0 ]] || fail "teams caught-up emitted $LAST_SIGNALS signals"; }
+      fi
+    fi
+  else
+    echo "  skip: no CDP port at $TEAMS_CDP_URL (Teams not running with --remote-debugging-port)"
   fi
 fi
 
