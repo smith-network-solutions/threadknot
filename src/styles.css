@@ -5889,6 +5889,19 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 12.5px;
   line-height: 1.6;
 }
+/* WebKitGTK draws `scrollbar-width: thin` as a GTK overlay bar that swells on
+   hover and covers the last line of code, so you can't select it. Resetting
+   both standard properties to auto brings back the ::-webkit-scrollbar bar,
+   which takes its own 9px of space under the code. The :root prefix outranks
+   the light and midnight `*` scrollbar rules. */
+:root .code-block .code-pre {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+:root .code-block .code-pre::-webkit-scrollbar-thumb {
+  background: #262d40;
+  border-color: #080b11;
+}
 .code-pre code {
   font-family: var(--font-mono);
   border: none;
