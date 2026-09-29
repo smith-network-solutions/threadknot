@@ -491,15 +491,19 @@ run_sweep() {
   log "sweep: ${#ids[@]} inbox threads, waiting $nw, task $nt, snoozed $snoozed, younger than ${min_age}h $young, skipped:${skipped%,}"
   (( total > 0 )) || return 0
 
-  local body="" sorted
+  # Lines per group: triage needs the shape, the work turn can re-run the sweep.
+  local per_group="${GMAIL_SWEEP_MAX_PER_GROUP:-15}"
+  local body="" sorted more
   if (( nw )); then
-    sorted="$(printf '%s\n' "${wait_lines[@]}" | sort -r | cut -f2-)"
+    sorted="$(printf '%s\n' "${wait_lines[@]}" | sort -r | cut -f2- | head -n "$per_group")"
     body+="### Waiting on you ($nw)"$'\n'"$sorted"
+    more=$((nw - per_group)); (( more > 0 )) && body+=$'\n'"…$more more in this group; run the sweep with --sweep --now for the full list"
   fi
   if (( nt )); then
-    sorted="$(printf '%s\n' "${task_lines[@]}" | sort -r | cut -f2-)"
+    sorted="$(printf '%s\n' "${task_lines[@]}" | sort -r | cut -f2- | head -n "$per_group")"
     [[ -n "$body" ]] && body+=$'\n\n'
     body+="### Probably a task ($nt)"$'\n'"$sorted"
+    more=$((nt - per_group)); (( more > 0 )) && body+=$'\n'"…$more more in this group; run the sweep with --sweep --now for the full list"
   fi
   local footer="---"$'\n'"waiting on you $nw · probably a task $nt · snoozed $snoozed"$'\n'
   footer+="Snooze: add \"<threadId>\": \"<YYYY-MM-DD or ISO datetime>\" to the JSON object in $snooze_file (hidden until then; a bare date means local midnight)."

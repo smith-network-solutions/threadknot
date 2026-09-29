@@ -278,6 +278,29 @@ def build_signal(task, *, slug, web_url, hint, members, clients, comment, emails
     return sig
 
 
+SELF_ACTIVITY = {"INTERNAL_UPDATE", "STATUS_CHANGED"}
+
+
+def resolve_me(orbit, state_dir, base, env, members):
+    """userIds for ORBIT_ME_EMAIL (emails or userIds), or an empty set."""
+    wanted = [e.strip().lower() for e in (env.get("ORBIT_ME_EMAIL") or "spencer@smithnetworksolutions.com").split(",") if e.strip()]
+    emails_map = cached_map(orbit, state_dir, "member-emails", base + "/members",
+                            lambda m: ((m.get("user") or {}).get("email") or "").lower(),
+                            lambda m: m.get("userId") or (m.get("user") or {}).get("id"))
+    return {emails_map[e] for e in wanted if e in emails_map} | {e for e in wanted if e in members}
+
+
+def self_caused(task, me):
+    """An update the person (or their agent) made themselves: a status flip or
+    an internal note. Signalling it back would wake the agent on its own
+    handoff comment and have it build the same change twice. A client reply
+    or a new inbound ticket is never self-caused."""
+    if not me:
+        return False
+    return (task.get("lastActivityType") in SELF_ACTIVITY
+            and (task.get("lastActivityByUserId") or "") in me)
+
+
 def select_new(tasks, mark, include, max_signals):
     """tasks: newest-first. Returns (oldest-first wanted list, new watermark str|None)."""
     fresh = [t for t in tasks if newer_than(t, mark)]
@@ -305,6 +328,11 @@ def selftest():
     check("parse junk", parse_ts("yesterday"), None)
     check("equal is not newer", newer_than({"updatedAt": "2026-09-26T16:00:00.000Z"}, mark), False)
     check("newer", newer_than({"updatedAt": "2026-09-26T16:00:00.001Z"}, mark), True)
+    check("self-caused: my status flip", self_caused({"lastActivityType": "STATUS_CHANGED", "lastActivityByUserId": "me1"}, {"me1"}), True)
+    check("self-caused: my internal note", self_caused({"lastActivityType": "INTERNAL_UPDATE", "lastActivityByUserId": "me1"}, {"me1"}), True)
+    check("not self-caused: client reply", self_caused({"lastActivityType": "EXTERNAL_REPLY", "lastActivityByUserId": "me1"}, {"me1"}), False)
+    check("not self-caused: someone else", self_caused({"lastActivityType": "STATUS_CHANGED", "lastActivityByUserId": "u2"}, {"me1"}), False)
+    check("not self-caused: unknown me", self_caused({"lastActivityType": "STATUS_CHANGED", "lastActivityByUserId": "me1"}, set()), False)
     check("default excludes done", status_wanted("done", None), False)
     check("default keeps custom", status_wanted("awaiting_response", None), True)
     check("include list", status_wanted("todo", {"todo"}), True)
@@ -453,6 +481,10 @@ def selftest():
 # local hour so the engine sees a fresh signal each run while anything is open.
 
 SWEEP_BODY_CAP = 32 * 1024
+# Lines per group in the signal. Triage only needs the shape of the list and
+# the work turn can re-run the sweep for everything; a 60-line digest just
+# slows the routing call down.
+SWEEP_MAX_PER_GROUP = max(1, int(os.environ.get("ORBIT_SWEEP_MAX_PER_GROUP") or 15))
 SWEEP_WORKERS = 6
 INBOUND_ACTIVITY = ("EXTERNAL_REPLY", "NEW_INBOUND")
 INBOUND_SUMMARY = ("reply from ", "new ticket from ")
@@ -678,7 +710,10 @@ def build_sweep(grouped, *, slug, label, web_url, hint, snoozed, snooze_path, no
         counts.append(f"{name.lower()} {len(items)}")
         if items:
             lines = [f"### {name} ({len(items)})"]
-            lines += [sweep_line(t, slug=slug, web_url=web_url, members=members, clients=clients) for t in items]
+            shown = items[:SWEEP_MAX_PER_GROUP]
+            lines += [sweep_line(t, slug=slug, web_url=web_url, members=members, clients=clients) for t in shown]
+            if len(items) > len(shown):
+                lines.append(f"…{len(items) - len(shown)} more in this group; run the sweep with --sweep --now for the full list")
             sections.append("\n".join(lines))
     footer = "---\n" + " · ".join(counts) + f" · snoozed {snoozed}\n" + snooze_footer(snooze_path)
     sig = {
@@ -1005,6 +1040,11 @@ def main():
                              lambda m: (m.get("user") or {}).get("displayName"))
         clients = cached_map(orbit, state_dir, "clients", base + "/clients",
                              lambda c: c.get("id"), lambda c: c.get("name"))
+        me = resolve_me(orbit, state_dir, base, env, members)
+        before = len(wanted)
+        wanted = [t for t in wanted if not self_caused(t, me)]
+        if len(wanted) < before:
+            log(f"skipped {before - len(wanted)} self-caused update(s)")
     for t in wanted:
         comment = None
         if ((t.get("_count") or {}).get("comments") or 0) > 0:
