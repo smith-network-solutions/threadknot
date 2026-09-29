@@ -443,3 +443,46 @@ fn work_prompt_carries_orders_signal_and_brief() {
     let ask = work_prompt("", "B", "Spencer", &s, "Calls", "", true);
     assert!(ask.contains("Triage chose ASK"));
 }
+
+#[test]
+fn a_merge_target_in_another_workspace_is_refused() {
+    let root = tempdir("merge");
+    let store = Store::open_for_test(root.join("data")).unwrap();
+    store.migrate_mesh("m1").unwrap();
+    let mut projects = Vec::new();
+    for name in ["A", "B"] {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        projects.push(store.create_project(dir.to_string_lossy().into_owned(), Some(name.into())).unwrap());
+    }
+    let ws_a = store.workspace_for_project(&projects[0].id).unwrap();
+    let ws_b = store.workspace_for_project(&projects[1].id).unwrap();
+    let mut b = minimal_bosun();
+    b.home_workspace_id = ws_a.clone();
+
+    // A thread this Bosun opened in workspace A, idle, not a day log.
+    let thread = store
+        .create_thread(projects[0].id.clone(), b.work.agent, b.work.settings.clone(), None)
+        .unwrap();
+    let origin = origin_for(&b, &signal("s1"), false);
+    store.update_thread(&thread.id, |t| t.origin = Some(origin)).unwrap();
+
+    let planned = |workspace: Option<&str>| Planned {
+        signal_id: "s2".into(),
+        decision: DecisionKind::Work,
+        workspace_id: workspace.map(str::to_string),
+        title: "t".into(),
+        reason: String::new(),
+        brief: String::new(),
+        merge_into: Some(thread.id.clone()),
+    };
+    assert!(merge_target(&store, &b, &planned(Some(&ws_a))).is_some(), "same workspace merges");
+    assert!(merge_target(&store, &b, &planned(None)).is_some(), "home (A) merges");
+    assert!(merge_target(&store, &b, &planned(Some(&ws_b))).is_none(), "another workspace opens fresh");
+
+    // Somebody else's thread never merges, even in the right workspace.
+    let mut other = b.clone();
+    other.id = "other".into();
+    assert!(merge_target(&store, &other, &planned(Some(&ws_a))).is_none());
+    std::fs::remove_dir_all(&root).ok();
+}

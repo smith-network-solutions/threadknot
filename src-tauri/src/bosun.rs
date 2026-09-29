@@ -1407,6 +1407,27 @@ fn append_log(hub: &Arc<Hub>, bosun: &Bosun, workspace_id: &str, plan: &Planned,
     Ok(thread.id)
 }
 
+/// The open thread a `mergeIntoThreadId` may continue, if any. Besides being
+/// idle and this Bosun's own, it has to live in the workspace triage picked:
+/// the model matches on the item ("same call", "same ticket") and will happily
+/// name a thread that an earlier, wrongly-charted wake opened somewhere else.
+/// Following it would keep the work in the wrong place for good, with the
+/// charter fix never taking effect.
+pub(crate) fn merge_target(store: &Store, bosun: &Bosun, plan: &Planned) -> Option<Thread> {
+    let target = plan.merge_into.as_deref()?;
+    let wanted = plan
+        .workspace_id
+        .clone()
+        .unwrap_or_else(|| bosun.home_workspace_id.clone());
+    store.thread(target).filter(|t| {
+        t.status == ThreadStatus::Idle
+            && t.origin
+                .as_ref()
+                .is_some_and(|o| o.bosun_id == bosun.id && !o.day_log)
+            && store.workspace_for_project(&t.project_id).as_deref() == Some(wanted.as_str())
+    })
+}
+
 async fn open_work(
     state: &ServerState,
     bosun: &Bosun,
@@ -1418,17 +1439,9 @@ async fn open_work(
     let hub = &state.hub;
     let store = &hub.store;
 
-    if let Some(target) = plan.merge_into.as_deref() {
-        let mergeable = store.thread(target).filter(|t| {
-            t.status == ThreadStatus::Idle
-                && t.origin
-                    .as_ref()
-                    .is_some_and(|o| o.bosun_id == bosun.id && !o.day_log)
-        });
-        if let Some(thread) = mergeable {
-            hub.start_injected_turn(&thread.id, follow_up_prompt(signal, lookout_name))?;
-            return Ok(thread.id);
-        }
+    if let Some(thread) = merge_target(store, bosun, plan) {
+        hub.start_injected_turn(&thread.id, follow_up_prompt(signal, lookout_name))?;
+        return Ok(thread.id);
     }
 
     let workspace_id = plan.workspace_id.clone().unwrap_or_else(|| bosun.home_workspace_id.clone());
