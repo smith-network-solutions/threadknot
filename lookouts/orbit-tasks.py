@@ -35,6 +35,7 @@ printed, so the next run retries from the same point).
 
 By hand:   BOSUN_WATERMARK= ./lookouts/orbit-tasks.py | jq
 Self-test: ./lookouts/orbit-tasks.py --selftest   (offline)
+One task:  ./lookouts/orbit-tasks.py --task <id>[,<id>] | ./lookouts/hail.sh   (re-feed a ticket as new)
 """
 
 import hashlib
@@ -114,7 +115,86 @@ def fmt_day(s):
     return ts.strftime("%Y-%m-%d") if ts else (s or "")
 
 
-def build_signal(task, *, slug, web_url, hint, members, clients, comment):
+EMAIL_CAP = 4000
+MAX_EMAILS = 3
+
+
+def email_texts(emails, task_id, state_dir, saved):
+    """The task's conversation as it arrived by mail, newest last, capped.
+
+    Tickets that come in through a support inbox carry no description at all;
+    the customer's words live only here. Inline images arrive as base64 data
+    URIs in bodyHtml, so they are written to the state dir and the paths
+    collected in `saved`; other attachments are listed by name and size (they
+    sit in Orbit's storage with no public download route)."""
+    out = []
+    ordered = sorted(emails, key=lambda e: e.get("receivedAt") or e.get("createdAt") or "")
+    for mail in ordered[-MAX_EMAILS:]:
+        who = mail.get("fromName") or mail.get("fromAddress") or "unknown"
+        addr = mail.get("fromAddress") or ""
+        when = mail.get("receivedAt") or mail.get("sentAt") or mail.get("createdAt") or ""
+        text = (mail.get("bodyText") or html_to_text(mail.get("bodyHtml") or "") or mail.get("snippet") or "").strip()
+        if len(text) > EMAIL_CAP:
+            text = text[:EMAIL_CAP] + "\n[truncated]"
+        head = f"Email — {who}{f' <{addr}>' if addr and addr not in who else ''}, {when}, {mail.get('direction') or ''}"
+        if mail.get("subject"):
+            head += f"\nSubject: {mail['subject']}"
+        lines = [head, text]
+        paths = save_inline_images(mail, task_id, state_dir)
+        saved.extend(paths)
+        for path in paths:
+            lines.append(f"[image: {path}]")
+        for att in mail.get("attachments") or []:
+            if att.get("isInline") and paths:
+                continue
+            lines.append(f"[attachment: {att.get('filename') or att.get('attachmentId')} {att.get('mimeType') or ''} {att.get('size') or ''} bytes, in Orbit]")
+        out.append("\n".join(l for l in lines if l))
+    return out
+
+
+def save_inline_images(mail, task_id, state_dir):
+    if not state_dir:
+        return []
+    import base64
+    import re as _re
+    html = mail.get("bodyHtml") or ""
+    paths = []
+    names = [a.get("filename") for a in (mail.get("attachments") or []) if a.get("isInline")]
+    for n, m in enumerate(_re.finditer(r'src="data:(image/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)"', html)):
+        mime, data = m.group(1), m.group(2)
+        ext = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}.get(mime, mime.split("/")[-1])
+        name = names[n] if n < len(names) and names[n] else f"inline-{n + 1}.{ext}"
+        name = _re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+        if not name.lower().endswith("." + ext):
+            name += "." + ext
+        folder = os.path.join(state_dir, "attachments", task_id)
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, name)
+        try:
+            with open(path, "wb") as fh:
+                fh.write(base64.b64decode("".join(data.split())))
+            paths.append(path)
+        except Exception as exc:  # noqa: BLE001
+            log(f"inline image for {task_id} not saved: {exc}")
+    return paths
+
+
+def html_to_text(html):
+    import re as _re
+    text = _re.sub(r"<br\s*/?>|</p>|</div>", "\n", html, flags=_re.I)
+    text = _re.sub(r"<[^>]+>", "", text)
+    return _re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def task_emails(orbit, base, task_id):
+    try:
+        return orbit.get(f"{base}/tasks/{task_id}/emails").get("data") or []
+    except ApiError as e:
+        log(f"emails for {task_id} unavailable: {e}")
+        return []
+
+
+def build_signal(task, *, slug, web_url, hint, members, clients, comment, emails=None, state_dir=None):
     tid = task["id"]
     client = (task.get("client") or {}).get("name") or clients.get(task.get("clientId") or "", "")
     assignee = members.get(task.get("assigneeId") or "", "") or (task.get("assigneeId") or "")
@@ -132,6 +212,14 @@ def build_signal(task, *, slug, web_url, hint, members, clients, comment):
         lines.append(f"Ticket: #{task['ticketNumber']}")
     if task.get("lastActivitySummary"):
         lines.append(f"Last activity: {task['lastActivitySummary']}")
+    if task.get("taskType"):
+        lines.append(f"Type: {task['taskType']}")
+    if task.get("tags"):
+        lines.append("Tags: " + ", ".join(str(t) for t in task["tags"]))
+    if task.get("sourceEmail"):
+        lines.append(f"From: {task['sourceEmail']}")
+    if (task.get("aiSummary") or "").strip():
+        lines.append(f"Summary: {task['aiSummary'].strip()}")
     body = "\n".join(lines)
     desc = (task.get("description") or "").strip()
     if desc:
@@ -146,6 +234,9 @@ def build_signal(task, *, slug, web_url, hint, members, clients, comment):
         if len(text) > COMMENT_CAP:
             text = text[:COMMENT_CAP] + "\n[truncated]"
         body += f"\n\nLatest comment — {who}, {comment.get('createdAt', '')}{tag}:\n{text}"
+    saved = []
+    for mail in email_texts(emails or [], tid, state_dir, saved):
+        body += "\n\n" + mail
     refs = {
         "url": f"{web_url.rstrip('/')}/{slug}/tasks/{tid}",
         "org": slug,
@@ -153,6 +244,8 @@ def build_signal(task, *, slug, web_url, hint, members, clients, comment):
     }
     if client:
         refs["client"] = client
+    if saved:
+        refs["attachments"] = ";".join(saved)
     sig = {
         "id": f"orbit:task:{tid}:{task.get('updatedAt', '')}",
         "kind": "ticket",
@@ -385,6 +478,38 @@ def main():
     base = f"/api/orgs/{org}"
     list_params = {"sortBy": "updatedAt", "sortOrder": "desc", "limit": PAGE_LIMIT}
 
+    # Specific tasks, regardless of watermark: `--task id[,id]` or ORBIT_TASK_IDS.
+    # For re-feeding a ticket the lookout missed (seeded past it, or triaged
+    # away) as if it had just arrived: pipe the output into hail.sh. Prints no
+    # watermark line, so it never moves the lookout's own position.
+    fixed = [a for a in sys.argv[1:] if a not in ("--task",)]
+    if "--task" in sys.argv:
+        fixed = sys.argv[sys.argv.index("--task") + 1:sys.argv.index("--task") + 2]
+    ids = ",".join(fixed if "--task" in sys.argv else [env.get("ORBIT_TASK_IDS", "")])
+    ids = [i.strip() for i in ids.split(",") if i.strip()]
+    if ids:
+        members = cached_map(orbit, state_dir, "members", base + "/members",
+                             lambda m: m.get("userId") or (m.get("user") or {}).get("id"),
+                             lambda m: (m.get("user") or {}).get("displayName"))
+        clients = cached_map(orbit, state_dir, "clients", base + "/clients",
+                             lambda c: c.get("id"), lambda c: c.get("name"))
+        for tid in ids:
+            t = orbit.get(f"{base}/tasks/{tid}").get("data") or {}
+            if not t.get("id"):
+                log(f"task {tid} not found")
+                continue
+            comment = None
+            if ((t.get("_count") or {}).get("comments") or 0) > 0:
+                try:
+                    comment = latest_comment(orbit.get(f"{base}/tasks/{tid}/comments").get("data"))
+                except ApiError as e:
+                    log(f"comments for {tid} unavailable: {e}")
+            print(json.dumps(build_signal(t, slug=slug, web_url=web_url, hint=hint,
+                                          members=members, clients=clients, comment=comment,
+                                          emails=task_emails(orbit, base, tid), state_dir=state_dir),
+                             ensure_ascii=False))
+        return 0
+
     watermark = env.get("BOSUN_WATERMARK", "").strip()
     mark = parse_ts(watermark)
     if not mark:
@@ -425,7 +550,8 @@ def main():
             except ApiError as e:
                 log(f"comments for {t['id']} unavailable: {e}")
         sig = build_signal(t, slug=slug, web_url=web_url, hint=hint,
-                           members=members, clients=clients, comment=comment)
+                           members=members, clients=clients, comment=comment,
+                           emails=task_emails(orbit, base, t["id"]), state_dir=state_dir)
         print(json.dumps(sig, ensure_ascii=False))
     log(f"since {watermark}: {len(tasks)} fetched, {len(wanted)} signalled")
     print(json.dumps({"watermark": new_wm or watermark}))
