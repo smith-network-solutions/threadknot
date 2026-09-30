@@ -358,7 +358,7 @@ fn day_log_is_reused_for_the_same_date_and_new_the_next() {
     assert!(origin.day_log);
     assert_eq!(origin.bosun_id, b.id);
     assert_eq!(origin.kind, "bosun");
-    assert!(first.title.starts_with("⚓ Blackbeard log · Proj · "), "{}", first.title);
+    assert!(first.title.starts_with("Blackbeard log · Proj · "), "{}", first.title);
     assert_eq!(first.status, ThreadStatus::Idle);
 
     let (again, created) = ensure_day_log(&store, &project.id, &b, &ws, "Proj", &signal("b"), today).unwrap();

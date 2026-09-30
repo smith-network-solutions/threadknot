@@ -261,7 +261,7 @@ machine"` recorded on the decision.
 - **log** → find the day-log thread for `(bosun, workspace, local date)`: a
   thread in the target project with `origin.day_log == true`,
   `origin.bosun_id == this`, `created_at` on today's local date. Create it if
-  missing, titled `⚓ <bosun name> log · <workspace> · <Mon d>`. Append the
+  missing, titled `<bosun name> log · <workspace> · <Mon d>`. Append the
   entry as an `AgentEvent::Status { text }` (not a `UserMessage`: a user
   message flips the thread to Running and nothing would flip it back). Text:
   `**<signal title>** — <reason>` + a blank line + the signal body trimmed to
@@ -274,7 +274,7 @@ machine"` recorded on the decision.
     `## New signal` (no standing orders again).
   - Else create a thread in the target project: `agent` and `settings` from
     `work` with `access = min(work.access, charter.access)`, `author =
-    bosun.author`, `origin = ThreadOrigin{…}`, title `⚓ <triage title>` set
+    bosun.author`, `origin = ThreadOrigin{…}`, title `<triage title>` set
     **before** the first turn so auto-titling leaves it. Then `start_turn` with
     the prompt in §7.2.
   - If the target member's `machine_id` is not this machine: create the

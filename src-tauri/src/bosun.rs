@@ -1343,7 +1343,7 @@ pub(crate) fn ensure_day_log(
         thread_settings(bosun, workspace_id),
         bosun.author.clone(),
     )?;
-    let title = format!("⚓ {} log · {} · {}", bosun.name, workspace_name, date.format("%b %-d"));
+    let title = format!("{} log · {} · {}", bosun.name, workspace_name, date.format("%b %-d"));
     let origin = origin_for(bosun, signal, true);
     let thread = store.update_thread(&thread.id, |t| {
         t.title = title;
@@ -1532,7 +1532,7 @@ async fn open_work(
         &related,
     );
     let settings = thread_settings(bosun, &workspace_id);
-    let title = format!("⚓ {}", plan.title);
+    let title = plan.title.clone();
     let origin = origin_for(bosun, signal, false);
 
     if member.machine_id == store.local_machine_id() {
