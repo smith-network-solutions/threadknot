@@ -18,6 +18,8 @@ import {
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
 import { copyText, elidePathMiddle } from "../lib/format";
+import { displayTitle } from "../lib/bosun";
+import { BosunMark, useBosunImage } from "./BosunMark";
 import type { ReplyTarget } from "../lib/reply";
 import type { FeedItem } from "../state/feed";
 import {
@@ -1257,7 +1259,7 @@ export function ThreadView() {
               onBlur={() => {
                 setEditing(false);
                 const t = titleDraft.trim();
-                if (t && t !== thread.title) void actions.renameThread(thread.id, t);
+                if (t && t !== thread.title && t !== displayTitle(thread)) void actions.renameThread(thread.id, t);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -1276,10 +1278,10 @@ export function ThreadView() {
                 ))}
               <span
                 className="thread-name"
-                title={thread ? thread.title || "Untitled thread" : undefined}
+                title={thread ? displayTitle(thread) || "Untitled thread" : undefined}
               >
                 {thread
-                  ? thread.title || "Untitled thread"
+                  ? displayTitle(thread) || "Untitled thread"
                   : quickHome
                     ? "New quick thread"
                     : "New thread"}
@@ -1289,7 +1291,7 @@ export function ThreadView() {
                   className="icon-btn title-edit"
                   aria-label="Rename thread"
                   onClick={() => {
-                    setTitleDraft(thread.title);
+                    setTitleDraft(displayTitle(thread));
                     setEditing(true);
                   }}
                 >
@@ -1645,11 +1647,12 @@ export function ThreadView() {
   );
 }
 
-/** `⚓ <bosunName> · <signalKind>` under the title of a thread a Bosun opened,
+/** `<mark> <bosunName> · <signalKind>` under the title of a thread a Bosun opened,
  *  with the signal's source: its URL as a link, or its file path (click to
  *  copy). */
 function BosunOriginChip({ thread }: { thread: Thread }) {
   const origin = thread.origin!;
+  const image = useBosunImage(origin.bosunId);
   const [copied, setCopied] = useState(false);
   const url = origin.refs?.url;
   const path = origin.refs?.path;
@@ -1659,7 +1662,8 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
         className="bosun-origin-chip"
         title={origin.dayLog ? `${origin.bosunName}'s day log` : `opened by ${origin.bosunName}`}
       >
-        ⚓ {origin.bosunName} · {origin.dayLog ? "log" : origin.signalKind}
+        <BosunMark image={image} size={12} />
+        {origin.bosunName} · {origin.dayLog ? "log" : origin.signalKind}
       </span>
       {url ? (
         <a className="bosun-origin-ref" href={url} target="_blank" rel="noreferrer" title={url}>

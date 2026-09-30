@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import type { Thread, ThreadPreview } from "../lib/protocol";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { timeAgo } from "../lib/format";
+import { displayTitle } from "../lib/bosun";
 import { resolvePortrait } from "../lib/portraits";
 import { machineLook } from "./MachineAvatar";
 import { useStore } from "../state/store";
@@ -362,7 +363,7 @@ export function ThreadHoverCardBody({ thread }: { thread: Thread }) {
         ) : (
           <AgentMark agent={thread.agent} size={14} className="hover-card-mark" />
         )}
-        <span className="hover-card-title">{thread.title || "Untitled thread"}</span>
+        <span className="hover-card-title">{displayTitle(thread) || "Untitled thread"}</span>
         <span className={`status-dot st-${thread.status}`} />
       </div>
 

@@ -67,7 +67,7 @@ try {
     assert.equal(b.wakeSummary(budget), '10:00 · 1 signal · ignored 0, logged 1, woke 0 · budget: 6/6 this hour');
   });
 
-  test('day grouping: newest day first, items interleaved newest first', () => {
+  test('day grouping: newest day first, threads newest first, wakes folded', () => {
     const wakes = [
       wake('a', at(2026, 9, 27, 8, 0), 1, ['log']),
       wake('b', at(2026, 9, 28, 16, 2), 3, ['ignore']),
@@ -75,20 +75,81 @@ try {
     ];
     const threads = [
       thread('t1', at(2026, 9, 28, 9, 1), origin()),
+      thread('t3', at(2026, 9, 28, 17, 30), origin()),
       thread('t2', at(2026, 9, 27, 8, 1), origin(true)),
       thread('plain', at(2026, 9, 28, 12, 0), undefined),
     ];
     const days = b.bosunTimeline(wakes, threads);
     assert.deepEqual(days.map((d) => d.key), ['2026-09-28', '2026-09-27']);
-    assert.deepEqual(
-      days[0].items.map((i) => (i.kind === 'wake' ? `w:${i.wake.id}` : `t:${i.thread.id}`)),
-      ['w:b', 't:t1', 'w:c'],
-    );
-    assert.deepEqual(
-      days[1].items.map((i) => (i.kind === 'wake' ? `w:${i.wake.id}` : `t:${i.thread.id}`)),
-      ['t:t2', 'w:a'],
-    );
+    // No wake is interleaved with the threads: they live in their own list.
+    assert.deepEqual(days[0].threads.map((t) => t.id), ['t3', 't1']);
+    assert.deepEqual(days[0].wakes.map((w) => w.id), ['b', 'c']);
+    assert.deepEqual(days[1].threads.map((t) => t.id), ['t2']);
+    assert.deepEqual(days[1].wakes.map((w) => w.id), ['a']);
+    assert.equal(days[0].summary.wakes, 2);
     assert.deepEqual(b.bosunTimeline([], []), []);
+  });
+
+  test('per-day summary aggregation', () => {
+    const wakes = [
+      wake('a', at(2026, 9, 28, 8, 0), 3, ['ignore', 'ignore', 'log']),
+      wake('b', at(2026, 9, 28, 9, 0), 4, ['work', 'ask', 'log', 'ignore']),
+      wake('c', at(2026, 9, 28, 10, 0), 2, [], 'triage failed: timeout'),
+      wake('d', at(2026, 9, 28, 11, 0), 1, ['log'], 'budget: 6/6 this hour'),
+      wake('e', at(2026, 9, 28, 12, 0), 1, [], 'triage failed: timeout'),
+    ];
+    const s = b.summarizeWakes(wakes);
+    assert.deepEqual(
+      { wakes: s.wakes, signals: s.signals, ignored: s.ignored, logged: s.logged, woke: s.woke },
+      { wakes: 5, signals: 11, ignored: 3, logged: 3, woke: 2 },
+    );
+    // Skipped wakes, newest first, whatever the reason.
+    assert.deepEqual(s.skipped.map((w) => w.id), ['e', 'd', 'c']);
+    assert.equal(
+      b.daySummaryLine('Today', s),
+      'Today · 5 wakes · 11 signals · ignored 3 · logged 3 · woke 2',
+    );
+    assert.equal(
+      b.skippedLine(s),
+      '3 wakes skipped: triage failed: timeout (+1 other reason)',
+    );
+
+    const one = b.summarizeWakes([wake('x', at(2026, 9, 28, 8, 0), 1, ['work'])]);
+    assert.equal(b.daySummaryLine('Yesterday', one), 'Yesterday · 1 wake · 1 signal · ignored 0 · logged 0 · woke 1');
+    assert.equal(b.skippedLine(one), null);
+
+    const lone = b.summarizeWakes([wake('y', at(2026, 9, 28, 8, 0), 2, [], 'triage failed: exit 1')]);
+    assert.equal(b.skippedLine(lone), '1 wake skipped: triage failed: exit 1');
+
+    // A day that only has threads is just its label.
+    const empty = b.summarizeWakes([]);
+    assert.equal(b.daySummaryLine('Today', empty), 'Today');
+
+    // The timeline carries the same summary per day.
+    const days = b.bosunTimeline(wakes, []);
+    assert.equal(days.length, 1);
+    assert.equal(days[0].summary.signals, 11);
+    assert.equal(days[0].summary.skipped.length, 3);
+  });
+
+  test('displayTitle strips leading anchors only', () => {
+    const t = (title) => ({ title });
+    assert.equal(b.displayTitle(t('⚓ Call: BOL generation fixed')), 'Call: BOL generation fixed');
+    assert.equal(b.displayTitle(t('⚓ ⚓ Call: BOL generation fixed')), 'Call: BOL generation fixed');
+    assert.equal(b.displayTitle(t('⚓ ⚓ ⚓ Call: BOL generation fixed')), 'Call: BOL generation fixed');
+    assert.equal(b.displayTitle(t('⚓⚓⚓Call')), 'Call');
+    assert.equal(b.displayTitle(t('  ⚓️  ⚓\t Ticket 42  ')), 'Ticket 42');
+    // Other titles are left alone, including an anchor that is not leading.
+    assert.equal(b.displayTitle(t('Fix the anchor ⚓ icon')), 'Fix the anchor ⚓ icon');
+    assert.equal(b.displayTitle(t('Plain title')), 'Plain title');
+    assert.equal(b.displayTitle(t('')), '');
+    assert.equal(b.displayTitle(t('⚓ ')), '');
+    assert.equal(b.displayTitle(undefined), '');
+    assert.equal(b.stripTitleMarks('⚓ ⚓ Blackbeard: done'), 'Blackbeard: done');
+    // Pure: the thread is not mutated.
+    const th = t('⚓ ⚓ x');
+    b.displayTitle(th);
+    assert.equal(th.title, '⚓ ⚓ x');
   });
 
   test('day labels', () => {

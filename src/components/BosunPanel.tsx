@@ -13,6 +13,8 @@ import type {
   WorkspaceMember,
 } from "../lib/protocol";
 import { SMART_SEARCH_MODELS } from "../lib/protocol";
+import { AnchorIcon } from "./icons";
+import { BosunMark } from "./BosunMark";
 import { isAgentVisible } from "../lib/agentVisibility";
 import {
   CHARTER_ACCESS,
@@ -80,7 +82,7 @@ function useMemberLabel() {
 function BosunAvatar({ bosun, size = 22 }: { bosun: { name: string; image?: string | null }; size?: number }) {
   return (
     <span className="bosun-avatar" style={{ width: size, height: size }}>
-      {bosun.image ? <img src={bosun.image} alt="" /> : <span aria-hidden>⚓</span>}
+      {bosun.image ? <img src={bosun.image} alt="" /> : <AnchorIcon size={Math.round(size * 0.62)} />}
     </span>
   );
 }
@@ -1173,9 +1175,7 @@ export function BosunPanel({
             <div className="sched-list">
               {state.bosuns.length === 0 && (
                 <div className="sched-empty">
-                  <span className="bosun-empty-mark" aria-hidden>
-                    ⚓
-                  </span>
+                  <BosunMark size={24} className="bosun-empty-mark" />
                   <p>
                     A Bosun is an always-on agent that watches your lookouts (a ticket queue, a folder of
                     call notes, a webhook, a timer) and triages what it sees. It opens a thread only when

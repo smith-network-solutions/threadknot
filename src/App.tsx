@@ -82,6 +82,7 @@ import { DirPicker } from "./components/DirPicker";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
 import { BosunPanel } from "./components/BosunPanel";
+import { displayTitle, stripTitleMarks } from "./lib/bosun";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
 import { PairBrowser } from "./components/PairBrowser";
@@ -2172,7 +2173,8 @@ function maybeNotify(
 
   const thread = findThread(state, frame.threadId);
   const detailed = prefs.previews ? frame.notice : undefined;
-  const title = detailed?.title || thread?.title?.trim() || "Threadknot";
+  const title =
+    stripTitleMarks(detailed?.title) || displayTitle(thread) || "Threadknot";
   const body = detailed?.body || legacyBody || "Update available";
   // Inside the mobile shell the server pushes the same moment through Expo —
   // chime/vibrate/system-notify here would double up. Keep only the toast.
@@ -2828,7 +2830,7 @@ export default function App() {
                   void actions.selectThread(n.threadId);
                 }}
               >
-                <span className="toast-title">{n.title}</span>
+                <span className="toast-title">{stripTitleMarks(n.title)}</span>
                 <span className="toast-body">{n.body}</span>
               </button>
             ))}

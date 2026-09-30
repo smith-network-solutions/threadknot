@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { stripTitleMarks } from "../lib/bosun";
 import { createPortal } from "react-dom";
 import type {
   ArchiveHeader,
@@ -2207,7 +2208,7 @@ function ArchiveRow({
   return (
     <div className="archive-row">
       <div className="archive-main">
-        <span className="archive-title">{a.title || "Untitled thread"}</span>
+        <span className="archive-title">{stripTitleMarks(a.title) || "Untitled thread"}</span>
         <span className="archive-sub">
           <span className="archive-proj">{a.projectName}</span>
           <span className="archive-dot">·</span>

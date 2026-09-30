@@ -31,6 +31,24 @@ export function isBosunThread(thread: Thread): boolean {
   return thread.origin?.kind === "bosun";
 }
 
+/** Anchors (with or without the emoji variation selector) and whitespace at
+ *  the start of a title. The engine prefixes bosun thread titles with "⚓ ",
+ *  and merged follow-ups can stack several. */
+const LEADING_MARKS = /^[\s\u2693\uFE0F]+/u;
+
+/** A title as it should be shown: any leading run of anchors and spaces
+ *  removed. The mark is drawn once, as an icon, by whatever renders the row;
+ *  it never belongs in the text. Pure — the stored title is untouched. */
+export function stripTitleMarks(title: string | null | undefined): string {
+  return (title ?? "").replace(LEADING_MARKS, "").trim();
+}
+
+/** The display title of a thread (empty string when it has none, so callers
+ *  keep their own "Untitled thread" fallback). */
+export function displayTitle(thread: Pick<Thread, "title"> | null | undefined): string {
+  return stripTitleMarks(thread?.title);
+}
+
 /** Every thread a Bosun opened, newest first. */
 export function bosunThreads(state: Pick<AppState, "threads">): Thread[] {
   return Object.values(state.threads)
@@ -83,40 +101,101 @@ export function dayLabel(key: string, now: Date = new Date()): string {
   return d.getFullYear() === now.getFullYear() ? label : `${label} ${d.getFullYear()}`;
 }
 
-export type TimelineItem =
-  | { kind: "wake"; at: string; wake: Wake }
-  | { kind: "thread"; at: string; thread: Thread };
+export interface DaySummary {
+  wakes: number;
+  signals: number;
+  ignored: number;
+  logged: number;
+  /** work + ask: the wakes' decisions that put someone to work. */
+  woke: number;
+  /** Wakes that failed or hit the budget (`skipped` set), newest first. */
+  skipped: Wake[];
+}
 
 export interface TimelineDay {
   key: string;
-  items: TimelineItem[];
+  /** The day's wakes, newest first. Shown only when the summary is expanded. */
+  wakes: Wake[];
+  /** Threads a bosun opened that day, newest first. The day's content. */
+  threads: Thread[];
+  summary: DaySummary;
+}
+
+const isoMs = (iso: string) => {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : 0;
+};
+
+/** Totals across a set of wakes, for the one summary line per day. */
+export function summarizeWakes(wakes: readonly Wake[]): DaySummary {
+  const s: DaySummary = { wakes: 0, signals: 0, ignored: 0, logged: 0, woke: 0, skipped: [] };
+  for (const w of wakes) {
+    const c = decisionCounts(w);
+    s.wakes += 1;
+    s.signals += w.signals;
+    s.ignored += c.ignore;
+    s.logged += c.log;
+    s.woke += c.work + c.ask;
+    if (w.skipped) s.skipped.push(w);
+  }
+  s.skipped.sort((a, b) => isoMs(b.at) - isoMs(a.at));
+  return s;
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** `Today · 9 wakes · 14 signals · ignored 5 · logged 6 · woke 3`. A day with
+ *  no wakes is just its label. */
+export function daySummaryLine(label: string, s: DaySummary): string {
+  if (s.wakes === 0) return label;
+  return [
+    label,
+    plural(s.wakes, "wake"),
+    plural(s.signals, "signal"),
+    `ignored ${s.ignored}`,
+    `logged ${s.logged}`,
+    `woke ${s.woke}`,
+  ].join(" · ");
+}
+
+/** `2 wakes skipped: triage failed: timeout` — the newest reason, plus a
+ *  count of other distinct reasons. Null when nothing was skipped. */
+export function skippedLine(s: DaySummary): string | null {
+  if (s.skipped.length === 0) return null;
+  const reasons = [...new Set(s.skipped.map((w) => w.skipped!.trim()))];
+  const more = reasons.length > 1 ? ` (+${reasons.length - 1} other reason${reasons.length === 2 ? "" : "s"})` : "";
+  return `${plural(s.skipped.length, "wake")} skipped: ${reasons[0]}${more}`;
 }
 
 /** Wakes and the threads bosuns opened, grouped by local day (newest day
- *  first), each day's entries interleaved newest first. A thread is placed
- *  by `createdAt`: the day its wake opened it. */
+ *  first). Threads are the content; wakes are folded into one summary per
+ *  day. A thread is placed by `createdAt`: the day its wake opened it. */
 export function bosunTimeline(wakes: readonly Wake[], threads: readonly Thread[]): TimelineDay[] {
-  const byDay = new Map<string, TimelineItem[]>();
-  const push = (item: TimelineItem) => {
-    const key = localDayKey(item.at);
-    const list = byDay.get(key);
-    if (list) list.push(item);
-    else byDay.set(key, [item]);
+  const byDay = new Map<string, { wakes: Wake[]; threads: Thread[] }>();
+  const day = (iso: string) => {
+    const key = localDayKey(iso);
+    let d = byDay.get(key);
+    if (!d) {
+      d = { wakes: [], threads: [] };
+      byDay.set(key, d);
+    }
+    return d;
   };
-  for (const wake of wakes) push({ kind: "wake", at: wake.at, wake });
+  for (const wake of wakes) day(wake.at).wakes.push(wake);
   for (const thread of threads) {
-    if (isBosunThread(thread)) push({ kind: "thread", at: thread.createdAt, thread });
+    if (isBosunThread(thread)) day(thread.createdAt).threads.push(thread);
   }
-  const ms = (iso: string) => {
-    const t = Date.parse(iso);
-    return Number.isFinite(t) ? t : 0;
-  };
   return [...byDay.entries()]
     .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
-    .map(([key, items]) => ({
-      key,
-      items: items.sort((a, b) => ms(b.at) - ms(a.at)),
-    }));
+    .map(([key, d]) => {
+      const ws = d.wakes.sort((a, b) => isoMs(b.at) - isoMs(a.at));
+      return {
+        key,
+        wakes: ws,
+        threads: d.threads.sort((a, b) => isoMs(b.createdAt) - isoMs(a.createdAt)),
+        summary: summarizeWakes(ws),
+      };
+    });
 }
 
 export function decisionCounts(wake: Wake): Record<DecisionKind, number> {

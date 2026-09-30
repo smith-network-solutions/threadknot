@@ -609,3 +609,16 @@ export function ToolGlyph({ name, size = 14 }: { name: string; size?: number }) 
   if (/(todo|task|plan)/.test(n)) return <CheckIcon size={size} />;
   return <WrenchIcon size={size} />;
 }
+
+// Anchor — a Bosun: the always-on agent that keeps watch.
+export const AnchorIcon = (p: IconProps) =>
+  svg(
+    <>
+      <circle cx="12" cy="5" r="2.2" />
+      <path d="M12 7.2V20.5" />
+      <path d="M8.5 10.5h7" />
+      <path d="M4.5 13a7.5 7.5 0 0 0 15 0" />
+      <path d="M3 14.5l1.5-1.5 1.5 1.5M18 14.5l1.5-1.5 1.5 1.5" />
+    </>,
+    p,
+  );

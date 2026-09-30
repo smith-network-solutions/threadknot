@@ -51,9 +51,13 @@ import {
   bosunAttentionThreads,
   bosunThreads,
   bosunTimeline,
+  daySummaryLine,
+  displayTitle,
+  skippedLine,
   dayLabel,
 } from "../lib/bosun";
 import { WakeLine } from "./BosunWake";
+import { BosunMark } from "./BosunMark";
 import {
   findThread,
   hermesAttentionThreads,
@@ -104,6 +108,7 @@ import {
   ArchiveIcon,
   BellIcon,
   CheckIcon,
+  AnchorIcon,
   ChevronIcon,
   ClockIcon,
   CompassIcon,
@@ -612,6 +617,10 @@ function projectAccent(id: string): string {
 function ProjectRail({
   quickThreads,
   quickOn,
+  bosunOn,
+  bosunImage,
+  bosunAttention,
+  onPickBosun,
   workspaces,
   hidden,
   threadsByWorkspace,
@@ -625,6 +634,13 @@ function ProjectRail({
 }: {
   quickThreads: Thread[];
   quickOn: boolean;
+  /** The Bosun view is showing. */
+  bosunOn: boolean;
+  /** The first bosun's avatar, drawn instead of the anchor when set. */
+  bosunImage: string | null;
+  /** How many bosun threads are asking for you (the tile's dot). */
+  bosunAttention: number;
+  onPickBosun: () => void;
   workspaces: Workspace[];
   /** Every stashed workspace, whether or not the view toggle is currently
    *  showing them inline — the stash button is how you get them back, so it has
@@ -698,6 +714,22 @@ function ProjectRail({
             className={`rail-dot${quickActivity === "attention" ? " lit" : ""}`}
             aria-hidden
           />
+        </button>
+        <button
+          type="button"
+          className={`rail-item rail-quick rail-bosun${bosunOn ? " on" : ""}${
+            bosunAttention > 0 ? " rail-attention" : ""
+          }`}
+          aria-current={bosunOn ? "true" : undefined}
+          aria-label={`Bosun${bosunAttention > 0 ? " — needs you" : ""}`}
+          title="Bosun"
+          onClick={onPickBosun}
+        >
+          <span className="rail-pip" aria-hidden />
+          <span className="rail-quick-face rail-bosun-face" aria-hidden>
+            {bosunImage ? <img src={bosunImage} alt="" /> : <AnchorIcon size={19} />}
+          </span>
+          <span className={`rail-dot${bosunAttention > 0 ? " lit" : ""}`} aria-hidden />
         </button>
         <span className="rail-divider" aria-hidden />
       </div>
@@ -1106,7 +1138,7 @@ function ThreadRow({
     name: hermesRec?.name ?? "hermes agent",
   });
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(thread.title);
+  const [value, setValue] = useState(() => displayTitle(thread));
   // "kebab" tracks the button; a point comes from a right-click
   // and is already in viewport coordinates. Touch needs the point mode: the
   // kebab is a 24px target that only appears on hover.
@@ -1253,7 +1285,7 @@ function ThreadRow({
 
   function startRename() {
     closeMenu();
-    setValue(thread.title);
+    setValue(displayTitle(thread));
     setEditing(true);
   }
 
@@ -1261,7 +1293,7 @@ function ThreadRow({
     if (!editing) return;
     const next = value.trim();
     setEditing(false);
-    if (next && next !== thread.title)
+    if (next && next !== thread.title && next !== displayTitle(thread))
       void actions.renameThread(thread.id, next);
   }
 
@@ -1310,7 +1342,7 @@ function ThreadRow({
 
   function cancelRename() {
     setEditing(false);
-    setValue(thread.title);
+    setValue(displayTitle(thread));
   }
 
   const card = view === "cards";
@@ -1334,6 +1366,12 @@ function ThreadRow({
   // A thread a Bosun opened wears an anchor in the agent slot, in every
   // view, the way a dispatched worker is marked by its rail.
   const bosunOrigin = thread.origin?.kind === "bosun" ? thread.origin : undefined;
+  const bosunImage = bosunOrigin
+    ? (state.bosuns.find((b) => b.id === bosunOrigin.bosunId)?.image ?? null)
+    : null;
+  // The engine prefixes bosun titles with anchors; the mark above is the only
+  // one a row shows.
+  const shownTitle = displayTitle(thread) || "Untitled thread";
   const bosunWorkspaceName = inBosunView
     ? (() => {
         const wsId = workspaceIdForProject(state, thread.projectId);
@@ -1342,12 +1380,11 @@ function ThreadRow({
     : undefined;
   const markVisual = bosunOrigin && !hermesAvatar ? (
     <span
-      className="thread-row-mark bosun-mark"
+      className="thread-row-mark bosun-row-mark"
       role="img"
       aria-label={`opened by ${bosunOrigin.bosunName}`}
-      title={`opened by ${bosunOrigin.bosunName} · ${thread.agent}`}
     >
-      ⚓
+      <BosunMark image={bosunImage} size={16} />
     </span>
   ) : hermesAvatar ? (
     <span className="hermes-avatar-wrap">
@@ -1734,7 +1771,7 @@ function ThreadRow({
         )
       : null;
 
-  const rowLabel = `${thread.title || "Untitled thread"}${
+  const rowLabel = `${shownTitle}${
     needsAttention ? ", unread" : ""
   }${settled ? ", settled" : ""}`;
   // Touch holds reorder active chats; actions remain on the kebab. Mouse
@@ -1793,9 +1830,9 @@ function ThreadRow({
             {hermesPreview.portal}
             <span
               className="thread-card-title"
-              title={thread.title || "Untitled thread"}
+              title={shownTitle}
             >
-              {thread.title || "Untitled thread"}
+              {shownTitle}
             </span>
           </div>
           <div className="thread-card-meta">
@@ -1840,9 +1877,9 @@ function ThreadRow({
             {hermesPreview.portal}
             <span
               className="thread-row-title"
-              title={thread.title || "Untitled thread"}
+              title={shownTitle}
             >
-              {thread.title || "Untitled thread"}
+              {shownTitle}
             </span>
           </div>
           <div className="thread-row-sub">
@@ -1876,9 +1913,9 @@ function ThreadRow({
         {hermesPreview.portal}
         <span
           className="thread-row-title"
-          title={thread.title || "Untitled thread"}
+          title={shownTitle}
         >
-          {thread.title || "Untitled thread"}
+          {shownTitle}
         </span>
         {chipsEl}
         {authorEl}
@@ -2529,23 +2566,31 @@ function HermesGroup({
 }
 
 /** The sidebar's Bosun view: one timeline across every workspace answering
- *  "what did my Bosun do today". Each day interleaves the wakes (a collapsible
- *  ledger line) with the threads those wakes opened (normal rows, plus a
- *  workspace chip, since this list is not scoped to one). Like the Hermes view
- *  it is a second way to reach chats that also live in their workspace. */
+ *  "what did my Bosun do today". Threads are the content: each day lists the
+ *  threads bosuns opened (normal rows, plus a workspace chip, since this list
+ *  is not scoped to one), under ONE collapsed summary of that day's wakes.
+ *  Skipped wakes (a triage failure, a budget stop) surface as a short line
+ *  even while collapsed. Like the Hermes view it is a second way to reach
+ *  chats that also live in their workspace. */
 function BosunSection({
   filter,
   contentMatches,
   view,
   onOpenBosun,
+  onBack,
 }: {
   filter: string;
   contentMatches: ReadonlySet<string>;
   view: SidebarLayout["view"];
   onOpenBosun: (startNew?: boolean) => void;
+  /** Non-rail layouts: a full-width "← Workspaces" row leads the view. The
+   *  rail layout omits it; the rail's project tiles are the way back. */
+  onBack?: () => void;
 }) {
   const { state, actions } = useStore();
   const [running, setRunning] = useState<Record<string, boolean>>({});
+  /** Day keys whose wake summary is expanded. Collapsed by default. */
+  const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
   const threads = useMemo(() => bosunThreads(state), [state.threads]);
   const names = useMemo(
     () => new Map(state.bosuns.map((b) => [b.id, b.name])),
@@ -2563,25 +2608,32 @@ function BosunSection({
     return bosunTimeline(shownWakes, shownThreads);
   }, [threads, state.bosunLedger, filter, contentMatches]);
 
+  const backRow = onBack ? (
+    <button type="button" className="bosun-back" onClick={onBack}>
+      <span aria-hidden>←</span> Workspaces
+    </button>
+  ) : null;
+
   if (state.bosuns.length === 0 && threads.length === 0) {
     return (
-      <div className="sidebar-empty bosun-empty">
-        <span className="bosun-empty-mark" aria-hidden>
-          ⚓
-        </span>
-        <p>
-          A Bosun is an always-on agent that watches your ticket queues, inboxes,
-          folders and timers, and sorts each signal into the right workspace.
-          It opens a thread only when there is work to show or a question to ask.
-        </p>
-        <button
-          type="button"
-          className="btn tone-allow sched-new-btn"
-          onClick={() => onOpenBosun(true)}
-        >
-          <PlusIcon size={13} /> Create a Bosun
-        </button>
-      </div>
+      <>
+        {backRow}
+        <div className="sidebar-empty bosun-empty">
+          <BosunMark size={24} className="bosun-empty-mark" />
+          <p>
+            A Bosun is an always-on agent that watches your ticket queues, inboxes,
+            folders and timers, and sorts each signal into the right workspace.
+            It opens a thread only when there is work to show or a question to ask.
+          </p>
+          <button
+            type="button"
+            className="btn tone-allow sched-new-btn"
+            onClick={() => onOpenBosun(true)}
+          >
+            <PlusIcon size={13} /> Create a Bosun
+          </button>
+        </div>
+      </>
     );
   }
 
@@ -2600,28 +2652,27 @@ function BosunSection({
   const now = new Date();
   return (
     <div className="bosun-view">
+      {backRow}
       <div className="bosun-crew">
         {state.bosuns.map((b) => (
-          <div key={b.id} className={`bosun-crew-row${b.enabled ? "" : " off"}`}>
-            <span className="bosun-avatar" style={{ width: 20, height: 20 }}>
-              {b.image ? <img src={b.image} alt="" /> : <span aria-hidden>⚓</span>}
-            </span>
-            <span className="bosun-crew-name" title={b.lastError ?? b.name}>
-              {b.name}
-            </span>
-            <span className={`bosun-crew-state${b.lastError ? " err" : ""}`}>
-              {b.lastError ? "error" : b.enabled ? "on watch" : "paused"}
-            </span>
-            <button
-              type="button"
-              className="icon-btn"
-              title={`Run ${b.name} now`}
-              aria-label={`Run ${b.name} now`}
-              disabled={!!running[b.id]}
-              onClick={() => void runNow(b.id)}
-            >
-              <PlayIcon size={12} />
-            </button>
+          <div key={b.id} className={`bosun-crew-member${b.enabled ? "" : " off"}`}>
+            <div className="bosun-crew-row">
+              <BosunMark image={b.image} size={18} />
+              <span className="bosun-crew-name">{b.name}</span>
+              <span className={`bosun-crew-state${b.lastError ? " err" : ""}`}>
+                {b.lastError ? "error" : b.enabled ? "on watch" : "paused"}
+              </span>
+              <button
+                type="button"
+                className="btn bosun-small-btn bosun-run"
+                aria-label={`Run ${b.name} now`}
+                disabled={!!running[b.id]}
+                onClick={() => void runNow(b.id)}
+              >
+                <PlayIcon size={10} /> {running[b.id] ? "Running" : "Run now"}
+              </button>
+            </div>
+            {b.lastError && <div className="bosun-crew-error">{b.lastError}</div>}
           </div>
         ))}
         <button
@@ -2637,28 +2688,49 @@ function BosunSection({
           <p>{filter ? "No matching activity." : "Nothing yet. Quiet lookouts cost nothing."}</p>
         </div>
       )}
-      {days.map((day) => (
-        <div key={day.key} className="bosun-day">
-          <div className="bosun-day-head">{dayLabel(day.key, now)}</div>
-          {day.items.map((item) =>
-            item.kind === "wake" ? (
-              <WakeLine
-                key={`w:${item.wake.id}`}
-                wake={item.wake}
-                bosunName={multi ? names.get(item.wake.bosunId) : undefined}
-              />
+      {days.map((day) => {
+        const open = openDays[day.key] ?? !!filter;
+        const label = daySummaryLine(dayLabel(day.key, now), day.summary);
+        const skipped = skippedLine(day.summary);
+        return (
+          <div key={day.key} className="bosun-day">
+            {day.wakes.length > 0 ? (
+              <button
+                type="button"
+                className="bosun-day-head bosun-day-toggle"
+                aria-expanded={open}
+                onClick={() => setOpenDays((o) => ({ ...o, [day.key]: !open }))}
+              >
+                <ChevronIcon size={10} open={open} className="row-chevron" />
+                <span className="bosun-day-text">{label}</span>
+              </button>
             ) : (
+              <div className="bosun-day-head">{label}</div>
+            )}
+            {skipped && <div className="bosun-day-skipped">{skipped}</div>}
+            {open && day.wakes.length > 0 && (
+              <div className="bosun-day-wakes">
+                {day.wakes.map((w) => (
+                  <WakeLine
+                    key={w.id}
+                    wake={w}
+                    bosunName={multi ? names.get(w.bosunId) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+            {day.threads.map((t) => (
               <ThreadRow
-                key={`t:${item.thread.id}`}
-                thread={item.thread}
-                active={state.activeThreadId === item.thread.id}
+                key={t.id}
+                thread={t}
+                active={state.activeThreadId === t.id}
                 inBosunView
                 view={view}
               />
-            ),
-          )}
-        </div>
-      ))}
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -3495,7 +3567,7 @@ function SearchResultRow({
       <div className="search-result-line">
         <AgentMark agent={thread.agent} size={18} className="search-result-mark" />
         <span className="search-result-title">
-          <SearchHighlight text={thread.title || "Untitled thread"} words={highlightWords}
+          <SearchHighlight text={displayTitle(thread) || "Untitled thread"} words={highlightWords}
             fuzzy={result?.reason === "Similar spelling match"} substring={!result} />
         </span>
         {project && <span className="search-result-project">{project}</span>}
@@ -4425,7 +4497,7 @@ export const Sidebar = memo(function Sidebar({
   // search flattens every project into one result set below it, rather than
   // vanishing and reflowing the sidebar on the first keystroke.
   const railMode =
-    sidebarPrefs.projectLayout === "rail" && !agentsView && !bosunView && !soloId;
+    sidebarPrefs.projectLayout === "rail" && !agentsView && !soloId;
 
   // Which project the single-project layouts are showing. Null means "not
   // chosen yet", which resolves to the project holding the open chat — so
@@ -4677,10 +4749,14 @@ export const Sidebar = memo(function Sidebar({
         <ProjectRail
           quickThreads={quickThreads}
           quickOn={quickView}
+          bosunOn={bosunView}
+          bosunImage={state.bosuns[0]?.image ?? null}
+          bosunAttention={bosunAttention}
+          onPickBosun={() => switchView("bosun")}
           workspaces={visibleWorkspaces}
           hidden={hiddenWorkspaces}
           threadsByWorkspace={threadsByWorkspace}
-          shownId={quickView ? null : shownWorkspaceId}
+          shownId={quickView || bosunView ? null : shownWorkspaceId}
           onPickQuick={() => switchView("quick")}
           onPick={pickRailProject}
           onMenu={(point, workspace) =>
@@ -4801,9 +4877,7 @@ export const Sidebar = memo(function Sidebar({
             className="sidebar-action"
             onClick={() => switchView("bosun")}
           >
-            <i className="sidebar-action-glyph" aria-hidden>
-              ⚓
-            </i>
+            <AnchorIcon size={18} />
             <span>Bosun</span>
             {bosunAttention > 0 && <span className="usermenu-dot" />}
           </button>
@@ -4848,6 +4922,7 @@ export const Sidebar = memo(function Sidebar({
             contentMatches={contentMatches}
             view={layout.view}
             onOpenBosun={onOpenBosun}
+            onBack={railMode ? undefined : () => switchView("fleet")}
           />
         )}
         {!quickView && !agentsView && !bosunView && !!filter && matchingQuickThreads.length > 0 && (

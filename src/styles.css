@@ -10610,7 +10610,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   padding: 6px 8px;
   white-space: pre-wrap;
 }
-.bosun-empty-mark { font-size: 24px; color: var(--brass); opacity: 0.85; line-height: 1; }
+.bosun-empty-mark { color: var(--brass); opacity: 0.85; }
 
 /* Wake lines: shared by the panel's ledger tail and the sidebar timeline. */
 .bosun-wake { display: flex; flex-direction: column; }
@@ -10665,16 +10665,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .bosun-badge.d-ask { color: var(--brass-hi); background: var(--brass-dim); border-color: color-mix(in srgb, var(--brass) 40%, transparent); }
 
 /* Sidebar view */
-.sidebar-action-glyph {
-  flex: none;
-  width: 18px;
-  text-align: center;
-  font-style: normal;
-  font-size: 15px;
-  line-height: 1;
-  color: var(--sidebar-muted);
-  opacity: 0.8;
-}
 .bosun-view { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; }
 .bosun-crew {
   display: flex;
@@ -10686,12 +10676,21 @@ span.title-agent-mark { width: 16px; height: 16px; }
   border-radius: 10px;
   background: var(--panel);
 }
+.bosun-crew-member { display: flex; flex-direction: column; min-width: 0; }
 .bosun-crew-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
-.bosun-crew-row.off .bosun-crew-name { opacity: 0.55; }
-.bosun-crew-row .bosun-avatar { font-size: 11px; }
+.bosun-crew-member.off .bosun-crew-name { opacity: 0.55; }
+.bosun-crew-member .bosun-mark { color: var(--brass-hi); }
+.bosun-run { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.bosun-crew-error {
+  margin: 0 0 4px 26px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
 .bosun-crew-name { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bosun-crew-state { flex: none; font-size: 10.5px; color: var(--teal); }
-.bosun-crew-row.off .bosun-crew-state { color: var(--faint); }
+.bosun-crew-member.off .bosun-crew-state { color: var(--faint); }
 .bosun-crew-state.err { color: var(--red); }
 .bosun-manage { align-self: flex-end; margin-top: 2px; }
 .bosun-day { display: flex; flex-direction: column; gap: 1px; }
@@ -10703,21 +10702,78 @@ span.title-agent-mark { width: 16px; height: 16px; }
   text-transform: uppercase;
   color: var(--faint);
 }
-.bosun-day .bosun-wake { margin: 0 8px; }
+.bosun-day-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 20px);
+  margin: 8px 10px 2px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  text-align: left;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-weight: 600;
+  font-size: 11px;
+}
+.bosun-day-toggle:hover { background: color-mix(in srgb, var(--brass) 8%, transparent); color: var(--dim); }
+.bosun-day-toggle .row-chevron { flex: none; opacity: 0.7; }
+.bosun-day-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A skipped wake stays visible while the day is collapsed: problems are the
+   one part of the ledger worth interrupting the thread list for. */
+.bosun-day-skipped {
+  margin: 0 12px 4px 34px;
+  padding: 2px 8px;
+  border-left: 2px solid var(--red);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--red);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bosun-day-wakes {
+  margin: 0 8px 6px 22px;
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+}
+.bosun-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 16px);
+  margin: 4px 8px 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.bosun-back:hover { border-color: color-mix(in srgb, var(--brass) 40%, var(--line)); background: color-mix(in srgb, var(--brass) 8%, var(--panel)); }
 .bosun-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; line-height: 1.55; }
 .bosun-empty p { margin: 0; }
 
-/* Row marks: the anchor in the agent slot, the day-log tag, the workspace chip. */
+/* The one Bosun mark: an anchor icon, or the bosun's avatar when it has one.
+   Sized inline by BosunMark; used in the row's agent slot, the header chip,
+   the crew card, and the empty states. */
 .bosun-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  font-size: 14px;
-  line-height: 1;
+  flex: none;
+  line-height: 0;
   color: var(--brass);
 }
+.bosun-mark svg { display: block; width: 100%; height: 100%; }
+.bosun-mark.has-image { border-radius: 50%; overflow: hidden; }
+.bosun-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bosun-row-mark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; }
+.rail-bosun-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thread-chip.bosun-log-tag {
   color: var(--faint);
   background: none;
@@ -10737,6 +10793,9 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .bosun-origin { display: flex; align-items: center; gap: 7px; margin-top: 3px; min-width: 0; }
 .bosun-origin-chip {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 6px;
   border-radius: 5px;
   border: 1px solid color-mix(in srgb, var(--brass) 34%, transparent);
