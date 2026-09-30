@@ -1866,8 +1866,8 @@ function ThreadRow({
       <>
         <div
           className={`thread-row two-line long-press-menu${active ? " active" : ""}${
-            needsAttention ? " has-attention" : ""
-          }${recede ? " recede" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}${reorder?.dragging ? " dragging" : ""}`}
+            inBosunView ? " bosun-row" : ""
+          }${needsAttention ? " has-attention" : ""}${recede ? " recede" : ""}${isGenerating ? " is-generating" : ""}${nest}${dim}${reorder?.dragging ? " dragging" : ""}`}
           {...rowGestures}
           {...hover.hoverProps}
         >
@@ -1883,7 +1883,10 @@ function ThreadRow({
             </span>
           </div>
           <div className="thread-row-sub">
-            {chipsEl}
+            {/* Bosun view: the workspace chip and "log" tag sit in one
+                shrinkable group on the meta line, so the chip ellipsizes and
+                the clock and row actions stay pinned right. */}
+            {inBosunView ? <span className="bosun-row-meta">{chipsEl}</span> : chipsEl}
             {authorEl}
             <span className="thread-row-time">{timeAgo(thread.updatedAt)}</span>
             {settleEl}
@@ -1901,8 +1904,8 @@ function ThreadRow({
     <>
       <div
         className={`thread-row long-press-menu${active ? " active" : ""}${
-          needsAttention ? " has-attention" : ""
-        }${recede ? " recede" : ""}${settled ? " slim" : ""}${
+          inBosunView ? " bosun-row" : ""
+        }${needsAttention ? " has-attention" : ""}${recede ? " recede" : ""}${settled ? " slim" : ""}${
           settled && lit ? " lit" : ""
         }${isGenerating ? " is-generating" : ""}${nest}${dim}${reorder?.dragging ? " dragging" : ""}`}
         {...rowGestures}

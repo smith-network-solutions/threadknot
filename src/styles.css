@@ -10782,11 +10782,93 @@ span.title-agent-mark { width: 16px; height: 16px; }
   letter-spacing: 0.06em;
   font-size: 9px;
 }
+/* Bosun view: the workspace name is secondary meta, not a badge. It rides
+   the meta line beside the clock as a plain muted label (no border or fill,
+   like the hover card's meta lines) and is the first thing to give when the
+   row narrows. The full name stays in its tooltip. */
 .thread-chip.bosun-ws-chip {
-  color: var(--brass-hi);
-  background: var(--brass-dim);
-  border-color: color-mix(in srgb, var(--brass) 34%, transparent);
-  max-width: 110px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 9ch;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--sidebar-muted);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  line-height: 1.4;
+  opacity: 1;
+}
+/* The chip + "log" tag group on the meta line. It shrinks (the chip inside
+   ellipsizes; the tag never does) and pushes the clock and row actions to
+   the right edge. */
+.bosun-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: auto;
+}
+/* Desktop list view: a real second line. The title owns line one at the
+   row's full width; chip, tag, clock and hover actions share line two,
+   indented to sit under the title (mark 18px + 9px gap). */
+@media (min-width: 768px) {
+  .thread-row.two-line.bosun-row {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    border-radius: 10px;
+  }
+  .thread-row.two-line.bosun-row .thread-row-main { flex: 1 1 100%; }
+  .thread-row.two-line.bosun-row .thread-row-sub {
+    flex: 1 1 100%;
+    min-width: 0;
+    gap: 6px;
+    padding-left: 27px;
+  }
+  .thread-row.two-line.bosun-row .thread-row-sub > .icon-btn { height: 18px; }
+  .thread-row.two-line.bosun-row .thread-row-sub > .thread-row-time { font-size: 10.5px; }
+}
+/* Compact view keeps one line, so its hover actions must not sit in the row
+   as invisible 24px boxes: on a Bosun row that dead space plus the "log" tag
+   left the title a few pixels. They collapse to zero until hover, the way
+   the list row's actions do. */
+@media (min-width: 768px) {
+  .sidebar.compact-view .thread-row.bosun-row > .thread-settle-btn,
+  .sidebar.compact-view .thread-row.bosun-row > .thread-star,
+  .sidebar.compact-view .thread-row.bosun-row > .thread-kebab {
+    width: 0;
+    min-width: 0;
+    margin-left: -6px;
+    overflow: hidden;
+    pointer-events: none;
+    transition: width 0.16s ease, opacity 0.16s ease, margin-left 0.16s ease;
+  }
+  .sidebar.compact-view .thread-row.bosun-row:hover > .thread-settle-btn,
+  .sidebar.compact-view .thread-row.bosun-row:hover > .thread-star,
+  .sidebar.compact-view .thread-row.bosun-row:hover > .thread-kebab,
+  .sidebar.compact-view .thread-row.bosun-row > .thread-star.on,
+  .sidebar.compact-view .thread-row.bosun-row > .thread-kebab.on {
+    width: 24px;
+    min-width: 24px;
+    margin-left: 0;
+    pointer-events: auto;
+  }
+}
+/* Compact view (and phones, below): no room for even a short label, so the
+   chip becomes a 6px brass dot; the name is still its tooltip. */
+.sidebar.compact-view .thread-row .thread-chip.bosun-ws-chip {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  max-width: 6px;
+  border-radius: 50%;
+  background: var(--brass);
+  font-size: 0;
+  color: transparent;
 }
 
 /* Thread header: which bosun opened this, and the signal's source. */
@@ -10821,7 +10903,27 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
 @media (max-width: 767px) {
   .bosun-modal { width: 100%; }
-  .thread-row .thread-chip.bosun-ws-chip { display: inline-block; max-width: 72px; }
+  .thread-row .thread-chip.bosun-ws-chip {
+    display: inline-block;
+    flex: none;
+    width: 6px;
+    height: 6px;
+    max-width: 6px;
+    border-radius: 50%;
+    background: var(--brass);
+    font-size: 0;
+    color: transparent;
+  }
+  /* Card view keeps its meta line on phones too, so it keeps the label. */
+  .thread-card .thread-chip.bosun-ws-chip {
+    width: auto;
+    height: auto;
+    max-width: 9ch;
+    border-radius: 0;
+    background: none;
+    font-size: 10px;
+    color: var(--sidebar-muted);
+  }
   .thread-row .thread-chip.bosun-log-tag { display: inline-block; }
   .bosun-wake-line { min-height: 36px; }
 }
