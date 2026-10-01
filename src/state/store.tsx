@@ -7,6 +7,7 @@ import type {
   AiPalette,
   ArtifactRecord,
   Bosun,
+  BosunTask,
   Wake,
   ArchiveHeader,
   CustomTheme,
@@ -366,6 +367,14 @@ export interface AppState {
   bosuns: Bosun[];
   /** Ledger tail across every bosun, newest first. */
   bosunLedger: Wake[];
+  /** Every bosun's tasks, closed ones from the last 3 days included
+   *  (docs/BOSUN.md §10). Null until `bosun.task.list` has answered, and
+   *  forever on a server that predates tasks: the UI reads null as "show the
+   *  thread-based Bosun view". */
+  bosunTasks: BosunTask[] | null;
+  /** The task shown in the main pane instead of the thread. Cleared whenever
+   *  a thread or draft is opened. */
+  activeTaskId: string | null;
   /** Persisted terminal tabs, keyed by projectId (loaded on demand). */
   terminals: Record<string, TermInfo[]>;
   /** Produced artifacts per project (loaded on demand for the Artifacts tab). */
@@ -454,6 +463,8 @@ export const initialState: AppState = {
   schedules: [],
   bosuns: [],
   bosunLedger: [],
+  bosunTasks: null,
+  activeTaskId: null,
   terminals: {},
   artifacts: {},
   artifactFocus: null,
@@ -515,6 +526,10 @@ export type Action =
   | { type: "schedules"; schedules: Schedule[] }
   | { type: "bosuns"; bosuns: Bosun[] }
   | { type: "bosunLedger"; wakes: Wake[] }
+  | { type: "bosunTasks"; tasks: BosunTask[] | null }
+  | { type: "bosunTaskUpserted"; task: BosunTask }
+  | { type: "bosunTaskRemoved"; taskId: string }
+  | { type: "openTask"; taskId: string | null }
   | { type: "terminals"; projectId: string; terminals: TermInfo[] }
   | { type: "artifacts"; projectId: string; artifacts: ArtifactRecord[] }
   | { type: "artifactFocus"; artifactId: string | null }
@@ -966,6 +981,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeThreadId: action.threadId,
+        activeTaskId: null,
         draft: null,
         feed: [],
         feedThreadId: null,
@@ -984,6 +1000,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeThreadId: null,
+        activeTaskId: null,
         draft: action.draft,
         feed: [],
         feedThreadId: null,
@@ -1241,6 +1258,26 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, bosuns: action.bosuns };
     case "bosunLedger":
       return { ...state, bosunLedger: action.wakes };
+    case "bosunTasks":
+      return { ...state, bosunTasks: action.tasks };
+    case "bosunTaskUpserted": {
+      const list = state.bosunTasks ?? [];
+      const i = list.findIndex((t) => t.id === action.task.id);
+      const next = i < 0 ? [...list, action.task] : list.map((t, j) => (j === i ? action.task : t));
+      return { ...state, bosunTasks: next };
+    }
+    case "bosunTaskRemoved":
+      return {
+        ...state,
+        bosunTasks: state.bosunTasks ? state.bosunTasks.filter((t) => t.id !== action.taskId) : null,
+        activeTaskId: state.activeTaskId === action.taskId ? null : state.activeTaskId,
+      };
+    case "openTask":
+      return {
+        ...state,
+        activeTaskId: action.taskId,
+        sidebarOpen: action.taskId ? false : state.sidebarOpen,
+      };
     case "terminals":
       return {
         ...state,
@@ -1775,6 +1812,22 @@ export interface ThreadknotActions {
   /** Load the ledger tail into `state.bosunLedger` (all bosuns). */
   loadBosunLedger: (limit?: number) => Promise<Wake[]>;
   bosunWebhookUrl: (bosunId: string, lookoutId: string) => Promise<string>;
+  /** Load every task into `state.bosunTasks` (closed ones from the last 3
+   *  days included). Rejects on a server without `bosun.task.*`, leaving the
+   *  state null. */
+  refreshBosunTasks: () => Promise<void>;
+  updateTask: (
+    payload: import("../lib/protocol").RequestMap["bosun.task.update"]["payload"],
+  ) => Promise<BosunTask>;
+  /** Open or continue the task's thread, then navigate to it. Resolves with
+   *  the thread id. */
+  workTask: (taskId: string, instruction?: string) => Promise<string>;
+  createTask: (
+    payload: import("../lib/protocol").RequestMap["bosun.task.create"]["payload"],
+  ) => Promise<BosunTask>;
+  deleteTask: (taskId: string) => Promise<void>;
+  /** Show a task in the main pane (null closes it, back to the thread). */
+  openTask: (taskId: string | null) => void;
   /** Export a thread to the archive dir and remove it from the live list. */
   archiveThread: (threadId: string, projectId: string) => Promise<void>;
   /** Reload one machine's archive list into `state.archives[machineId]`.

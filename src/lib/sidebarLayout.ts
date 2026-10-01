@@ -26,6 +26,10 @@ export interface SidebarLayout {
    *  per-device view toggle; what is hidden is on the workspace record and
    *  syncs mesh-wide. */
   showHidden: boolean;
+  /** List threads a Bosun opened inline in their workspace. Off by default:
+   *  each workspace folds them into one "<bosun> · N need you" row that opens
+   *  the Bosun task list (docs/BOSUN.md §10.7). */
+  showBosunThreads: boolean;
   /** Sidebar width in px, mirrored onto the --sidebar-w CSS variable. */
   width: number;
   /** Collapsed (animated to zero width) on desktop. Ignored on mobile, where
@@ -62,6 +66,7 @@ const DEFAULTS: SidebarLayout = {
   showTimes: true,
   showAgents: true,
   showHidden: false,
+  showBosunThreads: false,
   width: SIDEBAR_WIDTH_DEFAULT,
   collapsed: false,
   workspaceOrder: [],
@@ -79,7 +84,8 @@ export function isNonDefaultLayout(l: SidebarLayout): boolean {
     l.pinLocal !== DEFAULTS.pinLocal ||
     l.showTimes !== DEFAULTS.showTimes ||
     l.showAgents !== DEFAULTS.showAgents ||
-    l.showHidden !== DEFAULTS.showHidden
+    l.showHidden !== DEFAULTS.showHidden ||
+    l.showBosunThreads !== DEFAULTS.showBosunThreads
   );
 }
 
@@ -106,6 +112,7 @@ function loadLayout(): SidebarLayout {
       // showAgents defaults to true, so only an explicit false turns it off.
       showAgents: parsed.showAgents !== false,
       showHidden: parsed.showHidden === true,
+      showBosunThreads: parsed.showBosunThreads === true,
       width: clampWidth(
         typeof parsed.width === "number" ? parsed.width : SIDEBAR_WIDTH_DEFAULT,
       ),

@@ -239,6 +239,145 @@ try {
     assert.equal(b.envToText({ A: '1', B: '2' }), 'A=1\nB=2');
   });
 
+  // ---- tasks (docs/BOSUN.md §10.7) ----------------------------------------
+
+  const task = (id, status, extra = {}) => ({
+    id,
+    bosunId: 'b1',
+    key: `orbit:sns:${id}`,
+    title: `Task ${id}`,
+    client: null,
+    workspaceId: 'ws1',
+    status,
+    summary: '',
+    nextStep: null,
+    threadId: null,
+    orbit: null,
+    source: { kind: 'ticket', lookoutId: 'l', signalId: 's' },
+    due: null,
+    snoozedUntil: null,
+    pendingUpdates: [],
+    history: [],
+    createdAt: at(2026, 9, 20, 9, 0),
+    updatedAt: at(2026, 9, 20, 9, 0),
+    doneAt: null,
+    ...extra,
+  });
+  const NOW = new Date(2026, 9, 1, 12, 0); // Thu Oct 1 2026, 12:00 local
+
+  test('task groups: fixed order, empty groups dropped, Dropped folds into Done', () => {
+    const tasks = [
+      task('d', 'done', { doneAt: at(2026, 9, 30, 10, 0) }),
+      task('w', 'working'),
+      task('n', 'needs_you'),
+      task('s', 'snoozed'),
+      task('x', 'dropped', { updatedAt: at(2026, 10, 1, 9, 0) }),
+      task('c', 'waiting_on_client'),
+      task('old', 'done', { doneAt: at(2026, 9, 20, 9, 0) }),
+    ];
+    const g = b.groupTasks(tasks, NOW);
+    assert.deepEqual(g.map((x) => x.id), ['needs_you', 'working', 'waiting_on_client', 'snoozed', 'done']);
+    assert.deepEqual(g.map((x) => x.label), ['Needs you', 'Working', 'Waiting on client', 'Snoozed', 'Done (3 days)']);
+    assert.deepEqual(g.map((x) => x.collapsed), [false, false, false, true, true]);
+    // Closed older than 3 days is left out even if the server sent it.
+    assert.deepEqual(g[4].tasks.map((t) => t.id), ['x', 'd']);
+    assert.deepEqual(b.groupTasks([], NOW), []);
+  });
+
+  test('task sort within a group: due soonest, undated last, then updated newest', () => {
+    const tasks = [
+      task('a', 'todo', { updatedAt: at(2026, 9, 29, 9, 0) }),
+      task('b', 'todo', { due: '2026-10-05' }),
+      task('c', 'todo', { due: '2026-10-02', updatedAt: at(2026, 9, 1, 9, 0) }),
+      task('d', 'todo', { updatedAt: at(2026, 9, 30, 9, 0) }),
+      task('e', 'todo', { due: '2026-10-02', updatedAt: at(2026, 9, 25, 9, 0) }),
+    ];
+    const [todo] = b.groupTasks(tasks, NOW);
+    assert.equal(todo.id, 'todo');
+    assert.deepEqual(todo.tasks.map((t) => t.id), ['e', 'c', 'b', 'd', 'a']);
+  });
+
+  test('task row meta line: client · workspace · due or age', () => {
+    const t = task('a', 'needs_you', { client: 'Keith Roofing', due: '2026-10-01' });
+    assert.equal(b.taskMetaLine(t, 'Service Storm', NOW), 'Keith Roofing · Service Storm · due today');
+    assert.equal(b.taskMetaLine({ ...t, due: '2026-10-02' }, null, NOW), 'Keith Roofing · due tomorrow');
+    assert.equal(b.taskMetaLine({ ...t, due: '2026-10-09' }, null, NOW), 'Keith Roofing · due Oct 9');
+    assert.equal(b.taskMetaLine({ ...t, due: '2026-09-28' }, null, NOW), 'Keith Roofing · overdue Sep 28');
+    const aged = task('b', 'todo', { createdAt: new Date(NOW.getTime() - 3 * 3600_000).toISOString() });
+    assert.equal(b.taskMetaLine(aged, 'Home', NOW), 'Home · 3h ago');
+    const fresh = task('c', 'todo', { createdAt: NOW.toISOString() });
+    assert.equal(b.taskMetaLine(fresh, '', NOW), 'just now');
+    const done = task('d', 'done', { doneAt: new Date(NOW.getTime() - 2 * 86400_000).toISOString() });
+    assert.equal(b.taskMetaLine(done, 'Home', NOW), 'Home · done 2d ago');
+  });
+
+  test('snooze presets: tomorrow 8am and next Monday 8am, local time', () => {
+    const [tomorrow, monday] = b.snoozePresets(NOW);
+    assert.equal(tomorrow.label, 'Tomorrow 8am');
+    assert.equal(new Date(tomorrow.until).getTime(), new Date(2026, 9, 2, 8, 0).getTime());
+    assert.equal(monday.label, 'Next Monday 8am');
+    assert.equal(new Date(monday.until).getTime(), new Date(2026, 9, 5, 8, 0).getTime());
+    // On a Monday, "next Monday" is a week out, never today.
+    const [, fromMonday] = b.snoozePresets(new Date(2026, 9, 5, 7, 0));
+    assert.equal(new Date(fromMonday.until).getTime(), new Date(2026, 9, 12, 8, 0).getTime());
+    // Sunday night: tomorrow and next Monday are the same morning.
+    const [t2, m2] = b.snoozePresets(new Date(2026, 9, 4, 22, 0));
+    assert.equal(t2.until, m2.until);
+    // Month rollover.
+    const [t3] = b.snoozePresets(new Date(2026, 9, 31, 23, 30));
+    assert.equal(new Date(t3.until).getTime(), new Date(2026, 10, 1, 8, 0).getTime());
+    assert.equal(new Date(b.snoozeUntilDate('2026-10-20')).getTime(), new Date(2026, 9, 20, 8, 0).getTime());
+    assert.equal(b.snoozeUntilDate(''), null);
+  });
+
+  test('workspace roll-up counts and the folded row label', () => {
+    const tasks = [
+      task('a', 'needs_you'),
+      task('b', 'needs_you'),
+      task('c', 'working'),
+      task('d', 'snoozed'),
+      task('e', 'done'),
+      task('f', 'todo', { workspaceId: 'ws2' }),
+      task('g', 'needs_you', { workspaceId: null }),
+    ];
+    const r = b.workspaceTaskRollup(tasks);
+    assert.deepEqual(r.get('ws1'), { needYou: 2, open: 3 });
+    assert.deepEqual(r.get('ws2'), { needYou: 0, open: 1 });
+    assert.equal(r.has('ws3'), false);
+    assert.deepEqual(b.bosunRowLabel('Blackbeard', r.get('ws1')), { text: 'Blackbeard · 2 need you', muted: false });
+    assert.deepEqual(b.bosunRowLabel('Blackbeard', { needYou: 1, open: 1 }), { text: 'Blackbeard · 1 needs you', muted: false });
+    assert.deepEqual(b.bosunRowLabel('Blackbeard', r.get('ws2')), { text: 'Blackbeard · 1 open', muted: true });
+    assert.equal(b.bosunRowLabel('Blackbeard', undefined), null);
+    assert.equal(b.bosunRowLabel('Blackbeard', { needYou: 0, open: 0 }), null);
+    assert.equal(b.needsYouCount(tasks), 3);
+  });
+
+  test('hide-bosun-threads filter: day logs folded too, order kept', () => {
+    const threads = [
+      thread('p1', at(2026, 9, 28, 9, 0)),
+      thread('bt', at(2026, 9, 28, 9, 1), origin()),
+      thread('p2', at(2026, 9, 28, 9, 2)),
+      thread('log', at(2026, 9, 28, 9, 3), origin(true)),
+      thread('other', at(2026, 9, 28, 9, 4), { ...origin(), kind: 'schedule' }),
+    ];
+    const { shown, bosun } = b.splitBosunThreads(threads);
+    assert.deepEqual(shown.map((t) => t.id), ['p1', 'p2', 'other']);
+    assert.deepEqual(bosun.map((t) => t.id), ['bt', 'log']);
+  });
+
+  test('task search, manual detection, display title', () => {
+    const t = task('a', 'todo', { title: '⚓ Reply to Keith', client: 'Keith Roofing', summary: 'Job 2451 roof leak' });
+    assert.equal(b.taskMatches(t, ''), true);
+    assert.equal(b.taskMatches(t, 'keith'), true);
+    assert.equal(b.taskMatches(t, '2451'), true);
+    assert.equal(b.taskMatches(t, 'invoice'), false);
+    assert.equal(b.displayTitle(t), 'Reply to Keith');
+    assert.equal(b.isManualTask(t), false);
+    assert.equal(b.isManualTask(task('m', 'todo', { key: 'adhoc:1', source: { kind: 'manual', lookoutId: '', signalId: '' } })), true);
+    assert.equal(b.isOpenTask(t), true);
+    assert.equal(b.isOpenTask(task('s', 'snoozed')), false);
+  });
+
   console.log(`\n${passed} passed`);
 } finally {
   await rm(dir, { recursive: true, force: true });

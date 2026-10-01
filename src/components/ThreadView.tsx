@@ -19,6 +19,7 @@ import {
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
 import { copyText, elidePathMiddle } from "../lib/format";
 import { displayTitle } from "../lib/bosun";
+import { setSidebarView } from "../lib/sidebarView";
 import { BosunMark, useBosunImage } from "./BosunMark";
 import type { ReplyTarget } from "../lib/reply";
 import type { FeedItem } from "../state/feed";
@@ -1651,13 +1652,31 @@ export function ThreadView() {
  *  with the signal's source: its URL as a link, or its file path (click to
  *  copy). */
 function BosunOriginChip({ thread }: { thread: Thread }) {
+  const { state, actions } = useStore();
   const origin = thread.origin!;
   const image = useBosunImage(origin.bosunId);
   const [copied, setCopied] = useState(false);
   const url = origin.refs?.url;
   const path = origin.refs?.path;
+  // Back to the to-do this thread works (docs/BOSUN.md §10.7), only when the
+  // task is actually loaded: a server without tasks never draws the link.
+  const taskId = origin.taskId;
+  const hasTask = !!taskId && !!state.bosunTasks?.some((t) => t.id === taskId);
   return (
     <div className="bosun-origin">
+      {hasTask && (
+        <button
+          type="button"
+          className="bosun-origin-task"
+          title="Back to the to-do"
+          onClick={() => {
+            setSidebarView("bosun");
+            actions.openTask(taskId!);
+          }}
+        >
+          ← Task
+        </button>
+      )}
       <span
         className="bosun-origin-chip"
         title={origin.dayLog ? `${origin.bosunName}'s day log` : `opened by ${origin.bosunName}`}

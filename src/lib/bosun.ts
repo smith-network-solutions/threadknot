@@ -7,6 +7,7 @@ import type {
   Access,
   Agent,
   Bosun,
+  BosunTask,
   Cadence,
   Charter,
   DecisionKind,
@@ -14,6 +15,7 @@ import type {
   LookoutKind,
   LookoutType,
   QuietHours,
+  TaskStatus,
   Thread,
   ThreadSettings,
   TriageSettings,
@@ -470,4 +472,233 @@ export function textToEnv(text: string): Record<string, string> {
     if (key) env[key] = line.slice(eq + 1);
   }
   return env;
+}
+
+
+// ---- tasks (docs/BOSUN.md §10.7) -----------------------------------------
+
+/** Display order of the task list's groups. Snoozed and Done start collapsed. */
+export type TaskGroupId = "needs_you" | "working" | "todo" | "waiting_on_client" | "snoozed" | "done";
+
+export const TASK_GROUPS: { id: TaskGroupId; label: string; collapsed: boolean }[] = [
+  { id: "needs_you", label: "Needs you", collapsed: false },
+  { id: "working", label: "Working", collapsed: false },
+  { id: "todo", label: "To do", collapsed: false },
+  { id: "waiting_on_client", label: "Waiting on client", collapsed: false },
+  { id: "snoozed", label: "Snoozed", collapsed: true },
+  { id: "done", label: "Done (3 days)", collapsed: true },
+];
+
+export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  needs_you: "Needs you",
+  working: "Working",
+  todo: "To do",
+  waiting_on_client: "Waiting on client",
+  snoozed: "Snoozed",
+  done: "Done",
+  dropped: "Dropped",
+};
+
+/** The statuses a person picks from in the task view (Snoozed goes through
+ *  the snooze menu, since it needs a date). */
+export const PICKABLE_STATUSES: TaskStatus[] = ["needs_you", "working", "todo", "waiting_on_client", "done"];
+
+export function isClosedStatus(status: TaskStatus): boolean {
+  return status === "done" || status === "dropped";
+}
+
+/** Open = something is or will be done about it: not closed, not snoozed. */
+export function isOpenTask(task: Pick<BosunTask, "status">): boolean {
+  return !isClosedStatus(task.status) && task.status !== "snoozed";
+}
+
+/** A to-do the person typed in (only those may be deleted outright). */
+export function isManualTask(task: Pick<BosunTask, "key" | "source">): boolean {
+  return task.source?.kind === "manual" || task.key.startsWith("adhoc:");
+}
+
+export function taskGroupOf(status: TaskStatus): TaskGroupId {
+  return status === "dropped" ? "done" : status;
+}
+
+const CLOSED_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Sort key for an ISO date or timestamp; a bare "YYYY-MM-DD" is read as
+ *  local midnight so "due today" compares as today wherever this runs. */
+function dueMs(due: string | null | undefined): number | null {
+  if (!due) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  const t = Date.parse(due);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Within a group: due soonest first (undated after dated), then the most
+ *  recently updated. */
+export function compareTasks(a: BosunTask, b: BosunTask): number {
+  const da = dueMs(a.due);
+  const db = dueMs(b.due);
+  if (da !== null && db !== null && da !== db) return da - db;
+  if (da !== null && db === null) return -1;
+  if (da === null && db !== null) return 1;
+  return isoMs(b.updatedAt) - isoMs(a.updatedAt);
+}
+
+export interface TaskGroup {
+  id: TaskGroupId;
+  label: string;
+  /** Default fold state; the view may override per group. */
+  collapsed: boolean;
+  tasks: BosunTask[];
+}
+
+/** Tasks bucketed into the list's groups, in display order, each sorted by
+ *  `compareTasks`. Empty groups are dropped. Closed tasks older than three
+ *  days (by `doneAt`, else `updatedAt`) are left out even if the server sent
+ *  them. */
+export function groupTasks(tasks: readonly BosunTask[], now: Date = new Date()): TaskGroup[] {
+  const buckets = new Map<TaskGroupId, BosunTask[]>();
+  const cutoff = now.getTime() - CLOSED_WINDOW_MS;
+  for (const t of tasks) {
+    if (isClosedStatus(t.status) && isoMs(t.doneAt ?? t.updatedAt) < cutoff) continue;
+    const g = taskGroupOf(t.status);
+    if (!TASK_GROUPS.some((x) => x.id === g)) continue;
+    let list = buckets.get(g);
+    if (!list) buckets.set(g, (list = []));
+    list.push(t);
+  }
+  return TASK_GROUPS.filter((g) => (buckets.get(g.id)?.length ?? 0) > 0).map((g) => ({
+    ...g,
+    tasks: buckets.get(g.id)!.sort(compareTasks),
+  }));
+}
+
+/** "just now" / "5m ago" / "3h ago" / "2d ago". */
+export function ageLabel(iso: string, now: Date = new Date()): string {
+  const ms = now.getTime() - isoMs(iso);
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/** "due today" / "due tomorrow" / "due Oct 5" / "overdue Sep 28". */
+export function dueLabel(due: string, now: Date = new Date()): string {
+  const ms = dueMs(due);
+  if (ms === null) return `due ${due}`;
+  const d = new Date(ms);
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const diff = Math.round((day - today) / 86_400_000);
+  const date = `${MONTHS[d.getMonth()]} ${d.getDate()}${d.getFullYear() === now.getFullYear() ? "" : ` ${d.getFullYear()}`}`;
+  if (diff < 0) return `overdue ${date}`;
+  if (diff === 0) return "due today";
+  if (diff === 1) return "due tomorrow";
+  return `due ${date}`;
+}
+
+/** The row's muted second line: `client · workspace · due or age`, leaving
+ *  out whatever is unknown. Closed tasks say when they closed instead. */
+export function taskMetaLine(
+  task: BosunTask,
+  workspaceName: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  const parts: string[] = [];
+  if (task.client?.trim()) parts.push(task.client.trim());
+  if (workspaceName?.trim()) parts.push(workspaceName.trim());
+  if (task.status === "snoozed" && task.snoozedUntil) parts.push(`until ${snoozeLabel(task.snoozedUntil, now)}`);
+  else if (isClosedStatus(task.status)) parts.push(`${TASK_STATUS_LABEL[task.status].toLowerCase()} ${ageLabel(task.doneAt ?? task.updatedAt, now)}`);
+  else if (task.due) parts.push(dueLabel(task.due, now));
+  else parts.push(ageLabel(task.createdAt, now));
+  return parts.join(" · ");
+}
+
+/** "Thu 8:00" within a week, else "Oct 12 8:00". */
+export function snoozeLabel(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = `${d.getHours()}:${pad2(d.getMinutes())}`;
+  const days = (d.getTime() - now.getTime()) / 86_400_000;
+  if (days >= 0 && days < 6) return `${WEEKDAYS[d.getDay()]} ${time}`;
+  return `${MONTHS[d.getMonth()]} ${d.getDate()} ${time}`;
+}
+
+/** Local 8:00 on the given local calendar day. */
+function at8(y: number, m: number, d: number): Date {
+  return new Date(y, m, d, 8, 0, 0, 0);
+}
+
+/** Snooze presets in local time: tomorrow 8am, and next Monday 8am (a week
+ *  out when today is Monday). ISO strings, ready for `snoozedUntil`. */
+export function snoozePresets(now: Date = new Date()): { id: "tomorrow" | "monday"; label: string; until: string }[] {
+  const tomorrow = at8(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const ahead = ((8 - now.getDay()) % 7) || 7; // days until the next Monday
+  const monday = at8(now.getFullYear(), now.getMonth(), now.getDate() + ahead);
+  return [
+    { id: "tomorrow", label: "Tomorrow 8am", until: tomorrow.toISOString() },
+    { id: "monday", label: "Next Monday 8am", until: monday.toISOString() },
+  ];
+}
+
+/** A date input's "YYYY-MM-DD" as local 8:00, ISO. Null when malformed. */
+export function snoozeUntilDate(date: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return null;
+  return at8(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toISOString();
+}
+
+export interface WorkspaceRollup {
+  needYou: number;
+  open: number;
+}
+
+/** Per workspace id: how many open tasks need you, and how many are open at
+ *  all. Tasks with no workspace are not counted anywhere. */
+export function workspaceTaskRollup(tasks: readonly BosunTask[]): Map<string, WorkspaceRollup> {
+  const out = new Map<string, WorkspaceRollup>();
+  for (const t of tasks) {
+    if (!t.workspaceId || !isOpenTask(t)) continue;
+    let r = out.get(t.workspaceId);
+    if (!r) out.set(t.workspaceId, (r = { needYou: 0, open: 0 }));
+    r.open += 1;
+    if (t.status === "needs_you") r.needYou += 1;
+  }
+  return out;
+}
+
+/** The collapsed workspace row's label: `Blackbeard · 2 need you`, or
+ *  `Blackbeard · 3 open` (muted) when nothing needs you. Null = no row. */
+export function bosunRowLabel(
+  bosunName: string,
+  rollup: WorkspaceRollup | undefined,
+): { text: string; muted: boolean } | null {
+  if (!rollup || rollup.open === 0) return null;
+  if (rollup.needYou > 0) return { text: `${bosunName} · ${rollup.needYou} need${rollup.needYou === 1 ? "s" : ""} you`, muted: false };
+  return { text: `${bosunName} · ${rollup.open} open`, muted: true };
+}
+
+/** Split a workspace's threads into what the list shows and the Bosun
+ *  threads (day logs included) it folds into the one collapsed row. */
+export function splitBosunThreads<T extends Pick<Thread, "origin">>(
+  threads: readonly T[],
+): { shown: T[]; bosun: T[] } {
+  const shown: T[] = [];
+  const bosun: T[] = [];
+  for (const t of threads) (t.origin?.kind === "bosun" ? bosun : shown).push(t);
+  return { shown, bosun };
+}
+
+/** Sidebar search over tasks: title, client, summary (already lowercased
+ *  query, like the thread filter). */
+export function taskMatches(task: BosunTask, query: string): boolean {
+  if (!query) return true;
+  return [task.title, task.client ?? "", task.summary].some((s) => s.toLowerCase().includes(query));
+}
+
+/** Tasks answering "need you" for the launch button and rail dot. */
+export function needsYouCount(tasks: readonly BosunTask[]): number {
+  return tasks.reduce((n, t) => n + (t.status === "needs_you" ? 1 : 0), 0);
 }

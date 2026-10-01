@@ -860,6 +860,14 @@ impl Hub {
         })
     }
 
+    /// Queue a phone notification that no agent event produced (a Bosun
+    /// sweep's "N new to-dos"). Dropped silently when push is not attached.
+    pub fn enqueue_push(&self, job: crate::push::PushJob) {
+        if let Some(push) = self.push.get() {
+            push.enqueue(job);
+        }
+    }
+
     pub fn attach_push(&self, push: Arc<crate::push::PushService>) {
         let _ = self.push.set(push);
     }
@@ -1387,6 +1395,11 @@ impl Hub {
                 }
             });
         }
+
+        // A Bosun task follows its thread (BOSUN.md §10.3). After the status
+        // and shelf writes above, so a task closed mid-turn can re-settle the
+        // thread its own turn end just un-parked.
+        crate::bosun::on_thread_event(self, thread_id, &event);
 
         let notice = self.notice_for_event(thread_id, &event);
         self.push_for_event(thread_id, &event, notice.as_ref(), seq);

@@ -153,6 +153,7 @@ async fn handle_message(state: &ServerState, thread_id: &str, msg: &Value) -> Op
             if let Some(list) = tools.as_array_mut() {
                 list.extend(crate::mcp_search::tool_specs());
                 list.extend(crate::mcp_fleet::tool_specs_for(state, thread_id));
+                list.extend(crate::bosun::mcp_tool_specs_for(state, thread_id));
             }
             json!({ "tools": tools })
         }
@@ -233,6 +234,12 @@ async fn call_tool(
             } }),
             Ok(Err(error)) => tool_text_result(id, format!("error: {error}"), true),
             Err(error) => tool_text_result(id, format!("error: {error}"), true),
+        };
+    }
+    if name == "bosun_task" {
+        return match crate::bosun::mcp_bosun_task(state, thread_id, args).await {
+            Ok(text) => tool_text_result(id, text, false),
+            Err(e) => tool_text_result(id, format!("error: {e:#}"), true),
         };
     }
     if name == "publish_artifact" {

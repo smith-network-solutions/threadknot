@@ -1937,6 +1937,47 @@ function makeActions(
       return wakes ?? [];
     },
 
+    async refreshBosunTasks() {
+      const { tasks } = await client.request("bosun.task.list", { includeClosed: true });
+      dispatch({ type: "bosunTasks", tasks: tasks ?? [] });
+    },
+
+    async updateTask(payload) {
+      const task = await client.request("bosun.task.update", payload);
+      dispatch({ type: "bosunTaskUpserted", task });
+      return task;
+    },
+
+    async workTask(taskId, instruction) {
+      const { threadId } = await client.request("bosun.task.work", {
+        taskId,
+        ...(instruction?.trim() ? { instruction: instruction.trim() } : {}),
+      });
+      // The thread may be brand new; the server's state.changed refreshes the
+      // list, and thread.get below works before that lands.
+      await selectThreadRouted(threadId, routeFor(threadId));
+      void client
+        .request("bosun.task.list", { includeClosed: true })
+        .then(({ tasks }) => dispatch({ type: "bosunTasks", tasks: tasks ?? [] }))
+        .catch(() => undefined);
+      return threadId;
+    },
+
+    async createTask(payload) {
+      const task = await client.request("bosun.task.create", payload);
+      dispatch({ type: "bosunTaskUpserted", task });
+      return task;
+    },
+
+    async deleteTask(taskId) {
+      await client.request("bosun.task.delete", { taskId });
+      dispatch({ type: "bosunTaskRemoved", taskId });
+    },
+
+    openTask(taskId) {
+      dispatch({ type: "openTask", taskId });
+    },
+
     async bosunWebhookUrl(bosunId, lookoutId) {
       const { url } = await client.request("bosun.webhook.url", { bosunId, lookoutId });
       return url;
@@ -2368,6 +2409,11 @@ export default function App() {
         if (frame.origin) return;
         void actionsRef.current.refreshBosuns().catch(() => undefined);
         void actionsRef.current.loadBosunLedger().catch(() => undefined);
+        void actionsRef.current.refreshBosunTasks().catch(() => undefined);
+      }
+      else if (frame.scope === "bosunTasks") {
+        if (frame.origin) return;
+        void actionsRef.current.refreshBosunTasks().catch(() => undefined);
       }
       else if (frame.scope === "themes")
         void actionsRef.current.listThemes().catch(() => undefined);
@@ -2470,6 +2516,9 @@ export default function App() {
           // Older servers have no bosun.* methods; an empty list is right there.
           void actionsRef.current.refreshBosuns().catch(() => undefined);
           void actionsRef.current.loadBosunLedger().catch(() => undefined);
+          // Servers older than docs/BOSUN.md §10 have no bosun.task.*: the
+          // list stays null and the Bosun view keeps its thread timeline.
+          void actionsRef.current.refreshBosunTasks().catch(() => undefined);
           void actionsRef.current.refreshArchives().catch(() => undefined);
           void actionsRef.current.refreshUpdate().catch(() => undefined);
           void actionsRef.current.refreshPeers().catch(() => undefined);

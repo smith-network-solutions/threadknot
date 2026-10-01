@@ -1175,6 +1175,86 @@ export interface ThreadOrigin {
   refs: Record<string, string>;
   /** True for the per-day log thread `log` decisions append to. */
   dayLog: boolean;
+  /** The task this thread works (docs/BOSUN.md §10.1). Absent on day logs,
+   *  pre-tasks threads, and from servers older than tasks. */
+  taskId?: string | null;
+}
+
+// ---- Bosun tasks (docs/BOSUN.md §10) ---------------------------------------
+
+/** snake_case on the wire. */
+export type TaskStatus =
+  | "todo"
+  | "working"
+  | "needs_you"
+  | "waiting_on_client"
+  | "snoozed"
+  | "done"
+  | "dropped";
+
+export interface OrbitLink {
+  org: string;
+  taskId: string;
+  ticketNumber?: string | null;
+  url: string;
+}
+
+export interface TaskSource {
+  /** ticket | email | call | teams | sweep | manual */
+  kind: string;
+  lookoutId: string;
+  signalId: string;
+  url?: string | null;
+  path?: string | null;
+}
+
+export interface TaskEvent {
+  at: string;
+  status?: TaskStatus | null;
+  note: string;
+  /** "bosun" | "you" | "orbit" */
+  by: string;
+}
+
+/** One labelled to-do per real-world item, with at most one thread. */
+export interface BosunTask {
+  id: string;
+  bosunId: string;
+  /** Dedupe key: `orbit:<org>:<id>`, `gmail:<acct>:<thread>`, `adhoc:<uuid>`… */
+  key: string;
+  title: string;
+  client?: string | null;
+  workspaceId?: string | null;
+  status: TaskStatus;
+  summary: string;
+  nextStep?: string | null;
+  threadId?: string | null;
+  orbit?: OrbitLink | null;
+  source: TaskSource;
+  /** ISO date. */
+  due?: string | null;
+  snoozedUntil?: string | null;
+  pendingUpdates: string[];
+  /** Newest last, capped at 50 by the server. */
+  history: TaskEvent[];
+  createdAt: string;
+  updatedAt: string;
+  doneAt?: string | null;
+}
+
+/** One item of a sweep signal's `items` (docs/BOSUN.md §10.3). The engine
+ *  consumes these; the UI only ever sees the tasks they produce. */
+/** One to-do a sweep lookout listed (docs/BOSUN.md §10.3, lookouts/README.md). */
+export interface SweepItem {
+  key: string;
+  title: string;
+  client?: string | null;
+  detail: string;
+  url?: string | null;
+  group?: string | null;
+  due?: string | null;
+  orbitTaskId?: string | null;
+  orbitTicket?: string | null;
 }
 
 export type DecisionKind = "ignore" | "log" | "work" | "ask";
@@ -2338,6 +2418,37 @@ export interface RequestMap {
   };
   "bosun.ledger": { payload: { bosunId?: string; limit?: number }; data: { wakes: Wake[] } };
   "bosun.webhook.url": { payload: { bosunId: string; lookoutId: string }; data: { url: string } };
+  /** `includeClosed` adds Done/Dropped tasks from the last 3 days. */
+  "bosun.task.list": {
+    payload: { bosunId?: string; includeClosed?: boolean };
+    data: { tasks: BosunTask[] };
+  };
+  "bosun.task.update": {
+    payload: {
+      taskId: string;
+      status?: TaskStatus;
+      title?: string;
+      snoozedUntil?: string | null;
+      note?: string;
+    };
+    data: BosunTask;
+  };
+  /** Open or continue the task's one thread. */
+  "bosun.task.work": {
+    payload: { taskId: string; instruction?: string };
+    data: { threadId: string };
+  };
+  "bosun.task.create": {
+    payload: {
+      bosunId: string;
+      title: string;
+      workspaceId?: string;
+      summary?: string;
+      client?: string;
+    };
+    data: BosunTask;
+  };
+  "bosun.task.delete": { payload: { taskId: string }; data: Record<string, never> };
   "usage.get": { payload: Record<string, never>; data: { usage: ProviderUsage[] } };
   "usage.refresh": { payload: Record<string, never>; data: Record<string, never> };
   "dictation.settings.get": { payload: Record<string, never>; data: DictationSettings };
@@ -2546,6 +2657,7 @@ export interface StateChangedFrame {
     | "threads"
     | "schedules"
     | "bosuns"
+    | "bosunTasks"
     | "terminals"
     | "artifacts"
     | "git"

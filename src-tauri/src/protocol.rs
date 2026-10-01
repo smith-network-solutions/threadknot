@@ -1388,6 +1388,34 @@ pub struct Signal {
     pub refs: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub hints: SignalHints,
+    /// A sweep's items (BOSUN.md §10.3): one per real-world item still open at
+    /// the source. Absent on every other signal and on every signal written
+    /// before tasks existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<SweepItem>,
+}
+
+/// One item of a sweep signal: becomes (or refreshes) a task, never a thread.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SweepItem {
+    /// The task key (BOSUN.md §10.2), e.g. `orbit:<slug>:<taskId>`.
+    pub key: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbit_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbit_ticket: Option<String>,
 }
 
 /// Why a Bosun opened this thread. Lives on [`Thread::origin`].
@@ -1406,6 +1434,10 @@ pub struct ThreadOrigin {
     /// True for the per-day log thread `log` decisions append to.
     #[serde(default)]
     pub day_log: bool,
+    /// The Bosun task (BOSUN.md §10) this thread works on. Absent on day logs
+    /// and on every thread opened before tasks existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1446,6 +1478,107 @@ pub struct Wake {
     pub skipped: Option<String>,
     #[serde(default)]
     pub triage_ms: u64,
+}
+
+// ---- Bosun tasks (docs/BOSUN.md §10) ----
+
+/// Where a task stands. snake_case on the wire: `needs_you`, `waiting_on_client`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Todo,
+    Working,
+    NeedsYou,
+    WaitingOnClient,
+    Snoozed,
+    Done,
+    Dropped,
+}
+
+impl TaskStatus {
+    /// Done and Dropped are closed; everything else is open.
+    pub fn is_closed(self) -> bool {
+        matches!(self, TaskStatus::Done | TaskStatus::Dropped)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitLink {
+    pub org: String,
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket_number: Option<String>,
+    #[serde(default)]
+    pub url: String,
+}
+
+/// What created a task.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSource {
+    /// ticket | email | call | teams | sweep | manual (or a lookout's own kind).
+    pub kind: String,
+    #[serde(default)]
+    pub lookout_id: String,
+    #[serde(default)]
+    pub signal_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEvent {
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TaskStatus>,
+    #[serde(default)]
+    pub note: String,
+    /// "bosun" | "you" | "orbit".
+    pub by: String,
+}
+
+/// One to-do the Bosun keeps for one real-world item (BOSUN.md §10.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BosunTask {
+    pub id: String,
+    pub bosun_id: String,
+    /// Dedupe key: at most one open task per (bosun_id, key).
+    pub key: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    pub status: TaskStatus,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_step: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbit: Option<OrbitLink>,
+    #[serde(default)]
+    pub source: TaskSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snoozed_until: Option<String>,
+    /// Signal ids that arrived while the thread was busy or waiting.
+    #[serde(default)]
+    pub pending_updates: Vec<String>,
+    /// Status changes and notes, newest last, capped at 50.
+    #[serde(default)]
+    pub history: Vec<TaskEvent>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_at: Option<String>,
 }
 
 /// A project-bound terminal tab. The record persists (so tabs survive an app
@@ -1724,6 +1857,7 @@ mod tests {
             signal_kind: "ticket".into(),
             refs: Default::default(),
             day_log: true,
+            task_id: None,
         };
         let v = serde_json::to_value(&origin).unwrap();
         assert_eq!(v["bosunId"], "b1");

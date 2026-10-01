@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { findThread, resolveProjectView, useStore } from "../state/store";
 import { ThreadView } from "./ThreadView";
+import { BosunTaskView } from "./BosunTaskView";
 import { WorkspacePanel, type WorkspaceOrient } from "./WorkspacePanel";
 import "../styles/main-split.css";
 
@@ -37,7 +38,10 @@ export const MainSplit = memo(function MainSplit() {
   const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
   const projectId = thread?.projectId ?? state.draft?.projectId ?? null;
   const project = resolveProjectView(state, projectId)?.project ?? null;
-  const workspaceOpen = project != null && state.workspace[project.id] != null;
+  // An open Bosun task takes the pane instead of the thread (docs/BOSUN.md
+  // §10.7); the thread's workspace panel steps aside with it.
+  const taskOpen = state.activeTaskId != null;
+  const workspaceOpen = !taskOpen && project != null && state.workspace[project.id] != null;
 
   const [orient, setOrient] = useState<WorkspaceOrient>(loadOrient);
   const [frac, setFrac] = useState<number>(loadFrac);
@@ -113,7 +117,7 @@ export const MainSplit = memo(function MainSplit() {
       className={`main-split ${orient}${panelPresent ? " ws-present" : ""}${panelShown ? " ws-open" : ""}${dragging ? " dragging" : ""}`}
       style={style}
     >
-      <ThreadView />
+      {taskOpen ? <BosunTaskView /> : <ThreadView />}
       {panelPresent && (
         <div
           className="ws-divider"

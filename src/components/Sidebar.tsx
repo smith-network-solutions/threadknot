@@ -49,13 +49,24 @@ import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
   bosunAttentionThreads,
+  bosunRowLabel,
   bosunThreads,
   bosunTimeline,
   daySummaryLine,
   displayTitle,
+  groupTasks,
+  isClosedStatus,
+  needsYouCount,
   skippedLine,
   dayLabel,
+  splitBosunThreads,
+  taskMatches,
+  taskMetaLine,
+  workspaceTaskRollup,
+  type TaskGroupId,
 } from "../lib/bosun";
+import type { BosunTask } from "../lib/protocol";
+import { TaskStatusDot, orbitTicketLabel } from "./BosunTaskView";
 import { WakeLine } from "./BosunWake";
 import { BosunMark } from "./BosunMark";
 import {
@@ -1960,7 +1971,17 @@ function WorkspaceSection({
   onReorderThreads,
   threadOrder,
   sidebarScrollRef,
+  bosunRow,
 }: {
+  /** The folded stand-in for this workspace's Bosun threads (already removed
+   *  from `threads`). Absent = no row. */
+  bosunRow?: {
+    name: string;
+    image: string | null;
+    label: { text: string; muted: boolean };
+    attention: boolean;
+    onOpen: () => void;
+  };
   workspace: Workspace;
   /** First locally-present member project — target for pop-out and removal.
    *  Undefined when every member lives on another machine. */
@@ -2263,7 +2284,8 @@ function WorkspaceSection({
       )}
       {(open || hideHeader) && (
         <div className="project-threads" ref={threadListRef}>
-          {shown.length === 0 && settled.length === 0 && (
+          {bosunRow && <BosunWorkspaceRow {...bosunRow} />}
+          {shown.length === 0 && settled.length === 0 && !bosunRow && (
             <div className="project-empty">
               {forceOpen ? "no matches" : "no threads yet"}
             </div>
@@ -2568,14 +2590,379 @@ function HermesGroup({
   );
 }
 
-/** The sidebar's Bosun view: one timeline across every workspace answering
+/** The sidebar's Bosun view (docs/BOSUN.md §10.7): the to-do list the Bosun
+ *  keeps, grouped by status. A task opens in the main pane; its thread is one
+ *  click further. The wake ledger lives in Manage. On a server that predates
+ *  tasks (`bosunTasks` still null) this falls back to the thread timeline. */
+function BosunSection(props: {
+  filter: string;
+  contentMatches: ReadonlySet<string>;
+  view: SidebarLayout["view"];
+  onOpenBosun: (startNew?: boolean) => void;
+  onBack?: () => void;
+  /** Entered from a workspace's folded Bosun row: show only its tasks. */
+  workspaceFilter: string | null;
+  onClearWorkspaceFilter: () => void;
+}) {
+  const { state } = useStore();
+  if (state.bosunTasks === null) return <BosunTimelineSection {...props} />;
+  return <BosunTaskList {...props} tasks={state.bosunTasks} />;
+}
+
+function BosunTaskList({
+  filter,
+  onOpenBosun,
+  onBack,
+  workspaceFilter,
+  onClearWorkspaceFilter,
+  tasks,
+}: {
+  filter: string;
+  onOpenBosun: (startNew?: boolean) => void;
+  onBack?: () => void;
+  workspaceFilter: string | null;
+  onClearWorkspaceFilter: () => void;
+  tasks: BosunTask[];
+}) {
+  const { state, actions } = useStore();
+  const [running, setRunning] = useState<Record<string, boolean>>({});
+  /** Per-group fold overrides; absent = the group's default. */
+  const [folded, setFolded] = useState<Partial<Record<TaskGroupId, boolean>>>({});
+  const [adding, setAdding] = useState(false);
+  const workspaces = useMemo(() => allWorkspaces(state), [state.workspaces, state.serverCatalogs]);
+  const wsName = useCallback(
+    (id: string | null | undefined) => (id ? (workspaces.find((w) => w.id === id)?.name ?? null) : null),
+    [workspaces],
+  );
+  const shown = useMemo(
+    () =>
+      tasks.filter(
+        (t) => (!workspaceFilter || t.workspaceId === workspaceFilter) && taskMatches(t, filter),
+      ),
+    [tasks, workspaceFilter, filter],
+  );
+  const groups = useMemo(() => groupTasks(shown), [shown]);
+
+  const backRow = onBack ? (
+    <button type="button" className="bosun-back" onClick={onBack}>
+      <span aria-hidden>←</span> Workspaces
+    </button>
+  ) : null;
+
+  if (state.bosuns.length === 0 && tasks.length === 0) {
+    return (
+      <>
+        {backRow}
+        <div className="sidebar-empty bosun-empty">
+          <BosunMark size={24} className="bosun-empty-mark" />
+          <p>
+            A Bosun is an always-on agent that watches your ticket queues, inboxes,
+            folders and timers, and keeps a to-do list of what needs doing in each
+            workspace. It opens a thread only when there is work to show or a question to ask.
+          </p>
+          <button
+            type="button"
+            className="btn tone-allow sched-new-btn"
+            onClick={() => onOpenBosun(true)}
+          >
+            <PlusIcon size={13} /> Create a Bosun
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  async function runNow(bosunId: string) {
+    setRunning((r) => ({ ...r, [bosunId]: true }));
+    try {
+      await actions.runBosun(bosunId);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning((r) => ({ ...r, [bosunId]: false }));
+    }
+  }
+
+  const lastWake = state.bosuns
+    .map((b) => b.lastWakeAt)
+    .filter((x): x is string => !!x)
+    .sort()
+    .pop();
+  const filterName = wsName(workspaceFilter);
+
+  return (
+    <div className="bosun-view">
+      {backRow}
+      <div className="bosun-crew">
+        {state.bosuns.map((b) => (
+          <div key={b.id} className={`bosun-crew-member${b.enabled ? "" : " off"}`}>
+            <div className="bosun-crew-row">
+              <BosunMark image={b.image} size={18} />
+              <span className="bosun-crew-name">{b.name}</span>
+              <span className={`bosun-crew-state${b.lastError ? " err" : ""}`}>
+                {b.lastError ? "error" : b.enabled ? "on watch" : "paused"}
+              </span>
+              <button
+                type="button"
+                className="btn bosun-small-btn bosun-run"
+                aria-label={`Run ${b.name} now`}
+                disabled={!!running[b.id]}
+                onClick={() => void runNow(b.id)}
+              >
+                <PlayIcon size={10} /> {running[b.id] ? "Running" : "Run now"}
+              </button>
+            </div>
+            {b.lastError && <div className="bosun-crew-error">{b.lastError}</div>}
+          </div>
+        ))}
+        <div className="bosun-crew-actions">
+          {state.bosuns.length > 0 && (
+            <button
+              type="button"
+              className="btn bosun-small-btn task-new-btn"
+              aria-expanded={adding}
+              onClick={() => setAdding((v) => !v)}
+            >
+              <PlusIcon size={11} /> To-do
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn bosun-small-btn bosun-manage"
+            onClick={() => onOpenBosun(false)}
+          >
+            Manage
+          </button>
+        </div>
+      </div>
+      {adding && (
+        <NewTaskForm
+          workspaces={workspaces}
+          defaultWorkspaceId={workspaceFilter}
+          onDone={() => setAdding(false)}
+        />
+      )}
+      {workspaceFilter && (
+        <span className="task-ws-filter">
+          {filterName ?? "Workspace"}
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Show every workspace"
+            title="Show every workspace"
+            onClick={onClearWorkspaceFilter}
+          >
+            <XIcon size={11} />
+          </button>
+        </span>
+      )}
+      {groups.length === 0 &&
+        (filter ? (
+          <div className="sidebar-empty">
+            <p>No matching to-dos.</p>
+          </div>
+        ) : (
+          <div className="task-all-clear">
+            <strong>All clear</strong>
+            <span>{lastWake ? `Last wake ${timeAgo(lastWake)}` : "No wakes yet"}</span>
+          </div>
+        ))}
+      {groups.map((g) => {
+        const open = filter ? true : !(folded[g.id] ?? g.collapsed);
+        return (
+          <div key={g.id} className={`task-group g-${g.id}`}>
+            <button
+              type="button"
+              className="task-group-head"
+              aria-expanded={open}
+              onClick={() => setFolded((f) => ({ ...f, [g.id]: open }))}
+            >
+              <ChevronIcon size={10} open={open} className="row-chevron" />
+              <span>{g.label}</span>
+              <span className="task-group-count">{g.tasks.length}</span>
+            </button>
+            {open &&
+              g.tasks.map((t) => (
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  active={state.activeTaskId === t.id}
+                  workspaceName={workspaceFilter ? null : wsName(t.workspaceId)}
+                />
+              ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TaskRow({
+  task,
+  active,
+  workspaceName,
+}: {
+  task: BosunTask;
+  active: boolean;
+  workspaceName: string | null;
+}) {
+  const { actions } = useStore();
+  const ticket = orbitTicketLabel(task);
+  const title = displayTitle(task) || "Untitled to-do";
+  return (
+    <button
+      type="button"
+      className={`task-row s-${task.status}${active ? " active" : ""}${
+        isClosedStatus(task.status) ? " closed" : ""
+      }`}
+      aria-current={active ? "true" : undefined}
+      onClick={() => actions.openTask(task.id)}
+    >
+      <TaskStatusDot status={task.status} />
+      <span className="task-row-main">
+        <span className="task-row-title" title={title}>
+          {title}
+        </span>
+        <span className="task-row-meta">{taskMetaLine(task, workspaceName)}</span>
+      </span>
+      {ticket && (
+        <span className="task-orbit-pill" title={task.orbit?.url}>
+          {ticket}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** "+ To-do": a manual task (key `adhoc:`), created with the first bosun
+ *  unless several exist, in the filtered workspace when there is one. */
+function NewTaskForm({
+  workspaces,
+  defaultWorkspaceId,
+  onDone,
+}: {
+  workspaces: Workspace[];
+  defaultWorkspaceId: string | null;
+  onDone: () => void;
+}) {
+  const { state, actions } = useStore();
+  const [title, setTitle] = useState("");
+  const [workspaceId, setWorkspaceId] = useState(defaultWorkspaceId ?? "");
+  const [bosunId, setBosunId] = useState(state.bosuns[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    const t = title.trim();
+    if (!t || !bosunId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const task = await actions.createTask({
+        bosunId,
+        title: t,
+        ...(workspaceId ? { workspaceId } : {}),
+      });
+      onDone();
+      actions.openTask(task.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      className="task-new"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
+      <input
+        autoFocus
+        type="text"
+        placeholder="What needs doing?"
+        aria-label="To-do title"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onDone();
+        }}
+      />
+      <div className="task-new-row">
+        <select
+          aria-label="Workspace"
+          value={workspaceId}
+          onChange={(e) => setWorkspaceId(e.target.value)}
+        >
+          <option value="">No workspace</option>
+          {workspaces
+            .filter((w) => !w.hidden || w.id === workspaceId)
+            .map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+        </select>
+        {state.bosuns.length > 1 && (
+          <select aria-label="Bosun" value={bosunId} onChange={(e) => setBosunId(e.target.value)}>
+            {state.bosuns.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <button type="submit" className="btn tone-allow bosun-small-btn" disabled={busy || !title.trim()}>
+          Add
+        </button>
+      </div>
+      {error && <div className="task-new-error">{error}</div>}
+    </form>
+  );
+}
+
+/** One collapsed row standing in for every Bosun thread in a workspace:
+ *  `Blackbeard · 2 need you`. Lit when one of those threads needs attention,
+ *  so folding them away never hides a waiting question. */
+function BosunWorkspaceRow({
+  name,
+  image,
+  label,
+  attention,
+  onOpen,
+}: {
+  name: string;
+  image: string | null;
+  label: { text: string; muted: boolean };
+  attention: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`bosun-ws-row${label.muted && !attention ? " muted" : ""}`}
+      title={`Open ${name}'s to-dos for this workspace`}
+      onClick={onOpen}
+    >
+      <BosunMark image={image} size={16} />
+      <span className="bosun-ws-row-text">{label.text}</span>
+      {attention && <span className="bosun-ws-row-dot" role="status" aria-label="needs you" />}
+    </button>
+  );
+}
+
+/** The pre-tasks Bosun view, kept for servers without `bosun.task.*`: one
+ *  timeline across every workspace answering
  *  "what did my Bosun do today". Threads are the content: each day lists the
  *  threads bosuns opened (normal rows, plus a workspace chip, since this list
  *  is not scoped to one), under ONE collapsed summary of that day's wakes.
  *  Skipped wakes (a triage failure, a budget stop) surface as a short line
  *  even while collapsed. Like the Hermes view it is a second way to reach
  *  chats that also live in their workspace. */
-function BosunSection({
+function BosunTimelineSection({
   filter,
   contentMatches,
   view,
@@ -3142,6 +3529,16 @@ function SidebarViewPopover({
         onClick={() => update({ pinLocal: !layout.pinLocal })}
       >
         <span>Keep this machine on top</span>
+        <span className="sidebar-view-switch" />
+      </button>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={layout.showBosunThreads}
+        className={`sidebar-view-row${layout.showBosunThreads ? " on" : ""}`}
+        onClick={() => update({ showBosunThreads: !layout.showBosunThreads })}
+      >
+        <span>Show Bosun threads in workspaces</span>
         <span className="sidebar-view-switch" />
       </button>
       {/* Only offered once there is something to reveal — a switch that can
@@ -4007,11 +4404,14 @@ export const Sidebar = memo(function Sidebar({
                 : []),
             ];
     if (v === "bosun") {
-      // The Bosun timeline mixes every workspace, so whatever is open stays
-      // open; jump to a bosun chat only when one is asking for you.
-      const needy = bosunAttentionThreads(state);
-      if (needy.length > 0 && needy[0].id !== state.activeThreadId)
-        void actions.selectThread(needy[0].id);
+      // The Bosun view mixes every workspace, so whatever is open stays open.
+      // The task list is the place to choose from; only the pre-tasks
+      // timeline jumps straight to a bosun chat that is asking for you.
+      if (state.bosunTasks === null) {
+        const needy = bosunAttentionThreads(state);
+        if (needy.length > 0 && needy[0].id !== state.activeThreadId)
+          void actions.selectThread(needy[0].id);
+      }
     } else if (v === "agents") {
       // Jump straight to a Hermes chat that wants attention; otherwise leave a
       // Hermes chat (or nothing) in place, and clear only a workspace one — we
@@ -4184,8 +4584,30 @@ export const Sidebar = memo(function Sidebar({
     () => (showHermesAgents() ? hermesAttentionThreads(state).length : 0),
     [state],
   );
-  const bosunAttention = useMemo(() => bosunAttentionThreads(state).length, [state]);
-  // A newer master exists than the build that is running. Pulses regardless of
+  // NeedsYou tasks once the server keeps tasks; the old thread-based count
+  // on a server that predates them.
+  const bosunAttention = useMemo(
+    () =>
+      state.bosunTasks !== null
+        ? needsYouCount(state.bosunTasks)
+        : bosunAttentionThreads(state).length,
+    [state],
+  );
+  /** The Bosun view's workspace filter, set by a workspace's folded row. */
+  const [bosunWsFilter, setBosunWsFilter] = useState<string | null>(null);
+  const openBosunView = (workspaceId: string | null) => {
+    setBosunWsFilter(workspaceId);
+    switchView("bosun");
+  };
+  // Workspace lists fold Bosun threads into one row per workspace, unless the
+  // view option shows them inline, a search is running (an explicit request
+  // for a named thing), or the server has no tasks to fold them into.
+  const foldBosunThreads =
+    !layout.showBosunThreads && !filter && state.bosunTasks !== null;
+  const bosunRollup = useMemo(
+    () => workspaceTaskRollup(state.bosunTasks ?? []),
+    [state.bosunTasks],
+  );  // A newer master exists than the build that is running. Pulses regardless of
   // whether this machine can act on it cleanly: knowing you are behind is the
   // point, and the Updates tab explains what is blocking the fix.
   // A built-but-not-loaded binary counts too: the work is done and one click
@@ -4755,7 +5177,7 @@ export const Sidebar = memo(function Sidebar({
           bosunOn={bosunView}
           bosunImage={state.bosuns[0]?.image ?? null}
           bosunAttention={bosunAttention}
-          onPickBosun={() => switchView("bosun")}
+          onPickBosun={() => openBosunView(null)}
           workspaces={visibleWorkspaces}
           hidden={hiddenWorkspaces}
           threadsByWorkspace={threadsByWorkspace}
@@ -4878,7 +5300,7 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className="sidebar-action"
-            onClick={() => switchView("bosun")}
+            onClick={() => openBosunView(null)}
           >
             <AnchorIcon size={18} />
             <span>Bosun</span>
@@ -4926,6 +5348,8 @@ export const Sidebar = memo(function Sidebar({
             view={layout.view}
             onOpenBosun={onOpenBosun}
             onBack={railMode ? undefined : () => switchView("fleet")}
+            workspaceFilter={bosunWsFilter}
+            onClearWorkspaceFilter={() => setBosunWsFilter(null)}
           />
         )}
         {!quickView && !agentsView && !bosunView && !!filter && matchingQuickThreads.length > 0 && (
@@ -5061,16 +5485,39 @@ export const Sidebar = memo(function Sidebar({
               threads: [],
               lastActivity: undefined,
             };
-            const threads = filter
+            const matched = filter
               ? w.name.toLowerCase().includes(filter)
                 ? data.threads
                 : data.threads.filter((t) =>
                     threadMatches(t, filter, contentMatches),
                   )
               : data.threads;
+            let threads = matched;
+            let bosunRow: React.ComponentProps<typeof WorkspaceSection>["bosunRow"];
+            if (foldBosunThreads) {
+              const split = splitBosunThreads(matched);
+              threads = split.shown;
+              const first = state.bosuns[0];
+              const label = bosunRowLabel(first?.name ?? "Bosun", bosunRollup.get(w.id));
+              const attention = split.bosun.some((t) => threadNeedsAttention(state, t));
+              // A folded thread asking for you keeps the row even when no
+              // task is open, so the question is never hidden.
+              const shownLabel =
+                label ?? (attention ? { text: first?.name ?? "Bosun", muted: false } : null);
+              if (shownLabel) {
+                bosunRow = {
+                  name: first?.name ?? "Bosun",
+                  image: first?.image ?? null,
+                  label: shownLabel,
+                  attention,
+                  onOpen: () => openBosunView(w.id),
+                };
+              }
+            }
             return (
               <WorkspaceSection
                 key={w.id}
+                bosunRow={bosunRow}
                 workspace={w}
                 primary={data.projects[0]}
                 members={data.members}

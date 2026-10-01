@@ -29,6 +29,11 @@ import {
   randomSecret,
   textToEnv,
   validateBosunDraft,
+  bosunTimeline,
+  dayLabel,
+  daySummaryLine,
+  displayTitle,
+  skippedLine,
   type BosunDraft,
 } from "../lib/bosun";
 import { cadenceLabel, DAY_CHIP } from "../lib/schedule";
@@ -38,7 +43,7 @@ import { effortForModel, findThread, useStore } from "../state/store";
 import { DangerButton } from "./Sidebar";
 import { AgentSelect, effortLabel } from "./Composer";
 import { WakeLine } from "./BosunWake";
-import { CopyIcon, PencilIcon, PlayIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
+import { ChevronIcon, CopyIcon, PencilIcon, PlayIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
 
 const WORK_ACCESS: { id: Access; label: string }[] = [
   { id: "read", label: "Read-only" },
@@ -770,9 +775,6 @@ function BosunForm({
     }
   }
 
-  const ledger = draft.id
-    ? state.bosunLedger.filter((w) => w.bosunId === draft.id).slice(0, 20)
-    : [];
 
   return (
     <div className="sched-form bosun-form">
@@ -1084,16 +1086,99 @@ function BosunForm({
         </button>
       </div>
 
-      {draft.id && (
-        <div className="bosun-section">
-          <span className="sched-label">Recent wakes</span>
-          {ledger.length === 0 ? (
-            <div className="sched-hint">No wakes yet. A lookout that finds nothing costs nothing.</div>
-          ) : (
-            ledger.map((w) => <WakeLine key={w.id} wake={w} />)
-          )}
-        </div>
+      {draft.id && <RecentActivity bosunId={draft.id} />}
+    </div>
+  );
+}
+
+// ---- recent activity -------------------------------------------------------
+
+/** What the Bosun has been doing, by local day: one summary line per day
+ *  (expandable to its wakes and their decisions), any skipped wakes, and the
+ *  day-log threads the day's `log` decisions wrote to. This is where the wake
+ *  ledger lives now that the sidebar view is the task list. */
+function RecentActivity({
+  bosunId,
+  onOpen,
+}: {
+  /** Only this bosun's wakes and logs; absent = every bosun. */
+  bosunId?: string;
+  /** After navigating to a thread (closes the panel). */
+  onOpen?: () => void;
+}) {
+  const { state, actions } = useStore();
+  const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
+  const days = useMemo(() => {
+    const wakes = bosunId ? state.bosunLedger.filter((w) => w.bosunId === bosunId) : state.bosunLedger;
+    const logs = Object.values(state.threads)
+      .flat()
+      .filter((t) => t.origin?.kind === "bosun" && t.origin.dayLog && (!bosunId || t.origin.bosunId === bosunId));
+    return bosunTimeline(wakes, logs).slice(0, 7);
+  }, [bosunId, state.bosunLedger, state.threads]);
+  const names = new Map(state.bosuns.map((b) => [b.id, b.name]));
+  const multi = !bosunId && state.bosuns.length > 1;
+  const wsName = (projectId: string) =>
+    state.workspaces.find((w) => w.members.some((m) => m.projectId === projectId))?.name ?? null;
+  const now = new Date();
+
+  return (
+    <div className="bosun-section">
+      <span className="sched-label">Recent activity</span>
+      {days.length === 0 && (
+        <div className="sched-hint">No wakes yet. A lookout that finds nothing costs nothing.</div>
       )}
+      {days.map((day) => {
+        const open = !!openDays[day.key];
+        const label = daySummaryLine(dayLabel(day.key, now), day.summary);
+        const skipped = skippedLine(day.summary);
+        return (
+          <div key={day.key} className="bosun-day">
+            {day.wakes.length > 0 ? (
+              <button
+                type="button"
+                className="bosun-day-head bosun-day-toggle"
+                aria-expanded={open}
+                onClick={() => setOpenDays((o) => ({ ...o, [day.key]: !open }))}
+              >
+                <ChevronIcon size={10} open={open} className="row-chevron" />
+                <span className="bosun-day-text">{label}</span>
+              </button>
+            ) : (
+              <div className="bosun-day-head">{label}</div>
+            )}
+            {skipped && <div className="bosun-day-skipped">{skipped}</div>}
+            {open && day.wakes.length > 0 && (
+              <div className="bosun-day-wakes">
+                {day.wakes.map((w) => (
+                  <WakeLine
+                    key={w.id}
+                    wake={w}
+                    bosunName={multi ? names.get(w.bosunId) : undefined}
+                    onOpen={onOpen}
+                  />
+                ))}
+              </div>
+            )}
+            {day.threads.length > 0 && (
+              <div className="bosun-day-logs">
+                {day.threads.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className="sched-view"
+                    onClick={() => {
+                      void actions.selectThread(t.id);
+                      onOpen?.();
+                    }}
+                  >
+                    {wsName(t.projectId) ?? displayTitle(t)} log
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1147,8 +1232,6 @@ export function BosunPanel({
     setForm(blankDraft());
   }, [startNew, seeded]);
 
-  const names = new Map(state.bosuns.map((b) => [b.id, b.name]));
-  const ledger = state.bosunLedger.slice(0, 20);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1193,19 +1276,7 @@ export function BosunPanel({
                   }}
                 />
               ))}
-              {ledger.length > 0 && (
-                <div className="bosun-section">
-                  <span className="sched-label">Recent wakes</span>
-                  {ledger.map((w) => (
-                    <WakeLine
-                      key={w.id}
-                      wake={w}
-                      bosunName={state.bosuns.length > 1 ? names.get(w.bosunId) : undefined}
-                      onOpen={onClose}
-                    />
-                  ))}
-                </div>
-              )}
+              {state.bosuns.length > 0 && <RecentActivity onOpen={onClose} />}
             </div>
             <div className="modal-actions">
               <button

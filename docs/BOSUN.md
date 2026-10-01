@@ -438,3 +438,143 @@ by hand with `BOSUN_WATERMARK= ./lookouts/<name> | jq`.
 
 Call transcripts need no script: a `folder` lookout on `~/Calls` with pattern
 `triage.md` is the whole configuration.
+
+---
+
+## 10. Tasks (v2): the to-do list Bosun keeps
+
+Threads are working notes. The thing the person manages is a **task**: one
+labelled to-do per real-world item (an Orbit ticket, an email thread, a call's
+action item, a Teams ask), with a status, a one-line next step, and at most one
+thread behind it. The Bosun view is the task list; threads open from a task.
+
+### 10.1 Model (`protocol.rs`; JSON camelCase; persisted in `bosun-tasks.json`)
+
+```rust
+pub struct BosunTask {
+    pub id: String,
+    pub bosun_id: String,
+    /// Dedupe key for the real-world item. At most ONE task that is not
+    /// Done/Dropped exists per (bosun_id, key). Examples:
+    ///   orbit:<orgSlug>:<taskId>   gmail:<account>:<threadId>
+    ///   call:<path>#<n>            teams:<conversationId>:<firstMessageId>
+    ///   adhoc:<uuid>               (no natural key)
+    pub key: String,
+    pub title: String,          // imperative, names the client: "Reply to Keith Roofing about job 2451"
+    pub client: Option<String>, // "Keith Roofing"
+    pub workspace_id: Option<String>,
+    pub status: TaskStatus,
+    pub summary: String,        // 1-3 plain sentences: what this is and where it stands
+    pub next_step: Option<String>, // what happens next and who does it
+    pub thread_id: Option<String>, // the one working thread, once work has started
+    pub orbit: Option<OrbitLink>,
+    pub source: TaskSource,     // what created it
+    pub due: Option<String>,    // ISO date, from Orbit or the call
+    pub snoozed_until: Option<String>,
+    pub pending_updates: Vec<String>, // signal ids that arrived while the thread was busy/waiting
+    pub history: Vec<TaskEvent>,      // status changes and notes, newest last, capped at 50
+    pub created_at: String, pub updated_at: String, pub done_at: Option<String>,
+}
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus { Todo, Working, NeedsYou, WaitingOnClient, Snoozed, Done, Dropped }
+pub struct OrbitLink { pub org: String, pub task_id: String, pub ticket_number: Option<String>, pub url: String }
+pub struct TaskSource { pub kind: String /* ticket|email|call|teams|sweep|manual */, pub lookout_id: String, pub signal_id: String, pub url: Option<String>, pub path: Option<String> }
+pub struct TaskEvent { pub at: String, pub status: Option<TaskStatus>, pub note: String, pub by: String /* "bosun" | "you" | "orbit" */ }
+```
+
+`ThreadOrigin` gains `task_id: Option<String>` (serde default).
+
+### 10.2 Keys
+
+A signal may carry `refs.key`; lookouts set it (orbit-tasks: `orbit:<slug>:<taskId>`,
+gmail: `gmail:<account>:<threadId>`, teams: per burst). Otherwise the engine
+derives one: `refs.taskId`+`refs.org` → orbit key; `refs.threadId` with an
+email kind → gmail key; folder signals → `call:<path>`; else none. Triage is
+also shown the open tasks (id, key, title, client, status) and may return
+`taskId` to attach a signal to an existing task when the keys differ (a call
+about Keith's ticket → the Keith task). Deterministic key match wins over the
+model; the model's `taskId` is used only when the key matched nothing.
+
+### 10.3 Engine rules
+
+- **work / ask** → find the open task (by key, else triage `taskId`), else
+  create one (`title` from triage, status Working). If the task has a thread:
+  idle → follow-up turn there; busy or waiting on a question → push the signal
+  id to `pending_updates` and note it in history (no new thread, no new turn).
+  Each tick, a task whose thread is idle and whose `pending_updates` is
+  non-empty gets ONE follow-up turn carrying all of them, then the list clears.
+  If the task has no thread, open one exactly as §6 does, with
+  `origin.task_id` set. **Never a second thread for the same task.**
+- **log** → unchanged (day log). If the signal's key matches an open task,
+  also add a history note to that task.
+- **ignore** → unchanged.
+- **Sweep signals are not triaged.** A sweep carries `items:
+  [{ key, title, client?, detail, url?, group?, due?, orbitTaskId?,
+  orbitTicket? }]`, plus `refs.scope` and `refs.openKeys` (comma-joined). An
+  absent `openKeys` means skip reconciliation; a present but empty one means
+  nothing in scope is open. For each
+  item: open task with the same key → refresh `summary`/`due`/`orbit`, keep
+  status (unless Snoozed and the snooze has passed → Todo). No task → create
+  one with status Todo, **no thread**. Then **reconcile**: every open task
+  whose key belongs to that sweep's scope (`refs.scope`, e.g. `orbit:<slug>:`
+  or `gmail:<account>:`) and is absent from `refs.openKeys` → Done with note
+  "closed in Orbit" / "replied", and its thread settled. A sweep that created N
+  new tasks pushes ONE notification "<bosun> · <scope label>: N new to-dos";
+  zero new → no push. No sweep threads, no sweep cards.
+- **Thread state drives status:** a `question_request` / `approval_request` on
+  a task's thread → NeedsYou; `turn_started` → Working; `turn_completed`
+  without the agent having set a status this turn → NeedsYou if a question is
+  pending, otherwise keep the agent's last status (default NeedsYou, since
+  someone should look). Done/Dropped → settle the thread.
+- **Snoozed** tasks with `snoozed_until` in the past go back to Todo on tick.
+- Done/Dropped tasks older than 14 days are pruned from the file.
+
+### 10.4 The agent's tool
+
+Bosun threads get one extra MCP tool on the existing in-process server,
+offered only when `thread.origin.task_id` is set:
+
+`bosun_task { status?, title?, client?, summary?, nextStep?, due?, orbitTaskId?, orbitOrg?, note? }`
+→ updates the thread's task; returns the task. The work prompt tells the agent
+to call it once at the start (a clear title naming the client, a summary) and
+once at the end (status: needs_you / waiting_on_client / done, plus nextStep),
+and that a task linked to Orbit should name the ticket in `orbitTaskId`.
+
+### 10.5 Wire
+
+| Kind | Payload | Response |
+| --- | --- | --- |
+| `bosun.task.list` | `{ bosunId?, includeClosed? }` (closed = Done/Dropped from the last 3 days) | `{ tasks: BosunTask[] }` |
+| `bosun.task.update` | `{ taskId, status?, title?, snoozedUntil?, note? }` (`by: "you"`) | `BosunTask` |
+| `bosun.task.work` | `{ taskId, instruction? }` → open or continue its thread with the task summary as the brief (+ instruction) | `{ threadId }` |
+| `bosun.task.create` | `{ bosunId, title, workspaceId?, summary?, client? }` (manual to-do, key `adhoc:`) | `BosunTask` |
+| `bosun.task.delete` | `{ taskId }` | `{}` |
+
+`state.changed` scope `"bosunTasks"` after any task change.
+
+### 10.6 Migration (once, at startup, idempotent)
+
+For every non-day-log thread with `origin.kind == "bosun"` and no
+`origin.task_id`: derive the key from its origin refs (as §10.2); threads
+whose title or signal kind marks them as a sweep are settled and get no task.
+Group the rest by key; the most recently updated thread becomes the task's
+thread, the others are settled with a status note pointing at it. Status from
+the thread: waiting_approval → NeedsYou, running → Working, idle → NeedsYou.
+Title from the thread title (glyphs stripped).
+
+### 10.7 UI
+
+- **Bosun view = task list**, grouped by status: *Needs you*, *Working*,
+  *To do*, *Waiting on client*, then collapsed *Snoozed* and *Done (3 days)*.
+  Row: status dot, title, `client · workspace · due/age`, an Orbit `#ticket`
+  pill when linked. The wake ledger moves into Manage.
+- **Clicking a task opens a task view in the main pane** (not the thread):
+  title (editable), status picker, summary, next step, due, client, workspace,
+  Orbit link, source (with link/path), history, and actions: *Work on it* /
+  *Open conversation* (if a thread exists), *Snooze* (tomorrow, next week,
+  date), *Done*, *Drop*. A "+ To-do" button creates a manual task.
+- **Workspace lists hide Bosun threads** by default: each workspace section
+  shows one collapsed row "Blackbeard · N need you" that opens the Bosun view
+  filtered to that workspace. A sidebar preference shows them inline again.
+- Day-log threads are reachable from the task view's history and from Manage,
+  not from the main list.
