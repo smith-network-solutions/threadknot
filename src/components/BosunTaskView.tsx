@@ -25,11 +25,13 @@ export function TaskStatusDot({ status }: { status: TaskStatus }) {
   return <span className={`task-dot s-${status}`} aria-hidden="true" />;
 }
 
-/** "#2451" for a linked Orbit ticket (its number, else its id). */
+/** "#2451" for a linked Orbit ticket, or "Orbit" when it has no number (a
+ *  raw task id is noise in a row and crowds the title out). */
 export function orbitTicketLabel(task: Pick<BosunTask, "orbit">): string | null {
   const o = task.orbit;
   if (!o) return null;
-  const n = (o.ticketNumber ?? "").trim() || o.taskId;
+  const n = (o.ticketNumber ?? "").trim();
+  if (!n) return "Orbit";
   return n.startsWith("#") ? n : `#${n}`;
 }
 
@@ -107,6 +109,16 @@ export function BosunTaskView() {
   const thread = t.threadId ? findThread(state, t.threadId) : undefined;
   const closed = isClosedStatus(t.status);
   const ticket = orbitTicketLabel(t);
+  const threadBusy = thread?.status === "running";
+  const [orders, setOrders] = useState("");
+  const sendOrders = () => {
+    const text = orders.trim();
+    if (!text) return;
+    void run("orders", async () => {
+      await actions.workTask(t.id, text);
+      setOrders("");
+    });
+  };
 
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(label);
@@ -187,24 +199,24 @@ export function BosunTaskView() {
       <div className="task-body">
         <div className="task-inner">
           <div className="task-actions">
-            {t.threadId ? (
+            <button
+              type="button"
+              className="btn tone-allow task-primary"
+              disabled={!!busy || threadBusy}
+              onClick={() => void run("work", () => actions.workTask(t.id))}
+              title={threadBusy ? "Blackbeard is already working on this" : `${bosun?.name ?? "Bosun"} picks this up and takes it as far as the standing orders allow`}
+            >
+              <PlayIcon size={11} /> {busy === "work" ? "Starting…" : threadBusy ? "Working…" : "Work on it"}
+            </button>
+            {t.threadId && (
               <button
                 type="button"
-                className="btn tone-allow task-primary"
+                className="btn tone-deny"
                 disabled={!!busy}
                 onClick={() => void run("open", () => actions.selectThread(t.threadId!))}
                 title={thread ? undefined : "The thread is not loaded here yet; opening asks its machine"}
               >
                 Open conversation
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn tone-allow task-primary"
-                disabled={!!busy}
-                onClick={() => void run("work", () => actions.workTask(t.id))}
-              >
-                <PlayIcon size={11} /> {busy === "work" ? "Starting…" : "Work on it"}
               </button>
             )}
             {!closed && (
@@ -249,6 +261,31 @@ export function BosunTaskView() {
               </button>
             )}
           </div>
+          <form
+            className="task-orders"
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendOrders();
+            }}
+          >
+            <textarea
+              className="task-orders-input"
+              rows={2}
+              placeholder={`Tell ${bosun?.name ?? "Bosun"} what to do with this, e.g. "draft the reply and close the ticket"`}
+              value={orders}
+              disabled={!!busy || threadBusy}
+              onChange={(e) => setOrders(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  sendOrders();
+                }
+              }}
+            />
+            <button type="submit" className="btn tone-allow" disabled={!orders.trim() || !!busy || threadBusy}>
+              {busy === "orders" ? "Sending…" : "Send"}
+            </button>
+          </form>
           {snoozeOpen && (
             <div className="task-snooze">
               {presets.map((p) => (
