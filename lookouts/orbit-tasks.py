@@ -767,13 +767,15 @@ def item_title(group, task, client):
     # Many task titles already lead with the client ("Bay Gold: reconnect…");
     # naming it twice reads as noise. Drop the leading copy, keep ours.
     if client:
-        for word in (client, client.split()[0]):
-            lead = word.lower()
-            if len(lead) >= 3 and title.lower().startswith(lead):
-                rest = title[len(word):].lstrip(" :-—–·|")
-                if rest:
-                    title = rest[:1].upper() + rest[1:]
-                break
+        cwords, twords = client.lower().split(), title.split()
+        n = 0
+        while n < min(len(cwords), len(twords)) and twords[n].lower().rstrip(":-—–·|,") == cwords[n]:
+            n += 1
+        # Only when the shared run ends the title's lead-in ("Bay Gold: …").
+        if n and len(" ".join(cwords[:n])) >= 3 and (twords[n - 1][-1:] in ":-—–·|," or (n < len(twords) and twords[n] in ("-", "—", "–", "·", "|", ":"))):
+            rest = " ".join(twords[n:]).lstrip(" :-—–·|")
+            if rest:
+                title = rest[:1].upper() + rest[1:]
     if group == "replied":
         return f"Reply to {client or replier(task) or 'the client'}: {title}"
     if group == "overdue":
