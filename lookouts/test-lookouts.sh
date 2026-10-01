@@ -5,8 +5,11 @@
 # only a watermark, (b) an older watermark -> real signals. Every stdout line
 # must be JSON with a "title" or a "watermark"; the last line must be a
 # watermark. Each run gets a fresh BOSUN_STATE_DIR from mktemp.
+# Every signal line must carry a non-empty refs.key (the Bosun task key).
 # Sweep mode (gmail, orbit; when credentials are present): --sweep --now must
-# print at most one kind:"sweep" signal with an hourly id and no watermark;
+# print at most one kind:"sweep" signal with an hourly id and no watermark,
+# with `items`, refs.scope and refs.openKeys (every item key starts with the
+# scope and is in openKeys);
 # snoozing a listed Orbit task must hide it and count it, an expired snooze
 # entry must be pruned, and a run outside SWEEP_DAYS must print nothing.
 #
@@ -36,7 +39,8 @@ fail() { echo "  FAIL: $*"; FAILS=$((FAILS+1)); }
 ok()   { echo "  ok: $*"; }
 newstate() { local d; d="$(mktemp -d)"; TMPS+=("$d"); printf '%s' "$d"; }
 
-# validate <file> <label>: every line JSON with title or watermark; last line a watermark.
+# validate <file> <label>: every line JSON with title or watermark; every signal
+# has string refs including a non-empty refs.key (the Bosun task key); last line a watermark.
 validate() {
   local f="$1" label="$2" n=0 sig=0 wm=0 bad=0 line
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -48,6 +52,8 @@ validate() {
       sig=$((sig+1))
       jq -e '(.refs // {}) | to_entries | all(.value|type == "string")' <<<"$line" >/dev/null \
         || { bad=$((bad+1)); echo "    non-string ref on line $n"; }
+      jq -e '(.refs.key | type) == "string" and (.refs.key | length) > 0' <<<"$line" >/dev/null \
+        || { bad=$((bad+1)); echo "    no refs.key on line $n"; }
     fi
   done < "$f"
   LAST_SIGNALS=$sig
@@ -56,11 +62,12 @@ validate() {
   [[ $bad -eq 0 ]] && ok "$label: $n lines, $sig signals, $wm watermark line(s)"
 }
 
-# validate_sweep <file> <label> <id prefix>: zero or one line; if one, a
+# validate_sweep <file> <label> <id prefix> <scope>: zero or one line; if one, a
 # kind:"sweep" signal whose id starts <prefix> and ends :<YYYY-MM-DDTHH>, string refs incl.
-# snoozeFile and count, and no watermark line anywhere.
+# snoozeFile, count, scope (= <scope>) and openKeys, an `items` array whose length is
+# count and whose every key starts with the scope and is in openKeys, and no watermark.
 validate_sweep() {
-  local f="$1" label="$2" prefix="$3" n
+  local f="$1" label="$2" prefix="$3" scope="$4" n
   n="$(grep -c . "$f")"
   LAST_SIGNALS=$n
   if [[ $n -eq 0 ]]; then ok "$label: empty (nothing waiting)"; return; fi
@@ -72,6 +79,15 @@ validate_sweep() {
     and (.refs.snoozeFile | startswith("/")) and (.refs.count | test("^[0-9]+$"))
     and (.body | utf8bytelength) <= 32768' "$f" >/dev/null \
     && ok "$label: $(jq -r .title "$f")" || fail "$label: bad sweep signal: $(head -c 300 "$f")"
+  jq -e --arg s "$scope" '
+    (.items | type) == "array" and (.refs.scope == $s) and ((.refs.openKeys | type) == "string")
+    and ((.items | length | tostring) == .refs.count)
+    and (.items | all((.key | type) == "string" and (.key | startswith($s)) and (.title | type) == "string"
+                      and (.url | type) == "string" and (.group | type) == "string"))
+    and (([.items[].key] - (.refs.openKeys | split(","))) | length) == 0
+    and (.refs.openKeys | split(",") | map(select(. != "")) | all(startswith($s)))' "$f" >/dev/null \
+    && ok "$label: $(jq -r '.items | length' "$f") items, $(jq -r '.refs.openKeys | split(",") | map(select(. != "")) | length' "$f") openKeys, scope $scope" \
+    || fail "$label: bad items/scope/openKeys: $(jq -c '{scope: .refs.scope, items: (.items | length), count: .refs.count, item0: .items[0]}' "$f" 2>&1 | head -c 400)"
 }
 
 # not_today: a SWEEP_DAYS value that excludes today, for the outside-window check.
@@ -115,7 +131,7 @@ if [[ "${SKIP_GMAIL:-}" != "1" ]]; then
   if [[ -d "$GOOGLE_WORKSPACE_CLI_CONFIG_DIR" ]]; then
     st="$(newstate)"
     if run "gmail sweep" "$out" env BOSUN_STATE_DIR="$st" "$HERE/gmail-gws.sh" --sweep --now; then
-      validate_sweep "$out" "gmail sweep --now" "gmail:sweep:"
+      validate_sweep "$out" "gmail sweep --now" "gmail:sweep:" "gmail:$(jq -r '.refs.account // ""' "$out"):"
       [[ $LAST_SIGNALS -eq 1 ]] && jq -r .body "$out" | head -4 | cut -c1-160 | sed 's/^/    /'
     fi
     run "gmail sweep outside window" "$out" env BOSUN_STATE_DIR="$st" SWEEP_DAYS="$(not_today)" "$HERE/gmail-gws.sh" --sweep \
@@ -162,7 +178,7 @@ PY
   # pruned), and silence outside the window.
   st="$(newstate)"
   if run "orbit sweep" "$out" env BOSUN_STATE_DIR="$st" "$HERE/orbit-tasks.py" --sweep --now; then
-    validate_sweep "$out" "orbit sweep --now" "orbit:sweep:$ORBIT_ORG_SLUG:"
+    validate_sweep "$out" "orbit sweep --now" "orbit:sweep:$ORBIT_ORG_SLUG:" "orbit:$ORBIT_ORG_SLUG:"
     if [[ $LAST_SIGNALS -eq 1 ]]; then
       jq -r .body "$out" | head -4 | cut -c1-160 | sed 's/^/    /'
       sid="$(jq -r .body "$out" | grep -o '(id [a-z0-9]*)' | head -1 | tr -d '()' | cut -d' ' -f2)"
@@ -171,6 +187,10 @@ PY
         if [[ -s "$out" ]]; then
           jq -r .body "$out" | grep -q "(id $sid)" && fail "snoozed task $sid still listed" || ok "snoozed task $sid left out"
           jq -r .body "$out" | grep -q "snoozed 1" && ok "footer counts it (snoozed 1)" || fail "footer does not say snoozed 1"
+          jq -e --arg k "orbit:$ORBIT_ORG_SLUG:$sid" '([.items[].key] | index($k)) == null' "$out" >/dev/null \
+            && ok "snoozed task not in items" || fail "snoozed task $sid still in items"
+          jq -e --arg k "orbit:$ORBIT_ORG_SLUG:$sid" '.refs.openKeys | split(",") | index($k) != null' "$out" >/dev/null \
+            && ok "snoozed task still in openKeys (its task stays open)" || fail "snoozed task $sid missing from openKeys"
         else
           ok "snoozed the only item: nothing printed"
         fi

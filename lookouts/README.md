@@ -27,6 +27,7 @@ signal or a watermark:
 - Only `title` is required. Leave out `id` and Threadknot hashes the lookout id, title and body.
 - Make `id` deterministic. The engine drops ids it has already seen, so re-emitting a signal is harmless and crash-safe.
 - `refs` values must be strings.
+- Set `refs.key` to the real-world item's **task key** (`docs/BOSUN.md` §10.2): every signal about the same ticket, email thread or chat burst carries the same key, so Bosun keeps one to-do per item and never opens a second thread for it. Bundled keys: `orbit:<orgSlug>:<taskId>`, `gmail:<account>:<threadId>`, `teams:<conversationId>:<firstMessageId>`. Folder lookouts get `call:<path>` from the engine. Without a key the engine derives one from `refs.taskId`+`refs.org` or `refs.threadId`, or none.
 - The **last** `watermark` line wins. It is opaque to Threadknot: a timestamp, a cursor, a history id, anything you can resume from.
 - Print nothing when nothing happened. An empty run costs nothing: no wake, no ledger line.
 - On the first run (empty watermark), print only a watermark. Otherwise switching the lookout on floods the Bosun with the whole backlog.
@@ -94,7 +95,7 @@ messages that left the label before the run. Read-only (`getProfile`,
 network failure.
 
 ```json
-{"id":"gmail:1a0e973643a9d5b0","kind":"email","title":"Build failed for g5 — Railway","body":"From: Railway <hello@notify.railway.app>\nTo: spencer@smithnetworksolutions.com\nDate: Mon, 28 Sep 2026 19:17:27 +0000\n\nBuild failed for project: g5 ...","observedAt":"2026-09-28T15:17:27-04:00","refs":{"url":"https://mail.google.com/mail/u/0/#inbox/1a0e973643a9d5b0","from":"hello@notify.railway.app","threadId":"1a0e973643a9d5b0","messageId":"1a0e973643a9d5b0"}}
+{"id":"gmail:1a0e973643a9d5b0","kind":"email","title":"Build failed for g5 — Railway","body":"From: Railway <hello@notify.railway.app>\nTo: spencer@smithnetworksolutions.com\nDate: Mon, 28 Sep 2026 19:17:27 +0000\n\nBuild failed for project: g5 ...","observedAt":"2026-09-28T15:17:27-04:00","refs":{"url":"https://mail.google.com/mail/u/0/#inbox/1a0e973643a9d5b0","from":"hello@notify.railway.app","threadId":"1a0e973643a9d5b0","messageId":"1a0e973643a9d5b0","key":"gmail:spencer@smithnetworksolutions.com:1a0e973643a9d5b0"}}
 ```
 
 The link uses `/mail/u/0/`, the first signed-in Google account in the browser.
@@ -118,6 +119,8 @@ watermark. A task gets one signal per update (the id includes `updatedAt`).
 | `ORBIT_WEB_URL` | `ORBIT_API_URL` | Base for task links, if the web app lives elsewhere. |
 | `ORBIT_MAX_SIGNALS` | `50` | Per-run cap, oldest first; the watermark stops at the last one emitted. |
 
+`refs.key` is `orbit:<ORBIT_ORG_SLUG>:<taskId>` and `refs.ticket` the ticket
+number (as a string) when the task has one; `--task` signals carry both too.
 Body: status, priority, due date, client, assignee, project, ticket number,
 Orbit's last-activity summary, the description (max 8000 chars) and the
 latest comment or reply (max 2000 chars, marked internal when it is).
@@ -126,7 +129,7 @@ latest comment or reply (max 2000 chars, marked internal when it is).
 Exits 2 on auth failure, 1 on other API or network failure.
 
 ```json
-{"id":"orbit:task:cmukodblz1mt5emwekgo1az3r:2026-09-28T03:15:47.532Z","kind":"ticket","title":"New link for form","body":"Status: todo\nPriority: medium\nDue: 2026-09-29\nClient: Aletheia Integrative\nAssignee: unassigned\nTicket: #101324\nLast activity: New ticket from melissa@aletheia.md","observedAt":"2026-09-28T03:15:47.532Z","refs":{"url":"https://orbit.servicestorm.io/oscar-edge-817a467/tasks/cmukodblz1mt5emwekgo1az3r","org":"oscar-edge-817a467","taskId":"cmukodblz1mt5emwekgo1az3r","client":"Aletheia Integrative"},"hints":{"workspace":"Service Storm"}}
+{"id":"orbit:task:cmukodblz1mt5emwekgo1az3r:2026-09-28T03:15:47.532Z","kind":"ticket","title":"New link for form","body":"Status: todo\nPriority: medium\nDue: 2026-09-29\nClient: Aletheia Integrative\nAssignee: unassigned\nTicket: #101324\nLast activity: New ticket from melissa@aletheia.md","observedAt":"2026-09-28T03:15:47.532Z","refs":{"url":"https://orbit.servicestorm.io/oscar-edge-817a467/tasks/cmukodblz1mt5emwekgo1az3r","org":"oscar-edge-817a467","taskId":"cmukodblz1mt5emwekgo1az3r","key":"orbit:oscar-edge-817a467:cmukodblz1mt5emwekgo1az3r","ticket":"101324","client":"Aletheia Integrative"},"hints":{"workspace":"Service Storm"}}
 ```
 
 One lookout per org. For both of Spencer's orgs, add two lookouts with
@@ -141,16 +144,46 @@ separate `command` lookout at the same script with `--sweep` in its args
 (an interval of 1-2 h suits it).
 
 - **No watermark.** A sweep never prints a watermark line.
-- **One signal per run, only when the list is non-empty.** An empty list, or
-  a run outside the work window, prints nothing and exits 0.
+- **One signal per run inside the work window, even when nothing is listed**
+  (then `items` is `[]`, `count` is `"0"` and the title says "nothing
+  waiting"): the engine needs `openKeys` to close the to-dos of items that
+  stopped waiting. A run outside the window prints nothing and exits 0.
 - **The id changes every hour** (`orbit:sweep:<org slug>:<YYYY-MM-DDTHH>`,
   `gmail:sweep:<account>:<YYYY-MM-DDTHH>`, local time), so the engine's dedupe
   lets one sweep through per hour while anything stays open.
-- `kind: "sweep"`; `refs` = `url`, `org` or `account`, `snoozeFile`, `count`;
-  `hints.workspace` from `ORBIT_WORKSPACE_HINT` / `GMAIL_WORKSPACE_HINT`.
-- The body is grouped Markdown, one line per item ending in `(id …)`, capped
-  at 32 KiB, with a footer of per-group counts, the snoozed count, and the
-  snooze instruction.
+- `kind: "sweep"`; `refs` = `url`, `org` or `account`, `snoozeFile`, `count`,
+  `scope`, `openKeys`; `hints.workspace` from `ORBIT_WORKSPACE_HINT` /
+  `GMAIL_WORKSPACE_HINT`.
+- The body is grouped Markdown for a human, one line per item ending in
+  `(id …)`, at most 15 lines per group (`ORBIT_SWEEP_MAX_PER_GROUP`,
+  `GMAIL_SWEEP_MAX_PER_GROUP`), capped at 32 KiB, with a footer of per-group
+  counts, the snoozed count, and the snooze instruction.
+- **Sweep signals are not triaged** (`docs/BOSUN.md` §10.3). The engine reads
+  the top-level `items` array and the two reconcile refs:
+
+| Field | Meaning |
+| --- | --- |
+| `items` | One object per listed item, in body order (group order, then longest-waiting first), **not** capped by the per-group display cap; snoozed (and, for Orbit, ignored) items are left out. `items.length == refs.count`. Each becomes or refreshes a to-do keyed by `key`. |
+| `refs.scope` | Key prefix this sweep is authoritative for: `orbit:<orgSlug>:` or `gmail:<account>:`. Every item key starts with it. |
+| `refs.openKeys` | Comma-joined keys of **everything still open** in that scope, listed or not. Any open to-do whose key starts with `scope` and is absent here is closed ("closed in Orbit" / "replied"). So absence must mean "closed at the source" and nothing else: Orbit sends every task `statusNotIn=done,cancelled` returns (unlisted, snoozed and ignored ones included); Gmail sends every inbox thread still waiting on you, including snoozed threads and ones younger than `GMAIL_SWEEP_MIN_AGE_HOURS`. Over 60 KB it is still emitted (refs are strings) with a stderr warning. If Orbit paging stops at its page limit, `scope` and `openKeys` are left out so nothing is closed on a partial list; Gmail exits 1 instead of signalling a partial list. |
+
+Item fields (all strings unless noted):
+
+| Field | Orbit | Gmail |
+| --- | --- | --- |
+| `key` | `orbit:<slug>:<taskId>` | `gmail:<account>:<threadId>` |
+| `title` | Imperative, names the client, by group: *replied* `Reply to <client>: <task>`; *overdue* `<task> (<client>, overdue)`; *nudged* `Answer nudge: <task>`; *unassigned* `Assign: <task>`; *stale* `Follow up: <task>` | *waiting* `Reply to <sender name>: <subject>`; *task* `<subject> (<sender name>)` |
+| `client` | Orbit client name, or `null` | Sender's registrable domain (`mail.acme.co.uk` → `acme.co.uk`); the sender's name for personal mailboxes (gmail.com, outlook.com, …) |
+| `detail` | `status · due · assignee · last activity` | `<age>h · <name> <address> — <snippet>` |
+| `url` | Task link | Gmail thread link |
+| `group` | `replied`, `overdue`, `nudged`, `unassigned`, `stale` | `waiting`, `task` |
+| `due` | `YYYY-MM-DD` or `null` | — |
+| `orbitTaskId` | task id | — |
+| `orbitTicket` | ticket number or `null` | — |
+
+```json
+{"key":"orbit:oscar-edge-817a467:cmukodblz1mt5emwekgo1az3r","title":"Reply to Aletheia Integrative: New link for form","client":"Aletheia Integrative","detail":"response_received · due 2026-09-29 · unassigned · Reply from melissa@aletheia.md","url":"https://orbit.servicestorm.io/oscar-edge-817a467/tasks/cmukodblz1mt5emwekgo1az3r","group":"replied","due":"2026-09-29","orbitTaskId":"cmukodblz1mt5emwekgo1az3r","orbitTicket":"101324"}
+```
 
 | Env | Default | Meaning |
 | --- | --- | --- |
@@ -232,7 +265,7 @@ person lands in *Waiting on you*; notifications with no task keyword are
 dropped.
 
 ```json
-{"id":"orbit:sweep:smith-network-solutions-501877:2026-09-28T09","kind":"sweep","title":"Orbit sweep · SNS: 10 items need you","body":"### Client replied, nobody answered (3)\n- [#100463] Fortis server login — Fortis Institute · response_received · due 2026-09-29 · unassigned · Reply from daniel@fortisinstitute.org · https://orbit.servicestorm.io/smith-network-solutions-501877/tasks/cmula36uo2gb4emwesxb3av8k (id cmula36uo2gb4emwesxb3av8k)\n...","observedAt":"2026-09-28T09:00:02-04:00","refs":{"url":"https://orbit.servicestorm.io/smith-network-solutions-501877/tasks","org":"smith-network-solutions-501877","snoozeFile":"<data dir>/bosun/<lookoutId>/snooze.json","count":"10"},"hints":{"workspace":"SNS"}}
+{"id":"orbit:sweep:smith-network-solutions-501877:2026-09-28T09","kind":"sweep","title":"Orbit sweep · SNS: 10 items need you","body":"### Client replied, nobody answered (3)\n- [#100463] Fortis server login — Fortis Institute · response_received · due 2026-09-29 · unassigned · Reply from daniel@fortisinstitute.org · https://orbit.servicestorm.io/smith-network-solutions-501877/tasks/cmula36uo2gb4emwesxb3av8k (id cmula36uo2gb4emwesxb3av8k)\n...","observedAt":"2026-09-28T09:00:02-04:00","refs":{"url":"https://orbit.servicestorm.io/smith-network-solutions-501877/tasks","org":"smith-network-solutions-501877","snoozeFile":"<data dir>/bosun/<lookoutId>/snooze.json","count":"10","scope":"orbit:smith-network-solutions-501877:","openKeys":"orbit:smith-network-solutions-501877:cmula36uo2gb4emwesxb3av8k,..."},"items":[{"key":"orbit:smith-network-solutions-501877:cmula36uo2gb4emwesxb3av8k","title":"Reply to Fortis Institute: Fortis server login","...":"..."}],"hints":{"workspace":"SNS"}}
 ```
 
 ### `teams-cdp.mjs`: a 1:1 Microsoft Teams chat
@@ -277,12 +310,14 @@ The port is loopback-only. Nothing else changes; the app runs normally.
 | `BOSUN_WATERMARK`, `BOSUN_STATE_DIR` | set by Threadknot | Watermark is an ISO time; state dir holds `attachments/`. |
 
 Signal `id` is `teams:<conversationId>:<lastMessageId>`, `kind` is `"teams"`.
+`refs.key` (the task key) is `teams:<conversationId>:<first message id of the
+burst>`.
 The body is `[HH:MM] Name: text` per line (local time, HTML stripped, links kept
 as URLs, quoted replies shown as `> [reply to …]`, images inlined as
 `[image: <path>]`). `refs.attachments` is a `;`-joined list of saved paths.
 
 ```json
-{"id":"teams:19:uni01_…@thread.v2:1790608949943","kind":"teams","title":"Teams · Bill: She got it","body":"[11:17] Me: can you have her try again? That should be be fixed now\n[11:22] William Hunt: She got it","observedAt":"2026-09-28T15:22:29.943Z","refs":{"conversationId":"19:uni01_…@thread.v2","lastMessageId":"1790608949943","attachments":"","url":"https://teams.live.com/v2/#/conversations/19%3Auni01_…%40thread.v2?ctx=chat"}}
+{"id":"teams:19:uni01_…@thread.v2:1790608949943","kind":"teams","title":"Teams · Bill: She got it","body":"[11:17] Me: can you have her try again? That should be be fixed now\n[11:22] William Hunt: She got it","observedAt":"2026-09-28T15:22:29.943Z","refs":{"key":"teams:19:uni01_…@thread.v2:1790608640112","conversationId":"19:uni01_…@thread.v2","lastMessageId":"1790608949943","attachments":"","url":"https://teams.live.com/v2/#/conversations/19%3Auni01_…%40thread.v2?ctx=chat"}}
 ```
 
 **Extra modes.** `--dump --days N` (default 3) or `--dump --since <ISO>` prints
@@ -324,10 +359,13 @@ signals), a stale Gmail history id (must re-seed), an expired Orbit token (must
 refresh), and — when the CDP port answers — the Teams reader through seed →
 since → caught-up. Checks that every stdout line is JSON with a `title` or a
 `watermark`, that `refs` values are strings, and that the last line is a
-watermark. When credentials are present it also runs both sweeps with
-`--sweep --now` (at most one `kind: "sweep"` line, hourly id, string refs, no
-watermark, body ≤ 32 KiB), snoozes the first listed Orbit task until tomorrow
-(it must drop out and the footer must say `snoozed 1`), checks that an expired
+watermark, and that every signal line carries a non-empty `refs.key`. When
+credentials are present it also runs both sweeps with `--sweep --now` (at most
+one `kind: "sweep"` line, hourly id, string refs, no watermark, body ≤ 32 KiB,
+an `items` array as long as `refs.count`, `refs.scope` and `refs.openKeys`,
+every item key starting with the scope and present in `openKeys`), snoozes the
+first listed Orbit task until tomorrow (it must drop out of the body and
+`items`, stay in `openKeys`, and the footer must say `snoozed 1`), checks that an expired
 snooze entry is pruned, and runs each sweep with `SWEEP_DAYS` set to tomorrow
 (it must print nothing). `teams-cdp` auto-skips its live portion when Teams is
 not running with the debugging port; `SKIP_TEAMS=1` skips it outright. Orbit is

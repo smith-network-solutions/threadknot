@@ -36,7 +36,14 @@
 # (notifications about a failed build, form submission, security alert,
 # signature request, ...). Bulk, auto-replies and calendar mail are skipped.
 # Prints ONE signal (kind "sweep", id gmail:sweep:<account>:<YYYY-MM-DDTHH>
-# local) when the list is non-empty; nothing when empty or outside the window.
+# local) per run inside the window, even when nothing is listed; nothing
+# outside the window. Besides the human body it carries a top-level `items`
+# array (every listed thread, uncapped: key, title, client, detail, url,
+# group) and refs.scope = gmail:<account>: plus refs.openKeys = keys of every
+# thread still waiting on you (before the snooze and min-age filters), so a
+# thread you answered drops out and the engine closes its task.
+# Task keys (docs/BOSUN.md §10.2): poll signals carry
+# refs.key = gmail:<account>:<threadId>.
 #   SWEEP_HOURS                local window, default 08:00-18:00 (end exclusive)
 #   SWEEP_DAYS                 default mon-fri (also "mon,wed", "all")
 #   SWEEP_ALWAYS=1             ignore the window (--sweep --now sets it)
@@ -240,6 +247,44 @@ sweep_line() {
 # sweep_id <account> [YYYY-MM-DDTHH]: the per-hour signal id.
 sweep_id() { printf 'gmail:sweep:%s:%s' "$1" "${2:-$(date +%Y-%m-%dT%H)}"; }
 
+# thread_key <account> <threadId>: the Bosun task key (docs/BOSUN.md §10.2).
+thread_key() { printf 'gmail:%s:%s' "${1,,}" "$2"; }
+
+FREE_MAIL_RE='^(gmail|googlemail|outlook|hotmail|live|msn|yahoo|ymail|aol|icloud|me|mac|proton|protonmail|pm|gmx|zoho|comcast|att|sbcglobal|verizon|fastmail)\.'
+
+# client_label <from header>: the sender's organisation as a short label: the
+# registrable domain ("mail.acme.co.uk" -> "acme.co.uk"), or the sender's name
+# for personal mailboxes (gmail.com, outlook.com, ...).
+client_label() {
+  local d n; d="$(domain_of "$1")"
+  if [[ "$d" =~ $FREE_MAIL_RE ]]; then name_of "$1"; return; fi
+  IFS=. read -ra parts <<<"$d"
+  n=${#parts[@]}
+  if (( n >= 3 )) && [[ ${#parts[n-1]} -eq 2 && "${parts[n-2]}" =~ ^(co|com|org|net|ac|gov|edu)$ ]]; then
+    printf '%s.%s.%s' "${parts[n-3]}" "${parts[n-2]}" "${parts[n-1]}"
+  elif (( n >= 2 )); then
+    printf '%s.%s' "${parts[n-2]}" "${parts[n-1]}"
+  else
+    printf '%s' "$d"
+  fi
+}
+
+# sweep_item <group waiting|task> <age h> <from header> <subject> <snippet> <threadId> <account>
+# -> one compact JSON object for the sweep's top-level `items` array.
+sweep_item() {
+  local who addr subj="${4:-(no subject)}"
+  who="$(name_of "$3")"; addr="$(addr_of "$3")"
+  jq -nc --arg g "$1" --arg age "$2" --arg who "$who" --arg addr "$addr" --arg subj "$subj" \
+    --arg snip "$(tidy_snippet "$5")" --arg tid "$6" --arg key "$(thread_key "$7" "$6")" --arg client "$(client_label "$3")" '
+    {key: $key,
+     title: (if $g == "waiting" then "Reply to " + $who + ": " + $subj else $subj + " (" + $who + ")" end),
+     client: $client,
+     detail: ($age + "h · " + (if $who == $addr then "" else $who + " " end) + "<" + $addr + ">"
+              + (if $snip == "" then "" else " — " + $snip end)),
+     url: ("https://mail.google.com/mail/u/0/#inbox/" + $tid),
+     group: $g}'
+}
+
 # cap_lines <cap bytes> <footer> < body: drops trailing lines to fit; footer always kept.
 cap_lines() {
   local cap="$1" footer="$2" body dropped=0
@@ -337,6 +382,21 @@ selftest() {
     "- 26h · Bob Jones <bob@acme.com> · Quote — Can you send it's price? · https://mail.google.com/mail/u/0/#inbox/t1 (id t1)"
   eq "sweep line bare" "$(sweep_line 3 'x@y.com' '' 's' 't2')" "- 3h · <x@y.com> · (no subject) — s · https://mail.google.com/mail/u/0/#inbox/t2 (id t2)"
   eq "sweep id"   "$(sweep_id spencer@example.com 2026-09-28T09)" "gmail:sweep:spencer@example.com:2026-09-28T09"
+
+  # -- task keys + sweep items
+  eq "thread key"        "$(thread_key Spencer@Example.com 19a0f)" "gmail:spencer@example.com:19a0f"
+  eq "client domain"     "$(client_label 'Bob <bob@mail.acme.com>')" "acme.com"
+  eq "client cc tld"     "$(client_label 'x@shop.acme.co.uk')" "acme.co.uk"
+  eq "client bare"       "$(client_label 'x@acme.io')" "acme.io"
+  eq "client free mail"  "$(client_label '"Jo Smith" <jo.smith@gmail.com>')" "Jo Smith"
+  local it
+  it="$(sweep_item waiting 26 '"Bob Jones" <bob@acme.com>' 'Quote' 'Can you send it&#39;s price?' t1 spencer@example.com)"
+  eq "item waiting" "$it" '{"key":"gmail:spencer@example.com:t1","title":"Reply to Bob Jones: Quote","client":"acme.com","detail":"26h · Bob Jones <bob@acme.com> — Can you send it'"'"'s price?","url":"https://mail.google.com/mail/u/0/#inbox/t1","group":"waiting"}'
+  it="$(sweep_item task 3 'Railway <hello@notify.railway.app>' 'Build failed for g5' '' t2 me@x.io)"
+  eq "item task title"   "$(jq -r .title <<<"$it")" "Build failed for g5 (Railway)"
+  eq "item task client"  "$(jq -r .client <<<"$it")" "railway.app"
+  eq "item task detail"  "$(jq -r .detail <<<"$it")" "3h · Railway <hello@notify.railway.app>"
+  eq "item no subject"   "$(sweep_item waiting 1 'x@y.com' '' 's' t3 me@x.io | jq -r .title)" "Reply to x@y.com: (no subject)"
   [[ "$(sweep_id a@b.c)" =~ ^gmail:sweep:a@b\.c:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$ ]]; check "sweep id format now" 0 test $? -eq 0
   local capped; capped="$(for i in $(seq 1 300); do printf -- '- %0200d\n' "$i"; done | cap_lines 32768 $'---\nfooter')"
   check "cap under 32 KiB"   0 test "$(printf '%s' "$capped" | wc -c)" -le 32768
@@ -450,7 +510,7 @@ run_sweep() {
   export -f sweep_fetch_one; export SWEEP_HEADERS
   (( ${#ids[@]} )) && printf '%s\n' "${ids[@]}" | xargs -P 8 -I{} bash -c 'sweep_fetch_one "$1" "$2"' _ {} "$tmp"
 
-  local wait_lines=() task_lines=() snoozed=0 young=0 errs=0 authfail=0
+  local wait_lines=() task_lines=() wait_items=() task_items=() open_keys=() snoozed=0 young=0 errs=0 authfail=0
   declare -A why=()
   local rec f tid ms age cls
   for f in "$tmp"/*; do
@@ -466,7 +526,6 @@ run_sweep() {
       continue
     fi
     jq -e '.empty' <<<"$rec" >/dev/null && continue
-    if [[ -n "${SNOOZED[$tid]:-}" ]]; then snoozed=$((snoozed + 1)); continue; fi
     ms="$(jq -r '.internalDate // "0"' <<<"$rec")"
     age=$(( (now - ms / 1000) / 3600 ))
     local from to subject unsub prec autos xauto category ctype snippet
@@ -475,10 +534,17 @@ run_sweep() {
       jq -r '.from, .to, .subject, .unsub, .prec, .autos, .xauto, .category, .ctype, .snippet | gsub("[\r\n]+"; " ")' <<<"$rec")
     cls="$(sweep_class "$from" "$to" "$subject" "$unsub" "$prec" "$autos" "$xauto" "$category" "$ctype" "$snippet" \
       "${GMAIL_ALLOW_DOMAINS_FILE:-}" "$ME")"
+    # Still waiting on you, listed or not (too young, snoozed): its task stays
+    # open. A thread you answered, archived, or that aged out of the query is
+    # absent from openKeys and the engine closes its task.
+    if [[ "$cls" == waiting || "$cls" == task ]]; then open_keys+=("$(thread_key "$ME" "$tid")"); fi
     if [[ "$cls" == waiting || "$cls" == task ]] && (( age < min_age )); then young=$((young + 1)); continue; fi
+    if [[ ( "$cls" == waiting || "$cls" == task ) && -n "${SNOOZED[$tid]:-}" ]]; then snoozed=$((snoozed + 1)); continue; fi
     case "$cls" in
-      waiting) wait_lines+=("$(printf '%06d' "$age")"$'\t'"$(sweep_line "$age" "$from" "$subject" "$snippet" "$tid")") ;;
-      task)    task_lines+=("$(printf '%06d' "$age")"$'\t'"$(sweep_line "$age" "$from" "$subject" "$snippet" "$tid")") ;;
+      waiting) wait_lines+=("$(printf '%06d' "$age")"$'\t'"$(sweep_line "$age" "$from" "$subject" "$snippet" "$tid")")
+               wait_items+=("$(printf '%06d' "$age")"$'\t'"$(sweep_item waiting "$age" "$from" "$subject" "$snippet" "$tid" "$ME")") ;;
+      task)    task_lines+=("$(printf '%06d' "$age")"$'\t'"$(sweep_line "$age" "$from" "$subject" "$snippet" "$tid")")
+               task_items+=("$(printf '%06d' "$age")"$'\t'"$(sweep_item task "$age" "$from" "$subject" "$snippet" "$tid" "$ME")") ;;
       *)       why[$cls]=$(( ${why[$cls]:-0} + 1 )) ;;
     esac
   done
@@ -488,8 +554,9 @@ run_sweep() {
   local nw=${#wait_lines[@]} nt=${#task_lines[@]} total
   total=$((nw + nt))
   local skipped=""; for cls in "${!why[@]}"; do skipped+=" ${cls#skip-} ${why[$cls]},"; done
-  log "sweep: ${#ids[@]} inbox threads, waiting $nw, task $nt, snoozed $snoozed, younger than ${min_age}h $young, skipped:${skipped%,}"
-  (( total > 0 )) || return 0
+  log "sweep: ${#ids[@]} inbox threads, waiting $nw, task $nt, snoozed $snoozed, younger than ${min_age}h $young, skipped:${skipped%,}; ${#open_keys[@]} open keys"
+  # Signal even when nothing is listed: the engine needs openKeys to close the
+  # tasks of threads that stopped waiting.
 
   # Lines per group: triage needs the shape, the work turn can re-run the sweep.
   local per_group="${GMAIL_SWEEP_MAX_PER_GROUP:-15}"
@@ -507,16 +574,27 @@ run_sweep() {
   fi
   local footer="---"$'\n'"waiting on you $nw · probably a task $nt · snoozed $snoozed"$'\n'
   footer+="Snooze: add \"<threadId>\": \"<YYYY-MM-DD or ISO datetime>\" to the JSON object in $snooze_file (hidden until then; a bare date means local midnight)."
-  body="$(printf '%s' "$body" | cap_lines "$SWEEP_BODY_CAP" "$footer")"
+  if [[ -n "$body" ]]; then body="$(printf '%s' "$body" | cap_lines "$SWEEP_BODY_CAP" "$footer")"; else body="$footer"; fi
 
-  jq -nc --arg id "$(sweep_id "$ME")" --arg body "$body" --arg me "$ME" \
+  # Items: every listed thread, same order as the body, not capped per group.
+  local items_file keys
+  items_file="$tmp/.items"
+  { (( nw )) && printf '%s\n' "${wait_items[@]}" | sort -r | cut -f2-
+    (( nt )) && printf '%s\n' "${task_items[@]}" | sort -r | cut -f2-; } > "$items_file"
+  keys="$(IFS=,; printf '%s' "${open_keys[*]}")"
+  (( ${#keys} > 61440 )) && log "sweep: refs.openKeys is ${#keys} bytes (over 61440); emitting it anyway"
+
+  jq -c --slurp --arg id "$(sweep_id "$ME")" --arg body "$body" --arg me "$ME" \
     --arg n "$total" --arg snooze "$snooze_file" --arg observed "$(date '+%Y-%m-%dT%H:%M:%S%:z')" \
-    --arg hint "${GMAIL_WORKSPACE_HINT:-}" '
+    --arg hint "${GMAIL_WORKSPACE_HINT:-}" --arg scope "$(thread_key "$ME" "")" --arg keys "$keys" '
     {id: $id, kind: "sweep",
-     title: ("Inbox sweep: " + $n + " thread" + (if $n == "1" then "" else "s" end) + " waiting on you"),
+     title: (if $n == "0" then "Inbox sweep: nothing waiting on you"
+             else "Inbox sweep: " + $n + " thread" + (if $n == "1" then "" else "s" end) + " waiting on you" end),
      body: $body, observedAt: $observed,
-     refs: {url: "https://mail.google.com/mail/u/0/#inbox", account: $me, snoozeFile: $snooze, count: $n}}
-    + (if $hint == "" then {} else {hints: {workspace: $hint}} end)'
+     refs: {url: "https://mail.google.com/mail/u/0/#inbox", account: $me, snoozeFile: $snooze, count: $n,
+            scope: $scope, openKeys: $keys},
+     items: .}
+    + (if $hint == "" then {} else {hints: {workspace: $hint}} end)' "$items_file"
 }
 
 if (( SWEEP )); then run_sweep; exit 0; fi
@@ -615,7 +693,8 @@ for rec in "${RECORDS[@]}"; do
   jq -nc \
     --arg id "gmail:$mid" --arg subject "$subject" --arg who "$(name_of "$from")" \
     --arg from "$from" --arg to "$to" --arg date "$date_h" --arg text "$text" \
-    --arg observed "$observed" --arg thread "$thread" --arg mid "$mid" --arg fromAddr "$from_addr" '
+    --arg observed "$observed" --arg thread "$thread" --arg mid "$mid" --arg fromAddr "$from_addr" \
+    --arg key "$(thread_key "$ME" "$thread")" '
     {
       id: $id,
       kind: "email",
@@ -624,7 +703,7 @@ for rec in "${RECORDS[@]}"; do
       observedAt: $observed,
       refs: {
         url: ("https://mail.google.com/mail/u/0/#inbox/" + $thread),
-        from: $fromAddr, threadId: $thread, messageId: $mid
+        from: $fromAddr, threadId: $thread, messageId: $mid, key: $key
       }
     }'
   emitted=$((emitted+1))

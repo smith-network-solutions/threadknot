@@ -33,9 +33,18 @@ Read-only: only GET requests plus the auth exchange/refresh POSTs.
 Exit codes: 0 ok; 2 auth failure; 1 network/API failure (no watermark is
 printed, so the next run retries from the same point).
 
+Task keys (docs/BOSUN.md §10.2): every poll / --task signal carries
+refs.key = orbit:<slug>:<taskId> and refs.ticket = <ticketNumber> when set.
+
 Sweep mode (--sweep): no watermark. Lists open tasks still waiting on you and
 prints ONE signal (kind "sweep", id orbit:sweep:<slug>:<YYYY-MM-DDTHH> local)
-when the list is non-empty, nothing when it is empty or outside the window.
+per run inside the window, even when nothing is listed (the engine needs
+openKeys to close tasks); nothing outside the window. Besides the human body
+it carries a top-level `items` array (every listed task, uncapped, in group
+order: key, title, client, detail, url, group, due, orbitTaskId, orbitTicket)
+and refs.scope = orbit:<slug>: plus refs.openKeys = comma-joined keys of
+EVERY open task in the org (snoozed, ignored and unlisted ones included), so
+a key's absence means the task is closed in Orbit.
 Groups, first match wins: client replied and nobody answered (status
 response_received or lastActivityType EXTERNAL_REPLY/NEW_INBOUND, newest task
 email inbound and no later non-internal staff comment); overdue; nudged and
@@ -213,6 +222,11 @@ def task_emails(orbit, base, task_id):
         return []
 
 
+def task_key(slug, tid):
+    """The Bosun task key for an Orbit task (docs/BOSUN.md §10.2)."""
+    return f"orbit:{slug}:{tid}"
+
+
 def build_signal(task, *, slug, web_url, hint, members, clients, comment, emails=None, state_dir=None):
     tid = task["id"]
     client = (task.get("client") or {}).get("name") or clients.get(task.get("clientId") or "", "")
@@ -260,7 +274,10 @@ def build_signal(task, *, slug, web_url, hint, members, clients, comment, emails
         "url": f"{web_url.rstrip('/')}/{slug}/tasks/{tid}",
         "org": slug,
         "taskId": tid,
+        "key": task_key(slug, tid),
     }
+    if task.get("ticketNumber") not in (None, ""):
+        refs["ticket"] = str(task["ticketNumber"])
     if client:
         refs["client"] = client
     if saved:
@@ -333,6 +350,8 @@ def selftest():
     check("not self-caused: client reply", self_caused({"lastActivityType": "EXTERNAL_REPLY", "lastActivityByUserId": "me1"}, {"me1"}), False)
     check("not self-caused: someone else", self_caused({"lastActivityType": "STATUS_CHANGED", "lastActivityByUserId": "u2"}, {"me1"}), False)
     check("not self-caused: unknown me", self_caused({"lastActivityType": "STATUS_CHANGED", "lastActivityByUserId": "me1"}, set()), False)
+    check("item title drops leading client", item_title("replied", {"id": "t", "title": "Bay Gold: reconnect with Paul"}, "Bay Gold Staging & Interior Design"), "Reply to Bay Gold Staging & Interior Design: Reconnect with Paul")
+    check("item title keeps unrelated title", item_title("replied", {"id": "t", "title": "New link for form"}, "Aletheia Integrative"), "Reply to Aletheia Integrative: New link for form")
     check("default excludes done", status_wanted("done", None), False)
     check("default keeps custom", status_wanted("awaiting_response", None), True)
     check("include list", status_wanted("todo", {"todo"}), True)
@@ -372,6 +391,10 @@ def selftest():
     check("signal url", sig["refs"]["url"], "https://orbit.example/acme-1/tasks/t1")
     check("signal hint", sig["hints"], {"workspace": "Acme"})
     check("refs all strings", all(isinstance(v, str) for v in sig["refs"].values()), True)
+    check("signal key", sig["refs"]["key"], "orbit:acme-1:t1")
+    check("signal ticket is a string", sig["refs"]["ticket"], "42")
+    check("no ticket ref without a number", "ticket" in build_signal(dict(task, ticketNumber=None), slug="s", web_url="u",
+                                                                   hint="", members={}, clients={}, comment=None)["refs"], False)
     check("body has client", "Client: Acme Co" in sig["body"], True)
     check("body has assignee", "Assignee: Oscar" in sig["body"], True)
     check("body has due day", "Due: 2026-09-30" in sig["body"], True)
@@ -452,8 +475,8 @@ def selftest():
     check("sweep id", sw["id"], "orbit:sweep:acme-1:2026-09-28T09")
     check("sweep kind", sw["kind"], "sweep")
     check("sweep title", sw["title"], "Orbit sweep · Acme: 2 items need you")
-    check("sweep refs", sw["refs"], {"url": "https://o.x/acme-1/tasks", "org": "acme-1",
-                                     "snoozeFile": "/s/snooze.json", "count": "2"})
+    check("sweep refs (no open ids: no reconcile)", sw["refs"], {"url": "https://o.x/acme-1/tasks", "org": "acme-1",
+                                                                 "snoozeFile": "/s/snooze.json", "count": "2"})
     check("sweep line", sw["body"].split("\n")[1],
           "- [#7] Help — Acme Co · response_received · no due · Oscar · Reply from a@b.co · https://o.x/acme-1/tasks/t9 (id t9)")
     check("groups in order", sw["body"].index("### Client replied") < sw["body"].index("### Unassigned"), True)
@@ -461,6 +484,47 @@ def selftest():
     check("footer snooze path", "/s/snooze.json" in sw["body"].split("---")[-1], True)
     check("empty -> no signal", build_sweep({}, slug="s", label="s", web_url="u", hint="", snoozed=0,
                                             snooze_path="p", now=mon9, members={}, clients={}), None)
+
+    # -- sweep: items, scope, openKeys
+    sw = build_sweep(tasks_g, slug="acme-1", label="Acme", web_url="https://o.x", hint="Acme", snoozed=2,
+                     snooze_path="/s/snooze.json", now=mon9, members={"u1": "Oscar"}, clients={"cl1": "Acme Co"},
+                     open_ids=["t9", "t8", "quiet", "snoozed1", "ignored1"])
+    check("items in group order", [i["key"] for i in sw["items"]], ["orbit:acme-1:t9", "orbit:acme-1:t8"])
+    check("item replied", sw["items"][0], {
+        "key": "orbit:acme-1:t9", "title": "Reply to Acme Co: Help", "client": "Acme Co",
+        "detail": "response_received · no due · Oscar · Reply from a@b.co", "url": "https://o.x/acme-1/tasks/t9",
+        "group": "replied", "due": None, "orbitTaskId": "t9", "orbitTicket": "7"})
+    check("item unassigned", (sw["items"][1]["title"], sw["items"][1]["client"], sw["items"][1]["due"],
+                              sw["items"][1]["orbitTicket"]), ("Assign: New lead", None, "2026-10-01", None))
+    check("detail is the line's middle", sweep_line(tasks_g["replied"][0], slug="acme-1", web_url="https://o.x",
+                                                    members={"u1": "Oscar"}, clients={"cl1": "Acme Co"}),
+          "- [#7] Help — Acme Co · " + sw["items"][0]["detail"] + " · https://o.x/acme-1/tasks/t9 (id t9)")
+    check("scope", sw["refs"]["scope"], "orbit:acme-1:")
+    check("openKeys = every open id", sw["refs"]["openKeys"],
+          "orbit:acme-1:t9,orbit:acme-1:t8,orbit:acme-1:quiet,orbit:acme-1:snoozed1,orbit:acme-1:ignored1")
+    check("item keys in scope", all(i["key"].startswith(sw["refs"]["scope"]) for i in sw["items"]), True)
+    check("refs still all strings", all(isinstance(v, str) for v in sw["refs"].values()), True)
+    tt = lambda grp, t, c: item_title(grp, dict({"id": "x", "title": "Fix DNS"}, **t), c)
+    check("title overdue", tt("overdue", {}, "Keith Roofing"), "Fix DNS (Keith Roofing, overdue)")
+    check("title overdue no client", tt("overdue", {}, ""), "Fix DNS (overdue)")
+    check("title nudged", tt("nudged", {}, "K"), "Answer nudge: Fix DNS")
+    check("title unassigned", tt("unassigned", {}, "K"), "Assign: Fix DNS")
+    check("title stale", tt("stale", {}, "K"), "Follow up: Fix DNS")
+    check("title replied falls back to sender", tt("replied", {"lastActivitySummary": "Reply from bo@x.co"}, ""),
+          "Reply to bo@x.co: Fix DNS")
+    many = {"overdue": [{"id": f"o{i}", "title": f"T{i}"} for i in range(SWEEP_MAX_PER_GROUP + 5)]}
+    sw = build_sweep(many, slug="s", label="S", web_url="u", hint="", snoozed=0, snooze_path="p", now=mon9,
+                     members={}, clients={}, open_ids=[f"o{i}" for i in range(SWEEP_MAX_PER_GROUP + 5)])
+    check("items not capped by the display cap", len(sw["items"]), SWEEP_MAX_PER_GROUP + 5)
+    check("body still capped", sw["body"].count("(id o"), SWEEP_MAX_PER_GROUP)
+    sw = build_sweep({}, slug="s", label="S", web_url="u", hint="", snoozed=1, snooze_path="p", now=mon9,
+                     members={}, clients={}, open_ids=["a"])
+    check("empty list still reconciles", (sw["title"], sw["items"], sw["refs"]["openKeys"], sw["refs"]["count"]),
+          ("Orbit sweep · S: nothing waiting", [], "orbit:s:a", "0"))
+    check("empty body is the footer", sw["body"].startswith("---\n"), True)
+    check("no open tasks -> empty openKeys", build_sweep({}, slug="s", label="S", web_url="u", hint="", snoozed=0,
+                                                         snooze_path="p", now=mon9, members={}, clients={},
+                                                         open_ids=[])["refs"]["openKeys"], "")
     check("one item title", build_sweep({"overdue": [{"id": "z"}]}, slug="s", label="S", web_url="u", hint="",
                                         snoozed=0, snooze_path="p", now=mon9, members={}, clients={})["title"],
           "Orbit sweep · S: 1 item needs you")
@@ -661,22 +725,81 @@ def ignored(task, patterns):
     return any(p in title for p in patterns)
 
 
-def sweep_line(task, *, slug, web_url, members, clients):
-    tid = task["id"]
-    client = (task.get("client") or {}).get("name") or clients.get(task.get("clientId") or "", "") or "no client"
+def task_client(task, clients):
+    return (task.get("client") or {}).get("name") or clients.get(task.get("clientId") or "", "")
+
+
+def sweep_detail(task, *, members):
+    """`status · due · assignee · last activity`: the middle of a sweep line."""
     assignee = members.get(task.get("assigneeId") or "", "") or task.get("assigneeId") or ""
     if not assignee:
         names = [((a.get("user") or {}).get("displayName") or members.get(a.get("userId") or "", ""))
                  for a in task.get("assignments") or [] if (a.get("role") or "assignee") == "assignee"]
         assignee = ", ".join(n for n in names if n) or "unassigned"
     due = f"due {fmt_day(task['dueDate'])}" if task.get("dueDate") else "no due"
-    parts = [client, task.get("status") or "", due, assignee]
+    parts = [task.get("status") or "", due, assignee]
     if task.get("lastActivitySummary"):
         parts.append(task["lastActivitySummary"].strip())
-    parts.append(f"{web_url.rstrip('/')}/{slug}/tasks/{tid}")
+    return " · ".join(parts)
+
+
+def sweep_line(task, *, slug, web_url, members, clients):
+    tid = task["id"]
+    client = task_client(task, clients) or "no client"
+    parts = [client, sweep_detail(task, members=members), f"{web_url.rstrip('/')}/{slug}/tasks/{tid}"]
     num = f"[#{task['ticketNumber']}] " if task.get("ticketNumber") else ""
     title = clean_title(task.get("title")) or f"Task {tid}"
     return f"- {num}{title} — {' · '.join(parts)} (id {tid})"
+
+
+def replier(task):
+    """Who wrote in, from a "Reply from x@y" / "New ticket from x@y" summary."""
+    summary = (task.get("lastActivitySummary") or "").strip()
+    for p in INBOUND_SUMMARY:
+        if summary.lower().startswith(p):
+            return summary[len(p):].strip()
+    return task.get("sourceEmail") or ""
+
+
+def item_title(group, task, client):
+    """Imperative to-do title naming the client, by sweep group."""
+    title = clean_title(task.get("title")) or f"Task {task['id']}"
+    # Many task titles already lead with the client ("Bay Gold: reconnect…");
+    # naming it twice reads as noise. Drop the leading copy, keep ours.
+    if client:
+        for word in (client, client.split()[0]):
+            lead = word.lower()
+            if len(lead) >= 3 and title.lower().startswith(lead):
+                rest = title[len(word):].lstrip(" :-—–·|")
+                if rest:
+                    title = rest[:1].upper() + rest[1:]
+                break
+    if group == "replied":
+        return f"Reply to {client or replier(task) or 'the client'}: {title}"
+    if group == "overdue":
+        return f"{title} ({client}, overdue)" if client else f"{title} (overdue)"
+    if group == "nudged":
+        return f"Answer nudge: {title}"
+    if group == "unassigned":
+        return f"Assign: {title}"
+    return f"Follow up: {title}"
+
+
+def sweep_item(group, task, *, slug, web_url, members, clients):
+    tid = task["id"]
+    client = task_client(task, clients)
+    ticket = task.get("ticketNumber")
+    return {
+        "key": task_key(slug, tid),
+        "title": item_title(group, task, client),
+        "client": client or None,
+        "detail": sweep_detail(task, members=members),
+        "url": f"{web_url.rstrip('/')}/{slug}/tasks/{tid}",
+        "group": group,
+        "due": fmt_day(task["dueDate"]) if task.get("dueDate") else None,
+        "orbitTaskId": tid,
+        "orbitTicket": str(ticket) if ticket not in (None, "") else None,
+    }
 
 
 def snooze_footer(path):
@@ -699,15 +822,26 @@ def cap_body(sections, footer, cap):
     return "\n".join(lines) + f"\n…{dropped} more lines not shown" + tail
 
 
-def build_sweep(grouped, *, slug, label, web_url, hint, snoozed, snooze_path, now, members, clients):
-    """grouped: {group key: [task, ...]}. Returns the signal dict, or None if empty."""
+OPEN_KEYS_WARN = 60 * 1024
+
+
+def build_sweep(grouped, *, slug, label, web_url, hint, snoozed, snooze_path, now, members, clients,
+                open_ids=None):
+    """grouped: {group key: [task, ...]}. open_ids: ids of EVERY open task in the
+    org (listed or not, snoozed and ignored included); the engine closes any
+    task in `refs.scope` whose key is missing from `refs.openKeys`, so pass
+    None when the list is incomplete and the reconcile refs are left out.
+    Returns the signal dict, or None when there is nothing listed and nothing
+    to reconcile."""
     total = sum(len(v) for v in grouped.values())
-    if not total:
+    if not total and open_ids is None:
         return None
-    sections, counts = [], []
+    sections, counts, out_items = [], [], []
     for key, name in SWEEP_GROUPS:
         items = grouped.get(key) or []
         counts.append(f"{name.lower()} {len(items)}")
+        out_items += [sweep_item(key, t, slug=slug, web_url=web_url, members=members, clients=clients)
+                      for t in items]
         if items:
             lines = [f"### {name} ({len(items)})"]
             shown = items[:SWEEP_MAX_PER_GROUP]
@@ -716,14 +850,22 @@ def build_sweep(grouped, *, slug, label, web_url, hint, snoozed, snooze_path, no
                 lines.append(f"…{len(items) - len(shown)} more in this group; run the sweep with --sweep --now for the full list")
             sections.append("\n".join(lines))
     footer = "---\n" + " · ".join(counts) + f" · snoozed {snoozed}\n" + snooze_footer(snooze_path)
+    refs = {"url": f"{web_url.rstrip('/')}/{slug}/tasks", "org": slug,
+            "snoozeFile": snooze_path, "count": str(total)}
+    if open_ids is not None:
+        refs["scope"] = task_key(slug, "")
+        refs["openKeys"] = ",".join(task_key(slug, i) for i in open_ids)
+        if len(refs["openKeys"].encode()) > OPEN_KEYS_WARN:
+            log(f"sweep: refs.openKeys is {len(refs['openKeys'].encode())} bytes (over {OPEN_KEYS_WARN}); emitting it anyway")
     sig = {
         "id": f"orbit:sweep:{slug}:{now.strftime('%Y-%m-%dT%H')}",
         "kind": "sweep",
-        "title": f"Orbit sweep · {label}: {total} item{'s' if total != 1 else ''} need{'s' if total == 1 else ''} you",
-        "body": cap_body(sections, footer, SWEEP_BODY_CAP),
+        "title": (f"Orbit sweep · {label}: {total} item{'s' if total != 1 else ''} need{'s' if total == 1 else ''} you"
+                  if total else f"Orbit sweep · {label}: nothing waiting"),
+        "body": cap_body(sections, footer, SWEEP_BODY_CAP) if sections else footer,
         "observedAt": now.isoformat(timespec="seconds"),
-        "refs": {"url": f"{web_url.rstrip('/')}/{slug}/tasks", "org": slug,
-                 "snoozeFile": snooze_path, "count": str(total)},
+        "refs": refs,
+        "items": out_items,
     }
     if hint:
         sig["hints"] = {"workspace": hint}
@@ -879,7 +1021,7 @@ def run_sweep(orbit, env, *, org, slug, web_url, hint, state_dir):
     if not me:
         log(f"ORBIT_ME_EMAIL {','.join(wanted_me)} is not a member of this org; 'Mine and stale' is empty")
 
-    tasks, page = [], 1
+    tasks, page, complete = [], 1, True
     params = {"statusNotIn": ",".join(DEFAULT_EXCLUDED), "sortBy": "updatedAt", "sortOrder": "desc", "limit": PAGE_LIMIT}
     while page <= MAX_PAGES:
         res = orbit.get(base + "/tasks", dict(params, page=page))
@@ -889,7 +1031,8 @@ def run_sweep(orbit, env, *, org, slug, web_url, hint, state_dir):
             break
         page += 1
     else:
-        log(f"stopped after {MAX_PAGES} pages")
+        complete = False
+        log(f"stopped after {MAX_PAGES} pages; open task list incomplete, so no refs.openKeys (nothing will be closed)")
 
     open_tasks, snoozed, skipped = [], 0, 0
     for t in tasks:
@@ -937,10 +1080,15 @@ def run_sweep(orbit, env, *, org, slug, web_url, hint, state_dir):
     for items in grouped.values():  # oldest activity first: longest-waiting on top
         items.sort(key=lambda t: parse_ts(t.get("lastActivityAt")) or parse_ts(t.get("updatedAt"))
                    or datetime.min.replace(tzinfo=timezone.utc))
+    # Every open task (statusNotIn done,cancelled), listed or not: absence from
+    # openKeys must mean "closed in Orbit" and nothing else.
+    open_ids = list(dict.fromkeys(t["id"] for t in tasks if t.get("id"))) if complete else None
     sig = build_sweep(grouped, slug=slug, label=hint or slug, web_url=web_url, hint=hint,
-                      snoozed=snoozed, snooze_path=snooze_path, now=now, members=members, clients=clients)
+                      snoozed=snoozed, snooze_path=snooze_path, now=now, members=members, clients=clients,
+                      open_ids=open_ids)
     log(f"sweep: {len(tasks)} open fetched, {skipped} ignored, {snoozed} snoozed, "
-        + ", ".join(f"{k} {len(v)}" for k, v in grouped.items()))
+        + ", ".join(f"{k} {len(v)}" for k, v in grouped.items())
+        + (f"; {len(sig['items'])} items, {len(open_ids)} open keys" if sig and open_ids is not None else ""))
     if sig:
         print(json.dumps(sig, ensure_ascii=False))
     return 0

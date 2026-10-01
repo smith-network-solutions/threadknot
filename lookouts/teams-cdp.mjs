@@ -14,6 +14,8 @@
 //   signal per burst that contains at least one message from the contact
 //   (unless TEAMS_INCLUDE_MINE_ONLY=1). The watermark advances to the newest
 //   message regardless of filtering, so mine-only tails are not re-scanned.
+//   Each signal carries refs.key = teams:<conversationId>:<first message id
+//   of the burst>, the Bosun task key (docs/BOSUN.md §10.2).
 //
 // HOW IT READS (discovered, see lookouts/README.md): Teams for Linux is a
 // signed-in Electron app. This attaches to its "Microsoft Teams" page target
@@ -139,6 +141,12 @@ function groupBursts(messages, gapMs) {
     else { cur = [m]; bursts.push(cur); }
   }
   return bursts;
+}
+
+// Bosun task key for a burst (docs/BOSUN.md §10.2): the conversation plus the
+// burst's first message id, so every signal about the same burst lands on one task.
+function burstKey(conversationId, burst) {
+  return `teams:${conversationId}:${burst[0].id}`;
 }
 
 // watermark comparison: is message time strictly newer than watermark?
@@ -489,6 +497,7 @@ async function runPoll() {
       const body = burst.map((m) => renderMessageLine(m, imgMap, mriNames)).join("\n");
 
       const refs = {
+        key: burstKey(cid, burst),
         conversationId: cid,
         lastMessageId: last.id,
         attachments: allPaths.join(";"),
@@ -583,6 +592,12 @@ function selftest() {
   eq("bursts-count", g1.length, 2);
   eq("bursts-shape", g1.map((b) => b.length), [2, 2]);
   eq("bursts-empty", groupBursts([], BURST_GAP_MS).length, 0);
+
+  // task key: conversation + first message of the burst
+  const ids = (t, id) => ({ timeMs: t, id });
+  const g2 = groupBursts([ids(0, "100"), ids(min, "160"), ids(40 * min, "2500")], BURST_GAP_MS);
+  eq("key-first-msg", burstKey("19:uni01_a@thread.v2", g2[0]), "teams:19:uni01_a@thread.v2:100");
+  eq("key-second-burst", burstKey("19:uni01_a@thread.v2", g2[1]), "teams:19:uni01_a@thread.v2:2500");
 
   // watermark comparison
   eq("newer-yes", isNewer(Date.parse("2026-09-28T12:00:00Z"), "2026-09-28T11:00:00Z"), true);
