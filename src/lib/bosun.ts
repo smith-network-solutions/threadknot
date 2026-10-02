@@ -14,7 +14,10 @@ import type {
   Lookout,
   LookoutKind,
   LookoutType,
+  PersistedEvent,
+  Question,
   QuietHours,
+  TaskEvent,
   TaskStatus,
   Thread,
   ThreadSettings,
@@ -701,4 +704,71 @@ export function taskMatches(task: BosunTask, query: string): boolean {
 /** Tasks answering "need you" for the launch button and rail dot. */
 export function needsYouCount(tasks: readonly BosunTask[]): number {
   return tasks.reduce((n, t) => n + (t.status === "needs_you" ? 1 : 0), 0);
+}
+
+// ---- task page: what the thread says ------------------------------------
+
+/** The last finished assistant message in a thread tail (blank ones skipped),
+ *  for the task page's "Latest from Bosun". Null when there is none. */
+export function lastAssistantMessage(
+  events: readonly PersistedEvent[],
+): { text: string; ts: string; seq: number } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.event.kind === "assistant_message" && e.event.text.trim()) {
+      return { text: e.event.text, ts: e.ts, seq: e.seq };
+    }
+  }
+  return null;
+}
+
+export interface PendingQuestion {
+  requestId: string;
+  questions: Question[];
+  ts: string;
+  seq: number;
+}
+
+/** The question the thread is waiting on, if any. A `question_request` is
+ *  answerable only while its turn is live: the feed marks it answered on a
+ *  matching `question_resolved`, and the server drops it (thread idle) on
+ *  `turn_completed` / `turn_aborted` / `error`; a later `turn_started` means
+ *  a new turn has begun past it. Any of those closes it. */
+export function pendingQuestion(events: readonly PersistedEvent[]): PendingQuestion | null {
+  let open: PendingQuestion | null = null;
+  const resolved = new Set<string>();
+  for (const e of events) {
+    const ev = e.event;
+    switch (ev.kind) {
+      case "question_request":
+        // Replays may double-fire a request that was already answered.
+        if (!resolved.has(ev.requestId) && ev.questions.length > 0) {
+          open = { requestId: ev.requestId, questions: ev.questions, ts: e.ts, seq: e.seq };
+        }
+        break;
+      case "question_resolved":
+        resolved.add(ev.requestId);
+        if (open?.requestId === ev.requestId) open = null;
+        break;
+      case "turn_started":
+      case "turn_completed":
+      case "turn_aborted":
+      case "error":
+        open = null;
+        break;
+      default:
+        break;
+    }
+  }
+  return open;
+}
+
+const MIGRATION_NOTE = /^created from an existing bosun thread\.?$/i;
+
+/** History worth reading: the migration's "Created from an existing Bosun
+ *  thread" entry is noise once anything else has happened, so it is dropped
+ *  whenever other entries exist. Order is kept (oldest first). */
+export function visibleHistory<T extends Pick<TaskEvent, "note">>(history: readonly T[]): T[] {
+  const rest = history.filter((ev) => !MIGRATION_NOTE.test(ev.note.trim()));
+  return rest.length > 0 ? rest : history.slice();
 }

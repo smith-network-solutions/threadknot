@@ -2823,13 +2823,16 @@ function TaskRow({
         <span className="task-row-title" title={title}>
           {title}
         </span>
-        <span className="task-row-meta">{taskMetaLine(task, workspaceName)}</span>
-      </span>
-      {ticket && (
-        <span className="task-orbit-pill" title={task.orbit?.url}>
-          {ticket}
+        <span className="task-row-meta">
+          {taskMetaLine(task, workspaceName)}
+          {ticket && (
+            <span className="task-orbit-ref" title={task.orbit?.url}>
+              {" · "}
+              {ticket}
+            </span>
+          )}
         </span>
-      )}
+      </span>
     </button>
   );
 }

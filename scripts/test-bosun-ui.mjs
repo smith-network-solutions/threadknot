@@ -378,6 +378,70 @@ try {
     assert.equal(b.isOpenTask(task('s', 'snoozed')), false);
   });
 
+  // ---- task page: thread tail helpers ----
+  let seqN = 0;
+  const ev = (event) => ({ seq: ++seqN, ts: at(2026, 10, 2, 9, seqN % 60), event });
+  const q = (requestId) => ev({
+    kind: 'question_request',
+    requestId,
+    questions: [{ id: 'q1', header: 'Call', question: 'Which build?', options: [{ label: 'A', description: '' }], multiSelect: false, allowOther: true, isSecret: false }],
+  });
+
+  test('lastAssistantMessage: newest non-blank, ignores deltas and other kinds', () => {
+    assert.equal(b.lastAssistantMessage([]), null);
+    const events = [
+      ev({ kind: 'user_message', text: 'hi' }),
+      ev({ kind: 'assistant_message', text: 'first' }),
+      ev({ kind: 'tool_start', callId: 'c', name: 'Bash', detail: '' }),
+      ev({ kind: 'assistant_message', text: 'second **bold**' }),
+      ev({ kind: 'assistant_message', text: '   ' }),
+      ev({ kind: 'assistant_delta', text: 'streaming' }),
+      ev({ kind: 'turn_completed' }),
+    ];
+    const got = b.lastAssistantMessage(events);
+    assert.equal(got.text, 'second **bold**');
+    assert.equal(got.seq, events[3].seq);
+    assert.equal(b.lastAssistantMessage([ev({ kind: 'user_message', text: 'x' })]), null);
+  });
+
+  test('pendingQuestion: open while the turn is live', () => {
+    const events = [ev({ kind: 'turn_started' }), ev({ kind: 'assistant_message', text: 'hm' }), q('r1')];
+    const p = b.pendingQuestion(events);
+    assert.equal(p.requestId, 'r1');
+    assert.equal(p.questions[0].question, 'Which build?');
+  });
+
+  test('pendingQuestion: closed by question_resolved for the same request only', () => {
+    assert.equal(b.pendingQuestion([ev({ kind: 'turn_started' }), q('r1'), ev({ kind: 'question_resolved', requestId: 'r1', answers: { q1: ['A'] } })]), null);
+    const other = b.pendingQuestion([ev({ kind: 'turn_started' }), q('r2'), ev({ kind: 'question_resolved', requestId: 'zz' })]);
+    assert.equal(other.requestId, 'r2');
+  });
+
+  test('pendingQuestion: closed by any turn boundary or error', () => {
+    for (const kind of ['turn_completed', 'turn_aborted', 'turn_started']) {
+      assert.equal(b.pendingQuestion([q('r1'), ev({ kind })]), null, kind);
+    }
+    assert.equal(b.pendingQuestion([q('r1'), ev({ kind: 'error', message: 'boom' })]), null);
+  });
+
+  test('pendingQuestion: a replayed request that was already answered stays closed; the newest open one wins', () => {
+    const replay = [ev({ kind: 'turn_started' }), q('r1'), ev({ kind: 'question_resolved', requestId: 'r1' }), q('r1')];
+    assert.equal(b.pendingQuestion(replay), null);
+    const two = [ev({ kind: 'turn_started' }), q('r1'), ev({ kind: 'question_resolved', requestId: 'r1' }), ev({ kind: 'assistant_message', text: 'ok' }), q('r2')];
+    assert.equal(b.pendingQuestion(two).requestId, 'r2');
+    assert.equal(b.pendingQuestion([]), null);
+  });
+
+  test('visibleHistory hides the migration note only when other history exists', () => {
+    const mig = { at: at(2026, 9, 28, 9, 0), note: 'Created from an existing Bosun thread', by: 'bosun' };
+    const st = { at: at(2026, 9, 28, 10, 0), status: 'working', note: '', by: 'bosun' };
+    const note = { at: at(2026, 9, 28, 11, 0), note: 'Asked Bill about the builder', by: 'bosun' };
+    assert.deepEqual(b.visibleHistory([mig, st, note]), [st, note]);
+    assert.deepEqual(b.visibleHistory([mig]), [mig]);
+    assert.deepEqual(b.visibleHistory([]), []);
+    assert.deepEqual(b.visibleHistory([{ ...mig, note: 'created from an existing Bosun thread.' }, note]), [note]);
+  });
+
   console.log(`\n${passed} passed`);
 } finally {
   await rm(dir, { recursive: true, force: true });

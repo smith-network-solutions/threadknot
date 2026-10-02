@@ -1828,6 +1828,19 @@ export interface ThreadknotActions {
   deleteTask: (taskId: string) => Promise<void>;
   /** Show a task in the main pane (null closes it, back to the thread). */
   openTask: (taskId: string | null) => void;
+  /** The tail of any thread (not necessarily the open one), routed to its
+   *  owner; the task page reads its latest message and pending question. */
+  threadTail: (
+    threadId: string,
+    limit?: number,
+  ) => Promise<import("../lib/protocol").RequestMap["thread.get"]["data"]>;
+  /** `question.respond` for a thread that need not be the active one (the
+   *  task page answers its thread's question in place). */
+  answerThreadQuestion: (
+    threadId: string,
+    requestId: string,
+    answers: Record<string, string[]>,
+  ) => Promise<void>;
   /** Export a thread to the archive dir and remove it from the live list. */
   archiveThread: (threadId: string, projectId: string) => Promise<void>;
   /** Reload one machine's archive list into `state.archives[machineId]`.

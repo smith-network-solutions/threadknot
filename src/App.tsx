@@ -1978,6 +1978,22 @@ function makeActions(
       dispatch({ type: "openTask", taskId });
     },
 
+    async threadTail(threadId, limit = 150) {
+      return client.request("thread.get", { threadId, machineId: routeFor(threadId), limit });
+    },
+
+    async answerThreadQuestion(threadId, requestId, answers) {
+      const machineId = routeFor(threadId);
+      await client.request("question.respond", {
+        threadId,
+        requestId,
+        answers,
+        ...(machineId ? { machineId } : {}),
+      });
+      // Mirror the feed when this thread is also the one on screen.
+      if (getState().activeThreadId === threadId) dispatch({ type: "questionAnswer", requestId, answers });
+    },
+
     async bosunWebhookUrl(bosunId, lookoutId) {
       const { url } = await client.request("bosun.webhook.url", { bosunId, lookoutId });
       return url;
