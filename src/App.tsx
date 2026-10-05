@@ -52,9 +52,12 @@ import {
   defaultDraft,
   effortForModel,
   findThread,
+  allWorkspaces,
+  forgetLastTask,
   forgetLastThread,
   forgetNewThreadSettings,
   initialState,
+  loadLastTask,
   loadLastThread,
   loadThreadAttention,
   loadViewPerson,
@@ -63,6 +66,7 @@ import {
   lastProjectKey,
   projectOwner,
   remoteMachineId,
+  rememberLastTask,
   rememberLastThread,
   rememberNewThreadSettings,
   reducer,
@@ -82,7 +86,7 @@ import { DirPicker } from "./components/DirPicker";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
 import { BosunPanel } from "./components/BosunPanel";
-import { displayTitle, stripTitleMarks } from "./lib/bosun";
+import { displayTitle, stripTitleMarks, touchBosunThread, touchTask } from "./lib/bosun";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
 import { PairBrowser } from "./components/PairBrowser";
@@ -391,11 +395,17 @@ function makeActions(
     // doing that for a background refresh also resets every piece of mounted
     // UI state (open agent HUD, scroll position, expanded cards) and produces
     // a visible full-pane blink.
+    let touched = false;
     if (!preserveFeed) {
       dispatch({ type: "openThread", threadId });
       const known = findThread(getState(), threadId);
       rememberLastThread(getState().solo, threadId, known?.machineId ?? machineId);
       if (known) rememberProject(known.projectId, known.machineId);
+      // A startup restore is not you opening it again.
+      if (known && !restoring) {
+        touchBosunThread(known);
+        touched = true;
+      }
     }
     try {
       const { thread, events, nextBefore } = await client.request(
@@ -413,6 +423,8 @@ function makeActions(
       if (!preserveFeed) {
         rememberLastThread(getState().solo, threadId, thread.machineId);
         rememberProject(thread.projectId, thread.machineId);
+        // Covers a thread that wasn't in the list yet (a fresh Work on it).
+        if (!restoring && !touched) touchBosunThread(thread);
       }
       // Repo summaries power the per-repo badges on chat diff cards — load
       // them once per project without waiting for the Git tab to be opened
@@ -1940,15 +1952,21 @@ function makeActions(
     async refreshBosunTasks() {
       const { tasks } = await client.request("bosun.task.list", { includeClosed: true });
       dispatch({ type: "bosunTasks", tasks: tasks ?? [] });
+      return tasks ?? [];
     },
 
     async updateTask(payload) {
+      touchTask(payload.taskId);
       const task = await client.request("bosun.task.update", payload);
       dispatch({ type: "bosunTaskUpserted", task });
+      // Again once the server has written its history, so the change itself
+      // doesn't read as the Bosun replying.
+      touchTask(payload.taskId);
       return task;
     },
 
     async workTask(taskId, instruction) {
+      touchTask(taskId);
       const { threadId } = await client.request("bosun.task.work", {
         taskId,
         ...(instruction?.trim() ? { instruction: instruction.trim() } : {}),
@@ -1956,6 +1974,7 @@ function makeActions(
       // The thread may be brand new; the server's state.changed refreshes the
       // list, and thread.get below works before that lands.
       await selectThreadRouted(threadId, routeFor(threadId));
+      touchTask(taskId);
       void client
         .request("bosun.task.list", { includeClosed: true })
         .then(({ tasks }) => dispatch({ type: "bosunTasks", tasks: tasks ?? [] }))
@@ -1976,6 +1995,13 @@ function makeActions(
 
     openTask(taskId) {
       dispatch({ type: "openTask", taskId });
+      const solo = getState().solo;
+      if (taskId) {
+        rememberLastTask(solo, taskId);
+        touchTask(taskId);
+      } else {
+        forgetLastTask(solo);
+      }
     },
 
     async threadTail(threadId, limit = 150) {
@@ -1984,6 +2010,8 @@ function makeActions(
 
     async answerThreadQuestion(threadId, requestId, answers) {
       const machineId = routeFor(threadId);
+      const taskId = findThread(getState(), threadId)?.origin?.taskId;
+      if (taskId) touchTask(taskId);
       await client.request("question.respond", {
         threadId,
         requestId,
@@ -2585,6 +2613,26 @@ export default function App() {
             // A push tap that landed during the connect already chose a
             // destination — that is a deliberate navigation, this is a default.
             const navigated = stateRef.current.activeThreadId != null;
+            // The task page, when it was the last thing shown here (opened
+            // after the remembered chat): come back to it, if it still exists.
+            const lastTask = loadLastTask(solo);
+            const lastThreadAt = last?.at ? Date.parse(last.at) : 0;
+            if (!navigated && lastTask && Date.parse(lastTask.at) >= lastThreadAt) {
+              const tasks = await actionsRef.current.refreshBosunTasks().catch(() => null);
+              const task = tasks?.find((t) => t.id === lastTask.taskId);
+              // A solo window only reopens a task of its own project.
+              const inWindow =
+                !solo ||
+                (!!task?.workspaceId &&
+                  !!allWorkspaces(stateRef.current)
+                    .find((w) => w.id === task.workspaceId)
+                    ?.members.some((m) => m.projectId === solo));
+              if (task && inWindow && stateRef.current.activeThreadId == null) {
+                dispatch({ type: "openTask", taskId: task.id });
+                return;
+              }
+              if (tasks && !task) forgetLastTask(solo);
+            }
             const reopened =
               !navigated && eligible && last
                 ? await actionsRef.current

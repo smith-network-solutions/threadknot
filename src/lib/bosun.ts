@@ -684,13 +684,18 @@ export function bosunRowLabel(
 }
 
 /** Split a workspace's threads into what the list shows and the Bosun
- *  threads (day logs included) it folds into the one collapsed row. */
+ *  threads (day logs included) it folds into the one collapsed row. A Bosun
+ *  thread `keepInline` accepts (one you were just working in, see
+ *  `recentBosunThreadFilter`) stays in `shown`, in its normal place. */
 export function splitBosunThreads<T extends Pick<Thread, "origin">>(
   threads: readonly T[],
+  keepInline?: (thread: T) => boolean,
 ): { shown: T[]; bosun: T[] } {
   const shown: T[] = [];
   const bosun: T[] = [];
-  for (const t of threads) (t.origin?.kind === "bosun" ? bosun : shown).push(t);
+  for (const t of threads) {
+    (t.origin?.kind === "bosun" && !keepInline?.(t) ? bosun : shown).push(t);
+  }
   return { shown, bosun };
 }
 
@@ -771,4 +776,218 @@ const MIGRATION_NOTE = /^created from an existing bosun thread\.?$/i;
 export function visibleHistory<T extends Pick<TaskEvent, "note">>(history: readonly T[]): T[] {
   const rest = history.filter((ev) => !MIGRATION_NOTE.test(ev.note.trim()));
   return rest.length > 0 ? rest : history.slice();
+}
+
+// ---- recent touches (per device) -----------------------------------------
+//
+// What this device last worked on, so a task you started is easy to find
+// again after walking away: the task list's Recent group, the rail tile's
+// "open the last one", and the workspace lists' inline Bosun threads all read
+// these. Stored in localStorage, newest first, one entry per id.
+
+export const LS_BOSUN_RECENT = "threadknot.bosunRecent";
+/** Bosun threads opened here (day logs and pre-task threads have no task). */
+export const LS_BOSUN_RECENT_THREADS = "threadknot.bosunRecentThreads";
+export const RECENT_MAX = 30;
+/** How far back the Recent group looks. */
+export const RECENT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+/** How long a touched Bosun thread stays inline in its workspace list. */
+export const RECENT_INLINE_MS = 24 * 60 * 60 * 1000;
+export const RECENT_LIMIT = 6;
+
+export interface RecentTouch {
+  taskId: string;
+  at: string;
+}
+
+export interface RecentThreadTouch {
+  threadId: string;
+  at: string;
+}
+
+/** Newest first, one entry per key (its newest `at` wins), at most `max`. */
+function normalizeRecent<T extends { at: string }>(
+  list: readonly T[],
+  key: (e: T) => string,
+  max: number,
+): T[] {
+  const best = new Map<string, T>();
+  for (const e of list) {
+    const k = key(e);
+    const prev = best.get(k);
+    if (!prev || isoMs(e.at) > isoMs(prev.at)) best.set(k, e);
+  }
+  return [...best.values()].sort((a, b) => isoMs(b.at) - isoMs(a.at)).slice(0, max);
+}
+
+/** Record a touch of `taskId` at `at`: deduped, newest first, capped. */
+export function addRecentTouch(
+  list: readonly RecentTouch[],
+  taskId: string,
+  at: string,
+  max = RECENT_MAX,
+): RecentTouch[] {
+  return normalizeRecent([{ taskId, at }, ...list], (e) => e.taskId, max);
+}
+
+export function addRecentThreadTouch(
+  list: readonly RecentThreadTouch[],
+  threadId: string,
+  at: string,
+  max = RECENT_MAX,
+): RecentThreadTouch[] {
+  return normalizeRecent([{ threadId, at }, ...list], (e) => e.threadId, max);
+}
+
+/** Parse a stored list, dropping anything malformed. Never throws. */
+export function parseRecentTouches(raw: string | null): RecentTouch[] {
+  return parseStored(raw, "taskId") as unknown as RecentTouch[];
+}
+
+export function parseRecentThreadTouches(raw: string | null): RecentThreadTouch[] {
+  return parseStored(raw, "threadId") as unknown as RecentThreadTouch[];
+}
+
+function parseStored(raw: string | null, field: "taskId" | "threadId"): Record<string, string>[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const ok = parsed.filter(
+      (e): e is Record<string, string> =>
+        !!e &&
+        typeof e === "object" &&
+        typeof (e as Record<string, unknown>)[field] === "string" &&
+        !!(e as Record<string, string>)[field] &&
+        typeof (e as Record<string, unknown>).at === "string" &&
+        Number.isFinite(Date.parse((e as Record<string, string>).at)),
+    );
+    return normalizeRecent(
+      ok.map((e) => ({ [field]: e[field], at: e.at })),
+      (e) => e[field],
+      RECENT_MAX,
+    );
+  } catch {
+    return [];
+  }
+}
+
+// The storage side. Listeners fire on this window's own writes and on other
+// windows' writes (the `storage` event), so every list stays in step.
+const recentListeners = new Set<() => void>();
+let recentVersion = 0;
+let storageHooked = false;
+
+function bumpRecent() {
+  recentVersion += 1;
+  for (const l of [...recentListeners]) l();
+}
+
+/** For `useSyncExternalStore`: changes whenever either list is written. */
+export function bosunRecentVersion(): number {
+  return recentVersion;
+}
+
+export function subscribeBosunRecent(listener: () => void): () => void {
+  recentListeners.add(listener);
+  if (!storageHooked && typeof window !== "undefined") {
+    storageHooked = true;
+    window.addEventListener("storage", (e) => {
+      if (e.key === LS_BOSUN_RECENT || e.key === LS_BOSUN_RECENT_THREADS) bumpRecent();
+    });
+  }
+  return () => {
+    recentListeners.delete(listener);
+  };
+}
+
+function readLS(key: string): string | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLS(key: string, value: unknown) {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // A convenience only.
+  }
+}
+
+export function loadRecentTouches(): RecentTouch[] {
+  return parseRecentTouches(readLS(LS_BOSUN_RECENT));
+}
+
+export function loadRecentThreadTouches(): RecentThreadTouch[] {
+  return parseRecentThreadTouches(readLS(LS_BOSUN_RECENT_THREADS));
+}
+
+/** This device touched a task: opened it, worked it, answered it, moved it. */
+export function touchTask(taskId: string, now: Date = new Date()): void {
+  if (!taskId) return;
+  writeLS(LS_BOSUN_RECENT, addRecentTouch(loadRecentTouches(), taskId, now.toISOString()));
+  bumpRecent();
+}
+
+/** This device opened a Bosun thread (its task, if any, is touched too). */
+export function touchBosunThread(
+  thread: Pick<Thread, "id" | "origin">,
+  now: Date = new Date(),
+): void {
+  if (thread.origin?.kind !== "bosun") return;
+  writeLS(
+    LS_BOSUN_RECENT_THREADS,
+    addRecentThreadTouch(loadRecentThreadTouches(), thread.id, now.toISOString()),
+  );
+  if (thread.origin.taskId) touchTask(thread.origin.taskId, now);
+  else bumpRecent();
+}
+
+export interface RecentTask {
+  task: BosunTask;
+  /** Your last touch on this device. */
+  touchedAt: string;
+  /** The Bosun updated the task after that touch (newest history by "bosun"). */
+  replied: boolean;
+  /** Sort key: the task's update when replied, else your touch. */
+  at: string;
+}
+
+/** The Recent group: tasks touched in the last three days, newest activity
+ *  first, where activity is your touch or, when Blackbeard has done something
+ *  since, the task's `updatedAt`. */
+export function recentTasks(
+  tasks: readonly BosunTask[],
+  touches: readonly RecentTouch[],
+  now: Date = new Date(),
+  limit = RECENT_LIMIT,
+): RecentTask[] {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const cutoff = now.getTime() - RECENT_WINDOW_MS;
+  const out: RecentTask[] = [];
+  for (const touch of normalizeRecent(touches, (e) => e.taskId, RECENT_MAX)) {
+    const task = byId.get(touch.taskId);
+    if (!task || isoMs(touch.at) < cutoff) continue;
+    const last = task.history[task.history.length - 1];
+    const replied = isoMs(task.updatedAt) > isoMs(touch.at) && last?.by === "bosun";
+    out.push({ task, touchedAt: touch.at, replied, at: replied ? task.updatedAt : touch.at });
+  }
+  return out.sort((a, b) => isoMs(b.at) - isoMs(a.at)).slice(0, limit);
+}
+
+/** Which folded Bosun threads a workspace list shows inline anyway: ones
+ *  opened here in the last day, or whose task was touched in the last day. */
+export function recentBosunThreadFilter(
+  touches: readonly RecentTouch[],
+  threadTouches: readonly RecentThreadTouch[],
+  now: Date = new Date(),
+  windowMs = RECENT_INLINE_MS,
+): (thread: Pick<Thread, "id" | "origin">) => boolean {
+  const cutoff = now.getTime() - windowMs;
+  const tasks = new Set(touches.filter((e) => isoMs(e.at) >= cutoff).map((e) => e.taskId));
+  const threads = new Set(threadTouches.filter((e) => isoMs(e.at) >= cutoff).map((e) => e.threadId));
+  return (t) => threads.has(t.id) || (!!t.origin?.taskId && tasks.has(t.origin.taskId));
 }

@@ -222,6 +222,7 @@ function ArtifactGallery({ initial, render, onClose }: {
   const machineId = render.machineId;
   const url = render.http ? artifactFileUrl(render.http, item.artifactId, { machineId }) : null;
   const typeLabel = artifactTypeLabel({ ...item, id: item.artifactId });
+  const imageUrl = artifactKind({ ...item, id: item.artifactId }) === "image" ? url : null;
 
   const openArtifacts = () => {
     if (!render.projectId) return;
@@ -280,7 +281,7 @@ function ArtifactGallery({ initial, render, onClose }: {
                 <span>{formatBytes(item.sizeBytes)}{item.description ? ` · ${item.description}` : ""}</span>
               </div>
               <div className="artifact-lightbox-actions">
-                <ViewerClipboardActions key={item.artifactId} pathOnly
+                <ViewerClipboardActions key={item.artifactId} pathOnly imageUrl={imageUrl}
                   absolutePath={render.project ? absoluteProjectPath(render.project.path, item.relPath) : item.relPath}
                   fileTarget={{ kind: "artifact", artifactId: item.artifactId }} />
                 <button type="button" onClick={openArtifacts} title="Open in Artifacts">
@@ -301,7 +302,7 @@ function ArtifactGallery({ initial, render, onClose }: {
               </div>
             </ArtifactNavigation>
             <footer className="artifact-lightbox-mobile-actions">
-              <ViewerClipboardActions key={item.artifactId} pathOnly
+              <ViewerClipboardActions key={item.artifactId} pathOnly imageUrl={imageUrl}
                   absolutePath={render.project ? absoluteProjectPath(render.project.path, item.relPath) : item.relPath}
                   fileTarget={{ kind: "artifact", artifactId: item.artifactId }} />
               <button type="button" onClick={openArtifacts}><PopoutIcon size={15} /> Artifacts</button>

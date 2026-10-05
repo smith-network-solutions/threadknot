@@ -7,7 +7,7 @@ import { downloadViaShell } from "../lib/download";
 import { timeAgo } from "../lib/format";
 import { ChevronIcon, DownloadIcon, FileIcon, TrashIcon } from "./icons";
 import { absoluteProjectPath, ViewerClipboardActions } from "./files/ViewerActions";
-import { ArtifactPreview } from "./artifacts/ArtifactPreview";
+import { ArtifactPreview, artifactKind } from "./artifacts/ArtifactPreview";
 import "../styles/files.css";
 
 function formatBytes(n: number): string {
@@ -91,6 +91,7 @@ function ArtifactViewer({
           <ViewerClipboardActions
             absolutePath={absolutePath}
             fileTarget={{ kind: "artifact", artifactId: artifact.id }}
+            imageUrl={artifactKind(artifact) === "image" ? url : null}
           />
           <button
             type="button"

@@ -279,6 +279,7 @@ export function FileViewer({
           <ViewerClipboardActions
             absolutePath={absolutePath}
             fileTarget={{ kind: "project", projectId: project.id, path }}
+            imageUrl={isImage && http ? fileUrl(http, project.id, path, { machineId }) : null}
           />
           <button
             type="button"

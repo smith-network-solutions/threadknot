@@ -442,6 +442,116 @@ try {
     assert.deepEqual(b.visibleHistory([{ ...mig, note: 'created from an existing Bosun thread.' }, note]), [note]);
   });
 
+  test('recent touches: dedupe keeps newest, newest first, capped', () => {
+    let list = [];
+    list = b.addRecentTouch(list, 'a', at(2026, 10, 1, 9, 0));
+    list = b.addRecentTouch(list, 'b', at(2026, 10, 1, 10, 0));
+    list = b.addRecentTouch(list, 'a', at(2026, 10, 1, 11, 0));
+    assert.deepEqual(list, [
+      { taskId: 'a', at: at(2026, 10, 1, 11, 0) },
+      { taskId: 'b', at: at(2026, 10, 1, 10, 0) },
+    ]);
+    // An older touch never replaces a newer one.
+    list = b.addRecentTouch(list, 'b', at(2026, 9, 1, 10, 0));
+    assert.equal(list.find((e) => e.taskId === 'b').at, at(2026, 10, 1, 10, 0));
+    let many = [];
+    for (let i = 0; i < 40; i++) many = b.addRecentTouch(many, `t${i}`, new Date(2026, 9, 1, 0, i).toISOString());
+    assert.equal(many.length, b.RECENT_MAX);
+    assert.equal(many[0].taskId, 't39');
+    assert.equal(many[29].taskId, 't10');
+    const th = b.addRecentThreadTouch(b.addRecentThreadTouch([], 'x', at(2026, 10, 1, 9, 0)), 'x', at(2026, 10, 1, 9, 5));
+    assert.deepEqual(th, [{ threadId: 'x', at: at(2026, 10, 1, 9, 5) }]);
+  });
+
+  test('recent touches: parsing drops junk and normalizes', () => {
+    assert.deepEqual(b.parseRecentTouches(null), []);
+    assert.deepEqual(b.parseRecentTouches('not json'), []);
+    assert.deepEqual(b.parseRecentTouches('{"taskId":"a"}'), []);
+    const raw = JSON.stringify([
+      { taskId: 'a', at: at(2026, 10, 1, 9, 0) },
+      { taskId: '', at: at(2026, 10, 1, 9, 0) },
+      { taskId: 'b', at: 'nope' },
+      { taskId: 'c', at: at(2026, 10, 1, 12, 0), extra: 1 },
+      { taskId: 'a', at: at(2026, 10, 1, 8, 0) },
+      null,
+      7,
+    ]);
+    assert.deepEqual(b.parseRecentTouches(raw), [
+      { taskId: 'c', at: at(2026, 10, 1, 12, 0) },
+      { taskId: 'a', at: at(2026, 10, 1, 9, 0) },
+    ]);
+    assert.deepEqual(
+      b.parseRecentThreadTouches(JSON.stringify([{ threadId: 't', at: at(2026, 10, 1, 9, 0) }, { taskId: 'x', at: at(2026, 10, 1, 9, 0) }])),
+      [{ threadId: 't', at: at(2026, 10, 1, 9, 0) }],
+    );
+  });
+
+  test('recent tasks: 3-day window, limit, replied only when the Bosun wrote after your touch', () => {
+    const byBosun = (iso) => ({ at: iso, note: 'did a thing', by: 'bosun' });
+    const byYou = (iso) => ({ at: iso, note: 'moved', by: 'you' });
+    const tasks = [
+      // Touched 9:00; Bosun updated at 11:30 with the last word -> replied, sorts at 11:30.
+      task('r', 'needs_you', { updatedAt: at(2026, 10, 1, 11, 30), history: [byBosun(at(2026, 10, 1, 11, 30))] }),
+      // Touched 10:00; updated later but the last entry is yours -> not replied.
+      task('y', 'todo', { updatedAt: at(2026, 10, 1, 11, 45), history: [byBosun(at(2026, 10, 1, 8, 0)), byYou(at(2026, 10, 1, 11, 45))] }),
+      // Touched 11:00; the Bosun's entry predates the touch -> not replied.
+      task('o', 'working', { updatedAt: at(2026, 10, 1, 10, 0), history: [byBosun(at(2026, 10, 1, 10, 0))] }),
+      // Touched four days ago -> outside the window.
+      task('old', 'todo'),
+    ];
+    const touches = [
+      { taskId: 'o', at: at(2026, 10, 1, 11, 0) },
+      { taskId: 'y', at: at(2026, 10, 1, 10, 0) },
+      { taskId: 'r', at: at(2026, 10, 1, 9, 0) },
+      { taskId: 'gone', at: at(2026, 10, 1, 11, 50) },
+      { taskId: 'old', at: at(2026, 9, 27, 11, 0) },
+    ];
+    const r = b.recentTasks(tasks, touches, NOW);
+    assert.deepEqual(r.map((x) => x.task.id), ['r', 'o', 'y']);
+    assert.deepEqual(r.map((x) => x.replied), [true, false, false]);
+    assert.equal(r[0].at, at(2026, 10, 1, 11, 30));
+    assert.equal(r[0].touchedAt, at(2026, 10, 1, 9, 0));
+    assert.equal(r[1].at, at(2026, 10, 1, 11, 0));
+    // Limit: six by default.
+    const lots = Array.from({ length: 9 }, (_, i) => task(`l${i}`, 'todo'));
+    const lotsTouches = lots.map((t, i) => ({ taskId: t.id, at: new Date(2026, 9, 1, 10, i).toISOString() }));
+    const six = b.recentTasks(lots, lotsTouches, NOW);
+    assert.equal(six.length, b.RECENT_LIMIT);
+    assert.equal(six[0].task.id, 'l8');
+    assert.deepEqual(b.recentTasks(tasks, [], NOW), []);
+  });
+
+  test('split keeps recently touched Bosun threads inline', () => {
+    const withTask = (taskId) => ({ ...origin(), taskId });
+    const threads = [
+      thread('p1', at(2026, 9, 28, 9, 0)),
+      thread('opened', at(2026, 9, 28, 9, 1), origin()),
+      thread('viaTask', at(2026, 9, 28, 9, 2), withTask('t1')),
+      thread('stale', at(2026, 9, 28, 9, 3), withTask('t2')),
+      thread('log', at(2026, 9, 28, 9, 4), origin(true)),
+      thread('oldOpen', at(2026, 9, 28, 9, 5), origin()),
+    ];
+    const keep = b.recentBosunThreadFilter(
+      [
+        { taskId: 't1', at: at(2026, 10, 1, 8, 0) },
+        { taskId: 't2', at: at(2026, 9, 30, 11, 0) }, // 25h before NOW
+      ],
+      [
+        { threadId: 'opened', at: at(2026, 10, 1, 11, 0) },
+        { threadId: 'oldOpen', at: at(2026, 9, 29, 12, 0) },
+      ],
+      NOW,
+    );
+    const { shown, bosun } = b.splitBosunThreads(threads, keep);
+    assert.deepEqual(shown.map((t) => t.id), ['p1', 'opened', 'viaTask']);
+    assert.deepEqual(bosun.map((t) => t.id), ['stale', 'log', 'oldOpen']);
+    // Without a filter nothing changes.
+    assert.deepEqual(b.splitBosunThreads(threads).shown.map((t) => t.id), ['p1']);
+    // A non-Bosun thread is never moved by the filter.
+    const all = b.splitBosunThreads([thread('p2', at(2026, 9, 28, 9, 0))], () => false);
+    assert.deepEqual(all.shown.map((t) => t.id), ['p2']);
+  });
+
   console.log(`\n${passed} passed`);
 } finally {
   await rm(dir, { recursive: true, force: true });

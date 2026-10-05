@@ -48,7 +48,9 @@ import {
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
+  ageLabel,
   bosunAttentionThreads,
+  bosunRecentVersion,
   bosunRowLabel,
   bosunThreads,
   bosunTimeline,
@@ -56,13 +58,19 @@ import {
   displayTitle,
   groupTasks,
   isClosedStatus,
+  loadRecentThreadTouches,
+  loadRecentTouches,
   needsYouCount,
+  recentBosunThreadFilter,
+  recentTasks,
+  subscribeBosunRecent,
   skippedLine,
   dayLabel,
   splitBosunThreads,
   taskMatches,
   taskMetaLine,
   workspaceTaskRollup,
+  type RecentTask,
   type TaskGroupId,
 } from "../lib/bosun";
 import type { BosunTask } from "../lib/protocol";
@@ -2590,6 +2598,17 @@ function HermesGroup({
   );
 }
 
+/** This device's recent Bosun touches (lib/bosun.ts), re-read whenever any
+ *  window writes them. */
+function useBosunRecent() {
+  const version = useSyncExternalStore(subscribeBosunRecent, bosunRecentVersion);
+  return useMemo(
+    () => ({ touches: loadRecentTouches(), threadTouches: loadRecentThreadTouches() }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [version],
+  );
+}
+
 /** The sidebar's Bosun view (docs/BOSUN.md §10.7): the to-do list the Bosun
  *  keeps, grouped by status. A task opens in the main pane; its thread is one
  *  click further. The wake ledger lives in Manage. On a server that predates
@@ -2642,6 +2661,9 @@ function BosunTaskList({
     [tasks, workspaceFilter, filter],
   );
   const groups = useMemo(() => groupTasks(shown), [shown]);
+  const { touches } = useBosunRecent();
+  const recent = useMemo(() => recentTasks(shown, touches), [shown, touches]);
+  const [recentOpen, setRecentOpen] = useState(true);
 
   const backRow = onBack ? (
     <button type="button" className="bosun-back" onClick={onBack}>
@@ -2767,6 +2789,30 @@ function BosunTaskList({
             <span>{lastWake ? `Last wake ${timeAgo(lastWake)}` : "No wakes yet"}</span>
           </div>
         ))}
+      {recent.length > 0 && (
+        <div className="task-group g-recent">
+          <button
+            type="button"
+            className="task-group-head"
+            aria-expanded={recentOpen}
+            onClick={() => setRecentOpen((v) => !v)}
+          >
+            <ChevronIcon size={10} open={recentOpen} className="row-chevron" />
+            <span>Recent</span>
+            <span className="task-group-count">{recent.length}</span>
+          </button>
+          {recentOpen &&
+            recent.map((r) => (
+              <TaskRow
+                key={r.task.id}
+                task={r.task}
+                active={state.activeTaskId === r.task.id}
+                workspaceName={workspaceFilter ? null : wsName(r.task.workspaceId)}
+                hint={<RecentHint recent={r} />}
+              />
+            ))}
+        </div>
+      )}
       {groups.map((g) => {
         const open = filter ? true : !(folded[g.id] ?? g.collapsed);
         return (
@@ -2797,14 +2843,33 @@ function BosunTaskList({
   );
 }
 
+/** A Recent row's right-hand hint: working, replied since you looked, or
+ *  when you last touched it. */
+function RecentHint({ recent }: { recent: RecentTask }) {
+  const { state } = useStore();
+  const threadId = recent.task.threadId;
+  const running = !!threadId && findThread(state, threadId)?.status === "running";
+  if (running) return <span className="task-row-hint working">working…</span>;
+  if (recent.replied)
+    return (
+      <span className="task-row-hint replied" title={`Updated ${timeAgo(recent.task.updatedAt)}`}>
+        replied
+      </span>
+    );
+  return <span className="task-row-hint">{ageLabel(recent.touchedAt).replace(/ ago$/, "")}</span>;
+}
+
 function TaskRow({
   task,
   active,
   workspaceName,
+  hint,
 }: {
   task: BosunTask;
   active: boolean;
   workspaceName: string | null;
+  /** Right-hand note (the Recent group's). */
+  hint?: React.ReactNode;
 }) {
   const { actions } = useStore();
   const ticket = orbitTicketLabel(task);
@@ -2833,6 +2898,7 @@ function TaskRow({
           )}
         </span>
       </span>
+      {hint}
     </button>
   );
 }
@@ -4610,7 +4676,26 @@ export const Sidebar = memo(function Sidebar({
   const bosunRollup = useMemo(
     () => workspaceTaskRollup(state.bosunTasks ?? []),
     [state.bosunTasks],
-  );  // A newer master exists than the build that is running. Pulses regardless of
+  );
+  // What this device was last working on: the most recent task is the Bosun
+  // tile's target once you're already in the view, and Bosun threads touched
+  // in the last day stay inline in their workspace lists.
+  const bosunRecent = useBosunRecent();
+  const lastBosunTask = useMemo(
+    () => recentTasks(state.bosunTasks ?? [], bosunRecent.touches)[0]?.task ?? null,
+    [state.bosunTasks, bosunRecent],
+  );
+  const keepBosunInline = useMemo(
+    () => recentBosunThreadFilter(bosunRecent.touches, bosunRecent.threadTouches),
+    [bosunRecent],
+  );
+  const pickBosun = () => {
+    if (bosunView && !state.activeTaskId && !state.activeThreadId && lastBosunTask) {
+      actions.openTask(lastBosunTask.id);
+      return;
+    }
+    openBosunView(null);
+  };  // A newer master exists than the build that is running. Pulses regardless of
   // whether this machine can act on it cleanly: knowing you are behind is the
   // point, and the Updates tab explains what is blocking the fix.
   // A built-but-not-loaded binary counts too: the work is done and one click
@@ -5026,6 +5111,7 @@ export const Sidebar = memo(function Sidebar({
       agentsView ||
       bosunView ||
       state.activeThreadId ||
+      state.activeTaskId ||
       state.draft ||
       !shownWorkspaceId
     ) {
@@ -5042,6 +5128,7 @@ export const Sidebar = memo(function Sidebar({
     sectionData,
     shownWorkspaceId,
     state.activeThreadId,
+    state.activeTaskId,
     state.draft,
     state.restored,
   ]);
@@ -5180,7 +5267,7 @@ export const Sidebar = memo(function Sidebar({
           bosunOn={bosunView}
           bosunImage={state.bosuns[0]?.image ?? null}
           bosunAttention={bosunAttention}
-          onPickBosun={() => openBosunView(null)}
+          onPickBosun={pickBosun}
           workspaces={visibleWorkspaces}
           hidden={hiddenWorkspaces}
           threadsByWorkspace={threadsByWorkspace}
@@ -5303,7 +5390,8 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className="sidebar-action"
-            onClick={() => openBosunView(null)}
+            title={lastBosunTask ? `Bosun · last: ${displayTitle(lastBosunTask) || "Untitled to-do"}` : undefined}
+            onClick={pickBosun}
           >
             <AnchorIcon size={18} />
             <span>Bosun</span>
@@ -5498,7 +5586,7 @@ export const Sidebar = memo(function Sidebar({
             let threads = matched;
             let bosunRow: React.ComponentProps<typeof WorkspaceSection>["bosunRow"];
             if (foldBosunThreads) {
-              const split = splitBosunThreads(matched);
+              const split = splitBosunThreads(matched, keepBosunInline);
               threads = split.shown;
               const first = state.bosuns[0];
               const label = bosunRowLabel(first?.name ?? "Bosun", bosunRollup.get(w.id));

@@ -11029,6 +11029,18 @@ button.task-group-head:hover { color: var(--dim); background: color-mix(in srgb,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The Recent group's right-hand note: working… / replied / 5m. */
+.task-row-hint {
+  flex: none;
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--sidebar-muted, var(--faint));
+  white-space: nowrap;
+}
+.task-row-hint.working { color: var(--dim); font-style: italic; font-family: inherit; }
+.task-row-hint.replied { color: var(--brass-hi); font-weight: 600; font-family: inherit; }
+.task-group.g-recent .task-group-head { color: var(--dim); }
 .task-orbit-pill {
   flex: none;
   margin-top: 1px;

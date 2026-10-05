@@ -202,6 +202,9 @@ export function lastProjectKey(solo: string | null): string {
 export interface LastThread {
   threadId: string;
   machineId?: string;
+  /** When it was opened (ISO), to compare against the last task page. Absent
+   *  on entries written before the task page was restorable. */
+  at?: string;
 }
 
 export function loadLastThread(solo: string | null): LastThread | null {
@@ -212,9 +215,13 @@ export function loadLastThread(solo: string | null): LastThread | null {
     if (!raw.startsWith("{")) return { threadId: raw };
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
-    const { threadId, machineId } = parsed as Record<string, unknown>;
+    const { threadId, machineId, at } = parsed as Record<string, unknown>;
     if (typeof threadId !== "string" || !threadId) return null;
-    return { threadId, ...(typeof machineId === "string" ? { machineId } : {}) };
+    return {
+      threadId,
+      ...(typeof machineId === "string" ? { machineId } : {}),
+      ...(typeof at === "string" ? { at } : {}),
+    };
   } catch {
     return null;
   }
@@ -228,7 +235,11 @@ export function rememberLastThread(
   try {
     localStorage.setItem(
       lastThreadKey(solo),
-      JSON.stringify({ threadId, ...(machineId ? { machineId } : {}) }),
+      JSON.stringify({
+        threadId,
+        ...(machineId ? { machineId } : {}),
+        at: new Date().toISOString(),
+      }),
     );
   } catch {
     // Navigation persistence is a convenience only.
@@ -238,6 +249,51 @@ export function rememberLastThread(
 export function forgetLastThread(solo: string | null): void {
   try {
     localStorage.removeItem(lastThreadKey(solo));
+  } catch {
+    // ditto
+  }
+}
+
+export const LS_LAST_TASK = "threadknot.lastTask";
+
+/** localStorage key for the last task page shown, per window like
+ *  `lastThreadKey`. Startup reopens it instead of the last thread when it
+ *  was opened after that thread. */
+export function lastTaskKey(solo: string | null): string {
+  return solo ? `${LS_LAST_TASK}.${solo}` : LS_LAST_TASK;
+}
+
+export interface LastTask {
+  taskId: string;
+  at: string;
+}
+
+export function loadLastTask(solo: string | null): LastTask | null {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(lastTaskKey(solo)) ?? "null");
+    if (!parsed || typeof parsed !== "object") return null;
+    const { taskId, at } = parsed as Record<string, unknown>;
+    if (typeof taskId !== "string" || !taskId || typeof at !== "string") return null;
+    return { taskId, at };
+  } catch {
+    return null;
+  }
+}
+
+export function rememberLastTask(solo: string | null, taskId: string): void {
+  try {
+    localStorage.setItem(
+      lastTaskKey(solo),
+      JSON.stringify({ taskId, at: new Date().toISOString() }),
+    );
+  } catch {
+    // Navigation persistence is a convenience only.
+  }
+}
+
+export function forgetLastTask(solo: string | null): void {
+  try {
+    localStorage.removeItem(lastTaskKey(solo));
   } catch {
     // ditto
   }
@@ -1815,7 +1871,7 @@ export interface ThreadknotActions {
   /** Load every task into `state.bosunTasks` (closed ones from the last 3
    *  days included). Rejects on a server without `bosun.task.*`, leaving the
    *  state null. */
-  refreshBosunTasks: () => Promise<void>;
+  refreshBosunTasks: () => Promise<BosunTask[]>;
   updateTask: (
     payload: import("../lib/protocol").RequestMap["bosun.task.update"]["payload"],
   ) => Promise<BosunTask>;
