@@ -63,6 +63,8 @@ import {
   needsYouCount,
   recentBosunThreadFilter,
   recentTasks,
+  getRecentShowFinished,
+  setRecentShowFinished,
   subscribeBosunRecent,
   skippedLine,
   dayLabel,
@@ -2662,7 +2664,19 @@ function BosunTaskList({
   );
   const groups = useMemo(() => groupTasks(shown), [shown]);
   const { touches } = useBosunRecent();
-  const recent = useMemo(() => recentTasks(shown, touches), [shown, touches]);
+  const [showFinished, setShowFinishedState] = useState(getRecentShowFinished);
+  const setShowFinished = (on: boolean) => {
+    setRecentShowFinished(on);
+    setShowFinishedState(on);
+  };
+  const recent = useMemo(
+    () => recentTasks(shown, touches, undefined, undefined, showFinished),
+    [shown, touches, showFinished],
+  );
+  const finishedHidden = useMemo(
+    () => (showFinished ? 0 : recentTasks(shown, touches, undefined, undefined, true).length - recent.length),
+    [shown, touches, showFinished, recent.length],
+  );
   const [recentOpen, setRecentOpen] = useState(true);
 
   const backRow = onBack ? (
@@ -2789,18 +2803,31 @@ function BosunTaskList({
             <span>{lastWake ? `Last wake ${timeAgo(lastWake)}` : "No wakes yet"}</span>
           </div>
         ))}
-      {recent.length > 0 && (
+      {(recent.length > 0 || finishedHidden > 0) && (
         <div className="task-group g-recent">
-          <button
-            type="button"
-            className="task-group-head"
-            aria-expanded={recentOpen}
-            onClick={() => setRecentOpen((v) => !v)}
-          >
-            <ChevronIcon size={10} open={recentOpen} className="row-chevron" />
-            <span>Recent</span>
-            <span className="task-group-count">{recent.length}</span>
-          </button>
+          <div className="task-group-headrow">
+            <button
+              type="button"
+              className="task-group-head"
+              aria-expanded={recentOpen}
+              onClick={() => setRecentOpen((v) => !v)}
+            >
+              <ChevronIcon size={10} open={recentOpen} className="row-chevron" />
+              <span>Recent</span>
+              <span className="task-group-count">{recent.length}</span>
+            </button>
+            {(showFinished || finishedHidden > 0) && (
+              <button
+                type="button"
+                className={`recent-finished-toggle${showFinished ? " on" : ""}`}
+                aria-pressed={showFinished}
+                onClick={() => setShowFinished(!showFinished)}
+                title={showFinished ? "Hide finished to-dos from Recent" : "Show finished to-dos in Recent"}
+              >
+                {showFinished ? "Hide finished" : `Show finished (${finishedHidden})`}
+              </button>
+            )}
+          </div>
           {recentOpen &&
             recent.map((r) => (
               <TaskRow

@@ -14744,3 +14744,29 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .task-orbit-ref {
   font-variant-numeric: tabular-nums;
 }
+
+/* Recent group: header row with the "Show finished" toggle on the right. */
+.task-group-headrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.task-group-headrow .task-group-head {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.recent-finished-toggle {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--sidebar-muted, #8a8f98);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.recent-finished-toggle:hover,
+.recent-finished-toggle.on {
+  color: var(--accent, #d7a24b);
+}

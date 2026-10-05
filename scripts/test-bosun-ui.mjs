@@ -519,6 +519,11 @@ try {
     assert.equal(six.length, b.RECENT_LIMIT);
     assert.equal(six[0].task.id, 'l8');
     assert.deepEqual(b.recentTasks(tasks, [], NOW), []);
+    // Finished to-dos leave Recent unless asked for.
+    const doneTask = { ...tasks[0], status: "done" };
+    const withDone = [doneTask, ...tasks.slice(1)];
+    assert.ok(!b.recentTasks(withDone, touches, NOW).some((r) => r.task.id === doneTask.id), "done hidden by default");
+    assert.ok(b.recentTasks(withDone, touches, NOW, undefined, true).some((r) => r.task.id === doneTask.id), "done shown on request");
   });
 
   test('split keeps recently touched Bosun threads inline', () => {

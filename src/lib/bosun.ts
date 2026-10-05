@@ -964,6 +964,7 @@ export function recentTasks(
   touches: readonly RecentTouch[],
   now: Date = new Date(),
   limit = RECENT_LIMIT,
+  includeFinished = false,
 ): RecentTask[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const cutoff = now.getTime() - RECENT_WINDOW_MS;
@@ -971,6 +972,8 @@ export function recentTasks(
   for (const touch of normalizeRecent(touches, (e) => e.taskId, RECENT_MAX)) {
     const task = byId.get(touch.taskId);
     if (!task || isoMs(touch.at) < cutoff) continue;
+    // Marking something done is how you clear it from Recent.
+    if (!includeFinished && (task.status === "done" || task.status === "dropped")) continue;
     const last = task.history[task.history.length - 1];
     const replied = isoMs(task.updatedAt) > isoMs(touch.at) && last?.by === "bosun";
     out.push({ task, touchedAt: touch.at, replied, at: replied ? task.updatedAt : touch.at });
@@ -990,4 +993,21 @@ export function recentBosunThreadFilter(
   const tasks = new Set(touches.filter((e) => isoMs(e.at) >= cutoff).map((e) => e.taskId));
   const threads = new Set(threadTouches.filter((e) => isoMs(e.at) >= cutoff).map((e) => e.threadId));
   return (t) => threads.has(t.id) || (!!t.origin?.taskId && tasks.has(t.origin.taskId));
+}
+
+/** Per-device "Show finished" toggle for the Recent group. */
+const RECENT_FINISHED_KEY = "threadknot.bosunRecentShowFinished";
+export function getRecentShowFinished(): boolean {
+  try {
+    return localStorage.getItem(RECENT_FINISHED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+export function setRecentShowFinished(on: boolean): void {
+  try {
+    localStorage.setItem(RECENT_FINISHED_KEY, on ? "1" : "0");
+  } catch {
+    /* storage unavailable: the toggle just won't persist */
+  }
 }
