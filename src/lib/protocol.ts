@@ -403,7 +403,11 @@ export interface Thread {
    *  chat active forever — un-settling something just to read it shouldn't
    *  exempt it from auto-settle for good. Cleared on real activity. */
   keptActiveAt?: string;
-  /** Whether the user has starred this thread in the sidebar; absent = false. */
+  /** Whether the user has starred this thread in the sidebar; absent = false.
+   *  A starred chat is exempt from idle auto-settle — it leaves the list only
+   *  when you settle, archive or delete it by hand (see `threadSettled`
+   *  rule 3). Per-person, like `settledAt`: the server resolves this against
+   *  the acting person's overlay before it answers. */
   favorite?: boolean;
   /** The lanes in this thread. Absent/empty is the common case and means one
    *  implicit builder derived from `agent` — materialized when a reviewer joins.

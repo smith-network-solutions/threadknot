@@ -676,7 +676,7 @@ export interface SettleContext {
   activeThreadId: string | null;
 }
 
-/** Is this chat parked in the settled shelf? Four rules, in order:
+/** Is this chat parked in the settled shelf? Five rules, in order:
  *
  *  0. The chat you are READING is never parked. Auto-settle would otherwise
  *     swallow the row the moment you opened it — opening clears the unread
@@ -689,7 +689,17 @@ export interface SettleContext {
  *     client can see the new status a beat before that broadcast lands, and
  *     a chat asking for you must never be hidden in the meantime.
  *  2. An explicit settle parks it, full stop.
- *  3. Otherwise it settles itself once it has been quiet for `autoSettleDays`
+ *  3. A starred chat never parks ITSELF. The star is the one control that says
+ *     "this one is mine, leave it where I put it", so it has to outrank the
+ *     idle clock — otherwise the chats you care most about are exactly the
+ *     ones that quietly vanish while you are away from them for a week. It
+ *     sits BELOW rule 2 on purpose: starring exempts a chat from auto-settle,
+ *     it does not take the manual settle away from you — park a starred chat
+ *     by hand and it stays parked until you pull it back. Starring is
+ *     per-person (the server resolves `favorite` against the acting person's
+ *     overlay), so one person's star never pins a shared chat open in someone
+ *     else's sidebar.
+ *  4. Otherwise it settles itself once it has been quiet for `autoSettleDays`
  *     (null disables that entirely). Pulling a chat back out of the shelf
  *     restarts that clock rather than pinning it, so reading an old chat
  *     buys it a fresh window instead of exempting it forever.
@@ -706,6 +716,7 @@ export function threadSettled(
   if (thread.status === "running" || thread.status === "waiting_approval") return false;
   if (ctx.attention[thread.id]) return false;
   if (thread.settledAt) return true;
+  if (thread.favorite) return false;
   if (autoSettleDays === null) return false;
   const lastActivity = Math.max(
     Date.parse(thread.updatedAt),
