@@ -48,6 +48,7 @@ import { HERMES_ENABLED_EVENT, isAgentVisible } from "./lib/agentVisibility";
 import { hermesGatewayId } from "./lib/hermesBinding";
 import { ThreadknotClient } from "./lib/ws";
 import { bindTraceStore, traceDispatch } from "./lib/renderTrace";
+import { markUsed } from "./lib/recentUse";
 import {
   defaultDraft,
   effortForModel,
@@ -395,6 +396,12 @@ function makeActions(
       const known = findThread(getState(), threadId);
       rememberLastThread(getState().solo, threadId, known?.machineId ?? machineId);
       if (known) rememberProject(known.projectId, known.machineId);
+      // What the sidebar's "recently used first" floats sort by. Stamped here,
+      // inside the `!preserveFeed` branch, because that is the branch that
+      // means a person navigated: a background resync reaches this function
+      // too, and letting it stamp would turn the float back into the activity
+      // sort it deliberately is not.
+      markUsed({ threadId, projectId: known?.projectId });
     }
     try {
       const { thread, events, nextBefore } = await client.request(
@@ -412,6 +419,11 @@ function makeActions(
       if (!preserveFeed) {
         rememberLastThread(getState().solo, threadId, thread.machineId);
         rememberProject(thread.projectId, thread.machineId);
+        // Re-stamp with the project the server actually reports. The stamp
+        // above runs before the fetch and has no project for a chat that was
+        // not in local state yet (a peer's thread opened from search), which
+        // is exactly the case where the workspace float needs it most.
+        markUsed({ threadId, projectId: thread.projectId });
       }
       // Repo summaries power the per-repo badges on chat diff cards — load
       // them once per project without waiting for the Git tab to be opened

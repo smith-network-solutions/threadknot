@@ -93,6 +93,13 @@ import { useLongPressMenu, type MenuPoint } from "../lib/longPress";
 import { applyProjectOrder, applyThreadOrder, mergeProjectOrder } from "../lib/projectOrder";
 import { useReorderDrag, type ReorderHandleProps } from "../lib/reorder";
 import {
+  floatRecentFirst,
+  getRecentUse,
+  markUsed,
+  RECENTUSE_EVENT,
+  type RecentUse,
+} from "../lib/recentUse";
+import {
   useSidebarLayout,
   isNonDefaultLayout,
   SIDEBAR_WIDTH_DEFAULT,
@@ -446,12 +453,18 @@ function QuickChatsSection({
   autoSettleDays,
   now,
   view,
+  recentFirst,
+  recentThreads,
 }: {
   threads: Thread[];
   forceOpen: boolean;
   autoSettleDays: number | null;
   now: number;
   view: SidebarLayout["view"];
+  /** "Recently used first" is on for chats. Quick threads are chats too, and
+   *  a setting that ordered every list but this one would read as a bug. */
+  recentFirst: boolean;
+  recentThreads: Record<string, number>;
 }) {
   const { state, actions } = useStore();
   const [visibleThreadCount, setVisibleThreadCount] = useState(SOLO_PROJECT_PAGE_SIZE);
@@ -463,10 +476,17 @@ function QuickChatsSection({
     [threads],
   );
   const { active, settled } = useSettledSplit(parents, autoSettleDays, now);
+  const ordered = useMemo(
+    () =>
+      recentFirst
+        ? floatRecentFirst(active, (t) => recentThreads[t.id] ?? 0)
+        : active,
+    [active, recentFirst, recentThreads],
+  );
   const shown = forceOpen
-    ? active
+    ? ordered
     : pageActiveThreads(
-        active,
+        ordered,
         visibleThreadCount,
         (thread) =>
           threadNeedsAttention(state, thread) ||
@@ -1907,6 +1927,206 @@ function ThreadRow({
   );
 }
 
+/** One chat folder inside a workspace: its header, its chats, and the three
+ *  edits a folder has lacked since folders shipped — rename, delete, reorder.
+ *
+ *  Its own component rather than a map body because the rename needs state and
+ *  a focus effect, and hooks cannot live in a loop.
+ *
+ *  Deleting a folder deletes only the FOLDER. Its chats are unassigned back to
+ *  the workspace root, where they are still listed, still searchable, and
+ *  still exactly the chats they were. A grouping is a view, and no view should
+ *  be able to take work with it when it goes — which is also why the confirm
+ *  is the same two-step arm the rest of the sidebar uses rather than a modal
+ *  that has to explain itself. */
+function ChatFolderGroup({
+  folder,
+  folders,
+  shown,
+  activeThreads,
+  assignments,
+  workersOf,
+  forceOpen,
+  view,
+  onMoveToFolder,
+  onAddFolder,
+  onRename,
+  onDelete,
+  reorder,
+}: {
+  folder: ChatFolder;
+  /** Every folder in this workspace — the row menus list them as move targets,
+   *  and the rename checks its new name against them. */
+  folders: ChatFolder[];
+  /** The chats this section is currently showing (paged). */
+  shown: Thread[];
+  /** Every active chat, paged or not, so the count and the "empty" line can
+   *  tell "nothing in here" from "nothing in here YET on this page". */
+  activeThreads: Thread[];
+  assignments: Record<string, string>;
+  workersOf: Map<string, Thread[]>;
+  forceOpen: boolean;
+  view: SidebarLayout["view"];
+  onMoveToFolder: (threadId: string, folderId?: string) => void;
+  onAddFolder: (threadId?: string) => void;
+  onRename: (folderId: string, name: string) => void;
+  onDelete: (folderId: string) => void;
+  reorder: {
+    handle: ReorderHandleProps;
+    dragging: boolean;
+    drop?: "before" | "after";
+  };
+}) {
+  const { state, dispatch } = useStore();
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(folder.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!renaming) return;
+    setName(folder.name);
+    const el = inputRef.current;
+    if (el) {
+      el.focus();
+      el.select();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renaming]);
+
+  /** Commit on blur and on Enter alike, the way the workspace rename does. A
+   *  name that is blank, unchanged, or already taken by a sibling folder just
+   *  closes the input: a rename that silently did nothing is better than one
+   *  that leaves two folders you cannot tell apart. */
+  function commitRename() {
+    const next = name.trim();
+    setRenaming(false);
+    if (!next || next === folder.name) return;
+    const taken = folders.some(
+      (f) => f.id !== folder.id && f.name.toLowerCase() === next.toLowerCase(),
+    );
+    if (taken) return;
+    onRename(folder.id, next);
+  }
+
+  const folderThreads = shown.filter(
+    (thread) => assignments[thread.id] === folder.id,
+  );
+  const total = activeThreads.filter(
+    (thread) => assignments[thread.id] === folder.id,
+  ).length;
+  const collapseKey = `chat-folder:${folder.id}`;
+  const open = forceOpen || !state.collapsed[collapseKey];
+
+  return (
+    <div
+      className={`chat-folder${reorder.dragging ? " dragging" : ""}`}
+      data-folder-reorder-id={folder.id}
+      data-drop={reorder.drop}
+    >
+      <div className="chat-folder-head-row">
+        {!renaming && (
+          // A grip rather than the whole header: the header's press is spent
+          // opening and closing the folder, which is what you do to it most.
+          <span
+            className="chat-folder-grip"
+            role="button"
+            tabIndex={-1}
+            aria-label={`Drag to move ${folder.name}`}
+            title="Drag to reorder"
+            draggable={false}
+            {...reorder.handle}
+          >
+            <GripIcon size={12} />
+          </span>
+        )}
+        {renaming ? (
+          <input
+            ref={inputRef}
+            className="thread-rename-input chat-folder-rename-input"
+            value={name}
+            aria-label="Rename folder"
+            onChange={(e) => setName(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") commitRename();
+              else if (e.key === "Escape") setRenaming(false);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="chat-folder-head"
+            aria-expanded={open}
+            // Double-click to rename, the gesture a folder anywhere else
+            // answers to. The two clicks under it still toggle, which is why
+            // this deliberately does NOT suppress them: two toggles cancel out
+            // and the group ends open exactly as it started. Swallowing the
+            // second one would leave it folded shut behind the rename box.
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              setRenaming(true);
+            }}
+            onClick={() =>
+              dispatch({ type: "toggleProject", projectId: collapseKey })
+            }
+          >
+            <FolderClosedIcon size={18} />
+            <span className="chat-folder-name">{folder.name}</span>
+            <ChevronIcon size={11} open={open} className="row-chevron" />
+          </button>
+        )}
+        {!renaming && (
+          <span className="chat-folder-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={`Rename ${folder.name}`}
+              title="Rename folder"
+              onClick={(e) => {
+                e.stopPropagation();
+                setRenaming(true);
+              }}
+            >
+              <PencilIcon size={12} />
+            </button>
+            <DangerButton
+              label="Delete folder"
+              onConfirm={() => onDelete(folder.id)}
+            />
+          </span>
+        )}
+      </div>
+      {open && (
+        <div className="chat-folder-threads">
+          {folderThreads.length === 0 && total === 0 && (
+            <div className="chat-folder-empty">empty</div>
+          )}
+          {folderThreads.map((thread) => (
+            <Fragment key={thread.id}>
+              <ThreadRow
+                thread={thread}
+                active={state.activeThreadId === thread.id}
+                view={view}
+                folders={folders}
+                folderId={folder.id}
+                onMoveToFolder={onMoveToFolder}
+                onAddFolder={(threadId) => onAddFolder(threadId)}
+              />
+              <DispatchWorkers
+                workers={workersOf.get(thread.id) ?? []}
+                forceOpen={forceOpen}
+                view={view}
+              />
+            </Fragment>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkspaceSection({
   workspace,
   primary,
@@ -1933,6 +2153,11 @@ function WorkspaceSection({
   onAddChatFolder,
   onReorderThreads,
   threadOrder,
+  recentFirst,
+  recentThreads,
+  onRenameChatFolder,
+  onDeleteChatFolder,
+  onReorderChatFolders,
   sidebarScrollRef,
 }: {
   workspace: Workspace;
@@ -1986,6 +2211,15 @@ function WorkspaceSection({
   onReorderThreads: (ids: string[]) => void;
   /** The stored manual chat order, applied to this list's active chats. */
   threadOrder: string[];
+  /** "Recently used first" is on for chats. */
+  recentFirst: boolean;
+  /** Thread id -> when you last opened it. Only read when `recentFirst`. */
+  recentThreads: Record<string, number>;
+  onRenameChatFolder: (folderId: string, name: string) => void;
+  onDeleteChatFolder: (folderId: string) => void;
+  /** Commit a dragged folder order (this workspace's folder ids, top to
+   *  bottom). */
+  onReorderChatFolders: (ids: string[]) => void;
   /** The sidebar's scroller, so a drag that reaches the top or bottom edge
    *  carries the list with it. The chat list itself does not scroll. */
   sidebarScrollRef: React.RefObject<HTMLDivElement | null>;
@@ -2003,6 +2237,17 @@ function WorkspaceSection({
     scrollRef: sidebarScrollRef,
     onCommit: onReorderThreads,
     enabled: !renaming,
+  });
+  // Drag-to-reorder for this workspace's chat folders, on its own container
+  // and its own id attribute so the chat drag above and this one cannot see
+  // each other's items (the folder list is a DESCENDANT of the chat list).
+  const folderListRef = useRef<HTMLDivElement | null>(null);
+  const folderDrag = useReorderDrag({
+    containerRef: folderListRef,
+    scrollRef: sidebarScrollRef,
+    onCommit: onReorderChatFolders,
+    enabled: !renaming,
+    attr: "data-folder-reorder-id",
   });
   // useState only reads its argument once, so switching layout in Settings
   // would otherwise leave a section paged at the old size until a reload —
@@ -2059,9 +2304,22 @@ function WorkspaceSection({
   // that is what actually reaches a row: the static creation-date sort inside
   // it would otherwise overwrite any order imposed further up. The shelf keeps
   // its own parked-at order — a settled chat is filed, not arranged.
-  const orderedActive = useMemo(
+  const draggedActive = useMemo(
     () => applyThreadOrder(active, threadOrder),
     [active, threadOrder],
+  );
+  // "Recently used first", when it is on. Applied to the whole active list
+  // rather than per container: the root list and each folder are filtered out
+  // of this one list further down and a filter preserves order, so sorting
+  // once here lands every chat at the top of whichever container holds it —
+  // a chat in a folder rises inside that folder instead of leaving it. Chats
+  // you have not opened on this device carry no stamp and stay put.
+  const orderedActive = useMemo(
+    () =>
+      recentFirst
+        ? floatRecentFirst(draggedActive, (t) => recentThreads[t.id] ?? 0)
+        : draggedActive,
+    [draggedActive, recentFirst, recentThreads],
   );
 
   const shown = forceOpen
@@ -2264,57 +2522,38 @@ function WorkspaceSection({
               />
             </Fragment>
           ))}
-          {chatFolders.map((folder) => {
-            const folderThreads = shown.filter(
-              (thread) => chatFolderAssignments[thread.id] === folder.id,
-            );
-            const total = active.filter(
-              (thread) => chatFolderAssignments[thread.id] === folder.id,
-            ).length;
-            const collapseKey = `chat-folder:${folder.id}`;
-            const folderOpen = forceOpen || !state.collapsed[collapseKey];
-            return (
-              <div className="chat-folder" key={folder.id}>
-                <button
-                  type="button"
-                  className="chat-folder-head"
-                  aria-expanded={folderOpen}
-                  onClick={() =>
-                    dispatch({ type: "toggleProject", projectId: collapseKey })
-                  }
-                >
-                  <FolderClosedIcon size={18} />
-                  <span>{folder.name}</span>
-                  <ChevronIcon size={11} open={folderOpen} className="row-chevron" />
-                </button>
-                {folderOpen && (
-                  <div className="chat-folder-threads">
-                    {folderThreads.length === 0 && total === 0 && (
-                      <div className="chat-folder-empty">empty</div>
-                    )}
-                    {folderThreads.map((thread) => (
-                      <Fragment key={thread.id}>
-                        <ThreadRow
-                          thread={thread}
-                          active={state.activeThreadId === thread.id}
-                          view={view}
-                          folders={chatFolders}
-                          folderId={folder.id}
-                          onMoveToFolder={onMoveChatToFolder}
-                          onAddFolder={(threadId) => onAddChatFolder(threadId)}
-                        />
-                        <DispatchWorkers
-                          workers={workersOf.get(thread.id) ?? []}
-                          forceOpen={forceOpen}
-                          view={view}
-                        />
-                      </Fragment>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {/* The folders get their OWN reorder container and their own id
+              attribute. They sit inside `.project-threads`, which is already a
+              chat-reorder container looking for [data-reorder-id] — sharing
+              the attribute would let a chat drag pick a folder up and commit a
+              folder id as part of the chat order. */}
+          <div className="chat-folder-list" ref={folderListRef}>
+            {chatFolders.map((folder) => (
+              <ChatFolderGroup
+                key={folder.id}
+                folder={folder}
+                folders={chatFolders}
+                shown={shown}
+                activeThreads={active}
+                assignments={chatFolderAssignments}
+                workersOf={workersOf}
+                forceOpen={forceOpen}
+                view={view}
+                onMoveToFolder={onMoveChatToFolder}
+                onAddFolder={onAddChatFolder}
+                onRename={onRenameChatFolder}
+                onDelete={onDeleteChatFolder}
+                reorder={{
+                  handle: folderDrag.handleProps(folder.id),
+                  dragging: folderDrag.draggingId === folder.id,
+                  drop:
+                    folderDrag.dropId === folder.id
+                      ? folderDrag.dropSide
+                      : undefined,
+                }}
+              />
+            ))}
+          </div>
           {remaining > 0 && (
             <button
               className="load-more-threads"
@@ -4009,6 +4248,16 @@ export const Sidebar = memo(function Sidebar({
     return () => window.removeEventListener(SIDEBARPREFS_EVENT, onPrefs);
   }, []);
 
+  // What the two "recently used first" floats sort by, kept live so opening a
+  // chat reorders the list behind it rather than at the next reload. Reading
+  // it is cheap and the event only fires on navigation.
+  const [recentUse, setRecentUse] = useState<RecentUse>(getRecentUse);
+  useEffect(() => {
+    const onUse = (e: Event) => setRecentUse((e as CustomEvent<RecentUse>).detail);
+    window.addEventListener(RECENTUSE_EVENT, onUse);
+    return () => window.removeEventListener(RECENTUSE_EVENT, onUse);
+  }, []);
+
   const filter = query.trim().toLowerCase();
   const searchableThreads = useMemo(
     () => Object.values(state.threads).flat(),
@@ -4265,6 +4514,26 @@ export const Sidebar = memo(function Sidebar({
     return map;
   }, [sections, soloId, projectById, state.threads, state.peers, state.hello, state.viewPerson, state.serverCatalogs, layout.threadOrder]);
 
+  const recentWorkspacesFirst = sidebarPrefs.recentWorkspacesFirst;
+  const recentThreadsFirst = sidebarPrefs.recentThreadsFirst;
+
+  /** When this workspace was last opened: the newest stamp across the
+   *  workspace itself (a rail tile or header pick, which may land on no chat
+   *  at all) and every project under it (opening a chat stamps its project,
+   *  which is how you usually "use" a workspace). 0 = never opened, which the
+   *  float reads as "leave it where it is". */
+  const workspaceUsedAt = useCallback(
+    (workspaceId: string): number => {
+      const own = recentUse.workspaces[workspaceId] ?? 0;
+      const members = sectionData.get(workspaceId)?.members ?? [];
+      return members.reduce(
+        (max, m) => Math.max(max, recentUse.projects[m.projectId] ?? 0),
+        own,
+      );
+    },
+    [recentUse, sectionData],
+  );
+
   // Projects sit where they were PUT. The base order used to be activity —
   // the workspace holding the newest thread floated to the top — which meant
   // the list rearranged itself under the cursor exactly when it was busiest:
@@ -4320,9 +4589,21 @@ export const Sidebar = memo(function Sidebar({
       (a, b) => (a.favorite ? 0 : 1) - (b.favorite ? 0 : 1),
     );
 
-    // (1) Manual drag order last, so it wins: ids listed in workspaceOrder come
-    // first in that order; ids absent from it keep the float order above.
-    const ordered = applyProjectOrder(byFavorite, layout.workspaceOrder);
+    // (1) Manual drag order: ids listed in workspaceOrder come first in that
+    // order; ids absent from it keep the float order above.
+    const dragged = applyProjectOrder(byFavorite, layout.workspaceOrder);
+
+    // (0.5) "Recently used first", when it is on. This outranks even the
+    // manual order, because switching it on IS the explicit statement that the
+    // list should follow where you have been — leaving a drag above it would
+    // give you a setting that visibly does nothing on the projects you have
+    // arranged, which are the ones you use. Workspaces you have never opened
+    // carry no stamp and so never jump: they hold the dragged/float order
+    // below the ones you have, and the manual order is still exactly what you
+    // get back the moment the toggle goes off.
+    const byRecent = recentWorkspacesFirst
+      ? floatRecentFirst(dragged, (w) => workspaceUsedAt(w.id))
+      : dragged;
 
     // (0) A revealed stash sinks, and this outranks even the manual order:
     // "show hidden" asks to SEE the shelf, not to put the shelf back in the
@@ -4330,8 +4611,8 @@ export const Sidebar = memo(function Sidebar({
     // projects you put away collect at the bottom. Search results are left
     // interleaved — there the ordering that matters is the match, not the list.
     return filter
-      ? ordered
-      : [...ordered].sort((a, b) => (a.hidden ? 1 : 0) - (b.hidden ? 1 : 0));
+      ? byRecent
+      : [...byRecent].sort((a, b) => (a.hidden ? 1 : 0) - (b.hidden ? 1 : 0));
   }, [
     filter,
     soloId,
@@ -4341,6 +4622,8 @@ export const Sidebar = memo(function Sidebar({
     layout.pinLocal,
     layout.showHidden,
     layout.workspaceOrder,
+    recentWorkspacesFirst,
+    workspaceUsedAt,
   ]);
 
   /** Everything currently stashed, in the order the sidebar would list it.
@@ -4487,6 +4770,59 @@ export const Sidebar = memo(function Sidebar({
     },
     [layout.chatFolderAssignments, layout.chatFolders, updateLayout],
   );
+
+  const renameChatFolder = useCallback(
+    (folderId: string, name: string) => {
+      updateLayout({
+        chatFolders: layout.chatFolders.map((folder) =>
+          folder.id === folderId ? { ...folder, name } : folder,
+        ),
+      });
+    },
+    [layout.chatFolders, updateLayout],
+  );
+
+  /** Drop the folder and unassign its chats back to the workspace root. The
+   *  chats themselves are untouched — a folder is a grouping, and deleting a
+   *  grouping must never take the work in it. */
+  const deleteChatFolder = useCallback(
+    (folderId: string) => {
+      const chatFolderAssignments = Object.fromEntries(
+        Object.entries(layout.chatFolderAssignments).filter(
+          ([, id]) => id !== folderId,
+        ),
+      );
+      updateLayout({
+        chatFolders: layout.chatFolders.filter(
+          (folder) => folder.id !== folderId,
+        ),
+        chatFolderAssignments,
+      });
+    },
+    [layout.chatFolderAssignments, layout.chatFolders, updateLayout],
+  );
+
+  /** Commit a folder drag. `ids` is one workspace's folders, top to bottom;
+   *  every other workspace's folders keep their stored order and their place
+   *  in the array, so dragging in one project cannot shuffle another's. */
+  const reorderChatFolders = useCallback(
+    (ids: string[]) => {
+      const rank = new Map(ids.map((id, i) => [id, i]));
+      const dragged = layout.chatFolders
+        .filter((folder) => rank.has(folder.id))
+        .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+      // Refill the slots the dragged folders already occupied, leaving every
+      // other workspace's entries exactly where they were in the flat array.
+      let next = 0;
+      updateLayout({
+        chatFolders: layout.chatFolders.map((folder) =>
+          rank.has(folder.id) ? dragged[next++] : folder,
+        ),
+      });
+    },
+    [layout.chatFolders, updateLayout],
+  );
+
   const activeWorkspaceId = useMemo(() => {
     const active = state.activeThreadId
       ? findThread(state, state.activeThreadId)
@@ -4566,6 +4902,10 @@ export const Sidebar = memo(function Sidebar({
   function pickRailProject(id: string) {
     if (quickView || agentsView || bosunView) switchView("fleet");
     setPickedId(id);
+    // Stamped on the workspace itself, not just whatever chat we land on: a
+    // project you opened and then left without reading anything was still the
+    // last one you used, and an empty project has no chat to stamp at all.
+    markUsed({ workspaceId: id });
     const threads = sectionData.get(id)?.threads ?? [];
     // Already reading something in this project (a re-tap, or the chat that
     // made this project current): stay put rather than yanking the pane onto
@@ -4854,6 +5194,8 @@ export const Sidebar = memo(function Sidebar({
             autoSettleDays={sidebarPrefs.autoSettleDays}
             now={now}
             view={layout.view}
+            recentFirst={recentThreadsFirst}
+            recentThreads={recentUse.threads}
           />
         )}
         {bosunView && (
@@ -4871,6 +5213,8 @@ export const Sidebar = memo(function Sidebar({
             autoSettleDays={sidebarPrefs.autoSettleDays}
             now={now}
             view={layout.view}
+            recentFirst={recentThreadsFirst}
+            recentThreads={recentUse.threads}
           />
         )}
         {agentsView && (
@@ -5056,6 +5400,11 @@ export const Sidebar = memo(function Sidebar({
                 onAddChatFolder={(threadId) =>
                   setFolderDialog({ workspaceId: w.id, moveThreadId: threadId })
                 }
+                onRenameChatFolder={renameChatFolder}
+                onDeleteChatFolder={deleteChatFolder}
+                onReorderChatFolders={reorderChatFolders}
+                recentFirst={recentThreadsFirst}
+                recentThreads={recentUse.threads}
                 onMenu={(point, workspace) =>
                   setMenu({
                     x: point.x,

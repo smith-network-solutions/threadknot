@@ -68,6 +68,7 @@ import {
   setComposerPrefs,
   setSidebarPrefs,
   setTermPrefs,
+  SIDEBARPREFS_EVENT,
   SCROLLBACK_MAX,
   SCROLLBACK_MIN,
   TFONT_MAX,
@@ -166,6 +167,78 @@ const PROJECT_LAYOUT_HINTS: Record<ProjectLayout, string> = {
   picker: "One project at a time, chosen from a dropdown at the top. No headers, so the chat list gets the whole sidebar.",
   rail: "A column of project icons down the left edge. One tap to switch, every project always in view with its own unread badge.",
 };
+
+/** The two recency floats, independent so you can have your chats ordered by
+ *  what you were last in without your projects moving too.
+ *
+ *  First block in Appearance because it is the one knob here that changes
+ *  where things ARE rather than how they look, and burying that under the
+ *  theme gallery is how a setting goes unfound. */
+function RecentFirstSettings() {
+  const [s, setS] = useState(getSidebarPrefs);
+  // Settings can be open in one window while the sidebar lives in another, and
+  // the sidebar writes these too (nothing does yet, but the prefs record is
+  // shared). Mirroring the event keeps the buttons honest either way.
+  useEffect(() => {
+    const onPrefs = () => setS(getSidebarPrefs());
+    window.addEventListener(SIDEBARPREFS_EVENT, onPrefs);
+    return () => window.removeEventListener(SIDEBARPREFS_EVENT, onPrefs);
+  }, []);
+  /** Re-read the stored prefs instead of closing over `s`.
+   *
+   *  Two independent switches writing one shared record is exactly the shape
+   *  that loses a write: both buttons render against the same `s`, so two
+   *  clicks landing in one React batch would have the second persist the
+   *  FIRST one's pre-click value and quietly undo it. `setSidebarPrefs` writes
+   *  localStorage synchronously, so reading it back is always current. */
+  function toggle(key: "recentWorkspacesFirst" | "recentThreadsFirst") {
+    const current = getSidebarPrefs();
+    const next = { ...current, [key]: !current[key] };
+    setS(next);
+    setSidebarPrefs(next);
+  }
+  return (
+    <div className="settings-block">
+      <div className="settings-label">recently used first</div>
+      <div className="settings-row">
+        <span className="settings-value">
+          workspaces
+          <span className="settings-hint">
+            Float the projects you most recently opened to the top of the
+            sidebar and the rail. Counts when you open one — a background agent
+            finishing a turn never moves anything.
+          </span>
+        </span>
+        <button
+          type="button"
+          className={`settings-toggle ${s.recentWorkspacesFirst ? "on" : ""}`}
+          aria-pressed={s.recentWorkspacesFirst}
+          onClick={() => toggle("recentWorkspacesFirst")}
+        >
+          {s.recentWorkspacesFirst ? "on" : "off"}
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-value">
+          chats
+          <span className="settings-hint">
+            The same, for chats — each one floats to the top of wherever it
+            lives, so a chat in a folder rises inside that folder instead of
+            leaving it. The settled shelf keeps its own order.
+          </span>
+        </span>
+        <button
+          type="button"
+          className={`settings-toggle ${s.recentThreadsFirst ? "on" : ""}`}
+          aria-pressed={s.recentThreadsFirst}
+          onClick={() => toggle("recentThreadsFirst")}
+        >
+          {s.recentThreadsFirst ? "on" : "off"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function SidebarSettings() {
   const [s, setS] = useState(getSidebarPrefs);
@@ -5052,6 +5125,7 @@ function SettingsSectionContent({
     case "appearance":
       return (
         <>
+          <RecentFirstSettings />
           <AppearanceStudio />
           <SkinsSettings />
           <SidebarSettings />

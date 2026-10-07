@@ -99,6 +99,13 @@ export function useReorderDrag(opts: {
    *  container, which is right for the rail (it scrolls itself) and wrong for
    *  section headers (the sidebar's scroller is an ancestor). */
   scrollRef?: RefObject<HTMLElement | null>;
+  /** The attribute carrying each item's id. Overridden where one list NESTS
+   *  inside another that is also reorderable — chat folders live inside the
+   *  chat list, so a shared attribute would let a chat drag pick up a folder
+   *  and commit folder ids as a chat order. A separate attribute is what keeps
+   *  the two lists from seeing each other; `containerRef` alone cannot,
+   *  because the outer container contains the inner one. */
+  attr?: string;
 }): ReorderDrag {
   const optsRef = useRef(opts);
   optsRef.current = opts;
@@ -107,10 +114,12 @@ export function useReorderDrag(opts: {
   const suppressClick = useRef(false);
   const guardTimer = useRef<number | null>(null);
 
+  const attrName = () => optsRef.current.attr ?? "data-reorder-id";
+
   const items = useCallback((): HTMLElement[] => {
     const root = optsRef.current.containerRef.current;
     if (!root) return [];
-    return Array.from(root.querySelectorAll<HTMLElement>("[data-reorder-id]"));
+    return Array.from(root.querySelectorAll<HTMLElement>(`[${attrName()}]`));
   }, []);
 
   /** Which slot the pointer is over: the first item whose midpoint it has not
@@ -201,8 +210,11 @@ export function useReorderDrag(opts: {
   const activate = useCallback(
     (s: Session) => {
       s.active = true;
+      // Read through getAttribute rather than `dataset.reorderId`, so an
+      // overridden `attr` reads the attribute it actually wrote.
+      const name = attrName();
       s.ids = items()
-        .map((el) => el.dataset.reorderId ?? "")
+        .map((el) => el.getAttribute(name) ?? "")
         .filter(Boolean);
       s.from = s.ids.indexOf(s.id);
       if (s.from < 0) {

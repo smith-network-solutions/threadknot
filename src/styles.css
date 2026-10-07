@@ -2218,6 +2218,114 @@ body.reordering { cursor: grabbing; user-select: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The folder header is now a ROW: grip, the header button itself, then the
+   edit affordances. The button keeps every style it had — it is still the
+   whole width of the row and still the thing you press to fold the group —
+   and the two new controls sit beside it, revealed on hover like the project
+   grip above rather than permanently crowding the name. */
+.chat-folder-head-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.chat-folder-head-row .chat-folder-head { flex: 1; min-width: 0; }
+.chat-folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Out of flow, for the same reason as the actions on the right: the chat list
+   is ~204px wide in rail mode, and a 14px grip in the row is 14px the folder
+   name does not get. "WEBSITE WORK" fit before this feature and has to still
+   fit after it, so neither hover affordance is allowed to charge the name for
+   being available. The grip lives in the gutter `.chat-folder`'s left margin
+   already leaves. */
+.chat-folder-grip {
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 20px;
+  color: var(--dim);
+  opacity: 0;
+  cursor: grab;
+  touch-action: none;
+  transition: opacity 0.12s ease;
+}
+.chat-folder-head-row:hover .chat-folder-grip { opacity: 0.55; }
+.chat-folder-grip:hover { opacity: 1 !important; }
+.chat-folder-grip:active { cursor: grabbing; }
+/* Floated out of the row's flow rather than sitting in it. In flow these two
+   buttons cost ~50px of name width PERMANENTLY — opacity:0 still reserves the
+   space — and a folder called "GA4 CONVERSTION TRACKING" was rendering as
+   "GA4 ..." even with nothing visible beside it. Out of flow the name gets the
+   whole row, and the buttons only cover the chevron for as long as the pointer
+   is actually on the row, which is the moment you want them and not before. */
+.chat-folder-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 6px;
+  /* Opaque, so the count and chevron underneath do not read through it. */
+  background: var(--panel);
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.chat-folder-head-row:hover .chat-folder-actions,
+/* Keep the pair up while the delete button is armed, or moving the pointer
+   off the row would hide the confirm you are reaching for. */
+.chat-folder-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* No hover on a phone, so rename and delete have to be visible to exist at
+   all — and there they go back INTO the row, because a permanent overlay
+   would sit on top of the count and chevron forever. The name truncates
+   instead, which is the honest trade on a 390px screen. */
+@media (any-pointer: coarse) {
+  .chat-folder-grip { opacity: 0.4; }
+  .chat-folder-actions {
+    position: static;
+    transform: none;
+    flex: none;
+    background: none;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.chat-folder-rename-input { flex: 1; min-width: 0; margin: 1px 0; }
+
+/* Same drag language as the sections and chat rows: the dragged folder dims
+   and a brass line marks the slot it will land in. */
+.chat-folder { position: relative; }
+.chat-folder.dragging { opacity: 0.4; }
+.chat-folder[data-drop]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brass-hi);
+  box-shadow: 0 0 6px rgba(229, 181, 103, 0.55);
+  pointer-events: none;
+}
+.chat-folder[data-drop="before"]::after { top: -2px; }
+.chat-folder[data-drop="after"]::after { bottom: -2px; }
+
 .chat-folder-threads { margin-left: 9px; }
 .chat-folder-empty {
   padding: 4px 10px 5px 15px;
