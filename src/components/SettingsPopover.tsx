@@ -202,7 +202,7 @@ function SidebarSettings() {
           settle quiet chats
           <span className="settings-hint">
             Chats with no activity for this long move to the settled shelf on their own.
-            Anything still working, waiting on you, or unread stays put.
+            Anything still working, waiting on you, unread, or starred stays put.
           </span>
         </span>
         <button

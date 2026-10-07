@@ -977,6 +977,19 @@ export function DangerButton({
   );
 }
 
+/** Hover text for the star, on the row and in the kebab menu alike.
+ *
+ *  Says what the star DOES rather than only naming it. The star's one real
+ *  consequence is that it takes the chat off the idle clock (`threadSettled`
+ *  rule 3) — a bare "Favorite" never told anyone that, which left the feature
+ *  undiscoverable to exactly the person who wanted it. Exported so both call
+ *  sites read from one string instead of drifting apart. */
+export function starTitle(favorite: boolean): string {
+  return favorite
+    ? "Unfavorite — lets this chat settle itself once it goes quiet"
+    : "Favorite — keeps this chat off the settled shelf until you file it";
+}
+
 function ThreadRow({
   thread,
   active,
@@ -1546,7 +1559,7 @@ function ThreadRow({
       className={`icon-btn thread-star${thread.favorite ? " on" : ""}`}
       aria-label={thread.favorite ? "Unfavorite thread" : "Favorite thread"}
       aria-pressed={!!thread.favorite}
-      title={thread.favorite ? "Unfavorite" : "Favorite"}
+      title={starTitle(!!thread.favorite)}
       onClick={(e) => {
         e.stopPropagation();
         void actions.setThreadFavorite(thread.id, !thread.favorite);
@@ -1668,6 +1681,7 @@ function ThreadRow({
               type="button"
               role="menuitem"
               className="thread-menu-item"
+              title={starTitle(!!thread.favorite)}
               onClick={() => {
                 closeMenu();
                 void actions.setThreadFavorite(thread.id, !thread.favorite);
