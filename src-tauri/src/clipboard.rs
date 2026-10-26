@@ -96,6 +96,33 @@ pub async fn copy_artifact_file(
     set_file(path).await
 }
 
+/// Put image pixels on the clipboard, so they paste into chat apps, editors,
+/// and documents as a picture rather than as a file. The webview already
+/// rasterized whatever it was showing (JPEG, WebP, SVG, …) to PNG and sends
+/// those bytes as the raw invoke body. WebKitGTK has no async clipboard write
+/// for images, which is why this goes through the native context instead.
+#[tauri::command]
+pub async fn copy_image(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected raw PNG bytes.".into());
+    };
+    if !is_png(bytes) {
+        return Err("The image could not be converted to PNG.".into());
+    }
+    let png = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        context()?
+            .set_buffer("image/png", png)
+            .map_err(|error| format!("Couldn't copy the image: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Clipboard worker failed: {error}"))?
+}
+
+fn is_png(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+}
+
 fn materialize_artifact(snapshot: &Path, artifact_id: &str, name: &str) -> Result<PathBuf, String> {
     let file_name = Path::new(name)
         .file_name()

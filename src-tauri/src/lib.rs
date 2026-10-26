@@ -721,6 +721,7 @@ pub fn run() {
             clipboard_images,
             clipboard::copy_project_file,
             clipboard::copy_artifact_file,
+            clipboard::copy_image,
             notify,
             test_notification,
             debug_note,
