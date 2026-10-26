@@ -5669,6 +5669,38 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font-size: 13.5px;
 }
 
+/* The bubble's Markdown. `.md` is tuned for the dark feed, and most of its
+   accents (brass bullets, blue links, brass-on-panel code) vanish on a brass
+   fill, so inside the bubble everything takes the bubble's ink and marks
+   itself with weight, underline or a tint of that ink instead. */
+.msg-user .md { white-space: normal; }
+.msg-user .md p { margin: 0.4em 0; }
+.msg-user .md strong,
+.msg-user .md h4,
+.msg-user .md blockquote { color: inherit; }
+.msg-user .md a,
+.msg-user .md .md-file-link {
+  color: inherit;
+  border-bottom: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg-user .md li::marker { color: inherit; }
+.msg-user .md blockquote {
+  border-left-color: color-mix(in srgb, currentColor 45%, transparent);
+  opacity: 0.85;
+}
+.msg-user .md :not(pre) > code,
+.msg-user .md .inline-code {
+  color: inherit;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  border-color: transparent;
+}
+.msg-user .md hr { border-top-color: color-mix(in srgb, currentColor 30%, transparent); }
+.msg-user .md th { background: color-mix(in srgb, currentColor 10%, transparent); color: inherit; }
+.msg-user .md th,
+.msg-user .md td { border-color: color-mix(in srgb, currentColor 25%, transparent); }
+
 /* Reply is intentionally a quiet edge affordance: the action appears when the
    reader is already on the message, while the selected context becomes the
    stronger brass rail in the composer below. */
@@ -7460,6 +7492,61 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .composer-card textarea::placeholder { color: var(--faint); }
 
+/* Live Markdown: the textarea keeps the caret, selection and every key handler,
+   but its glyphs are transparent; the styled copy painted behind it is what
+   you read. The two must lay out identically, so the backdrop takes the
+   textarea's box rules above (font, line-height, padding) and neither layer
+   shows a scrollbar, which would narrow only one of them and rewrap it. */
+.composer-md {
+  position: relative;
+}
+.composer-md-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+  font-size: var(--composer-font, 16px);
+  font-weight: 450;
+  line-height: 1.55;
+  padding: 4px 6px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.composer-md textarea {
+  position: relative;
+  color: transparent;
+  caret-color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  scrollbar-width: none;
+}
+.composer-md textarea::-webkit-scrollbar { display: none; }
+
+/* Nothing below may change a glyph's width — no font-weight, italic face,
+   font-size or font-family — or the caret drifts off the text it belongs to.
+   Strong is a hairline stroke; emphasis and headings are colour. */
+.md-hl-mark { color: var(--faint); }
+.md-hl-bullet { color: var(--brass-hi); }
+.md-hl-strong { -webkit-text-stroke: 0.035em currentColor; }
+.md-hl-em { color: color-mix(in srgb, var(--brass-hi) 70%, var(--text)); }
+.md-hl-strike { text-decoration: line-through; color: var(--dim); }
+.md-hl-heading { color: var(--brass-hi); -webkit-text-stroke: 0.035em currentColor; }
+.md-hl-heading .md-hl-mark { -webkit-text-stroke: 0; }
+.md-hl-quote { color: var(--dim); }
+.md-hl-code,
+.md-hl-codeblock {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 4px;
+}
+.md-hl-code { color: var(--brass-hi); }
+.md-hl-link,
+.md-hl-url { color: var(--brass-hi); }
+.md-hl-link > :not(.md-hl-mark),
+.md-hl-url { text-decoration: underline; text-underline-offset: 2px; }
+
 .reply-context {
   display: flex;
   align-items: center;
@@ -7625,7 +7712,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
   padding-top: 8px;
   padding-bottom: 7px;
 }
-:root[data-composer-density="compact"] .composer-card textarea {
+:root[data-composer-density="compact"] .composer-card textarea,
+:root[data-composer-density="compact"] .composer-md-backdrop {
   padding-top: 1px;
   padding-bottom: 5px;
   min-height: 20px;
@@ -7733,7 +7821,8 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 /* Keep whatever is already typed from running underneath the badge: the words
    about to arrive land at the cursor, which is exactly where it sits. */
-.composer-input.busy textarea { padding-right: 124px; }
+.composer-input.busy textarea,
+.composer-input.busy .composer-md-backdrop { padding-right: 124px; }
 
 /* Shown while a clip is being turned into words. Pinned to the top-right of
    the text box and click-through, so it never blocks typing or the cursor. */

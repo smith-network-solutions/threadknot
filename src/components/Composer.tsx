@@ -46,6 +46,7 @@ import {
   XIcon,
 } from "./icons";
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
+import { highlightMarkdown } from "../lib/markdownHighlight";
 import { markJustSent } from "../lib/justSent";
 import { formatReply, replyPreview, type ReplyTarget } from "../lib/reply";
 import { isImageAttachment, normalizedAttachmentMime } from "../lib/attachments";
@@ -833,6 +834,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  // The styled copy of the draft painted behind the (transparent) textarea.
+  const backdropRef = useRef<HTMLDivElement | null>(null);
+  const highlighted = useMemo(() => highlightMarkdown(text), [text]);
   const composerInputRef = useRef<HTMLDivElement | null>(null);
   const taObserverRef = useRef<ResizeObserver | null>(null);
   const taWidthRef = useRef(0);
@@ -858,6 +862,10 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     if (!ta) return;
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
+    // The textarea scrolls before React repaints the backdrop with the new
+    // text, so the backdrop's own scroll event clamps to the old height.
+    // Re-align once both have the same content.
+    if (backdropRef.current) backdropRef.current.scrollTop = ta.scrollTop;
   }, []);
 
   useEffect(() => {
@@ -1685,81 +1693,92 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               <span>Transcribing…</span>
             </div>
           )}
-          <textarea
-            ref={attachTextarea}
-            rows={1}
-            value={text}
-            placeholder={placeholder}
-            autoCorrect="on"
-            autoCapitalize="sentences"
-            spellCheck={true}
-            onChange={(e) => {
-              updateText(e.target.value);
-              trackCursor(e.currentTarget);
-            }}
-            onClick={(e) => trackCursor(e.currentTarget)}
-            onSelect={(e) => trackCursor(e.currentTarget)}
-            onPaste={(e) => {
-              const files = clipboardFiles(e.clipboardData);
-              if (files.length > 0) {
+          <div className="composer-md">
+            <div ref={backdropRef} className="composer-md-backdrop" aria-hidden="true">
+              {highlighted}
+              {/* A trailing newline collapses in a div but not in a textarea;
+                  this keeps the last empty line's height so the layers agree. */}
+              {"\u200b"}
+            </div>
+            <textarea
+              ref={attachTextarea}
+              rows={1}
+              value={text}
+              placeholder={placeholder}
+              autoCorrect="on"
+              autoCapitalize="sentences"
+              spellCheck={true}
+              onChange={(e) => {
+                updateText(e.target.value);
+                trackCursor(e.currentTarget);
+              }}
+              onClick={(e) => trackCursor(e.currentTarget)}
+              onSelect={(e) => trackCursor(e.currentTarget)}
+              onPaste={(e) => {
+                const files = clipboardFiles(e.clipboardData);
+                if (files.length > 0) {
+                  e.preventDefault();
+                  void addFiles(files);
+                  return;
+                }
+
+                // Preserve ordinary browser text paste. In the desktop shell we
+                // first check the native clipboard because WebKit can flatten a
+                // copied file into indistinguishable plain path text.
+                const pastedText = e.clipboardData.getData("text/plain");
+                const hasText = pastedText.length > 0;
+                const hasImageType = Array.from(e.clipboardData.types).some((type) =>
+                  IMAGE_TYPES.includes(type),
+                );
+                const nativeShell = "__TAURI_INTERNALS__" in window;
+                if (hasText && !hasImageType && !nativeShell) return;
+
+                // Native Linux file copies can look exactly like a plain path to
+                // WebKit. Hold the default text insertion until the backend has
+                // checked the native file-list clipboard, then restore normal text
+                // paste when it wasn't an image file.
                 e.preventDefault();
-                void addFiles(files);
-                return;
-              }
-
-              // Preserve ordinary browser text paste. In the desktop shell we
-              // first check the native clipboard because WebKit can flatten a
-              // copied file into indistinguishable plain path text.
-              const pastedText = e.clipboardData.getData("text/plain");
-              const hasText = pastedText.length > 0;
-              const hasImageType = Array.from(e.clipboardData.types).some((type) =>
-                IMAGE_TYPES.includes(type),
-              );
-              const nativeShell = "__TAURI_INTERNALS__" in window;
-              if (hasText && !hasImageType && !nativeShell) return;
-
-              // Native Linux file copies can look exactly like a plain path to
-              // WebKit. Hold the default text insertion until the backend has
-              // checked the native file-list clipboard, then restore normal text
-              // paste when it wasn't an image file.
-              e.preventDefault();
-              const start = e.currentTarget.selectionStart;
-              const end = e.currentTarget.selectionEnd;
-              void pasteFromClipboard(e.clipboardData).then((attached) => {
-                if (!attached && hasText) insertPastedText(pastedText, start, end);
-              });
-            }}
-            onKeyDown={(e) => {
-              if (slashOpen) {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setSlashIndex((index) => (index + 1) % slashCommands.length);
-                  return;
-                }
-                if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setSlashIndex(
-                    (index) => (index - 1 + slashCommands.length) % slashCommands.length,
-                  );
-                  return;
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  setDismissedSlashKey(slashKey);
-                  return;
+                const start = e.currentTarget.selectionStart;
+                const end = e.currentTarget.selectionEnd;
+                void pasteFromClipboard(e.clipboardData).then((attached) => {
+                  if (!attached && hasText) insertPastedText(pastedText, start, end);
+                });
+              }}
+              onKeyDown={(e) => {
+                if (slashOpen) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSlashIndex((index) => (index + 1) % slashCommands.length);
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSlashIndex(
+                      (index) => (index - 1 + slashCommands.length) % slashCommands.length,
+                    );
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setDismissedSlashKey(slashKey);
+                    return;
+                  }
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    chooseSlashCommand(slashCommands[selectedSlashIndex]);
+                    return;
+                  }
                 }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  chooseSlashCommand(slashCommands[selectedSlashIndex]);
-                  return;
+                  void submit();
                 }
-              }
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-          />
+              }}
+              onScroll={(e) => {
+                if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
+              }}
+            />
+          </div>
         </div>
         <input
           ref={fileRef}

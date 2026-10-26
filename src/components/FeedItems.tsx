@@ -905,7 +905,13 @@ function UserMessage({
           onOpenFile={render.onOpenFile}
         />
       )}
-      {hasText && <div className="msg-user"><div className="msg-user-text">{messageText}</div></div>}
+      {hasText && (
+        <div className="msg-user">
+          <div className="msg-user-text">
+            <Markdown text={messageText} breaks onOpenFile={render.onOpenFile} />
+          </div>
+        </div>
+      )}
       {render.http && threadId && images.length > 0 && (
         <div className={`msg-user-attachments ${images.length === 1 ? "single" : "gallery"}`}>
           {images.map((a) => {

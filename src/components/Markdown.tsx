@@ -1,6 +1,7 @@
 import { memo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
 import { copyText } from "../lib/format";
@@ -143,11 +144,15 @@ function markdownComponents(onOpenFile?: (path: string) => void): Components {
 export const Markdown = memo(function Markdown({
   text,
   streaming = false,
+  breaks = false,
   onOpenFile,
 }: {
   text: string;
   /** Live output is intentionally plain text; parse/highlight once at turn end. */
   streaming?: boolean;
+  /** Keep single line breaks as typed. People hit Enter meaning a new line;
+   *  agents write CommonMark and rely on soft wraps joining. */
+  breaks?: boolean;
   onOpenFile?: (path: string) => void;
 }) {
   if (streaming) {
@@ -156,7 +161,7 @@ export const Markdown = memo(function Markdown({
   return (
     <div className="md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={breaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={markdownComponents(onOpenFile)}
       >
