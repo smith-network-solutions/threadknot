@@ -1157,6 +1157,30 @@ pub(crate) fn note_log_on_task(registry: &BosunRegistry, bosun: &Bosun, plan: &P
         .is_ok()
 }
 
+/// Queued updates older than this are dropped rather than delivered. A
+/// thread can sit busy (or waiting on a question) for days; by then the
+/// signal is history, and replaying a pile of them at once (as every restart
+/// used to, when the threads finally read idle) only wakes threads to say
+/// "nothing new" and buzzes the phone for each.
+pub(crate) const QUEUED_UPDATE_MAX_AGE_HOURS: i64 = 12;
+
+/// Which queued updates are still worth a turn: none for a closed task (it
+/// was finished after they queued; a genuinely new signal reopens it through
+/// the normal path), and only recent ones otherwise. A signal whose time does
+/// not parse is kept, and so is one whose text is gone (it says so itself).
+pub(crate) fn deliverable_updates(task_closed: bool, signals: &[Option<Signal>], now: DateTime<Local>) -> Vec<bool> {
+    let cutoff = now - chrono::Duration::hours(QUEUED_UPDATE_MAX_AGE_HOURS);
+    signals
+        .iter()
+        .map(|s| {
+            !task_closed
+                && s.as_ref()
+                    .and_then(|s| parse_iso(&s.observed_at))
+                    .is_none_or(|at| at > cutoff)
+        })
+        .collect()
+}
+
 /// §10.3: every task of this Bosun whose thread is idle and has queued
 /// updates gets ONE follow-up turn carrying all of them.
 pub(crate) fn drain_pending_updates(hub: &Arc<Hub>, bosun: &Bosun, lookout_names: &HashMap<String, String>) -> usize {
@@ -1193,6 +1217,24 @@ pub(crate) fn drain_pending_updates(hub: &Arc<Hub>, bosun: &Bosun, lookout_names
             let signals: Vec<Option<Signal>> = ids.iter().map(|id| file.signals.get(id).cloned()).collect();
             (signals, ids)
         });
+        if ids.is_empty() {
+            continue;
+        }
+        let keep = deliverable_updates(task.status.is_closed(), &signals, Local::now());
+        let dropped = keep.iter().filter(|k| !**k).count();
+        let (ids, signals): (Vec<String>, Vec<Option<Signal>>) = ids
+            .into_iter()
+            .zip(signals)
+            .zip(keep)
+            .filter_map(|(pair, k)| k.then_some(pair))
+            .unzip();
+        if dropped > 0 {
+            let why = if task.status.is_closed() { "the to-do is closed" } else { "too old to act on" };
+            let _ = registry.update_task(&task.id, |t| {
+                push_history(t, None, &format!("{dropped} queued update(s) dropped: {why}"), "bosun", &now_iso());
+                Ok(())
+            });
+        }
         if ids.is_empty() {
             continue;
         }

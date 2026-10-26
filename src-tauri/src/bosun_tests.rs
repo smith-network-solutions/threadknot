@@ -1015,3 +1015,24 @@ fn triage_carries_open_tasks_and_task_ids() {
     let planned = validate_decisions(vec![it], &[signal("s1")], &b);
     assert_eq!(planned[0].task_id.as_deref(), Some(t.id.as_str()));
 }
+
+#[test]
+fn queued_updates_skip_stale_ones_and_closed_tasks() {
+    let now = Local::now();
+    let fresh = signal("fresh");
+    let mut stale = signal("stale");
+    stale.observed_at = (now - chrono::Duration::days(3)).to_rfc3339();
+    let mut unparsable = signal("odd");
+    unparsable.observed_at = "not a time".into();
+    let queued = vec![Some(fresh), Some(stale), Some(unparsable), None];
+    assert_eq!(
+        tasks::deliverable_updates(false, &queued, now),
+        vec![true, false, true, true],
+        "open task: only the stale one is dropped"
+    );
+    assert_eq!(
+        tasks::deliverable_updates(true, &queued, now),
+        vec![false; 4],
+        "closed task: nothing is replayed into it"
+    );
+}

@@ -1036,6 +1036,18 @@ impl Hub {
         // finished with nobody watching; its own kind lets the phone say so.
         let kind = match (kind, &thread.origin) {
             (crate::push::PushKind::TurnCompleted, Some(origin)) if origin.kind == "bosun" => {
+                // A turn that ends with its to-do closed is a Bosun saying
+                // "nothing left to do": worth a line in the task's history,
+                // not a buzz on the phone. (`on_thread_event` has already
+                // applied this turn's status by the time we get here.)
+                let closed = origin
+                    .task_id
+                    .as_deref()
+                    .and_then(|id| self.bosuns.task(id))
+                    .is_some_and(|t| t.status.is_closed());
+                if closed {
+                    return;
+                }
                 crate::push::PushKind::Bosun
             }
             (kind, _) => kind,
