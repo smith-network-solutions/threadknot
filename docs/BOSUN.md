@@ -655,11 +655,30 @@ write the day with the tool below.
 
 ### 11.3 The agent's tool
 
-`bosun_plan { action: "tasks" | "get" | "set", date?, blocks? }`, offered on
-every Bosun to-do thread. `tasks` lists open to-dos (id, title, client,
-status, due, ticket, next step). `set` takes blocks of `{ title, start, end,
-items: [{ taskId } | { title, client? }, steps?: [text]] }`; a row with a
-title and no taskId creates an ad-hoc to-do.
+`bosun_plan { action: "tasks" | "get" | "add" | "set", date?, … }`, offered on
+every Bosun to-do thread; `date` also takes "today" / "tomorrow". `tasks`
+lists open to-dos (id, title, client, status, due, ticket, next step). `add`
+puts ONE row at the end of a day (`taskId`, or `title` + `client?` for a new
+to-do; `block?`, default "Follow-ups", created at the end if missing;
+`steps?`) and leaves the rest of the day alone; a task already on the day
+stays where it is. `set` replaces the whole day with blocks of `{ title,
+start, end, items: [{ taskId } | { title, client? }, steps?: [text]] }`; a
+row with a title and no taskId creates an ad-hoc to-do.
+
+### 11.5 Follow-ups
+
+`bosun_task { followUp: { title, due?, summary?, nextStep?, steps?, plan? } }`
+creates the next to-do a piece of work leads to: "I replied, make a task for
+tomorrow to finish and release it". `due` is YYYY-MM-DD, "today" or
+"tomorrow" (default tomorrow). The follow-up (source kind `follow-up`, status
+To do) copies the original's client, workspace and Orbit link, so the ticket
+stays open until the follow-up is ticked; when the original is closed in the
+same call it also takes over the original's key, so the next signal or sweep
+for that ticket lands on it. Unless `plan: false` it is appended to its due
+day (§11.3 `add`, "Follow-ups" block). The original's history notes it, and
+the tool returns `{ task, followUp, plannedFor }`. Every to-do thread's
+instructions say when to use it. The agent closing the original never closes
+the Orbit ticket (§10.8 is the person's path only).
 
 ### 11.4 UI (`BosunToday.tsx`)
 

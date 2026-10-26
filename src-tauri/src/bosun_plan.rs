@@ -150,6 +150,57 @@ pub(crate) fn normalize_plan(mut plan: DayPlan, task_exists: impl Fn(&str) -> bo
     Ok(plan)
 }
 
+/// Where follow-ups land when no block is named.
+pub(crate) const FOLLOW_UPS_BLOCK: &str = "Follow-ups";
+
+/// Add one row to the end of a day without touching the rest of it: into the
+/// block titled `block` (case-insensitive), or a new one of that name at the
+/// end. A task already on the day stays where it is. Returns whether it added.
+pub(crate) fn append_row(plan: &mut DayPlan, task_id: &str, block: Option<&str>, steps: &[String]) -> bool {
+    if plan.blocks.iter().any(|b| b.items.iter().any(|i| i.task_id == task_id)) {
+        return false;
+    }
+    let name = block.map(str::trim).filter(|b| !b.is_empty()).unwrap_or(FOLLOW_UPS_BLOCK);
+    let at = match plan.blocks.iter().position(|b| b.title.eq_ignore_ascii_case(name)) {
+        Some(at) => at,
+        None => {
+            plan.blocks.push(PlanBlock { id: new_id(), title: name.to_string(), ..Default::default() });
+            plan.blocks.len() - 1
+        }
+    };
+    plan.blocks[at].items.push(PlanItem {
+        id: new_id(),
+        task_id: task_id.to_string(),
+        steps: steps
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| PlanStep { id: new_id(), text: s.trim().to_string(), done: false })
+            .collect(),
+    });
+    true
+}
+
+/// "today", "tomorrow", YYYY-MM-DD, or an ISO date-time → a local date.
+pub(crate) fn resolve_day(raw: Option<&str>, default_tomorrow: bool) -> Result<String> {
+    let base = Local::now().date_naive();
+    let day = match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => {
+            if default_tomorrow {
+                base + chrono::Duration::days(1)
+            } else {
+                base
+            }
+        }
+        Some(s) if s.eq_ignore_ascii_case("today") => base,
+        Some(s) if s.eq_ignore_ascii_case("tomorrow") => base + chrono::Duration::days(1),
+        Some(s) => match NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => parse_iso(s).map(|t| t.date_naive()).with_context(|| format!("not a date: {s}"))?,
+        },
+    };
+    Ok(day.format("%Y-%m-%d").to_string())
+}
+
 /// Keep the newest `keep` days.
 pub(crate) fn prune_days(days: &mut BTreeMap<String, DayPlan>, keep: usize) {
     while days.len() > keep {
@@ -189,6 +240,17 @@ impl BosunRegistry {
         file.days.insert(plan.date.clone(), plan.clone());
         prune_days(&mut file.days, PLAN_KEEP_DAYS);
         write_atomic(&self.dir.join("bosun-plan.json"), &serde_json::to_string(&*file)?)?;
+        Ok(plan)
+    }
+}
+
+impl BosunRegistry {
+    /// [`append_row`] on the stored day, saved. Returns the day's plan.
+    pub(crate) fn append_to_plan(&self, date: &str, task_id: &str, block: Option<&str>, steps: &[String]) -> Result<DayPlan> {
+        let (mut plan, _) = self.plan(date);
+        if append_row(&mut plan, task_id, block, steps) {
+            return self.put_plan(plan);
+        }
         Ok(plan)
     }
 }
@@ -296,14 +358,21 @@ pub fn mcp_plan_tool_specs_for(state: &ServerState, thread_id: &str) -> Vec<Valu
         "description":
             "Read or write the person's day plan (the Today view): their to-dos for one day, ordered into \
              time blocks they tick off. action \"tasks\" lists every open to-do (id, title, client, status, \
-             due, Orbit ticket, next step). action \"get\" returns the plan for a date. action \"set\" \
-             replaces the plan for a date with `blocks`. Ticking a row closes its to-do, so only real \
+             due, Orbit ticket, next step). action \"get\" returns the plan for a date. action \"add\" \
+             puts ONE row at the end of a day (in `block`, default \"Follow-ups\") and leaves the rest \
+             alone: use it to add a single to-do. action \"set\" replaces the WHOLE day with `blocks`: \
+             only for building or rebuilding a day, after \"get\". Ticking a row closes its to-do, so only real \
              to-dos are rows: a row is { taskId } for an existing one, or { title, client? } to create one.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "action": { "type": "string", "enum": ["tasks", "get", "set"] },
-                "date": s("YYYY-MM-DD, local. Default today."),
+                "action": { "type": "string", "enum": ["tasks", "get", "add", "set"] },
+                "date": s("YYYY-MM-DD, \"today\" or \"tomorrow\", local. Default today."),
+                "taskId": s("For add: an existing to-do's id."),
+                "title": s("For add: a new to-do's title, imperative, naming the client."),
+                "client": s("For add: a new to-do's client."),
+                "block": s("For add: the block title to add to; created at the end if missing. Default \"Follow-ups\"."),
+                "steps": { "type": "array", "items": { "type": "string" }, "description": "For add: 0-5 short sub-steps." },
                 "blocks": {
                     "type": "array",
                     "description": "For set: the whole day, in order.",
@@ -336,6 +405,16 @@ pub fn mcp_plan_tool_specs_for(state: &ServerState, thread_id: &str) -> Vec<Valu
     })]
 }
 
+/// An ad-hoc to-do created by a plan row (`set` or `add`). Returns its id.
+fn new_plan_task(registry: &BosunRegistry, bosun: &Bosun, title: &str, client: Option<String>, now: &str) -> String {
+    let source = TaskSource { kind: "manual".into(), ..Default::default() };
+    let mut task = new_task(&bosun.id, format!("adhoc:{}", new_id()), title, TaskStatus::Todo, source, now);
+    task.client = client;
+    task.workspace_id = Some(bosun.home_workspace_id.clone());
+    push_history(&mut task, Some(TaskStatus::Todo), "Added to the day plan", "bosun", now);
+    registry.insert_task(task).0.id
+}
+
 fn task_line(t: &BosunTask) -> Value {
     json!({
         "id": t.id,
@@ -353,7 +432,8 @@ pub async fn mcp_bosun_plan(state: &ServerState, thread_id: &str, args: &Value) 
     let hub = &state.hub;
     let registry = &hub.bosuns;
     let bosun_id = thread_bosun(state, thread_id).context("this thread is not a Bosun to-do thread")?;
-    let date = date_field(args)?;
+    let date = resolve_day(args.get("date").and_then(Value::as_str), false)?;
+    let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     match args.get("action").and_then(Value::as_str).unwrap_or("") {
         "tasks" => {
             let open: Vec<Value> = registry
@@ -365,25 +445,48 @@ pub async fn mcp_bosun_plan(state: &ServerState, thread_id: &str, args: &Value) 
             Ok(serde_json::to_string(&json!({ "tasks": open }))?)
         }
         "get" => Ok(serde_json::to_string(&registry.plan(&date).0)?),
+        "add" => {
+            let task_id = match text(args, "taskId") {
+                Some(id) => {
+                    registry.task(&id).context("unknown taskId")?;
+                    id
+                }
+                None => {
+                    let bosun = registry.get(&bosun_id).context("this to-do's Bosun no longer exists")?;
+                    let title = text(args, "title").context("add needs a taskId or a title")?;
+                    new_plan_task(registry, &bosun, &title, text(args, "client"), &now_iso())
+                }
+            };
+            let steps: Vec<String> = args
+                .get("steps")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+            let block = text(args, "block");
+            registry.append_to_plan(&date, &task_id, block.as_deref(), &steps)?;
+            hub.broadcast_state("bosunTasks", None);
+            hub.broadcast_state("bosunPlan", None);
+            Ok(format!(
+                "Added to {date} under \"{}\".",
+                block.as_deref().unwrap_or(FOLLOW_UPS_BLOCK)
+            ))
+        }
         "set" => {
             let bosun = registry.get(&bosun_id).context("this to-do's Bosun no longer exists")?;
             let raw = args.get("blocks").and_then(Value::as_array).context("set needs blocks")?;
             let now = now_iso();
             let mut blocks = Vec::new();
             for b in raw {
-                let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
                 let mut items = Vec::new();
                 for it in b.get("items").and_then(Value::as_array).into_iter().flatten() {
                     let task_id = match text(it, "taskId") {
                         Some(id) => id,
                         None => {
                             let Some(title) = text(it, "title") else { continue };
-                            let source = TaskSource { kind: "manual".into(), ..Default::default() };
-                            let mut task = new_task(&bosun.id, format!("adhoc:{}", new_id()), &title, TaskStatus::Todo, source, &now);
-                            task.client = text(it, "client");
-                            task.workspace_id = Some(bosun.home_workspace_id.clone());
-                            push_history(&mut task, Some(TaskStatus::Todo), "Added to the day plan", "bosun", &now);
-                            registry.insert_task(task).0.id
+                            new_plan_task(registry, &bosun, &title, text(it, "client"), &now)
                         }
                     };
                     let steps = it

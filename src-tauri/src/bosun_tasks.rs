@@ -756,6 +756,68 @@ pub(crate) fn apply_agent_update(task: &mut BosunTask, args: &Value, known_orbit
     Ok(status)
 }
 
+/// `bosun_task { followUp }`: the next to-do this work leads to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct FollowUpSpec {
+    pub title: String,
+    /// Local YYYY-MM-DD.
+    pub due: String,
+    pub summary: Option<String>,
+    pub next_step: Option<String>,
+    pub steps: Vec<String>,
+    /// Put it on its due day's plan (default yes).
+    pub plan: bool,
+}
+
+impl FollowUpSpec {
+    pub(crate) fn parse(v: &Value) -> Result<Self> {
+        let text = |k: &str| v.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        let title = text("title").context("followUp needs a title")?;
+        Ok(Self {
+            title: cap_chars(&title, TASK_TITLE_CHARS),
+            due: plan::resolve_day(v.get("due").and_then(Value::as_str), true)?,
+            summary: text("summary").map(|s| cap_chars(&s, TASK_SUMMARY_CHARS)),
+            next_step: text("nextStep").map(|s| cap_chars(&s, TASK_NEXT_STEP_CHARS)),
+            steps: v
+                .get("steps")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|s| cap_chars(s.trim(), 200))
+                .filter(|s| !s.is_empty())
+                .take(12)
+                .collect(),
+            plan: v.get("plan").and_then(Value::as_bool).unwrap_or(true),
+        })
+    }
+}
+
+/// The follow-up to-do for `original`: same Bosun, client, workspace and
+/// Orbit link, so the ticket stays open until the follow-up is ticked. It
+/// takes over the original's key when the original is closed, so the next
+/// signal or sweep for that ticket lands on the follow-up.
+pub(crate) fn follow_up_task(original: &BosunTask, spec: &FollowUpSpec, now: &str) -> BosunTask {
+    let key = if original.status.is_closed() && !original.key.starts_with("adhoc:") && !original.key.starts_with("plan:") {
+        original.key.clone()
+    } else {
+        format!("adhoc:{}", new_id())
+    };
+    let source = TaskSource { kind: "follow-up".into(), ..Default::default() };
+    let mut task = new_task(&original.bosun_id, key, &spec.title, TaskStatus::Todo, source, now);
+    task.client = original.client.clone();
+    task.workspace_id = original.workspace_id.clone();
+    task.orbit = original.orbit.clone();
+    task.due = Some(spec.due.clone());
+    task.summary = spec
+        .summary
+        .clone()
+        .unwrap_or_else(|| cap_chars(&format!("Follow-up to \"{}\".", original.title), TASK_SUMMARY_CHARS));
+    task.next_step = spec.next_step.clone();
+    push_history(&mut task, Some(TaskStatus::Todo), &format!("Follow-up from \"{}\"", original.title), "bosun", now);
+    task
+}
+
 // ---------------------------------------------------------------------------
 // Registry: the tasks file
 // ---------------------------------------------------------------------------
@@ -1013,7 +1075,10 @@ pub(crate) fn task_instructions(task: &BosunTask, bosun_name: &str) -> String {
          Call the `bosun_task` tool once now with a clear title that names the client and a\n\
          one-to-three-sentence summary, and once more right before you stop with a status\n\
          (needs_you, waiting_on_client or done) and nextStep: what happens next and who does it.\n\
-         If the work is an Orbit ticket, pass its id in orbitTaskId.\n",
+         If the work is an Orbit ticket, pass its id in orbitTaskId.\n\
+         When the person says this part is done but there is a next step for another day (\"I replied,\n\
+         make a task for tomorrow to finish and release it\"), call `bosun_task` with status done and\n\
+         followUp {{ title, due }}: the follow-up keeps the client and Orbit ticket and lands on that day's plan.\n",
         title = task.title,
         status = status_label(task.status),
     )
@@ -1551,7 +1616,12 @@ pub fn mcp_tool_specs_for(state: &ServerState, thread_id: &str) -> Vec<Value> {
             "Update the to-do this thread works on (the person's Bosun task list). Call it once \
              at the start with a clear title that names the client and a 1-3 sentence summary, \
              and once right before you stop with status (needs_you, waiting_on_client or done) \
-             and nextStep. Every field is optional; only what you pass changes. Returns the task.",
+             and nextStep. Every field is optional; only what you pass changes. Returns the task. \
+             When this work leads to a next to-do (the person says \"I replied, now make a task for \
+             tomorrow to finish and release it\"), pass followUp: it creates that to-do with this one's \
+             client, workspace and Orbit link (the ticket stays open until the follow-up is done) and \
+             adds it to that day's plan. Usually together with status done. Closing a to-do here never \
+             closes its Orbit ticket.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1567,6 +1637,19 @@ pub fn mcp_tool_specs_for(state: &ServerState, thread_id: &str) -> Vec<Value> {
                 "orbitTaskId": s("The Orbit task id (or ticket number) this work belongs to."),
                 "orbitOrg": s("Orbit org slug, when linking a task that is not linked yet."),
                 "note": s("One line for the task's history."),
+                "followUp": {
+                    "type": "object",
+                    "description": "The next to-do this work leads to.",
+                    "properties": {
+                        "title": s("Imperative, names the client: \"Finish and release the line-totals display for Crossland\"."),
+                        "due": s("YYYY-MM-DD, \"today\" or \"tomorrow\". Default tomorrow."),
+                        "summary": s("1-3 sentences: what is left and why."),
+                        "nextStep": s("What happens next and who does it."),
+                        "steps": { "type": "array", "items": { "type": "string" }, "description": "0-5 short sub-steps for the plan row." },
+                        "plan": { "type": "boolean", "description": "Put it on the due day's plan. Default true." },
+                    },
+                    "required": ["title"],
+                },
             },
             "required": [],
         },
@@ -1603,12 +1686,47 @@ pub async fn mcp_bosun_task(state: &ServerState, thread_id: &str, args: &Value) 
     if let Some(status) = set {
         registry.note_agent_status(&updated.id, status);
     }
+    // The next to-do this work leads to (after the status, so a closed
+    // original hands its key on).
+    let follow = match args.get("followUp").filter(|v| !v.is_null()) {
+        Some(v) => {
+            let spec = FollowUpSpec::parse(v)?;
+            let (follow, created) = registry.insert_task(follow_up_task(&updated, &spec, &now));
+            let planned = if spec.plan {
+                registry.append_to_plan(&spec.due, &follow.id, None, &spec.steps)?;
+                hub.broadcast_state("bosunPlan", None);
+                Some(spec.due.clone())
+            } else {
+                None
+            };
+            let note = match (&planned, created) {
+                (_, false) => format!("Follow-up already tracked: \"{}\"", follow.title),
+                (Some(day), true) => format!("Follow-up added for {day}: \"{}\"", follow.title),
+                (None, true) => format!("Follow-up added: \"{}\" (due {})", follow.title, spec.due),
+            };
+            let now = now_iso();
+            registry.update_task(&updated.id, |t| {
+                push_history(t, None, &note, "bosun", &now);
+                Ok(())
+            })?;
+            Some((follow, planned))
+        }
+        None => None,
+    };
     // Closed mid-turn: the thread is running, so its turn end settles it.
     if updated.status.is_closed() {
         settle_thread(hub, thread_id);
     }
     hub.broadcast_state("bosunTasks", None);
-    Ok(serde_json::to_string(&updated)?)
+    let updated = registry.task(&updated.id).unwrap_or(updated);
+    match follow {
+        None => Ok(serde_json::to_string(&updated)?),
+        Some((follow, planned)) => Ok(serde_json::to_string(&json!({
+            "task": updated,
+            "followUp": follow,
+            "plannedFor": planned,
+        }))?),
+    }
 }
 
 // ---------------------------------------------------------------------------

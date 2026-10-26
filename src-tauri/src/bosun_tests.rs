@@ -1210,3 +1210,53 @@ fn plans_persist_prune_and_find_the_last_planned_day() {
     prune_days(&mut days, 3);
     assert_eq!(days.keys().next().map(String::as_str), Some("2026-10-03"));
 }
+
+#[test]
+fn follow_up_inherits_client_orbit_and_key_from_a_closed_original() {
+    let now = now_iso();
+    let mut original = new_task("b1", "orbit:acme-1:t9".into(), "Reply to Crossland", TaskStatus::Done, TaskSource::default(), &now);
+    original.client = Some("Crossland".into());
+    original.workspace_id = Some("ws".into());
+    original.orbit = Some(OrbitLink { org: "acme-1".into(), task_id: "t9".into(), ticket_number: Some("101484".into()), url: String::new() });
+    let spec = FollowUpSpec::parse(&json!({ "title": "Finish and release line totals for Crossland", "due": "2026-10-27", "steps": ["ship", " "] })).unwrap();
+    assert_eq!(spec.steps, ["ship"]);
+    assert!(spec.plan);
+    let f = follow_up_task(&original, &spec, &now);
+    assert_eq!(f.key, "orbit:acme-1:t9");
+    assert_eq!(f.client.as_deref(), Some("Crossland"));
+    assert_eq!(f.workspace_id.as_deref(), Some("ws"));
+    assert_eq!(f.orbit.as_ref().and_then(|o| o.ticket_number.as_deref()), Some("101484"));
+    assert_eq!(f.due.as_deref(), Some("2026-10-27"));
+    assert_eq!(f.status, TaskStatus::Todo);
+    assert!(f.summary.contains("Reply to Crossland"));
+    // Still open: the follow-up gets its own key so two open tasks never share one.
+    original.status = TaskStatus::NeedsYou;
+    assert!(follow_up_task(&original, &spec, &now).key.starts_with("adhoc:"));
+    assert!(FollowUpSpec::parse(&json!({ "due": "tomorrow" })).is_err());
+}
+
+#[test]
+fn resolve_day_understands_words_and_dates() {
+    let today = Local::now().date_naive();
+    let tomorrow = (today + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    assert_eq!(resolve_day(None, true).unwrap(), tomorrow);
+    assert_eq!(resolve_day(Some("Tomorrow"), false).unwrap(), tomorrow);
+    assert_eq!(resolve_day(Some("today"), true).unwrap(), today.format("%Y-%m-%d").to_string());
+    assert_eq!(resolve_day(Some("2026-11-02"), true).unwrap(), "2026-11-02");
+    assert!(resolve_day(Some("next tuesday"), true).is_err());
+}
+
+#[test]
+fn append_row_adds_to_follow_ups_without_touching_the_day() {
+    let mut plan = plan_with(vec![PlanBlock { title: "Morning".into(), items: vec![row("a", &[])], ..Default::default() }]);
+    assert!(append_row(&mut plan, "b", None, &["one".into()]));
+    assert_eq!(plan.blocks.len(), 2);
+    assert_eq!(plan.blocks[1].title, FOLLOW_UPS_BLOCK);
+    assert_eq!(plan.blocks[1].items[0].steps[0].text, "one");
+    assert!(append_row(&mut plan, "c", Some("follow-ups"), &[]));
+    assert_eq!(plan.blocks.len(), 2, "matches the block case-insensitively");
+    assert!(append_row(&mut plan, "d", Some("Morning"), &[]));
+    assert_eq!(plan.blocks[0].items.len(), 2);
+    assert!(!append_row(&mut plan, "a", None, &[]), "a task already planned stays put");
+    assert_eq!(plan.blocks[0].items[0].task_id, "a");
+}
