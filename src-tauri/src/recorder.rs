@@ -48,13 +48,20 @@ impl Recording {
 /// True when a usable ffmpeg is on PATH. Recording is the only feature that
 /// needs it, so its absence must degrade to a clear message rather than a panic.
 pub fn ffmpeg_available() -> bool {
-    std::process::Command::new("ffmpeg")
+    let mut probe = std::process::Command::new("ffmpeg");
+    probe
         .arg("-version")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .stderr(Stdio::null());
+    // Windows: a GUI app's console children each get a terminal window unless
+    // spawned with CREATE_NO_WINDOW (the same flag agents::no_console sets for
+    // tokio commands). Without it every recording flashed an ffmpeg window.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        probe.creation_flags(0x0800_0000);
+    }
+    probe.status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Begin encoding `frames` to `path`.
@@ -76,7 +83,9 @@ pub async fn start(
         std::fs::create_dir_all(parent).ok();
     }
 
-    let mut ffmpeg = Command::new("ffmpeg")
+    let mut ffmpeg = Command::new("ffmpeg");
+    crate::agents::no_console(&mut ffmpeg);
+    let mut ffmpeg = ffmpeg
         .args([
             "-hide_banner",
             "-loglevel",

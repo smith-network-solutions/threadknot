@@ -336,6 +336,16 @@ export interface SidebarPrefs {
    *  null = never auto-settle; only explicit settles park a chat. */
   autoSettleDays: number | null;
   projectLayout: ProjectLayout;
+  /** Float the workspaces you most recently OPENED to the top of the sidebar
+   *  list and the rail. Off by default: the list is otherwise where you put
+   *  it, and a float that moves projects is a thing to ask for rather than
+   *  inherit. See `src/lib/recentUse.ts` for why "opened" and not "active". */
+  recentWorkspacesFirst: boolean;
+  /** The same float for chats, applied inside whichever container the chat
+   *  lives in — the workspace root list, or its folder. Independent of the
+   *  workspace knob: wanting your chats ordered by recency says nothing about
+   *  wanting your projects to move. */
+  recentThreadsFirst: boolean;
 }
 
 /** The parts a skin is cut into. Each id gates one block of skin CSS through
@@ -428,6 +438,10 @@ const A_DEFAULT: Appearance = {
 };
 const S_DEFAULT: SidebarPrefs = {
   autoSettleDays: AUTOSETTLE_DEFAULT,
+  // Both floats ship off. They move rows, and an upgrade that silently
+  // rearranges the sidebar you have spent months arranging is not a feature.
+  recentWorkspacesFirst: false,
+  recentThreadsFirst: false,
   // The rail is the layout the app is built around now: every project stays on
   // screen and badgeable, switching costs one tap, and the chat list gets the
   // full sidebar width instead of sharing it with a stack of headers. Only new
@@ -735,29 +749,39 @@ function readProjectLayout(value: unknown): ProjectLayout {
 export function getSidebarPrefs(): SidebarPrefs {
   const s = read(S_KEY, S_DEFAULT);
   const projectLayout = readProjectLayout(s.projectLayout);
-  if (s.autoSettleDays === null) return { autoSettleDays: null, projectLayout };
+  // Both default to off, so only an explicit `true` turns a float on — an
+  // install written before these existed reads as "off" rather than "missing".
+  const recentWorkspacesFirst = s.recentWorkspacesFirst === true;
+  const recentThreadsFirst = s.recentThreadsFirst === true;
+  const rest = { projectLayout, recentWorkspacesFirst, recentThreadsFirst };
+  if (s.autoSettleDays === null) return { autoSettleDays: null, ...rest };
   const days = Number(s.autoSettleDays);
   if (!Number.isFinite(days)) {
-    return { autoSettleDays: S_DEFAULT.autoSettleDays, projectLayout };
+    return { autoSettleDays: S_DEFAULT.autoSettleDays, ...rest };
   }
   return {
     autoSettleDays: clamp(Math.round(days), AUTOSETTLE_MIN, AUTOSETTLE_MAX),
-    projectLayout,
+    ...rest,
   };
 }
 
 export function setSidebarPrefs(next: SidebarPrefs): void {
   const projectLayout = readProjectLayout(next.projectLayout);
+  const rest = {
+    projectLayout,
+    recentWorkspacesFirst: next.recentWorkspacesFirst === true,
+    recentThreadsFirst: next.recentThreadsFirst === true,
+  };
   const clamped: SidebarPrefs =
     next.autoSettleDays === null
-      ? { autoSettleDays: null, projectLayout }
+      ? { autoSettleDays: null, ...rest }
       : {
           autoSettleDays: clamp(
             Math.round(next.autoSettleDays),
             AUTOSETTLE_MIN,
             AUTOSETTLE_MAX,
           ),
-          projectLayout,
+          ...rest,
         };
   localStorage.setItem(S_KEY, JSON.stringify(clamped));
   window.dispatchEvent(new CustomEvent<SidebarPrefs>(SIDEBARPREFS_EVENT, { detail: clamped }));
