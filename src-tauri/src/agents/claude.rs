@@ -359,7 +359,7 @@ pub fn builtin_models() -> Vec<ModelInfo> {
     models
 }
 
-pub const DEFAULT_MODEL: &str = "claude-opus-5";
+pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
 
 /// Model id passed to `--model`.
 ///
@@ -2537,7 +2537,7 @@ mod tests {
     #[test]
     fn builtin_models_replace_opus_48_with_fixed_window_opus_5() {
         let models = builtin_models();
-        assert_eq!(DEFAULT_MODEL, "claude-opus-5");
+        assert_eq!(DEFAULT_MODEL, "claude-opus-5-5");
         assert!(models.iter().any(|model| model.id == DEFAULT_MODEL));
         assert!(!models.iter().any(|model| model.id == "claude-opus-4-8"));
         let opus = models
@@ -2562,10 +2562,10 @@ mod tests {
         assert_eq!(fable.fixed_context_window, None);
         assert_eq!(fable.supports_wide_context, Some(true));
         assert!(WIDE_CONTEXT_MODELS.contains(&"claude-fable-5-1"));
-        // Adding it displaces nothing: Fable 5 stays selectable and Opus 5
+        // Adding it displaces nothing: Fable 5 stays selectable and Opus 5.5
         // stays the default.
         assert!(models.iter().any(|model| model.id == "claude-fable-5"));
-        assert_eq!(DEFAULT_MODEL, "claude-opus-5");
+        assert_eq!(DEFAULT_MODEL, "claude-opus-5-5");
 
         let mut settings = settings(Access::Full);
         settings.model = "claude-fable-5-1".into();
@@ -2589,9 +2589,9 @@ mod tests {
         assert_eq!(opus.supports_wide_context, None);
         assert!(!WIDE_CONTEXT_MODELS.contains(&"claude-opus-5-5"));
 
-        // Adding it displaces nothing: Opus 5 stays selectable and default.
+        // Opus 5.5 is the default for new chats; Opus 5 stays selectable.
         assert!(models.iter().any(|model| model.id == "claude-opus-5"));
-        assert_eq!(DEFAULT_MODEL, "claude-opus-5");
+        assert_eq!(DEFAULT_MODEL, "claude-opus-5-5");
 
         let mut settings = settings(Access::Full);
         settings.model = "claude-opus-5-5".into();

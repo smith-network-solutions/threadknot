@@ -552,11 +552,12 @@ export const SMART_SEARCH_MODELS: { id: string; label: string; agent: Agent }[] 
   { id: "claude-haiku-4-5", label: "Haiku 4.5", agent: "claude" },
   { id: "claude-sonnet-5", label: "Sonnet 5", agent: "claude" },
   { id: "claude-opus-5", label: "Opus 5", agent: "claude" },
+  { id: "claude-opus-5-5", label: "Opus 5.5", agent: "claude" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", agent: "codex" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", agent: "codex" },
   { id: "gpt-6-astra", label: "GPT-6 Astra", agent: "codex" },
 ];
-export const SMART_SEARCH_DEFAULT_MODEL = "claude-opus-5";
+export const SMART_SEARCH_DEFAULT_MODEL = "claude-opus-5-5";
 
 export interface ThreadPreview {
   threadId: string;

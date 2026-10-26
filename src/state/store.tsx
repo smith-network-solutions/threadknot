@@ -44,7 +44,7 @@ export const LS_THREAD_ATTENTION = "threadknot.threadAttention";
 const LS_VIEW_PERSON = "threadknot.viewPerson";
 const NEW_THREAD_DEFAULTS_VERSION = 3;
 const RETIRED_CLAUDE_OPUS_MODEL = "claude-opus-4-8";
-const CURRENT_CLAUDE_OPUS_MODEL = "claude-opus-5";
+const CURRENT_CLAUDE_OPUS_MODEL = "claude-opus-5-5";
 
 /** Completion/read state belongs to this client, not the server: opening a
  * chat on one person's phone must not mark it read on everyone else's. */

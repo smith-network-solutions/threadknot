@@ -31,7 +31,7 @@ use tokio::process::Command;
 
 /// The ranking model when the client does not name one. Opus reads a page of
 /// digests in a few seconds; the per-search cost is a few cents.
-pub const DEFAULT_MODEL: &str = "claude-opus-5";
+pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
 /// Models a client may ask for, each with the CLI that runs it. Anything else
 /// is refused rather than passed to a CLI, so the request cannot smuggle an
 /// arbitrary `--model` argument. Mirrored by `SMART_SEARCH_MODELS` in
@@ -40,6 +40,7 @@ pub const MODELS: &[(&str, Agent)] = &[
     ("claude-haiku-4-5", Agent::Claude),
     ("claude-sonnet-5", Agent::Claude),
     ("claude-opus-5", Agent::Claude),
+    ("claude-opus-5-5", Agent::Claude),
     ("gpt-5.6-luna", Agent::Codex),
     ("gpt-5.6-sol", Agent::Codex),
     ("gpt-6-astra", Agent::Codex),

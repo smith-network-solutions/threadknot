@@ -31,7 +31,7 @@ pub fn is_quick_home_project_id(project_id: &str) -> bool {
     project_id.starts_with(QUICK_HOME_PROJECT_PREFIX)
 }
 const RETIRED_CLAUDE_OPUS_MODEL: &str = "claude-opus-4-8";
-const CURRENT_CLAUDE_OPUS_MODEL: &str = "claude-opus-5";
+const CURRENT_CLAUDE_OPUS_MODEL: &str = "claude-opus-5-5";
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write as _;
