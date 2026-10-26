@@ -61,6 +61,8 @@
 /* ---- blocks ----------------------------------------------------------- */
 
 .today-block {
+  /* The list scrolls; a card never shrinks to fit it. */
+  flex: none;
   border: 1px solid var(--line-2);
   border-radius: 12px;
   background: var(--panel);
@@ -291,7 +293,7 @@
 
 /* ---- not planned ------------------------------------------------------ */
 
-.today-tray { border: 1px dashed var(--line-2); border-radius: 12px; overflow: hidden; }
+.today-tray { flex: none; border: 1px dashed var(--line-2); border-radius: 12px; overflow: hidden; }
 .today-tray-head {
   display: flex;
   align-items: center;
