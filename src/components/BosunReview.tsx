@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BosunTask, TaskStatus } from "../lib/protocol";
 import {
   TASK_STATUS_LABEL,
@@ -24,6 +24,58 @@ const AGE_CHOICES: { days: number; label: string }[] = [
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** What the review was showing, kept across opening a task and coming back
+ *  (the page unmounts while a task is open). sessionStorage so a phone's
+ *  WebView reloading in the background doesn't lose it either. */
+interface ReviewSession {
+  query: string;
+  statuses: TaskStatus[];
+  workspaceId: string;
+  ageDays: number;
+  oldestFirst: boolean;
+  selected: string[];
+  scrollTop: number;
+}
+const SESSION_KEY = "threadknot.bosunReview";
+const RETURN_KEY = "threadknot.bosunReview.return";
+
+function loadSession(): ReviewSession | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? (JSON.parse(raw) as ReviewSession) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(s: ReviewSession) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  } catch {
+    // Storage full or disabled: the review still works, it just forgets.
+  }
+}
+
+/** Whether the open task was reached from the review, so the task page can
+ *  offer the way back. Set when a row is opened, cleared when the review is
+ *  closed. */
+export function cameFromReview(): boolean {
+  try {
+    return sessionStorage.getItem(RETURN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setCameFromReview(on: boolean) {
+  try {
+    if (on) sessionStorage.setItem(RETURN_KEY, "1");
+    else sessionStorage.removeItem(RETURN_KEY);
+  } catch {
+    // ignore
+  }
+}
 /** Requests in flight at once during a bulk close: quick, without queueing
  *  two hundred writes against the task file at the same instant. */
 const BULK_CONCURRENCY = 6;
@@ -34,16 +86,56 @@ const BULK_CONCURRENCY = 6;
  *  tap target and the bulk bar sits at the bottom within thumb reach. */
 export function BosunReview() {
   const { state, dispatch, actions } = useStore();
-  const [query, setQuery] = useState("");
+  const [initial] = useState(loadSession);
+  const [query, setQuery] = useState(initial?.query ?? "");
   const [statuses, setStatuses] = useState<Set<TaskStatus>>(
-    () => new Set<TaskStatus>(["needs_you", "todo", "waiting_on_client"]),
+    () => new Set<TaskStatus>(initial?.statuses ?? ["needs_you", "todo", "waiting_on_client"]),
   );
-  const [workspaceId, setWorkspaceId] = useState("");
-  const [ageDays, setAgeDays] = useState(0);
-  const [oldestFirst, setOldestFirst] = useState(true);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [workspaceId, setWorkspaceId] = useState(initial?.workspaceId ?? "");
+  const [ageDays, setAgeDays] = useState(initial?.ageDays ?? 0);
+  const [oldestFirst, setOldestFirst] = useState(initial?.oldestFirst ?? true);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initial?.selected ?? []));
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollTop = useRef(initial?.scrollTop ?? 0);
   const [progress, setProgress] = useState<{ done: number; total: number; verb: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    saveSession({
+      query,
+      statuses: [...statuses],
+      workspaceId,
+      ageDays,
+      oldestFirst,
+      selected: [...selected],
+      scrollTop: scrollTop.current,
+    });
+  }, [query, statuses, workspaceId, ageDays, oldestFirst, selected]);
+
+  // Back where you were in the list once the rows exist (tasks may still be
+  // loading on the first render).
+  const restored = useRef(false);
+  const loaded = state.bosunTasks !== null;
+  useLayoutEffect(() => {
+    if (restored.current || !loaded || !listRef.current) return;
+    restored.current = true;
+    listRef.current.scrollTop = scrollTop.current;
+  }, [loaded]);
+
+  function openRow(id: string) {
+    scrollTop.current = listRef.current?.scrollTop ?? scrollTop.current;
+    saveSession({
+      query,
+      statuses: [...statuses],
+      workspaceId,
+      ageDays,
+      oldestFirst,
+      selected: [...selected],
+      scrollTop: scrollTop.current,
+    });
+    setCameFromReview(true);
+    actions.openTask(id);
+  }
 
   const workspaces = allWorkspaces(state);
   const wsName = (id: string | null | undefined) =>
@@ -166,7 +258,10 @@ export function BosunReview() {
           className="icon-btn"
           aria-label="Close review"
           title="Close"
-          onClick={() => actions.openTask(null)}
+          onClick={() => {
+            setCameFromReview(false);
+            actions.openTask(null);
+          }}
         >
           <XIcon size={15} />
         </button>
@@ -240,7 +335,13 @@ export function BosunReview() {
         </span>
       </label>
 
-      <div className="review-list">
+      <div
+        className="review-list"
+        ref={listRef}
+        onScroll={(e) => {
+          scrollTop.current = e.currentTarget.scrollTop;
+        }}
+      >
         {state.bosunTasks === null ? (
           <div className="task-empty">Loading…</div>
         ) : shown.length === 0 ? (
@@ -261,7 +362,7 @@ export function BosunReview() {
                 <label className="review-check" aria-label={`Select ${displayTitle(t)}`}>
                   <input type="checkbox" checked={checked} disabled={busy} onChange={() => toggle(t.id)} />
                 </label>
-                <button type="button" className="review-main" onClick={() => actions.openTask(t.id)}>
+                <button type="button" className="review-main" onClick={() => openRow(t.id)}>
                   <span className="review-title">{displayTitle(t) || "Untitled to-do"}</span>
                   <span className="review-meta">
                     <span className={`review-status s-${t.status}`}>

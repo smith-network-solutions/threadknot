@@ -171,3 +171,20 @@
   .task-head-done { min-height: 40px; padding: 0 14px; font-size: 13.5px; }
   .bosun-origin-done { padding: 4px 10px; font-size: 12px; }
 }
+
+/* "← Review" on a task opened from the review page. */
+.task-back-review {
+  flex: none;
+  margin-left: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--brass-hi);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.task-back-review:hover { background: color-mix(in srgb, var(--brass) 12%, transparent); }
+@media (max-width: 767px) {
+  .task-back-review { min-height: 40px; padding: 0 14px; font-size: 14px; }
+}

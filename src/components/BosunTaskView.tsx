@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { BosunTask, PersistedEvent, TaskStatus } from "../lib/protocol";
 import {
   PICKABLE_STATUSES,
+  TASK_REVIEW_ID,
   TASK_STATUS_LABEL,
   ageLabel,
   dueLabel,
@@ -27,6 +28,7 @@ import { CheckIcon, ChevronIcon, MoreIcon, PanelLeftIcon, PencilIcon, PlayIcon, 
 import "../styles/bosun-review.css";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
+import { cameFromReview } from "./BosunReview";
 
 /** The status as a coloured dot; the palette lives in styles.css
  *  (`.task-dot.s-<status>`), shared with the sidebar rows. */
@@ -139,6 +141,9 @@ export function BosunTaskView() {
     });
   }, []);
 
+  // Opened from Review to-dos: the way back keeps the review's filters,
+  // checked rows and scroll position (BosunReview keeps them in session).
+  const fromReview = cameFromReview();
   const header = (main: React.ReactNode) => (
     <header className="thread-head task-head">
       <div className="head-cluster">
@@ -149,6 +154,16 @@ export function BosunTaskView() {
         >
           <PanelLeftIcon size={18} />
         </button>
+        {fromReview && (
+          <button
+            type="button"
+            className="task-back-review"
+            title="Back to Review to-dos"
+            onClick={() => actions.openTask(TASK_REVIEW_ID)}
+          >
+            ← Review
+          </button>
+        )}
       </div>
       <div className="thread-head-main task-head-main">{main}</div>
       <button
