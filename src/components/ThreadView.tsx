@@ -1324,13 +1324,7 @@ export function ThreadView() {
                 )}
                 {deviceName}
               </span>
-              <span
-                className="thread-project-path"
-                title={project.path}
-                aria-label={`Project directory: ${project.path}`}
-              >
-                {project.path}
-              </span>
+              <ProjectPath path={project.path} />
             </div>
           )}
           {thread?.origin?.kind === "bosun" && <BosunOriginChip thread={thread} />}
@@ -1647,6 +1641,28 @@ export function ThreadView() {
         />
       </div>
     </section>
+  );
+}
+
+/** The project directory under a thread's title. Clicking copies it. */
+function ProjectPath({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`thread-project-path copyable${copied ? " copied" : ""}`}
+      title={copied ? "Copied" : `Copy ${path}`}
+      aria-label={`Copy project directory: ${path}`}
+      onClick={() =>
+        void copyText(path).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1400);
+        })
+      }
+    >
+      {copied ? "copied" : path}
+    </button>
   );
 }
 

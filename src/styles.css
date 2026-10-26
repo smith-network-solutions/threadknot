@@ -15002,3 +15002,18 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 @media (hover: none) {
   .msg-user-copy { opacity: 0.85; }
 }
+
+/* The header path is a copy button; keep it looking like the path. */
+button.thread-project-path.copyable {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: copy;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.thread-project-path.copyable:hover { color: var(--text); text-decoration: underline; }
+button.thread-project-path.copied { color: var(--teal); }
