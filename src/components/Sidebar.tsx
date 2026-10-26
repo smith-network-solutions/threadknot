@@ -77,6 +77,7 @@ import {
   workspaceTaskRollup,
   type RecentTask,
   type TaskGroupId,
+  openTaskOrConversation,
 } from "../lib/bosun";
 import type { BosunTask } from "../lib/protocol";
 import { TaskStatusDot, orbitTicketLabel } from "./BosunTaskView";
@@ -3261,17 +3262,19 @@ function TaskRow({
   /** Right-hand note (the Recent group's). */
   hint?: React.ReactNode;
 }) {
-  const { actions } = useStore();
+  const { state, actions } = useStore();
   const ticket = orbitTicketLabel(task);
   const title = displayTitle(task) || "Untitled to-do";
+  // Its conversation is open counts as this row being open.
+  const isActive = active || (!state.activeTaskId && !!task.threadId && state.activeThreadId === task.threadId);
   return (
     <button
       type="button"
-      className={`task-row s-${task.status}${active ? " active" : ""}${
+      className={`task-row s-${task.status}${isActive ? " active" : ""}${
         isClosedStatus(task.status) ? " closed" : ""
       }`}
-      aria-current={active ? "true" : undefined}
-      onClick={() => actions.openTask(task.id)}
+      aria-current={isActive ? "true" : undefined}
+      onClick={() => openTaskOrConversation(task, actions, null)}
     >
       <TaskStatusDot status={task.status} />
       <span className="task-row-main">

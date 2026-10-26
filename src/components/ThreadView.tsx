@@ -18,7 +18,7 @@ import {
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
 import { copyText, elidePathMiddle } from "../lib/format";
-import { confirmHeldOrbitClose, displayTitle } from "../lib/bosun";
+import { TASK_TODAY_ID, confirmHeldOrbitClose, displayTitle, todayReturnThread } from "../lib/bosun";
 import { setSidebarView } from "../lib/sidebarView";
 import { BosunMark, useBosunImage } from "./BosunMark";
 import type { ReplyTarget } from "../lib/reply";
@@ -1696,11 +1696,24 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
   };
   return (
     <div className="bosun-origin">
+      {hasTask && todayReturnThread() === thread.id && (
+        <button
+          type="button"
+          className="bosun-origin-task"
+          title="Back to Today"
+          onClick={() => {
+            setSidebarView("bosun");
+            actions.openTask(TASK_TODAY_ID);
+          }}
+        >
+          ← Today
+        </button>
+      )}
       {hasTask && (
         <button
           type="button"
           className="bosun-origin-task"
-          title="Back to the to-do"
+          title="The to-do's page: summary, status, history"
           onClick={() => {
             setSidebarView("bosun");
             actions.openTask(taskId!);

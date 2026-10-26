@@ -4,6 +4,7 @@ import {
   displayTitle,
   isClosedStatus,
   localDayKey,
+  openTaskOrConversation,
   setTaskReturnPage,
   taskMatches,
 } from "../lib/bosun";
@@ -351,8 +352,13 @@ export function BosunToday() {
   }
 
   function openRow(taskId: string) {
-    setTaskReturnPage("today");
-    actions.openTask(taskId);
+    const task = byId.get(taskId);
+    if (task) {
+      openTaskOrConversation(task, actions, "today");
+    } else {
+      setTaskReturnPage("today");
+      actions.openTask(taskId);
+    }
   }
 
   // ---- render ------------------------------------------------------------

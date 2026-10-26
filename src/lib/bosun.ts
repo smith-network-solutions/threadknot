@@ -1042,6 +1042,53 @@ export function setRecentShowFinished(on: boolean): void {
   }
 }
 
+const TODAY_THREAD_KEY = "threadknot.bosunToday.thread";
+
+/** The conversation last opened from Today, so that thread can offer
+ *  "← Today". Keyed to the one thread, so a stale flag never shows it on
+ *  another. */
+export function todayReturnThread(): string | null {
+  try {
+    return sessionStorage.getItem(TODAY_THREAD_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setTodayReturnThread(threadId: string | null) {
+  try {
+    if (threadId) sessionStorage.setItem(TODAY_THREAD_KEY, threadId);
+    else sessionStorage.removeItem(TODAY_THREAD_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** Clicking a to-do in a list: straight into its conversation when it has
+ *  one (that is where the work is), else its task page. `from` is the page
+ *  the click came from, for the way back. */
+export function openTaskOrConversation(
+  task: Pick<BosunTask, "id" | "threadId">,
+  actions: { openTask: (taskId: string | null) => void; selectThread: (threadId: string) => Promise<boolean> },
+  from: TaskReturnPage | null,
+): void {
+  setTaskReturnPage(from);
+  if (task.threadId) {
+    touchTask(task.id);
+    setTodayReturnThread(from === "today" ? task.threadId : null);
+    // A thread that is gone (pruned, deleted) falls back to the task page.
+    void actions
+      .selectThread(task.threadId)
+      .then((ok) => {
+        if (!ok) actions.openTask(task.id);
+      })
+      .catch(() => actions.openTask(task.id));
+  } else {
+    setTodayReturnThread(null);
+    actions.openTask(task.id);
+  }
+}
+
 /** After closing a to-do: a client ticket Orbit kept open (docs/BOSUN.md
  *  §10.8) gets a plain confirm, then the forced close. For pages without
  *  their own inline prompt (the task page, a thread's to-do bar). */
