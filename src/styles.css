@@ -14981,3 +14981,24 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 .recent-finished-toggle.on {
   color: var(--accent, #d7a24b);
 }
+
+/* Copy on your own bubble, top-right, on hover (always shown on touch). */
+.msg-user { position: relative; padding-right: 34px; }
+.msg-user-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--brass) 85%, #000);
+  opacity: 0;
+}
+.msg-user:hover .msg-user-copy,
+.msg-user-copy:focus-visible { opacity: 1; }
+.msg-user-copy:hover { background: color-mix(in srgb, var(--brass) 70%, #000); color: var(--accent-ink); }
+@media (hover: none) {
+  .msg-user-copy { opacity: 0.85; }
+}

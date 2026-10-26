@@ -36,7 +36,6 @@ import {
   DollarIcon,
   DownloadIcon,
   PopoutIcon,
-  ReplyIcon,
   ShieldIcon,
   ToolGlyph,
   XIcon,
@@ -814,24 +813,6 @@ function MessageImage({ url, name }: { url: string; name: string }) {
   );
 }
 
-function ReplyButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="msg-reply"
-      title="Reply to message"
-      aria-label="Reply to message"
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-    >
-      <ReplyIcon size={15} />
-      <span>Reply</span>
-    </button>
-  );
-}
-
 const FILE_REFERENCE = /`([^`\n]+)`|(?<![\w./-])([\w.-]+(?:\/[\w.-]+)*\.[A-Za-z0-9]+)\b/g;
 
 function ReplyReference({
@@ -910,6 +891,7 @@ function UserMessage({
           <div className="msg-user-text">
             <Markdown text={messageText} breaks onOpenFile={render.onOpenFile} />
           </div>
+          <CopyButton value={messageText} label="Copy message" className="copy-btn msg-user-copy" />
         </div>
       )}
       {render.http && threadId && images.length > 0 && (
@@ -921,20 +903,6 @@ function UserMessage({
             return <MessageImage key={a.id} url={url} name={a.name} />;
           })}
         </div>
-      )}
-      {(hasText || images.length > 0) && (
-        <ReplyButton
-          onClick={() =>
-            render.onReply({
-              id: item.id,
-              kind: "user",
-              author: "You",
-              text: item.text,
-              attachments: images,
-              timestamp: item.timestamp,
-            })
-          }
-        />
       )}
       <MessageTime timestamp={item.timestamp} side="user" />
     </div>
@@ -981,21 +949,6 @@ export const FeedItemView = memo(function FeedItemView({
           {item.streaming && <span className="stream-caret" />}
           {!item.streaming && item.text.length > 0 && (
             <CopyButton value={item.text} label="Copy message" className="copy-btn msg-copy" />
-          )}
-          {!item.streaming && item.text.trim().length > 0 && (
-            <ReplyButton
-              onClick={() =>
-                render.onReply({
-                  id: item.id,
-                  kind: "assistant",
-                  author:
-                    render.participants.find((participant) => participant.id === item.speaker)?.name ??
-                    "Assistant",
-                  text: item.text,
-                  timestamp: item.timestamp,
-                })
-              }
-            />
           )}
           {!item.streaming && (
             <MessageTime timestamp={item.timestamp} side="assistant" />
