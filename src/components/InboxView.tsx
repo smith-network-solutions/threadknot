@@ -31,6 +31,16 @@ function rememberOpenedFromInbox(threadId: string | null) {
   }
 }
 
+/** Notification copy is the agent's markdown; the list shows it as plain
+ *  text, so drop the emphasis, code and heading marks. */
+function plain(text: string): string {
+  return text
+    .replace(/\*\*|__|`/g, "")
+    .replace(/^#+\s*/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const KIND_LABEL: Record<string, string> = {
   turn_completed: "Finished",
   approval_request: "Approval needed",
@@ -170,8 +180,8 @@ export function InboxView() {
                     {count > 1 && <span className="inbox-count">×{count}</span>}
                     <span className="inbox-when">{ageLabel(e.at)}</span>
                   </span>
-                  <span className="inbox-title">{e.threadTitle || e.title}</span>
-                  {e.body && <span className="inbox-body">{e.body}</span>}
+                  <span className="inbox-title">{plain(e.threadTitle || e.title)}</span>
+                  {e.body && <span className="inbox-body">{plain(e.body)}</span>}
                 </button>
                 {g.unread > 0 && (
                   <button
