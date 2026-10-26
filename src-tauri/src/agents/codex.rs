@@ -1149,13 +1149,18 @@ pub async fn probe(cwd: &str) -> Result<(bool, Vec<ModelInfo>, String)> {
 
 /// Threadknot's opinionated Codex starting point. The app-server catalog remains
 /// authoritative for availability and effort options, but its own defaults are
-/// deliberately conservative — Sol ships at "low", Astra at "medium" — and new
-/// Threadknot Codex chats should start at high.
+/// deliberately conservative — both Sols ship at "low", Astra at "medium" — and
+/// new Threadknot Codex chats should start at high.
 ///
-/// Newest first, so a Codex that has never heard of Astra still lands on Sol
-/// rather than on whatever the catalog happened to list first.
+/// Newest first, so a Codex that has never heard of 6.1-Sol still lands on
+/// Astra, and one that predates Astra still lands on 5.6-Sol, rather than on
+/// whatever the catalog happened to list first. The head of this list has to
+/// keep up with the catalog's own default: leaving a superseded model pinned
+/// here would override OpenAI's choice with a staler one and, because the
+/// effort bump only reaches the model this returns, quietly start the newer
+/// one at the conservative effort the bump exists to correct.
 fn apply_threadknot_defaults(models: &mut [ModelInfo], discovered_default: String) -> String {
-    const PREFERRED_MODELS: &[&str] = &["gpt-6-astra", "gpt-5.6-sol"];
+    const PREFERRED_MODELS: &[&str] = &["gpt-6.1-sol", "gpt-6-astra", "gpt-5.6-sol"];
     const PREFERRED_EFFORT: &str = "high";
 
     for preferred in PREFERRED_MODELS {
@@ -1247,6 +1252,43 @@ mod tests {
         assert_eq!(models[1].default_effort.as_deref(), Some("high"));
         // Sol is left exactly as the catalog described it.
         assert_eq!(models[0].default_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn sol_61_outranks_astra_and_still_starts_at_high_effort() {
+        let mut models = vec![
+            model("gpt-6-astra", &["low", "medium", "high", "xhigh"], "medium"),
+            model(
+                "gpt-6.1-sol",
+                &["low", "medium", "high", "xhigh", "max", "ultra"],
+                "low",
+            ),
+        ];
+
+        // Same rule Astra arrived under: the app-server calls 6.1-Sol its
+        // default, so Threadknot's preference agrees instead of pinning new
+        // chats to Astra.
+        let default_model = apply_threadknot_defaults(&mut models, "gpt-6.1-sol".into());
+
+        assert_eq!(default_model, "gpt-6.1-sol");
+        // Sol ships at "low"; the whole point of the bump is that a new chat
+        // does not inherit it.
+        assert_eq!(models[1].default_effort.as_deref(), Some("high"));
+        // Astra is left exactly as the catalog described it.
+        assert_eq!(models[0].default_effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn a_codex_without_sol_61_still_prefers_astra() {
+        let mut models = vec![
+            model("gpt-5.6-sol", &["low", "medium", "high"], "low"),
+            model("gpt-6-astra", &["low", "medium", "high", "xhigh"], "medium"),
+        ];
+
+        assert_eq!(
+            apply_threadknot_defaults(&mut models, "gpt-6-astra".into()),
+            "gpt-6-astra"
+        );
     }
 
     #[test]
