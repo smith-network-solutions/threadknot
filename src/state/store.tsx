@@ -8,6 +8,7 @@ import type {
   ArtifactRecord,
   Bosun,
   BosunTask,
+  InboxEntry,
   Wake,
   ArchiveHeader,
   CustomTheme,
@@ -428,6 +429,9 @@ export interface AppState {
    *  forever on a server that predates tasks: the UI reads null as "show the
    *  thread-based Bosun view". */
   bosunTasks: BosunTask[] | null;
+  /** The notification inbox (`inbox.list`). Null until loaded, and on a
+   *  server that predates it. */
+  inbox: { entries: InboxEntry[]; unread: number } | null;
   /** The task shown in the main pane instead of the thread. Cleared whenever
    *  a thread or draft is opened. */
   activeTaskId: string | null;
@@ -520,6 +524,7 @@ export const initialState: AppState = {
   bosuns: [],
   bosunLedger: [],
   bosunTasks: null,
+  inbox: null,
   activeTaskId: null,
   terminals: {},
   artifacts: {},
@@ -583,6 +588,7 @@ export type Action =
   | { type: "bosuns"; bosuns: Bosun[] }
   | { type: "bosunLedger"; wakes: Wake[] }
   | { type: "bosunTasks"; tasks: BosunTask[] | null }
+  | { type: "inbox"; inbox: { entries: InboxEntry[]; unread: number } | null }
   | { type: "bosunTaskUpserted"; task: BosunTask }
   | { type: "bosunTaskRemoved"; taskId: string }
   | { type: "openTask"; taskId: string | null }
@@ -1318,6 +1324,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, bosunLedger: action.wakes };
     case "bosunTasks":
       return { ...state, bosunTasks: action.tasks };
+    case "inbox":
+      return { ...state, inbox: action.inbox };
     case "bosunTaskUpserted": {
       const list = state.bosunTasks ?? [];
       const i = list.findIndex((t) => t.id === action.task.id);
@@ -1874,6 +1882,12 @@ export interface ThreadknotActions {
    *  days included). Rejects on a server without `bosun.task.*`, leaving the
    *  state null. */
   refreshBosunTasks: () => Promise<BosunTask[]>;
+  /** Load the notification inbox into `state.inbox`. */
+  refreshInbox: () => Promise<void>;
+  /** Mark inbox entries read: by id, every entry of a thread, or all. */
+  markInboxRead: (
+    payload: import("../lib/protocol").RequestMap["inbox.markRead"]["payload"],
+  ) => Promise<void>;
   updateTask: (
     payload: import("../lib/protocol").RequestMap["bosun.task.update"]["payload"],
   ) => Promise<BosunTask>;

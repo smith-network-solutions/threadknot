@@ -783,7 +783,6 @@ pub fn accept_report(
 /// in-process subagents, which are steps inside a turn the user is watching,
 /// and would bury the one notification that matters under a dozen that don't.
 fn push_finished(hub: &Arc<Hub>, record: &DispatchRecord) {
-    let Some(push) = hub.push() else { return };
     let Some(parent) = hub.store.thread(&record.parent_thread_id) else {
         return;
     };
@@ -806,7 +805,7 @@ fn push_finished(hub: &Arc<Hub>, record: &DispatchRecord) {
         .map(|r| truncate(&r.summary, 160))
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| format!("{} {outcome}", record.agent.display_name()));
-    push.enqueue(crate::push::PushJob {
+    hub.enqueue_push(crate::push::PushJob {
         kind: crate::push::PushKind::DispatchFinished,
         seq: hub.store.read_events(&parent.id).iter().rev().find(|e| matches!(
             &e.event, AgentEvent::SubagentCompleted { task_id, .. } if task_id == &record.id
@@ -821,6 +820,7 @@ fn push_finished(hub: &Arc<Hub>, record: &DispatchRecord) {
             body: detail,
         }),
         only_device: None,
+        badge: None,
     });
 }
 

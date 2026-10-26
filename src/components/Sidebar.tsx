@@ -46,6 +46,7 @@ import {
   SEARCH_WIDTH_DEFAULT,
 } from "../lib/sidebarLayout";
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
+import { INBOX_ID } from "./InboxView";
 import { timeAgo } from "../lib/format";
 import {
   TASK_REVIEW_ID,
@@ -5484,6 +5485,20 @@ export const Sidebar = memo(function Sidebar({
           <SearchIcon size={18} />
           <span>Search</span>
         </button>
+        {!soloId && state.inbox && (
+          <button
+            type="button"
+            className={`sidebar-action inbox-open${state.activeTaskId === INBOX_ID ? " on" : ""}`}
+            title="Every notification, so none slips past"
+            onClick={() => actions.openTask(INBOX_ID)}
+          >
+            <BellIcon size={18} />
+            <span>Notifications</span>
+            {state.inbox.unread > 0 && (
+              <span className="inbox-unread-count">{state.inbox.unread}</span>
+            )}
+          </button>
+        )}
         {!soloId && !agentsView && !quickView && !bosunView && (
           <button type="button" className="sidebar-action" onClick={onAddProject}>
             <FolderPlusIcon size={18} />

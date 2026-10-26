@@ -1094,6 +1094,26 @@ button; `threadknot --test-notification` exercises the same backend without open
 a window. Windows native notifications require the NSIS-installed build (the
 portable CI executable has no registered toast identity).
 
+### Inbox (`inbox.list`, `inbox.markRead`)
+
+Every notification that goes through `Hub::enqueue_push` is also recorded in
+`inbox.json` (14 days, at most 500 entries), whether or not a phone is paired
+and whether or not presence holds the push back. Test pushes are not recorded.
+
+- `inbox.list {limit?}` → `{entries: InboxEntry[], unread}`, newest first.
+  `InboxEntry` is `{id, at, kind, workspaceId, projectId, projectName,
+  threadId, threadTitle, title, body, readAt?}`; `kind` is the push payload's
+  `eventKind`, and `threadId` is empty for a notice that belongs to no thread
+  (a Bosun sweep).
+- `inbox.markRead {ids?, threadId?, all?}` → `{changed, unread}`.
+
+Read state is server-side, so it is shared by every device. The client marks a
+thread's entries read when it opens that thread, and when entries arrive for
+the thread already on screen while the page is visible. Any change broadcasts
+`state.changed {scope: "inbox"}`. Each push carries the unread count as the
+Expo `badge`, and the mobile shell sets the icon badge from the page's
+`{type: "badge", count}` bridge message so it falls again as things are read.
+
 ## People (several teammates on one machine)
 
 Threadknot assumes one owner per machine, and that is still the security model:

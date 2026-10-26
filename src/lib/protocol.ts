@@ -1217,6 +1217,24 @@ export interface TaskEvent {
 }
 
 /** One labelled to-do per real-world item, with at most one thread. */
+/** One notification in the inbox (server `inbox.rs`): every push Threadknot
+ *  sent or held back, kept two weeks, read state shared by every device. */
+export interface InboxEntry {
+  id: string;
+  at: string;
+  /** turn_completed | approval_request | question_request | dispatch_finished | bosun | error */
+  kind: string;
+  workspaceId: string;
+  projectId: string;
+  projectName: string;
+  /** Empty for a notice that belongs to no thread (a Bosun sweep). */
+  threadId: string;
+  threadTitle: string;
+  title: string;
+  body: string;
+  readAt?: string | null;
+}
+
 export interface BosunTask {
   id: string;
   bosunId: string;
@@ -2449,6 +2467,12 @@ export interface RequestMap {
     data: BosunTask;
   };
   "bosun.task.delete": { payload: { taskId: string }; data: Record<string, never> };
+  /** Newest first. */
+  "inbox.list": { payload: { limit?: number }; data: { entries: InboxEntry[]; unread: number } };
+  "inbox.markRead": {
+    payload: { ids?: string[]; threadId?: string; all?: boolean };
+    data: { changed: number; unread: number };
+  };
   "usage.get": { payload: Record<string, never>; data: { usage: ProviderUsage[] } };
   "usage.refresh": { payload: Record<string, never>; data: Record<string, never> };
   "dictation.settings.get": { payload: Record<string, never>; data: DictationSettings };
@@ -2666,6 +2690,7 @@ export interface StateChangedFrame {
     | "identity"
     | "themes"
     | "updates"
+    | "inbox"
     | "connector";
   projectId?: string;
   /** Set on frames relayed from a peer: the origin machine's id (added by the

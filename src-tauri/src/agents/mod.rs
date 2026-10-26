@@ -751,6 +751,8 @@ pub struct Hub {
     pub dispatch: Arc<crate::dispatch::DispatchLedger>,
     /// Always-on Bosun agents (bosuns.json), their pending signals and ledger.
     pub bosuns: Arc<crate::bosun::BosunRegistry>,
+    /// Every notification sent or held back, with read state (inbox.json).
+    pub inbox: Arc<crate::inbox::Inbox>,
     /// What a dispatched worker passed to `report_result`, keyed by its thread,
     /// waiting for that turn to end. Held here rather than on the record so a
     /// worker that reports and then keeps talking still ends with its own
@@ -829,6 +831,7 @@ impl Hub {
         let bosuns = Arc::new(
             crate::bosun::BosunRegistry::open(store.dir()).expect("open bosun registry"),
         );
+        let inbox = Arc::new(crate::inbox::Inbox::open(store.dir()));
         Arc::new_cyclic(|self_weak| Self {
             self_weak: self_weak.clone(),
             store,
@@ -843,6 +846,7 @@ impl Hub {
             themes,
             dispatch,
             bosuns,
+            inbox,
             dispatch_reports: Mutex::new(HashMap::new()),
             dispatch_progress_at: Mutex::new(HashMap::new()),
             dispatch_activity: Mutex::new(HashMap::new()),
@@ -862,7 +866,15 @@ impl Hub {
 
     /// Queue a phone notification that no agent event produced (a Bosun
     /// sweep's "N new to-dos"). Dropped silently when push is not attached.
-    pub fn enqueue_push(&self, job: crate::push::PushJob) {
+    /// Every notification goes through here: it is recorded in the inbox
+    /// (whether or not a phone is paired, or presence later holds it back),
+    /// then queued for the phones with the unread count as the icon badge.
+    pub fn enqueue_push(&self, mut job: crate::push::PushJob) {
+        if job.kind != crate::push::PushKind::Test {
+            let unread = self.inbox.record(&job);
+            job.badge = u32::try_from(unread).ok();
+            self.broadcast_state("inbox", None);
+        }
         if let Some(push) = self.push.get() {
             push.enqueue(job);
         }
@@ -1023,7 +1035,6 @@ impl Hub {
         notice: Option<&crate::protocol::EventNotice>,
         seq: i64,
     ) {
-        let Some(push) = self.push.get() else { return };
         let kind = match event {
             AgentEvent::TurnCompleted { .. } => crate::push::PushKind::TurnCompleted,
             AgentEvent::ApprovalRequest { .. } => crate::push::PushKind::ApprovalRequest,
@@ -1064,7 +1075,7 @@ impl Hub {
             .store
             .workspace_for_project(&thread.project_id)
             .unwrap_or_else(|| thread.project_id.clone());
-        push.enqueue(crate::push::PushJob {
+        self.enqueue_push(crate::push::PushJob {
             kind,
             seq: u64::try_from(seq).ok(),
             project_id: thread.project_id,
@@ -1074,6 +1085,7 @@ impl Hub {
             thread_title: thread.title,
             notice: notice.cloned(),
             only_device: None,
+            badge: None,
         });
     }
 

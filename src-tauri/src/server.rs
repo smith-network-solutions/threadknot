@@ -1729,6 +1729,7 @@ async fn mobile_push_test_handler(
         thread_title: format!("Threadknot {}", env!("CARGO_PKG_VERSION")),
         notice: None,
         only_device: Some(device_id),
+        badge: None,
     });
     axum::Json(json!({})).into_response()
 }
@@ -2410,6 +2411,7 @@ fn required_capability(kind: &str) -> Option<Capability> {
         || kind.starts_with("turn.")
         || kind.starts_with("schedule.")
         || kind.starts_with("bosun.")
+        || kind.starts_with("inbox.")
         || kind.starts_with("archive.")
         || kind == "approval.respond"
         || kind == "question.respond"
@@ -4651,6 +4653,18 @@ pub async fn handle_request(
         "fs.read" => crate::files::read(state, &p),
         k if k.starts_with("exec.") => crate::exec::handle(state, k, &p).await,
         k if k.starts_with("bosun.") => crate::bosun::handle(state, principal, k, &p).await,
+        "inbox.list" => {
+            let limit = p.get("limit").and_then(Value::as_u64).unwrap_or(200).min(500) as usize;
+            Ok(json!({ "entries": hub.inbox.list(limit), "unread": hub.inbox.unread() }))
+        }
+        "inbox.markRead" => {
+            let req: crate::inbox::MarkRead = serde_json::from_value(p.clone()).unwrap_or_default();
+            let changed = hub.inbox.mark_read(&req);
+            if changed > 0 {
+                hub.broadcast_state("inbox", None);
+            }
+            Ok(json!({ "changed": changed, "unread": hub.inbox.unread() }))
+        }
         k if k.starts_with("dispatch.") || k.starts_with("mesh.dispatch") => {
             crate::dispatch::handle(state, principal, k, &p).await
         }

@@ -94,7 +94,7 @@ pub enum PushKind {
 }
 
 impl PushKind {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             PushKind::TurnCompleted => "Turn complete",
             PushKind::ApprovalRequest => "Approval needed",
@@ -107,7 +107,7 @@ impl PushKind {
     }
 
     /// Wire value carried in the notification data payload (mobile routing).
-    fn event_kind(self) -> &'static str {
+    pub(crate) fn event_kind(self) -> &'static str {
         match self {
             PushKind::TurnCompleted => "turn_completed",
             PushKind::ApprovalRequest => "approval_request",
@@ -137,6 +137,9 @@ pub struct PushJob {
     pub notice: Option<crate::protocol::EventNotice>,
     /// Test pushes target exactly one device; agent events fan out.
     pub only_device: Option<String>,
+    /// Unread inbox count for the app icon badge, stamped by
+    /// `Hub::enqueue_push`. `None` leaves the badge alone.
+    pub badge: Option<u32>,
 }
 
 /// A sent ticket awaiting its receipt: (receipt id, expo push token, due time).
@@ -309,7 +312,7 @@ async fn send_job(
             .filter(|token| people.get(*token).is_some_and(|p| p == person))
             .map(|token| {
                 let show_preview = previews_by_token.get(token).copied().unwrap_or(false);
-                json!({
+                let mut message = json!({
                     "to": token,
                     "title": if show_preview { &title } else { &status_title },
                     "body": if show_preview { &body } else { &status_body },
@@ -317,7 +320,11 @@ async fn send_job(
                     "sound": "default",
                     "priority": "high",
                     "channelId": "threadknot",
-                })
+                });
+                if let Some(badge) = job.badge {
+                    message["badge"] = json!(badge);
+                }
+                message
             })
             .collect();
 

@@ -1323,6 +1323,7 @@ fn push_sweep(hub: &Hub, bosun: &Bosun, workspace_id: &str, label: &str, new: us
         thread_title: String::new(),
         notice: Some(EventNotice { title, body }),
         only_device: None,
+        badge: None,
     });
 }
 

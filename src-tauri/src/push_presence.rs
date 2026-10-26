@@ -115,6 +115,7 @@ mod tests {
             seq: Some(seq),
             notice: None,
             only_device: None,
+            badge: None,
         }
     }
     #[test]

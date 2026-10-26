@@ -28,7 +28,8 @@ export type NativeOutMessage =
   | { type: "routeChanged"; projectId?: string; threadId?: string }
   | { type: "connectionChanged"; conn: "connecting" | "online" | "offline" }
   | { type: "clipboardRead"; requestId: string }
-  | { type: "reloadRequest" };
+  | { type: "reloadRequest" }
+  | { type: "badge"; count: number };
 
 export interface NativeNavigate {
   type: "navigate";
@@ -94,6 +95,13 @@ export function requestNativeReload(): boolean {
   if (!isNativeShell() || !hasNativeCapability("reload")) return false;
   postToNative({ type: "reloadRequest" });
   return true;
+}
+
+/** Tell the shell the unread notification count, for the app icon badge.
+ *  Older shells ignore message types they do not know. */
+export function reportBadge(count: number): void {
+  if (!isNativeShell()) return;
+  postToNative({ type: "badge", count });
 }
 
 export function postToNative(msg: NativeOutMessage): void {

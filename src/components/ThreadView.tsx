@@ -53,6 +53,7 @@ import {
 } from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
 import "../styles/workspace.css";
+import { BackToInbox } from "./InboxView";
 
 /** How close to the end we can be before showing the jump-to-present button. */
 const BOTTOM_SLACK = 90;
@@ -1333,6 +1334,7 @@ export function ThreadView() {
             </div>
           )}
           {thread?.origin?.kind === "bosun" && <BosunOriginChip thread={thread} />}
+          {thread && <BackToInbox threadId={thread.id} />}
           {chipPreview.portal}
         </div>
         {quickHome && (

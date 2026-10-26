@@ -22,6 +22,7 @@ pub mod files;
 pub mod git;
 pub mod claudex;
 pub mod hermes;
+pub mod inbox;
 pub mod ingress;
 pub mod library;
 pub mod limits;

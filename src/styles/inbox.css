@@ -1,0 +1,109 @@
+/* Notifications inbox (InboxView.tsx). Phone-first like the review page:
+   whole-row tap targets, the mark-read tick separate at the right. */
+
+.inbox-pane { display: flex; flex-direction: column; min-height: 0; }
+
+.inbox-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.inbox-tabs { display: flex; gap: 6px; flex: 1; }
+.inbox-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 13px;
+  font-weight: 600;
+}
+.inbox-tab.on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--brass) 60%, transparent);
+  background: color-mix(in srgb, var(--brass) 14%, transparent);
+}
+.inbox-tab-count, .inbox-unread-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--amber);
+  color: #111;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-action .inbox-unread-count { margin-left: auto; }
+.inbox-readall { min-height: 32px; padding: 0 12px; white-space: nowrap; }
+
+.inbox-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 40px; }
+.inbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 8px 2px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-left: 3px solid transparent;
+}
+.inbox-row.unread { border-left-color: var(--amber); background: color-mix(in srgb, var(--amber) 5%, transparent); }
+.inbox-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 8px 10px 14px;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.inbox-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; color: var(--faint); }
+.inbox-kind { font-weight: 700; color: var(--brass-hi); white-space: nowrap; }
+.inbox-row.k-approval_request .inbox-kind,
+.inbox-row.k-question_request .inbox-kind { color: var(--amber); }
+.inbox-row.k-error .inbox-kind { color: var(--red, #e5484d); }
+.inbox-ws { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-count { font-weight: 700; color: var(--text); }
+.inbox-when { margin-left: auto; white-space: nowrap; }
+.inbox-title { font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.inbox-row:not(.unread) .inbox-title { font-weight: 500; color: var(--muted, var(--faint)); }
+.inbox-body {
+  color: var(--muted, var(--faint));
+  font-size: 12.5px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.inbox-markread { flex: none; align-self: center; width: 36px; height: 36px; color: var(--faint); }
+.inbox-markread:hover { color: var(--teal); }
+
+.back-to-inbox {
+  display: inline-flex;
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brass-hi);
+}
+.back-to-inbox:hover { text-decoration: underline; }
+
+@media (max-width: 767px) {
+  .inbox-tab { min-height: 40px; font-size: 14px; }
+  .inbox-readall { min-height: 40px; font-size: 14px; }
+  .inbox-top { font-size: 13px; }
+  .inbox-title { font-size: 15px; }
+  .inbox-body { font-size: 13.5px; }
+  .inbox-main { padding: 12px 8px 12px 14px; }
+  .inbox-markread { width: 44px; height: 44px; }
+  .back-to-inbox { font-size: 13px; padding: 4px 0; }
+}

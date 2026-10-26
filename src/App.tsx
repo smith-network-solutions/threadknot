@@ -19,6 +19,7 @@ import {
   initNativeBridge,
   isNativeShell,
   postToNative,
+  reportBadge,
   setNativeNavigationHandler,
   setNativeResumeHandler,
 } from "./lib/native";
@@ -30,6 +31,7 @@ import { VoiceSession } from "./components/VoiceSession";
 import { LinkOpenModal } from "./components/LinkOpenModal";
 import { getSidebarPrefs } from "./lib/appearance";
 import type {
+  InboxEntry,
   Access,
   Agent,
   ClaudexProfileInput,
@@ -86,6 +88,7 @@ import { DirPicker } from "./components/DirPicker";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
 import { BosunPanel } from "./components/BosunPanel";
+import { INBOX_ID } from "./components/InboxView";
 import { TASK_REVIEW_ID, displayTitle, stripTitleMarks, touchBosunThread, touchTask } from "./lib/bosun";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
@@ -397,6 +400,10 @@ function makeActions(
     // a visible full-pane blink.
     let touched = false;
     if (!preserveFeed) {
+      // Opening a chat reads its notifications, on every device.
+      if (getState().inbox?.entries.some((e) => !e.readAt && e.threadId === threadId)) {
+        void markInboxRead({ threadId }).catch(() => undefined);
+      }
       dispatch({ type: "openThread", threadId });
       const known = findThread(getState(), threadId);
       rememberLastThread(getState().solo, threadId, known?.machineId ?? machineId);
@@ -553,6 +560,24 @@ function makeActions(
       return false;
     }
   };
+
+  async function markInboxRead(
+    payload: import("./lib/protocol").RequestMap["inbox.markRead"]["payload"],
+  ): Promise<void> {
+    const { unread } = await client.request("inbox.markRead", payload);
+    const cur = getState().inbox;
+    if (cur) {
+      const now = new Date().toISOString();
+      const hit = (e: InboxEntry) =>
+        !e.readAt &&
+        (payload.all || payload.ids?.includes(e.id) || (!!payload.threadId && e.threadId === payload.threadId));
+      dispatch({
+        type: "inbox",
+        inbox: { unread, entries: cur.entries.map((e) => (hit(e) ? { ...e, readAt: now } : e)) },
+      });
+    }
+    reportBadge(unread);
+  }
 
   return {
     refreshProjects,
@@ -1949,6 +1974,25 @@ function makeActions(
       return wakes ?? [];
     },
 
+    async refreshInbox() {
+      const inbox = await client.request("inbox.list", { limit: 300 });
+      dispatch({ type: "inbox", inbox });
+      // Whatever arrived for the chat already on screen was seen as it
+      // happened; only an app in the background leaves it unread.
+      const s = getState();
+      const open = s.activeThreadId;
+      if (
+        open &&
+        document.visibilityState === "visible" &&
+        inbox.entries.some((e) => !e.readAt && e.threadId === open)
+      ) {
+        void markInboxRead({ threadId: open }).catch(() => undefined);
+      }
+      reportBadge(inbox.unread);
+    },
+
+    markInboxRead,
+
     async refreshBosunTasks() {
       const { tasks } = await client.request("bosun.task.list", { includeClosed: true });
       dispatch({ type: "bosunTasks", tasks: tasks ?? [] });
@@ -1996,7 +2040,7 @@ function makeActions(
     openTask(taskId) {
       dispatch({ type: "openTask", taskId });
       const solo = getState().solo;
-      if (taskId === TASK_REVIEW_ID) {
+      if (taskId === TASK_REVIEW_ID || taskId === INBOX_ID) {
         // A page, not a task: nothing to remember or put in Recent.
       } else if (taskId) {
         rememberLastTask(solo, taskId);
@@ -2461,6 +2505,10 @@ export default function App() {
         if (frame.origin) return;
         void actionsRef.current.refreshBosunTasks().catch(() => undefined);
       }
+      else if (frame.scope === "inbox") {
+        if (frame.origin) return;
+        void actionsRef.current.refreshInbox().catch(() => undefined);
+      }
       else if (frame.scope === "themes")
         void actionsRef.current.listThemes().catch(() => undefined);
       else if (frame.scope === "workspaces") {
@@ -2565,6 +2613,7 @@ export default function App() {
           // Servers older than docs/BOSUN.md §10 have no bosun.task.*: the
           // list stays null and the Bosun view keeps its thread timeline.
           void actionsRef.current.refreshBosunTasks().catch(() => undefined);
+          void actionsRef.current.refreshInbox().catch(() => undefined);
           void actionsRef.current.refreshArchives().catch(() => undefined);
           void actionsRef.current.refreshUpdate().catch(() => undefined);
           void actionsRef.current.refreshPeers().catch(() => undefined);

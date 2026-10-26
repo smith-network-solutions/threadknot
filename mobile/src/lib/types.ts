@@ -84,4 +84,5 @@ export type WebToNativeMessage =
   | { type: 'routeChanged'; projectId?: string; threadId?: string }
   | { type: 'connectionChanged'; conn: 'connecting' | 'online' | 'offline' }
   | { type: 'clipboardRead'; requestId: string }
-  | { type: 'reloadRequest' };
+  | { type: 'reloadRequest' }
+  | { type: 'badge'; count: number };

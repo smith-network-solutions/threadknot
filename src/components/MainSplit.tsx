@@ -3,6 +3,7 @@ import { findThread, resolveProjectView, useStore } from "../state/store";
 import { ThreadView } from "./ThreadView";
 import { BosunTaskView } from "./BosunTaskView";
 import { BosunReview } from "./BosunReview";
+import { InboxView, INBOX_ID } from "./InboxView";
 import { TASK_REVIEW_ID } from "../lib/bosun";
 import { WorkspacePanel, type WorkspaceOrient } from "./WorkspacePanel";
 import "../styles/main-split.css";
@@ -119,7 +120,15 @@ export const MainSplit = memo(function MainSplit() {
       className={`main-split ${orient}${panelPresent ? " ws-present" : ""}${panelShown ? " ws-open" : ""}${dragging ? " dragging" : ""}`}
       style={style}
     >
-      {state.activeTaskId === TASK_REVIEW_ID ? <BosunReview /> : taskOpen ? <BosunTaskView /> : <ThreadView />}
+      {state.activeTaskId === INBOX_ID ? (
+        <InboxView />
+      ) : state.activeTaskId === TASK_REVIEW_ID ? (
+        <BosunReview />
+      ) : taskOpen ? (
+        <BosunTaskView />
+      ) : (
+        <ThreadView />
+      )}
       {panelPresent && (
         <div
           className="ws-divider"

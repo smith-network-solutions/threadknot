@@ -5,6 +5,7 @@ import { sameOrigin } from '@/lib/api';
 import { downloadAndShare, isFileUrl } from '@/lib/download';
 import type { RemoteSession, ServerProfile, WebToNativeMessage } from '@/lib/types';
 import * as Clipboard from 'expo-clipboard';
+import * as Notifications from 'expo-notifications';
 import * as React from 'react';
 import { ActivityIndicator, AppState, Linking, Platform, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -45,6 +46,7 @@ function parseMessage(raw: string): WebToNativeMessage | null {
       t === 'routeChanged' ||
       t === 'connectionChanged' ||
       t === 'reloadRequest' ||
+      (t === 'badge' && typeof (msg as { count?: unknown }).count === 'number') ||
       (t === 'clipboardRead' && typeof (msg as { requestId?: unknown }).requestId === 'string')
     ) {
       return msg as WebToNativeMessage;
@@ -190,6 +192,10 @@ export const WebViewPool = React.forwardRef<PoolHandle, Props>(function WebViewP
         // load, so a wedged page recovers and `startInLoadingState` shows the
         // native connecting spinner.
         reloadView(profileId);
+      } else if (msg.type === 'badge') {
+        // The server's unread notification count. Pushes carry it too, but
+        // only a page can lower it again once things are read.
+        void Notifications.setBadgeCountAsync(Math.max(0, Math.floor(msg.count))).catch(() => undefined);
       } else if (msg.type === 'clipboardRead') {
         void Clipboard.getStringAsync()
           .then((text) => {
