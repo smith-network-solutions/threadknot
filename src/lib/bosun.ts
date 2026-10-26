@@ -492,6 +492,10 @@ export const TASK_GROUPS: { id: TaskGroupId; label: string; collapsed: boolean }
   { id: "done", label: "Done (3 days)", collapsed: true },
 ];
 
+/** `activeTaskId` value that puts the Review to-dos page in the main pane
+ *  instead of one task, so every path that closes a task page closes it too. */
+export const TASK_REVIEW_ID = "__review__";
+
 export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   needs_you: "Needs you",
   working: "Working",

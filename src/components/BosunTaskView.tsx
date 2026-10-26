@@ -23,7 +23,8 @@ import type { FeedItem } from "../state/feed";
 import { allWorkspaces, findThread, useStore } from "../state/store";
 import { BosunMark, useBosunImage } from "./BosunMark";
 import { ContextMenu, type CtxItem } from "./ContextMenu";
-import { ChevronIcon, MoreIcon, PanelLeftIcon, PencilIcon, PlayIcon, XIcon } from "./icons";
+import { CheckIcon, ChevronIcon, MoreIcon, PanelLeftIcon, PencilIcon, PlayIcon, XIcon } from "./icons";
+import "../styles/bosun-review.css";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
 
@@ -342,6 +343,17 @@ export function BosunTaskView() {
             <TaskStatusDot status={t.status} />
             {TASK_STATUS_LABEL[t.status]}
             <ChevronIcon size={11} open className="task-status-caret" />
+          </button>
+          {/* Closing is the commonest thing done here, so it lives in the
+              header: on a phone the action row is a long scroll away. */}
+          <button
+            type="button"
+            className={`task-head-done${closed ? " reopen" : ""}`}
+            disabled={!!busy}
+            onClick={() => setStatus(closed ? "todo" : "done")}
+            title={closed ? "Reopen this to-do" : "Mark this to-do done"}
+          >
+            {closed ? "Reopen" : (<><CheckIcon size={13} /> Done</>)}
           </button>
         </div>,
       )}

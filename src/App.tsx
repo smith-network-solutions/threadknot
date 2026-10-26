@@ -86,7 +86,7 @@ import { DirPicker } from "./components/DirPicker";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
 import { BosunPanel } from "./components/BosunPanel";
-import { displayTitle, stripTitleMarks, touchBosunThread, touchTask } from "./lib/bosun";
+import { TASK_REVIEW_ID, displayTitle, stripTitleMarks, touchBosunThread, touchTask } from "./lib/bosun";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
 import { PairBrowser } from "./components/PairBrowser";
@@ -1996,7 +1996,9 @@ function makeActions(
     openTask(taskId) {
       dispatch({ type: "openTask", taskId });
       const solo = getState().solo;
-      if (taskId) {
+      if (taskId === TASK_REVIEW_ID) {
+        // A page, not a task: nothing to remember or put in Recent.
+      } else if (taskId) {
         rememberLastTask(solo, taskId);
         touchTask(taskId);
       } else {

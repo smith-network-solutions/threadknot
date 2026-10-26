@@ -1661,7 +1661,20 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
   // Back to the to-do this thread works (docs/BOSUN.md §10.7), only when the
   // task is actually loaded: a server without tasks never draws the link.
   const taskId = origin.taskId;
-  const hasTask = !!taskId && !!state.bosunTasks?.some((t) => t.id === taskId);
+  const task = taskId ? state.bosunTasks?.find((t) => t.id === taskId) : undefined;
+  const hasTask = !!task;
+  const taskClosed = task ? task.status === "done" || task.status === "dropped" : false;
+  const [closing, setClosing] = useState(false);
+  // Finish (or reopen) the to-do from inside its conversation, where the
+  // work actually ends, instead of a trip back to the task page.
+  const toggleDone = () => {
+    if (!task) return;
+    setClosing(true);
+    void actions
+      .updateTask({ taskId: task.id, status: taskClosed ? "todo" : "done" })
+      .catch((e) => window.alert(e instanceof Error ? e.message : String(e)))
+      .finally(() => setClosing(false));
+  };
   return (
     <div className="bosun-origin">
       {hasTask && (
@@ -1675,6 +1688,17 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
           }}
         >
           ← Task
+        </button>
+      )}
+      {hasTask && (
+        <button
+          type="button"
+          className={`bosun-origin-done${taskClosed ? " closed" : ""}`}
+          disabled={closing}
+          title={taskClosed ? "Reopen the to-do" : "Mark the to-do done"}
+          onClick={toggleDone}
+        >
+          {taskClosed ? "Done · reopen" : "✓ Mark done"}
         </button>
       )}
       <span

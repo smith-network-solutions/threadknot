@@ -1,0 +1,173 @@
+/* Review to-dos (BosunReview.tsx): the main pane for closing many tasks at
+   once. Phone-first: full titles that wrap, rows that are whole tap targets,
+   and the bulk bar pinned to the bottom of the pane. */
+
+.review-pane { display: flex; flex-direction: column; min-height: 0; }
+.review-head-count { margin-left: 8px; color: var(--faint); font-weight: 500; font-size: 12.5px; }
+
+.review-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.review-search {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel, transparent);
+  color: var(--text);
+  font-size: 13.5px;
+}
+.review-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted, var(--faint));
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-chip.on {
+  border-color: color-mix(in srgb, var(--task-c) 55%, transparent);
+  background: color-mix(in srgb, var(--task-c) 14%, transparent);
+  color: var(--text);
+}
+.review-chip-count { color: var(--faint); font-variant-numeric: tabular-nums; font-weight: 500; }
+.review-selects { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-selects select {
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel, transparent);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.review-selectall {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  color: var(--faint);
+  font-size: 12.5px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.review-selectall input, .review-check input { width: 17px; height: 17px; accent-color: var(--brass); cursor: pointer; }
+
+.review-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 80px; }
+.review-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 8px 4px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.review-row.checked { background: color-mix(in srgb, var(--brass) 9%, transparent); }
+.review-check { flex: none; display: flex; align-items: center; justify-content: center; width: 38px; min-height: 40px; cursor: pointer; }
+.review-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 4px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.review-main:hover .review-title { text-decoration: underline; text-decoration-color: var(--faint); }
+.review-title { font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.review-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--faint); font-size: 12px; }
+.review-status { display: inline-flex; align-items: center; gap: 5px; color: var(--task-c); font-weight: 600; }
+.review-next {
+  color: var(--muted, var(--faint));
+  font-size: 12.5px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.review-done { flex: none; width: 36px; height: 36px; margin-top: 4px; color: var(--faint); }
+.review-done:hover:not(:disabled) { color: var(--teal); }
+
+.review-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.25);
+}
+.review-bar-count { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); }
+.review-bar .btn { min-height: 34px; padding: 0 14px; }
+.review-progress { flex: 1; font-size: 13px; color: var(--text); }
+.review-error { flex-basis: 100%; }
+
+/* Done / Reopen beside the status chip on the task page, and on a Bosun
+   thread's origin line: closing a task never needs a scroll or a menu. */
+.task-head-done {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--teal) 55%, transparent);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.task-head-done.reopen { border-color: var(--border); background: none; color: var(--faint); }
+.task-head-done:disabled { opacity: 0.6; }
+.bosun-origin-done {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--teal) 50%, transparent);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.bosun-origin-done.closed { border-color: var(--border); color: var(--faint); }
+.bosun-origin-done:disabled { opacity: 0.6; }
+.bosun-crew-actions .btn { white-space: nowrap; }
+
+@media (max-width: 767px) {
+  .review-search { min-height: 42px; font-size: 16px; }
+  .review-chip { min-height: 38px; font-size: 13.5px; }
+  .review-selects select { min-height: 38px; font-size: 14px; flex: 1 1 30%; }
+  .review-selectall { min-height: 46px; font-size: 14px; }
+  .review-selectall input, .review-check input { width: 22px; height: 22px; }
+  .review-check { width: 44px; min-height: 52px; }
+  .review-title { font-size: 15px; }
+  .review-meta { font-size: 13px; }
+  .review-done { width: 44px; height: 44px; }
+  .review-bar .btn { min-height: 44px; font-size: 14.5px; }
+  .task-head-done { min-height: 40px; padding: 0 14px; font-size: 13.5px; }
+  .bosun-origin-done { padding: 4px 10px; font-size: 12px; }
+}

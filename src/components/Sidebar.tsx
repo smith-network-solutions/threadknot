@@ -48,6 +48,7 @@ import {
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
 import { timeAgo } from "../lib/format";
 import {
+  TASK_REVIEW_ID,
   ageLabel,
   bosunAttentionThreads,
   bosunRecentVersion,
@@ -2814,6 +2815,14 @@ function BosunTaskList({
               <PlusIcon size={11} /> To-do
             </button>
           )}
+          <button
+            type="button"
+            className="btn bosun-small-btn bosun-review-btn"
+            title="Every open to-do with its full title, to close many at once"
+            onClick={() => actions.openTask(TASK_REVIEW_ID)}
+          >
+            Review
+          </button>
           <button
             type="button"
             className="btn bosun-small-btn bosun-manage"
