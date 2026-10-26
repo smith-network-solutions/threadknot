@@ -188,3 +188,18 @@
 @media (max-width: 767px) {
   .task-back-review { min-height: 40px; padding: 0 14px; font-size: 14px; }
 }
+
+/* Phone task header: one row cannot hold the sidebar toggle, "← Review", the
+   Bosun's name, the status chip, Done and Close, and they overlapped. Two rows
+   instead: navigation on top (toggle, back, close at the far right), then the
+   task's own controls — status, with Done pushed to the right edge. The
+   Bosun's name is dropped here; the page is plainly its to-do. */
+@media (max-width: 767px) {
+  .task-pane:not(.review-pane) .task-head { flex-wrap: wrap; row-gap: 8px; }
+  .task-pane:not(.review-pane) .task-head .task-close { order: 1; margin-left: auto; min-width: 40px; min-height: 40px; }
+  .task-pane:not(.review-pane) .task-head .task-head-main { order: 2; flex: 1 1 100%; }
+  .task-pane:not(.review-pane) .task-head .task-head-row { width: 100%; }
+  .task-pane:not(.review-pane) .task-head .task-head-who { display: none; }
+  .task-pane:not(.review-pane) .task-head .task-head-done { margin-left: auto; }
+  .task-pane:not(.review-pane) .task-head .task-back-review { margin-left: 0; }
+}

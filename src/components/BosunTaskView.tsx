@@ -168,7 +168,7 @@ export function BosunTaskView() {
       <div className="thread-head-main task-head-main">{main}</div>
       <button
         type="button"
-        className="icon-btn"
+        className="icon-btn task-close"
         aria-label="Close to-do"
         title="Close"
         onClick={() => actions.openTask(null)}
