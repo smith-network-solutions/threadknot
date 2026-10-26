@@ -1,4 +1,4 @@
-import { useFeedStore } from "../state/store";
+import { findThread, useFeedStore } from "../state/store";
 import { ArtifactNavigation } from "./artifacts/ArtifactNavigation";
 import { absoluteProjectPath, ViewerClipboardActions } from "./files/ViewerActions";
 import { memo, useEffect, useState, type Dispatch, type ReactNode } from "react";
@@ -734,8 +734,19 @@ function HandoffDivider({ item }: { item: Extract<FeedItem, { type: "turn" }> })
  * though the human wrote that wall of instructions — so it collapses to a
  * divider that can be expanded to audit exactly what the reviewer was told.
  */
-function BriefDivider({ item }: { item: Extract<FeedItem, { type: "user" }> }) {
+function BriefDivider({
+  item,
+  threadId,
+}: {
+  item: Extract<FeedItem, { type: "user" }>;
+  threadId: string | null;
+}) {
   const [open, setOpen] = useState(false);
+  const { state } = useFeedStore();
+  // A Bosun injects its own instructions the same way a Parley lane gets its
+  // role brief; "review requested" on those read as if a review had started.
+  const origin = threadId ? findThread(state, threadId)?.origin : undefined;
+  const label = origin?.kind === "bosun" ? `${origin.bosunName || "Bosun"}'s instructions` : "review requested";
   return (
     <div className={`brief-divider${open ? " open" : ""}`}>
       <div className="brief-head">
@@ -747,7 +758,7 @@ function BriefDivider({ item }: { item: Extract<FeedItem, { type: "user" }> }) {
           title={open ? "Hide the brief" : "Show the brief this agent was given"}
         >
           <ShieldIcon size={11} />
-          review requested
+          {label}
           <ChevronIcon size={11} open={open} />
         </button>
         <span className="turn-line" />
@@ -939,7 +950,7 @@ export const FeedItemView = memo(function FeedItemView({
     case "user":
       // A role brief is not the user talking — see BriefDivider.
       return item.injected
-        ? <BriefDivider item={item} />
+        ? <BriefDivider item={item} threadId={render.threadId} />
         : <UserMessage item={item} render={render} />;
     case "assistant":
       return (

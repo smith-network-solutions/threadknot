@@ -471,25 +471,40 @@ export function BosunTaskView() {
           )}
 
           <div className="task-actions">
-            <button
-              type="button"
-              className="btn tone-allow task-primary"
-              disabled={!!busy || threadBusy}
-              onClick={() => void run("work", () => actions.workTask(t.id))}
-              title={threadBusy ? `${bosunName} is already working on this` : `${bosunName} picks this up and takes it as far as the standing orders allow`}
-            >
-              <PlayIcon size={11} /> {busy === "work" ? "Starting…" : threadBusy ? "Working…" : "Work on it"}
-            </button>
+            {/* With a conversation already going, the main action is to read
+                it: "Work on it" sends Blackbeard a new brief and starts a
+                turn, which is not what someone tapping in to look expects. */}
+            {t.threadId ? (
+              <button
+                type="button"
+                className="btn tone-allow task-primary"
+                disabled={!!busy}
+                onClick={() => void run("open", () => actions.selectThread(t.threadId!))}
+                title={thread ? undefined : "The thread is not loaded here yet; opening asks its machine"}
+              >
+                Open conversation
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn tone-allow task-primary"
+                disabled={!!busy || threadBusy}
+                onClick={() => void run("work", () => actions.workTask(t.id))}
+                title={`${bosunName} picks this up and takes it as far as the standing orders allow`}
+              >
+                <PlayIcon size={11} /> {busy === "work" ? "Starting…" : "Work on it"}
+              </button>
+            )}
             <div className="task-actions-rest">
               {t.threadId && (
                 <button
                   type="button"
                   className="btn tone-deny"
-                  disabled={!!busy}
-                  onClick={() => void run("open", () => actions.selectThread(t.threadId!))}
-                  title={thread ? undefined : "The thread is not loaded here yet; opening asks its machine"}
+                  disabled={!!busy || threadBusy}
+                  onClick={() => void run("work", () => actions.workTask(t.id))}
+                  title={threadBusy ? `${bosunName} is already working on this` : `Start a new turn: ${bosunName} picks this up again`}
                 >
-                  Open conversation
+                  <PlayIcon size={11} /> {busy === "work" ? "Starting…" : threadBusy ? "Working…" : "Work on it"}
                 </button>
               )}
               {t.status !== "done" && (
