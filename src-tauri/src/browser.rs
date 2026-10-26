@@ -2179,14 +2179,45 @@ impl BrowserSession {
         Ok(response.result.value.unwrap_or(Value::Null))
     }
 
-    async fn focus_backend(&self, backend: BackendNodeId) -> Result<()> {
+    /// Focus the node, reporting whether the focus actually took.
+    ///
+    /// The answer matters to `type`: keys are dispatched to whatever holds
+    /// focus at the moment they fire, not to the node that was targeted, so a
+    /// modal focus trap or an `autoFocus` landing a tick later silently
+    /// redirects every keystroke. Returning the check rather than discarding
+    /// it is what lets the caller say so.
+    async fn focus_backend(&self, backend: BackendNodeId) -> Result<bool> {
+        let landed = self
+            .call_on_backend(
+                backend,
+                "function() { this.focus({preventScroll:false}); return document.activeElement === this; }",
+                Vec::new(),
+            )
+            .await?;
+        Ok(landed.as_bool().unwrap_or(false))
+    }
+
+    /// What `type` needs to tell a real edit from keys that went elsewhere:
+    /// the node's current text, whether it can hold text at all, and whether
+    /// it still has focus.
+    async fn typing_probe(&self, backend: BackendNodeId) -> Result<Value> {
         self.call_on_backend(
             backend,
-            "function() { this.focus({preventScroll:false}); return document.activeElement === this; }",
+            r#"function() {
+                const editable = this.isContentEditable || ("value" in this);
+                const value = this.isContentEditable ? this.textContent : ("value" in this ? this.value : null);
+                const a = document.activeElement;
+                const describe = (el) => {
+                    if (!el || el === document.body) return "the page body";
+                    const id = el.id ? `#${el.id}` : "";
+                    const label = el.getAttribute && el.getAttribute("aria-label");
+                    return `<${el.tagName.toLowerCase()}${id}>${label ? ` aria-label="${label}"` : ""}`;
+                };
+                return { editable, value, focused: a === this, active: describe(a) };
+            }"#,
             Vec::new(),
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     async fn fill_backend(&self, backend: BackendNodeId, value: &str) -> Result<Value> {
@@ -3426,19 +3457,71 @@ impl BrowserRegistry {
                 Ok(json!({ "ok": true, "target": result }))
             }
             "type" => {
+                // Keys land wherever focus is when they fire, so a targeted
+                // type has to prove the text reached the element it named.
+                // Without that check a focus trap swallows every keystroke and
+                // the call still reports success — the caller then debugs the
+                // page instead of the focus.
+                let mut aimed = None;
                 if input.get("ref").is_some() || input.get("selector").is_some() {
                     let backend = session.backend_for_input(input).await?;
                     let target = session.point_of_backend(backend).await?;
                     session.activity(&action_id, "targeting", op, &label, None, Some(&target));
-                    session.focus_backend(backend).await?;
+                    if !session.focus_backend(backend).await? {
+                        let probe = session.typing_probe(backend).await.unwrap_or(Value::Null);
+                        let active = probe
+                            .get("active")
+                            .and_then(Value::as_str)
+                            .unwrap_or("something else");
+                        return Err(anyhow!(
+                            "could not focus the target element — {active} holds focus instead, \
+                             so the text would have gone there"
+                        ));
+                    }
+                    aimed = Some((backend, session.typing_probe(backend).await?));
                 }
+                let text = s("text");
                 let per_key = input.get("fast").and_then(Value::as_bool) != Some(true);
-                session.type_text(&s("text"), per_key).await?;
+                session.type_text(&text, per_key).await?;
+
+                // Verified before any submit: Enter may clear the field or
+                // navigate, which would erase the evidence either way.
+                let mut landed = Value::Null;
+                if let Some((backend, before)) = aimed {
+                    let after = session.typing_probe(backend).await?;
+                    let editable = before.get("editable").and_then(Value::as_bool) == Some(true);
+                    let unchanged = before.get("value") == after.get("value");
+                    if editable && unchanged && !text.is_empty() {
+                        let active = after
+                            .get("active")
+                            .and_then(Value::as_str)
+                            .unwrap_or("something else");
+                        if after.get("focused").and_then(Value::as_bool) != Some(true) {
+                            return Err(anyhow!(
+                                "the text never reached the target element: focus moved to \
+                                 {active} while typing, so the keys went there. Use browser_fill \
+                                 to set the value directly when a modal or autofocus keeps \
+                                 stealing focus."
+                            ));
+                        }
+                        return Err(anyhow!(
+                            "the target element kept focus but its value did not change, so the \
+                             page swallowed the keys (a hotkey handler or a read-only field). \
+                             Use browser_fill if the value needs setting directly."
+                        ));
+                    }
+                    landed = after.get("value").cloned().unwrap_or(Value::Null);
+                }
+
                 if input.get("submit").and_then(Value::as_bool) == Some(true) {
                     session.press_chord("Enter").await?;
                 }
                 session.settle_after_action().await;
-                Ok(json!({ "ok": true, "url": session.current_url() }))
+                Ok(json!({
+                    "ok": true,
+                    "url": session.current_url(),
+                    "target": { "value": landed },
+                }))
             }
             "press" => {
                 let key = s("key");
