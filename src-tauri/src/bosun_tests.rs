@@ -1036,3 +1036,177 @@ fn queued_updates_skip_stale_ones_and_closed_tasks() {
         "closed task: nothing is replayed into it"
     );
 }
+
+// ---------------------------------------------------------------------------
+// §10.8 Orbit close + §11 day plans
+// ---------------------------------------------------------------------------
+
+fn orbit_lookout_with(id: &str, slug: &str, key: &str, enabled: bool) -> Lookout {
+    Lookout {
+        id: id.into(),
+        name: id.into(),
+        enabled,
+        kind: LookoutKind::Command {
+            command: "~/app/lookouts/orbit-tasks.py".into(),
+            args: Vec::new(),
+            env: [("ORBIT_ORG_SLUG", slug), ("ORBIT_API_KEY", key)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            cwd: None,
+        },
+        interval_secs: 300,
+        watermark: None,
+        last_run_at: None,
+        last_error: None,
+        last_signal_count: 0,
+    }
+}
+
+#[test]
+fn orbit_lookout_matches_the_org_slug_and_prefers_enabled() {
+    let mut bosun = minimal_bosun();
+    bosun.lookouts = vec![
+        orbit_lookout_with("sweep", "acme-1", "k", false),
+        orbit_lookout_with("other", "beta-2", "k", true),
+        orbit_lookout_with("poll", "acme-1", "k", true),
+    ];
+    assert_eq!(orbit_lookout(&bosun, "acme-1").map(|l| l.id.as_str()), Some("poll"));
+    assert_eq!(orbit_lookout(&bosun, "beta-2").map(|l| l.id.as_str()), Some("other"));
+    assert!(orbit_lookout(&bosun, "gamma").is_none());
+    bosun.lookouts.retain(|l| l.id != "poll");
+    assert_eq!(orbit_lookout(&bosun, "acme-1").map(|l| l.id.as_str()), Some("sweep"));
+}
+
+#[test]
+fn close_env_holds_back_non_agent_tickets_unless_forced() {
+    let env = |force| close_env("t1", TaskStatus::Done, force).into_iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
+    assert_eq!(env(false), ["ORBIT_CLOSE_TASK_ID=t1", "ORBIT_CLOSE_STATUS=done", "ORBIT_CLOSE_ONLY_ORIGIN=agent"]);
+    assert_eq!(env(true)[2], "ORBIT_CLOSE_ONLY_ORIGIN=");
+    assert_eq!(close_env("t1", TaskStatus::Dropped, true)[1].1, "cancelled");
+}
+
+#[test]
+fn orbit_lookout_finds_a_bash_wrapper_that_sets_the_slug() {
+    let wrapper = |id: &str, script: &str| Lookout {
+        kind: LookoutKind::Command {
+            command: "bash".into(),
+            args: vec!["-c".into(), script.into()],
+            env: BTreeMap::new(),
+            cwd: None,
+        },
+        ..orbit_lookout_with(id, "", "", true)
+    };
+    let mut bosun = minimal_bosun();
+    bosun.lookouts = vec![
+        wrapper("ss", "set -a; . ~/ss.env; set +a; export ORBIT_ORG_SLUG=oscar-edge-817a467 ORBIT_WORKSPACE_HINT='Service Storm'; exec python3 ~/app/lookouts/orbit-tasks.py"),
+        wrapper("sns", "export ORBIT_ORG_SLUG='smith-501877'; exec python3 ~/app/lookouts/orbit-tasks.py --sweep"),
+        wrapper("gmail", "export ORBIT_ORG_SLUG=oscar-edge-817a467; exec ~/gmail.py"),
+    ];
+    assert_eq!(orbit_lookout(&bosun, "oscar-edge-817a467").map(|l| l.id.as_str()), Some("ss"));
+    assert_eq!(orbit_lookout(&bosun, "smith-501877").map(|l| l.id.as_str()), Some("sns"));
+    // A prefix of a slug is not the slug.
+    assert!(orbit_lookout(&bosun, "oscar-edge").is_none());
+}
+
+#[test]
+fn close_output_parses_each_outcome() {
+    let closed = parse_close_output("log line\n{\"closed\":true,\"ticket\":\"101\",\"origin\":\"agent\"}\n").unwrap();
+    assert!(closed.closed && !closed.needs_confirm);
+    assert_eq!(closed.ticket.as_deref(), Some("101"));
+    let held = parse_close_output("{\"closed\":false,\"reason\":\"origin\",\"origin\":\"client\"}").unwrap();
+    assert!(!held.closed && held.needs_confirm);
+    assert!(close_note(&held, "#7").contains("client ticket"));
+    let already = parse_close_output("{\"closed\":false,\"reason\":\"already\"}").unwrap();
+    assert!(already.closed && !already.needs_confirm);
+    assert!(parse_close_output("nothing here").is_err());
+    assert_eq!(close_note(&closed, "#101"), "Closed Orbit #101");
+}
+
+#[test]
+fn close_policy_parses() {
+    assert_eq!(OrbitClosePolicy::parse(&json!({})).unwrap(), OrbitClosePolicy::Auto);
+    assert_eq!(OrbitClosePolicy::parse(&json!({ "orbit": "force" })).unwrap(), OrbitClosePolicy::Force);
+    assert_eq!(OrbitClosePolicy::parse(&json!({ "orbit": "skip" })).unwrap(), OrbitClosePolicy::Skip);
+    assert!(OrbitClosePolicy::parse(&json!({ "orbit": "maybe" })).is_err());
+}
+
+#[test]
+fn plan_times_normalize() {
+    assert_eq!(normalize_time("9:00").as_deref(), Some("09:00"));
+    assert_eq!(normalize_time("13:45").as_deref(), Some("13:45"));
+    assert!(normalize_time("24:00").is_none());
+    assert!(normalize_time("9").is_none());
+    assert!(normalize_time("9:00 am").is_none());
+}
+
+fn plan_with(blocks: Vec<PlanBlock>) -> DayPlan {
+    DayPlan { date: "2026-10-26".into(), blocks, updated_at: String::new() }
+}
+
+fn row(task_id: &str, steps: &[&str]) -> PlanItem {
+    PlanItem {
+        id: String::new(),
+        task_id: task_id.into(),
+        steps: steps.iter().map(|s| PlanStep { id: String::new(), text: s.to_string(), done: false }).collect(),
+    }
+}
+
+#[test]
+fn plan_normalize_fills_ids_drops_unknown_and_duplicate_rows() {
+    let plan = plan_with(vec![
+        PlanBlock { title: " Morning ".into(), start: Some("8:00".into()), end: Some("9:30".into()), items: vec![row("a", &["one", " ", "two"]), row("ghost", &[]), row("b", &[])], ..Default::default() },
+        PlanBlock { title: "Later".into(), items: vec![row("a", &[]), row("c", &[])], ..Default::default() },
+    ]);
+    let known = ["a", "b", "c"];
+    let out = normalize_plan(plan, |id| known.contains(&id), "now").unwrap();
+    assert_eq!(out.blocks[0].title, "Morning");
+    assert_eq!(out.blocks[0].start.as_deref(), Some("08:00"));
+    let ids: Vec<Vec<&str>> = out.blocks.iter().map(|b| b.items.iter().map(|i| i.task_id.as_str()).collect()).collect();
+    assert_eq!(ids, vec![vec!["a", "b"], vec!["c"]]);
+    assert_eq!(out.blocks[0].items[0].steps.len(), 2);
+    assert!(out.blocks.iter().all(|b| !b.id.is_empty()));
+    assert!(out.blocks[0].items[0].steps.iter().all(|s| !s.id.is_empty()));
+    assert_eq!(out.updated_at, "now");
+}
+
+#[test]
+fn plan_normalize_rejects_bad_dates_and_times() {
+    let mut bad = plan_with(Vec::new());
+    bad.date = "Oct 26".into();
+    assert!(normalize_plan(bad, |_| true, "now").is_err());
+    let backwards = plan_with(vec![PlanBlock { title: "x".into(), start: Some("10:00".into()), end: Some("09:00".into()), ..Default::default() }]);
+    assert!(normalize_plan(backwards, |_| true, "now").is_err());
+    let garbled = plan_with(vec![PlanBlock { title: "x".into(), start: Some("ten".into()), ..Default::default() }]);
+    assert!(normalize_plan(garbled, |_| true, "now").is_err());
+}
+
+#[test]
+fn plans_persist_prune_and_find_the_last_planned_day() {
+    let dir = tempdir("plan");
+    let registry = BosunRegistry::open(&dir).unwrap();
+    let now = now_iso();
+    let (task, _) = registry.insert_task(new_task("b1", "adhoc:1".into(), "Do it", TaskStatus::Todo, TaskSource::default(), &now));
+    for day in ["2026-10-22", "2026-10-23", "2026-10-26"] {
+        let mut plan = plan_with(vec![PlanBlock { title: "B".into(), items: vec![row(&task.id, &[])], ..Default::default() }]);
+        plan.date = day.into();
+        if day == "2026-10-23" {
+            plan.blocks[0].items.clear();
+        }
+        registry.put_plan(plan).unwrap();
+    }
+    let (today, last) = registry.plan("2026-10-26");
+    assert_eq!(today.blocks[0].items[0].task_id, task.id);
+    // The 23rd has no rows, so carry-over looks past it.
+    assert_eq!(last.as_deref(), Some("2026-10-22"));
+    let (empty, _) = registry.plan("2026-10-30");
+    assert!(empty.blocks.is_empty());
+    let reloaded = BosunRegistry::open(&dir).unwrap();
+    assert_eq!(reloaded.plan("2026-10-26").0.blocks.len(), 1);
+    let mut days = BTreeMap::new();
+    for d in 1..=5 {
+        days.insert(format!("2026-10-0{d}"), DayPlan::default());
+    }
+    prune_days(&mut days, 3);
+    assert_eq!(days.keys().next().map(String::as_str), Some("2026-10-03"));
+}

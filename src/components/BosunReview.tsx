@@ -5,7 +5,9 @@ import {
   ageLabel,
   displayTitle,
   isClosedStatus,
+  setTaskReturnPage,
   taskMatches,
+  taskReturnPage,
 } from "../lib/bosun";
 import { allWorkspaces, useStore } from "../state/store";
 import { orbitTicketLabel, TaskStatusDot } from "./BosunTaskView";
@@ -38,7 +40,6 @@ interface ReviewSession {
   scrollTop: number;
 }
 const SESSION_KEY = "threadknot.bosunReview";
-const RETURN_KEY = "threadknot.bosunReview.return";
 
 function loadSession(): ReviewSession | null {
   try {
@@ -61,21 +62,14 @@ function saveSession(s: ReviewSession) {
  *  offer the way back. Set when a row is opened, cleared when the review is
  *  closed. */
 export function cameFromReview(): boolean {
-  try {
-    return sessionStorage.getItem(RETURN_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return taskReturnPage() === "review";
 }
 
 function setCameFromReview(on: boolean) {
-  try {
-    if (on) sessionStorage.setItem(RETURN_KEY, "1");
-    else sessionStorage.removeItem(RETURN_KEY);
-  } catch {
-    // ignore
-  }
+  setTaskReturnPage(on ? "review" : null);
 }
+type HeldTicket = { taskId: string; ticket: string };
+
 /** Requests in flight at once during a bulk close: quick, without queueing
  *  two hundred writes against the task file at the same instant. */
 const BULK_CONCURRENCY = 6;
@@ -99,6 +93,25 @@ export function BosunReview() {
   const scrollTop = useRef(initial?.scrollTop ?? 0);
   const [progress, setProgress] = useState<{ done: number; total: number; verb: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Client tickets a bulk close left open in Orbit (§10.8), to confirm. */
+  const [held, setHeld] = useState<HeldTicket[]>([]);
+  const [closingHeld, setClosingHeld] = useState(false);
+
+  async function closeHeld() {
+    setClosingHeld(true);
+    const failed: string[] = [];
+    for (const h of held) {
+      try {
+        const oc = await actions.closeTaskInOrbit(h.taskId);
+        if (!oc.closed) failed.push(h.ticket);
+      } catch {
+        failed.push(h.ticket);
+      }
+    }
+    setClosingHeld(false);
+    setHeld([]);
+    if (failed.length) setError(`Orbit kept ${failed.length} open: ${failed.join(", ")}`);
+  }
 
   useEffect(() => {
     saveSession({
@@ -210,13 +223,18 @@ export function BosunReview() {
     setError(null);
     setProgress({ done: 0, total: tasks.length, verb });
     const failed: string[] = [];
+    const heldBack: HeldTicket[] = [];
     let next = 0;
     let finished = 0;
+    setHeld([]);
     const worker = async () => {
       while (next < tasks.length) {
         const t = tasks[next++];
         try {
-          await actions.updateTask({ taskId: t.id, status });
+          const res = await actions.updateTask({ taskId: t.id, status });
+          if (res.orbitClose?.needsConfirm) {
+            heldBack.push({ taskId: t.id, ticket: res.orbitClose.ticket ? `#${res.orbitClose.ticket}` : (orbitTicketLabel(t) ?? "ticket") });
+          }
         } catch {
           failed.push(displayTitle(t) || t.id);
         }
@@ -226,6 +244,7 @@ export function BosunReview() {
     };
     await Promise.all(Array.from({ length: Math.min(BULK_CONCURRENCY, tasks.length) }, worker));
     setProgress(null);
+    setHeld(heldBack);
     setSelected((s) => {
       const left = new Set(s);
       for (const t of tasks) left.delete(t.id);
@@ -402,7 +421,7 @@ export function BosunReview() {
         )}
       </div>
 
-      {(selectedShown.length > 0 || progress || error) && (
+      {(selectedShown.length > 0 || progress || error || held.length > 0) && (
         <div className="review-bar" role="toolbar" aria-label="Selected to-dos">
           {progress ? (
             <span className="review-progress">
@@ -431,6 +450,21 @@ export function BosunReview() {
                 Clear
               </button>
             </>
+          )}
+          {held.length > 0 && !progress && (
+            <div className="review-held">
+              <span>
+                {held.length} client ticket{held.length === 1 ? " is" : "s are"} still open in Orbit (
+                {held.slice(0, 6).map((h) => h.ticket).join(", ")}
+                {held.length > 6 ? "…" : ""}). Closing may email the client.
+              </span>
+              <button type="button" className="btn bosun-small-btn" disabled={closingHeld} onClick={() => void closeHeld()}>
+                {closingHeld ? "Closing…" : "Close in Orbit"}
+              </button>
+              <button type="button" className="btn bosun-small-btn" disabled={closingHeld} onClick={() => setHeld([])}>
+                Leave open
+              </button>
+            </div>
           )}
           {error && <div className="task-error review-error">{error}</div>}
         </div>

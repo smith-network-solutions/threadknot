@@ -137,6 +137,14 @@ different `ORBIT_ORG_ID`, `ORBIT_ORG_SLUG` and `ORBIT_WORKSPACE_HINT`.
 
 ### Sweep mode: what is still waiting on you
 
+`orbit-tasks.py` has one write, **close mode**: `--close <taskId> [--status
+done|cancelled] [--only-origin agent]`, or the same through
+`ORBIT_CLOSE_TASK_ID` / `ORBIT_CLOSE_STATUS` / `ORBIT_CLOSE_ONLY_ORIGIN`.
+Threadknot runs the org's Orbit lookout this way when a to-do linked to a
+ticket is closed (docs/BOSUN.md §10.8). It prints one JSON line (`closed`,
+`ticket`, `origin`, `status`, and `reason: "origin" | "already"` when it did
+not write).
+
 `orbit-tasks.py --sweep` and `gmail-gws.sh --sweep` are a second, model-free
 kind of lookout: instead of "what changed since the watermark" they rebuild
 the list of items still waiting on the person and nag about it. Point a

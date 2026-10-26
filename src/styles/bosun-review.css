@@ -195,13 +195,13 @@
    task's own controls — status, with Done pushed to the right edge. The
    Bosun's name is dropped here; the page is plainly its to-do. */
 @media (max-width: 767px) {
-  .task-pane:not(.review-pane):not(.inbox-pane) .task-head { flex-wrap: wrap; row-gap: 8px; }
-  .task-pane:not(.review-pane):not(.inbox-pane) .task-head .task-close { order: 1; margin-left: auto; min-width: 40px; min-height: 40px; }
-  .task-pane:not(.review-pane):not(.inbox-pane) .task-head .task-head-main { order: 2; flex: 1 1 100%; }
-  .task-pane:not(.review-pane):not(.inbox-pane) .task-head .task-head-row { width: 100%; }
-  .task-pane:not(.review-pane):not(.inbox-pane) .task-head .task-head-who { display: none; }
-  .task-pane:not(.review-pane):not(.inbox-pane) .task-head .task-head-done { margin-left: auto; }
-  .task-pane:not(.review-pane):not(.inbox-pane) .task-head .task-back-review { margin-left: 0; }
+  .task-pane:not(.review-pane):not(.inbox-pane):not(.today-pane) .task-head { flex-wrap: wrap; row-gap: 8px; }
+  .task-pane:not(.review-pane):not(.inbox-pane):not(.today-pane) .task-head .task-close { order: 1; margin-left: auto; min-width: 40px; min-height: 40px; }
+  .task-pane:not(.review-pane):not(.inbox-pane):not(.today-pane) .task-head .task-head-main { order: 2; flex: 1 1 100%; }
+  .task-pane:not(.review-pane):not(.inbox-pane):not(.today-pane) .task-head .task-head-row { width: 100%; }
+  .task-pane:not(.review-pane):not(.inbox-pane):not(.today-pane) .task-head .task-head-who { display: none; }
+  .task-pane:not(.review-pane):not(.inbox-pane):not(.today-pane) .task-head .task-head-done { margin-left: auto; }
+  .task-pane:not(.review-pane):not(.inbox-pane):not(.today-pane) .task-head .task-back-review { margin-left: 0; }
 }
 
 /* Rows are one big checkbox (label wrapping the box and the text); opening
@@ -239,3 +239,17 @@
   .review-pick .review-box { width: 24px; height: 24px; margin-top: 0; }
   .review-open { min-height: 44px; padding: 0 14px; font-size: 13.5px; }
 }
+
+.review-held {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--brass) 12%, transparent);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.review-held > span { flex: 1 1 220px; }

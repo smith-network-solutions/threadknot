@@ -1265,6 +1265,47 @@ export interface BosunTask {
   doneAt?: string | null;
 }
 
+/** What closing a to-do did to its Orbit ticket (docs/BOSUN.md §10.8). */
+export interface OrbitCloseOutcome {
+  closed: boolean;
+  /** Left open: a client or team ticket, whose closing may email them. Ask,
+   *  then `bosun.task.orbitClose`. */
+  needsConfirm: boolean;
+  ticket?: string | null;
+  origin?: string | null;
+  error?: string | null;
+}
+
+/** A day plan (docs/BOSUN.md §11): to-dos ordered into time blocks. */
+export interface DayPlan {
+  /** Local YYYY-MM-DD. */
+  date: string;
+  blocks: PlanBlock[];
+  updatedAt?: string;
+}
+
+export interface PlanBlock {
+  id: string;
+  title: string;
+  /** "HH:MM" local. */
+  start?: string | null;
+  end?: string | null;
+  items: PlanItem[];
+}
+
+/** One row: always a Bosun task; ticking it closes the task. */
+export interface PlanItem {
+  id: string;
+  taskId: string;
+  steps: PlanStep[];
+}
+
+export interface PlanStep {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
 /** One item of a sweep signal's `items` (docs/BOSUN.md §10.3). The engine
  *  consumes these; the UI only ever sees the tasks they produce. */
 /** One to-do a sweep lookout listed (docs/BOSUN.md §10.3, lookouts/README.md). */
@@ -2453,8 +2494,24 @@ export interface RequestMap {
       title?: string;
       snoozedUntil?: string | null;
       note?: string;
+      /** When this closes the to-do, what happens to its Orbit ticket.
+       *  Default auto: tickets the Bosun filed close, others come back with
+       *  `orbitClose.needsConfirm`. */
+      orbit?: "auto" | "force" | "skip";
     };
-    data: BosunTask;
+    data: BosunTask & { orbitClose?: OrbitCloseOutcome };
+  };
+  /** Close the linked Orbit ticket whatever its origin (the confirm). */
+  "bosun.task.orbitClose": { payload: { taskId: string }; data: OrbitCloseOutcome };
+  /** An unplanned day is an empty plan. `lastDate`: the newest earlier day
+   *  with rows, for carrying unfinished ones over. */
+  "bosun.plan.get": { payload: { date?: string }; data: { plan: DayPlan; lastDate?: string | null } };
+  /** Replace a day whole. Rows whose task is gone are dropped. */
+  "bosun.plan.set": { payload: { date: string; blocks: PlanBlock[] }; data: DayPlan };
+  /** "Plan my day": a to-do whose thread builds the plan. */
+  "bosun.plan.draft": {
+    payload: { bosunId?: string; date?: string; instruction?: string };
+    data: { taskId: string; threadId: string };
   };
   /** Open or continue the task's one thread. */
   "bosun.task.work": {
@@ -2687,6 +2744,7 @@ export interface StateChangedFrame {
     | "schedules"
     | "bosuns"
     | "bosunTasks"
+    | "bosunPlan"
     | "terminals"
     | "artifacts"
     | "git"

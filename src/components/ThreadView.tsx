@@ -18,7 +18,7 @@ import {
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
 import { copyText, elidePathMiddle } from "../lib/format";
-import { displayTitle } from "../lib/bosun";
+import { confirmHeldOrbitClose, displayTitle } from "../lib/bosun";
 import { setSidebarView } from "../lib/sidebarView";
 import { BosunMark, useBosunImage } from "./BosunMark";
 import type { ReplyTarget } from "../lib/reply";
@@ -1673,7 +1673,8 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
     if (!task) return;
     setClosing(true);
     void actions
-      .updateTask({ taskId: task.id, status: taskClosed ? "todo" : "done" })
+      .updateTask({ taskId: task.id, status: taskClosed ? "todo" : "done", ...(taskClosed ? { orbit: "skip" as const } : {}) })
+      .then((res) => confirmHeldOrbitClose(res, actions.closeTaskInOrbit))
       .catch((e) => window.alert(e instanceof Error ? e.message : String(e)))
       .finally(() => setClosing(false));
   };

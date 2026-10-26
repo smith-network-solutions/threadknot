@@ -50,6 +50,7 @@ import { INBOX_ID } from "./InboxView";
 import { timeAgo } from "../lib/format";
 import {
   TASK_REVIEW_ID,
+  TASK_TODAY_ID,
   ageLabel,
   bosunAttentionThreads,
   bosunRecentVersion,
@@ -3104,6 +3105,16 @@ function BosunTaskList({
               onClick={() => setAdding((v) => !v)}
             >
               <PlusIcon size={11} /> To-do
+            </button>
+          )}
+          {state.bosuns.length > 0 && (
+            <button
+              type="button"
+              className={`btn bosun-small-btn bosun-today-btn${state.activeTaskId === TASK_TODAY_ID ? " on" : ""}`}
+              title="Today's plan: your to-dos in time blocks, ticked off as you go"
+              onClick={() => actions.openTask(TASK_TODAY_ID)}
+            >
+              Today
             </button>
           )}
           <button

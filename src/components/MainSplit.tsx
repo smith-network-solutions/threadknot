@@ -4,7 +4,8 @@ import { ThreadView } from "./ThreadView";
 import { BosunTaskView } from "./BosunTaskView";
 import { BosunReview } from "./BosunReview";
 import { InboxView, INBOX_ID } from "./InboxView";
-import { TASK_REVIEW_ID } from "../lib/bosun";
+import { TASK_REVIEW_ID, TASK_TODAY_ID } from "../lib/bosun";
+import { BosunToday } from "./BosunToday";
 import { WorkspacePanel, type WorkspaceOrient } from "./WorkspacePanel";
 import "../styles/main-split.css";
 
@@ -124,6 +125,8 @@ export const MainSplit = memo(function MainSplit() {
         <InboxView />
       ) : state.activeTaskId === TASK_REVIEW_ID ? (
         <BosunReview />
+      ) : state.activeTaskId === TASK_TODAY_ID ? (
+        <BosunToday />
       ) : taskOpen ? (
         <BosunTaskView />
       ) : (

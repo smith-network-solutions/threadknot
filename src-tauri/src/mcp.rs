@@ -154,6 +154,7 @@ async fn handle_message(state: &ServerState, thread_id: &str, msg: &Value) -> Op
                 list.extend(crate::mcp_search::tool_specs());
                 list.extend(crate::mcp_fleet::tool_specs_for(state, thread_id));
                 list.extend(crate::bosun::mcp_tool_specs_for(state, thread_id));
+                list.extend(crate::bosun::mcp_plan_tool_specs_for(state, thread_id));
             }
             json!({ "tools": tools })
         }
@@ -238,6 +239,12 @@ async fn call_tool(
     }
     if name == "bosun_task" {
         return match crate::bosun::mcp_bosun_task(state, thread_id, args).await {
+            Ok(text) => tool_text_result(id, text, false),
+            Err(e) => tool_text_result(id, format!("error: {e:#}"), true),
+        };
+    }
+    if name == "bosun_plan" {
+        return match crate::bosun::mcp_bosun_plan(state, thread_id, args).await {
             Ok(text) => tool_text_result(id, text, false),
             Err(e) => tool_text_result(id, format!("error: {e:#}"), true),
         };

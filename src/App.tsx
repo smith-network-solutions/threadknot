@@ -90,7 +90,7 @@ import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { SchedulesPanel } from "./components/SchedulesPanel";
 import { BosunPanel } from "./components/BosunPanel";
 import { INBOX_ID } from "./components/InboxView";
-import { TASK_REVIEW_ID, displayTitle, stripTitleMarks, touchBosunThread, touchTask } from "./lib/bosun";
+import { TASK_REVIEW_ID, TASK_TODAY_ID, displayTitle, stripTitleMarks, touchBosunThread, touchTask } from "./lib/bosun";
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
 import { PairBrowser } from "./components/PairBrowser";
@@ -2049,10 +2049,29 @@ function makeActions(
       dispatch({ type: "bosunTaskRemoved", taskId });
     },
 
+    async closeTaskInOrbit(taskId) {
+      return client.request("bosun.task.orbitClose", { taskId });
+    },
+
+    async getPlan(date) {
+      return client.request("bosun.plan.get", date ? { date } : {});
+    },
+
+    async setPlan(date, blocks) {
+      return client.request("bosun.plan.set", { date, blocks });
+    },
+
+    async draftPlan(date, instruction) {
+      return client.request("bosun.plan.draft", {
+        date,
+        ...(instruction?.trim() ? { instruction: instruction.trim() } : {}),
+      });
+    },
+
     openTask(taskId) {
       dispatch({ type: "openTask", taskId });
       const solo = getState().solo;
-      if (taskId === TASK_REVIEW_ID || taskId === INBOX_ID) {
+      if (taskId === TASK_REVIEW_ID || taskId === TASK_TODAY_ID || taskId === INBOX_ID) {
         // A page, not a task: nothing to remember or put in Recent.
       } else if (taskId) {
         rememberLastTask(solo, taskId);
@@ -2516,6 +2535,10 @@ export default function App() {
       else if (frame.scope === "bosunTasks") {
         if (frame.origin) return;
         void actionsRef.current.refreshBosunTasks().catch(() => undefined);
+      }
+      else if (frame.scope === "bosunPlan") {
+        if (frame.origin) return;
+        dispatch({ type: "bosunPlanChanged" });
       }
       else if (frame.scope === "inbox") {
         if (frame.origin) return;

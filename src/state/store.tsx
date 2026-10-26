@@ -429,6 +429,9 @@ export interface AppState {
    *  forever on a server that predates tasks: the UI reads null as "show the
    *  thread-based Bosun view". */
   bosunTasks: BosunTask[] | null;
+  /** Bumped by every `state.changed` for `bosunPlan`, so the Today page
+   *  refetches the day it shows. */
+  bosunPlanRev: number;
   /** The notification inbox (`inbox.list`). Null until loaded, and on a
    *  server that predates it. */
   inbox: { entries: InboxEntry[]; unread: number } | null;
@@ -524,6 +527,7 @@ export const initialState: AppState = {
   bosuns: [],
   bosunLedger: [],
   bosunTasks: null,
+  bosunPlanRev: 0,
   inbox: null,
   activeTaskId: null,
   terminals: {},
@@ -588,6 +592,7 @@ export type Action =
   | { type: "bosuns"; bosuns: Bosun[] }
   | { type: "bosunLedger"; wakes: Wake[] }
   | { type: "bosunTasks"; tasks: BosunTask[] | null }
+  | { type: "bosunPlanChanged" }
   | { type: "inbox"; inbox: { entries: InboxEntry[]; unread: number } | null }
   | { type: "bosunTaskUpserted"; task: BosunTask }
   | { type: "bosunTaskRemoved"; taskId: string }
@@ -1333,6 +1338,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, bosunLedger: action.wakes };
     case "bosunTasks":
       return { ...state, bosunTasks: action.tasks };
+    case "bosunPlanChanged":
+      return { ...state, bosunPlanRev: state.bosunPlanRev + 1 };
     case "inbox":
       return { ...state, inbox: action.inbox };
     case "bosunTaskUpserted": {
@@ -1897,9 +1904,11 @@ export interface ThreadknotActions {
   markInboxRead: (
     payload: import("../lib/protocol").RequestMap["inbox.markRead"]["payload"],
   ) => Promise<void>;
+  /** Resolves with the task, plus `orbitClose` when the update closed a
+   *  to-do linked to an Orbit ticket (docs/BOSUN.md §10.8). */
   updateTask: (
     payload: import("../lib/protocol").RequestMap["bosun.task.update"]["payload"],
-  ) => Promise<BosunTask>;
+  ) => Promise<import("../lib/protocol").RequestMap["bosun.task.update"]["data"]>;
   /** Open or continue the task's thread, then navigate to it. Resolves with
    *  the thread id. */
   workTask: (taskId: string, instruction?: string) => Promise<string>;
@@ -1907,6 +1916,25 @@ export interface ThreadknotActions {
     payload: import("../lib/protocol").RequestMap["bosun.task.create"]["payload"],
   ) => Promise<BosunTask>;
   deleteTask: (taskId: string) => Promise<void>;
+  /** Close a to-do's Orbit ticket whatever its origin (the confirm for a
+   *  client ticket that `updateTask` held back). */
+  closeTaskInOrbit: (
+    taskId: string,
+  ) => Promise<import("../lib/protocol").OrbitCloseOutcome>;
+  /** The day plan for `date` (local YYYY-MM-DD; default today). */
+  getPlan: (
+    date?: string,
+  ) => Promise<import("../lib/protocol").RequestMap["bosun.plan.get"]["data"]>;
+  /** Replace a day's plan whole; resolves with what the server kept. */
+  setPlan: (
+    date: string,
+    blocks: import("../lib/protocol").PlanBlock[],
+  ) => Promise<import("../lib/protocol").DayPlan>;
+  /** "Plan my day": open the Bosun thread that drafts the plan. */
+  draftPlan: (
+    date: string,
+    instruction?: string,
+  ) => Promise<import("../lib/protocol").RequestMap["bosun.plan.draft"]["data"]>;
   /** Show a task in the main pane (null closes it, back to the thread). */
   openTask: (taskId: string | null) => void;
   /** The tail of any thread (not necessarily the open one), routed to its

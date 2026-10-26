@@ -29,7 +29,8 @@ Env:
 State (BOSUN_STATE_DIR): token.json (access + refresh token, mode 0600),
 members.json and clients.json (name lookups, refreshed daily).
 
-Read-only: only GET requests plus the auth exchange/refresh POSTs.
+Read-only, except --close: otherwise only GET requests plus the auth
+exchange/refresh POSTs.
 Exit codes: 0 ok; 2 auth failure; 1 network/API failure (no watermark is
 printed, so the next run retries from the same point).
 
@@ -64,6 +65,19 @@ By hand:   BOSUN_WATERMARK= ./lookouts/orbit-tasks.py | jq
 Sweep:     BOSUN_STATE_DIR=$(mktemp -d) ./lookouts/orbit-tasks.py --sweep --now | jq -r .body
 Self-test: ./lookouts/orbit-tasks.py --selftest   (offline)
 One task:  ./lookouts/orbit-tasks.py --task <id>[,<id>] | ./lookouts/hail.sh   (re-feed a ticket as new)
+
+Close mode (--close <taskId> [--status done|cancelled] [--only-origin agent],
+or the same through ORBIT_CLOSE_TASK_ID / ORBIT_CLOSE_STATUS /
+ORBIT_CLOSE_ONLY_ORIGIN): the one write. Threadknot runs it when a Bosun to-do
+linked to this task is closed, exactly as it runs this lookout's poll plus
+those variables (a bash -c wrapper passes the environment on, not argv). PATCHes the task's status
+(default done) and prints ONE JSON line, then exits 0:
+  {"closed": true,  "taskId", "ticket", "origin", "status"}
+  {"closed": false, "taskId", "ticket", "origin", "status", "reason"}
+reason "origin": --only-origin was given and the task's taskOrigin differs
+(a client ticket, whose closing may email the client: the caller asks first);
+"already": the task is already done or cancelled. Auth/API failures exit 2/1
+as usual.
 """
 
 import hashlib
@@ -533,6 +547,28 @@ def selftest():
     check("cap keeps footer", big.endswith("---\nfooter"), True)
     check("cap notes dropped", "more lines not shown" in big, True)
 
+    class FakeOrbit:
+        def __init__(self, task):
+            self.task, self.patched = task, []
+
+        def get(self, path, params=None):
+            return {"data": dict(self.task)}
+
+        def request(self, method, path, params=None, body=None):
+            self.patched.append(body)
+            return {"data": dict(self.task, **body)}
+
+    fo = FakeOrbit({"id": "t1", "ticketNumber": 101, "taskOrigin": "agent", "status": "todo"})
+    res = close_task(fo, "/api/orgs/o", "t1", "done", "agent")
+    check("close agent task", (res["closed"], res["status"], res["ticket"], fo.patched), (True, "done", "101", [{"status": "done"}]))
+    fo = FakeOrbit({"id": "t2", "taskOrigin": "client", "status": "todo"})
+    res = close_task(fo, "/api/orgs/o", "t2", "done", "agent")
+    check("client task held back", (res["closed"], res["reason"], fo.patched), (False, "origin", []))
+    res = close_task(fo, "/api/orgs/o", "t2", "cancelled")
+    check("forced close", (res["closed"], res["status"]), (True, "cancelled"))
+    fo = FakeOrbit({"id": "t3", "taskOrigin": "agent", "status": "done"})
+    check("already closed", close_task(fo, "/api/orgs/o", "t3")["reason"], "already")
+
     json.dumps(sig)
     print(f"orbit-tasks selftest: {ok} passed, {fail} failed")
     return 0 if fail == 0 else 1
@@ -928,16 +964,22 @@ class Orbit:
             raise AuthError(f"API key exchange failed (HTTP {code})")
         self._save_token(tokens)
 
-    # -- GET with 401 refresh and 429/5xx backoff
+    # -- requests with 401 refresh and 429/5xx backoff
     def get(self, path, params=None):
+        return self.request("GET", path, params=params)
+
+    def request(self, method, path, params=None, body=None):
         if not self.tok.get("accessToken"):
             self.authenticate(try_refresh=False)
         url = self.api + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        data = json.dumps(body).encode() if body is not None else None
         reauthed = False
         for attempt in range(4):
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.tok['accessToken']}",
-                                                       "Accept": "application/json",
-                                                       "User-Agent": USER_AGENT})
+            headers = {"Authorization": f"Bearer {self.tok['accessToken']}",
+                       "Accept": "application/json", "User-Agent": USER_AGENT}
+            if data is not None:
+                headers["Content-Type"] = "application/json"
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:
                     return json.load(r)
@@ -947,18 +989,39 @@ class Orbit:
                     self.authenticate()
                     continue
                 if e.code in (401, 403):
-                    raise AuthError(f"GET {path}: HTTP {e.code}")
-                if e.code == 429 or e.code >= 500:
+                    raise AuthError(f"{method} {path}: HTTP {e.code}")
+                # A write is retried only on 429, where the server did nothing.
+                if e.code == 429 or (e.code >= 500 and method == "GET"):
                     wait = e.headers.get("Retry-After")
                     time.sleep(min(float(wait) if wait and wait.isdigit() else 2 ** attempt, 20))
                     continue
-                body = e.read(300).decode(errors="replace")
-                raise ApiError(f"GET {path}: HTTP {e.code} {body}")
+                body_text = e.read(300).decode(errors="replace")
+                raise ApiError(f"{method} {path}: HTTP {e.code} {body_text}")
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                if attempt == 3:
-                    raise ApiError(f"GET {path}: {e}")
+                if attempt == 3 or method != "GET":
+                    raise ApiError(f"{method} {path}: {e}")
                 time.sleep(2 ** attempt)
-        raise ApiError(f"GET {path}: gave up after retries")
+        raise ApiError(f"{method} {path}: gave up after retries")
+
+
+CLOSED_STATUSES = ("done", "cancelled")
+
+
+def close_task(orbit, base, tid, status="done", only_origin=None):
+    """--close: one PATCH, guarded. Returns the result dict printed to stdout."""
+    if status not in CLOSED_STATUSES:
+        raise ApiError(f"--status must be one of {', '.join(CLOSED_STATUSES)}")
+    t = orbit.get(f"{base}/tasks/{tid}").get("data") or {}
+    if not t.get("id"):
+        raise ApiError(f"task {tid} not found")
+    out = {"taskId": t["id"], "ticket": str(t["ticketNumber"]) if t.get("ticketNumber") else None,
+           "origin": t.get("taskOrigin"), "status": t.get("status")}
+    if t.get("status") in CLOSED_STATUSES:
+        return dict(out, closed=False, reason="already")
+    if only_origin and t.get("taskOrigin") != only_origin:
+        return dict(out, closed=False, reason="origin")
+    res = orbit.request("PATCH", f"{base}/tasks/{tid}", body={"status": status}).get("data") or {}
+    return dict(out, closed=res.get("status") == status, status=res.get("status") or status)
 
 
 def cached_map(orbit, state_dir, name, path, key_fn, val_fn):
@@ -1119,11 +1182,25 @@ def main():
     os.makedirs(state_dir, exist_ok=True)
 
     orbit = Orbit(env["ORBIT_API_URL"], env["ORBIT_API_KEY"], state_dir)
+    base = f"/api/orgs/{org}"
+    # Close mode: argv by hand, the environment from Threadknot (a bash -c
+    # wrapper drops appended args but passes the environment through exec).
+    def opt(name, var, default=None):
+        if name in sys.argv and sys.argv.index(name) + 1 < len(sys.argv):
+            return sys.argv[sys.argv.index(name) + 1]
+        return env.get(var, "").strip() or default
+    close_id = opt("--close", "ORBIT_CLOSE_TASK_ID")
+    if close_id or "--close" in sys.argv:
+        if not close_id or close_id.startswith("--"):
+            log("--close needs a task id")
+            return 1
+        print(json.dumps(close_task(orbit, base, close_id, opt("--status", "ORBIT_CLOSE_STATUS", "done"),
+                                    opt("--only-origin", "ORBIT_CLOSE_ONLY_ORIGIN"))))
+        return 0
     if "--sweep" in sys.argv:
         if "--now" in sys.argv:
             env["SWEEP_ALWAYS"] = "1"
         return run_sweep(orbit, env, org=org, slug=slug, web_url=web_url, hint=hint, state_dir=state_dir)
-    base = f"/api/orgs/{org}"
     list_params = {"sortBy": "updatedAt", "sortOrder": "desc", "limit": PAGE_LIMIT}
 
     # Specific tasks, regardless of watermark: `--task id[,id]` or ORBIT_TASK_IDS.

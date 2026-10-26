@@ -3,6 +3,9 @@ import type { BosunTask, PersistedEvent, TaskStatus } from "../lib/protocol";
 import {
   PICKABLE_STATUSES,
   TASK_REVIEW_ID,
+  TASK_TODAY_ID,
+  confirmHeldOrbitClose,
+  taskReturnPage,
   TASK_STATUS_LABEL,
   ageLabel,
   dueLabel,
@@ -144,6 +147,7 @@ export function BosunTaskView() {
   // Opened from Review to-dos: the way back keeps the review's filters,
   // checked rows and scroll position (BosunReview keeps them in session).
   const fromReview = cameFromReview();
+  const fromToday = taskReturnPage() === "today";
   const header = (main: React.ReactNode) => (
     <header className="thread-head task-head">
       <div className="head-cluster">
@@ -162,6 +166,16 @@ export function BosunTaskView() {
             onClick={() => actions.openTask(TASK_REVIEW_ID)}
           >
             ← Review
+          </button>
+        )}
+        {fromToday && (
+          <button
+            type="button"
+            className="task-back-review"
+            title="Back to Today"
+            onClick={() => actions.openTask(TASK_TODAY_ID)}
+          >
+            ← Today
           </button>
         )}
       </div>
@@ -222,7 +236,12 @@ export function BosunTaskView() {
   };
 
   const setStatus = (status: TaskStatus) =>
-    status === t.status ? undefined : void run("status", () => actions.updateTask({ taskId: t.id, status }));
+    status === t.status
+      ? undefined
+      : void run("status", async () => {
+          const res = await actions.updateTask({ taskId: t.id, status });
+          await confirmHeldOrbitClose(res, actions.closeTaskInOrbit);
+        });
 
   const snooze = (until: string) =>
     void run("snooze", async () => {

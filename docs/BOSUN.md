@@ -579,3 +579,100 @@ Title from the thread title (glyphs stripped).
   filtered to that workspace. A sidebar preference shows them inline again.
 - Day-log threads are reachable from the task view's history and from Manage,
   not from the main list.
+
+### 10.8 Closing the Orbit ticket with its to-do (`bosun_orbit.rs`)
+
+Orbit closing a ticket already closes its to-do (§10.3 reconcile). This is the
+other direction, so a pile closed in Bosun leaves no orphans in Orbit.
+
+- **When:** `bosun.task.update` moves a to-do with an Orbit link (`orbit.taskId`
+  set) from open to Done or Dropped. Done → Orbit `done`, Dropped → `cancelled`.
+  Editing a to-do that was already closed never re-closes. The sweep's own
+  reconcile and the agent's `bosun_task` never write to Orbit.
+- **How:** through the org's own Orbit lookout: the `orbit-tasks` command
+  lookout whose `ORBIT_ORG_SLUG` is the link's org, either in its env map or
+  set by its wrapper script (`bash -c '…; export ORBIT_ORG_SLUG=<slug>; exec
+  python3 orbit-tasks.py'`). An enabled one wins over a paused one. It runs
+  exactly as its poll does, plus `ORBIT_CLOSE_TASK_ID`, `ORBIT_CLOSE_STATUS`
+  and `ORBIT_CLOSE_ONLY_ORIGIN`. The environment, not argv, because a
+  `bash -c` wrapper drops appended args. Threadknot holds no Orbit
+  credentials of its own.
+- **Who is asked:** tickets the Bosun filed (`taskOrigin: agent`) close on
+  their own. Any other origin (client, team) may email someone when it
+  closes, so the script holds it back (`reason: "origin"`) and the response
+  says `needsConfirm`; the UI asks, then `bosun.task.orbitClose` closes it
+  whatever its origin. A ticket Orbit already closed counts as closed.
+- **Payload:** `bosun.task.update { orbit?: "auto" | "force" | "skip" }`,
+  default `auto` (the rule above). `skip` leaves Orbit alone (un-ticking a
+  row reopens the to-do and never reopens the ticket).
+- **Result:** the update's response carries `orbitClose: { closed,
+  needsConfirm, ticket?, origin?, error? }`, and the to-do's history gets one
+  line: "Closed Orbit #N", "Orbit #N left open: a client ticket…", or "Could
+  not close Orbit #N: …".
+
+| Kind | Payload | Response |
+| --- | --- | --- |
+| `bosun.task.orbitClose` | `{ taskId }` | `OrbitCloseOutcome` |
+
+## 11. Day plans: Today (`bosun_plan.rs`)
+
+The to-dos for one day, ordered into time blocks and ticked off as they're
+worked. A plan holds no work of its own: **every row is a Bosun task**, so
+ticking a row is closing the task (and, by §10.8, its Orbit ticket). The plan
+only adds the order, the blocks, and a few sub-steps per row. Something not
+tracked yet becomes an ad-hoc to-do when it is added.
+
+### 11.1 Model (`bosun-plan.json`, last 30 days)
+
+```rust
+pub struct DayPlan { pub date: String /* local YYYY-MM-DD */, pub blocks: Vec<PlanBlock>, pub updated_at: String }
+pub struct PlanBlock { pub id: String, pub title: String, pub start: Option<String> /* "HH:MM" */, pub end: Option<String>, pub items: Vec<PlanItem> }
+pub struct PlanItem { pub id: String, pub task_id: String, pub steps: Vec<PlanStep> }
+pub struct PlanStep { pub id: String, pub text: String, pub done: bool }
+```
+
+A row is done when its task is closed; there is no done flag on the row.
+Writes replace a day whole and are normalised: missing ids filled in, times
+to `HH:MM`, `end > start`, rows whose task does not exist dropped, each task
+once per day (first row wins), caps of 24 blocks, 40 rows a block, 12 steps a
+row. Last write wins, the same as a task edit.
+
+### 11.2 Wire
+
+| Kind | Payload | Response |
+| --- | --- | --- |
+| `bosun.plan.get` | `{ date? }` (default today) | `{ plan, lastDate }`: an unplanned day is an empty plan; `lastDate` is the newest earlier day with rows, for carry-over |
+| `bosun.plan.set` | `{ date, blocks }` | the stored `DayPlan` |
+| `bosun.plan.draft` | `{ bosunId?, date?, instruction? }` | `{ taskId, threadId }` |
+
+`state.changed` scope `"bosunPlan"` after any plan write.
+
+`bosun.plan.draft` is "Plan my day": an ad-hoc to-do (key `plan:<date>`, one
+per day) whose thread builds the plan, so the drafting is a conversation the
+person can steer. Its prompt has the agent list open to-dos, check fixed
+meetings and unanswered mail when its tools reach them, rank by leverage, and
+write the day with the tool below.
+
+### 11.3 The agent's tool
+
+`bosun_plan { action: "tasks" | "get" | "set", date?, blocks? }`, offered on
+every Bosun to-do thread. `tasks` lists open to-dos (id, title, client,
+status, due, ticket, next step). `set` takes blocks of `{ title, start, end,
+items: [{ taskId } | { title, client? }, steps?: [text]] }`; a row with a
+title and no taskId creates an ad-hoc to-do.
+
+### 11.4 UI (`BosunToday.tsx`)
+
+The **Today** button in the Bosun sidebar opens the page in the main pane
+(`activeTaskId = "__today__"`, like Review). Header: day, previous/next.
+Under it, "N of M done" with a progress bar and the actions *Plan my day* /
+*Re-plan with Bosun*, *Carry over from <day>* (unfinished rows of `lastDate`
+into a block at the top) and *+ Block*. Each block is a card: time and title
+(click to edit times, title, or delete), *Now* on the block the clock is in,
+late blocks' time tinted, `done/total`. Each row: a big round checkbox, the
+title (opens the task page, which offers "← Today"), client and `#ticket`, the
+next step, and steps with their own checkboxes. The row's chevron opens: add
+step, up/down, move to another block, remove from the plan (the to-do stays
+open). Rows drag between blocks on desktop. A client ticket held back by
+§10.8 shows an inline "Close in Orbit / Leave open" on its row. Below the
+blocks, a collapsed *Not planned* tray lists open to-dos with "Add to…".

@@ -496,6 +496,32 @@ export const TASK_GROUPS: { id: TaskGroupId; label: string; collapsed: boolean }
  *  instead of one task, so every path that closes a task page closes it too. */
 export const TASK_REVIEW_ID = "__review__";
 
+/** `activeTaskId` value for the Today page (the day plan), same idea. */
+export const TASK_TODAY_ID = "__today__";
+
+/** The page a task was opened from, so the task page can offer the way back.
+ *  sessionStorage, so a phone WebView reloading in the background keeps it. */
+export type TaskReturnPage = "review" | "today";
+const TASK_RETURN_KEY = "threadknot.bosunTask.return";
+
+export function taskReturnPage(): TaskReturnPage | null {
+  try {
+    const v = sessionStorage.getItem(TASK_RETURN_KEY);
+    return v === "review" || v === "today" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setTaskReturnPage(page: TaskReturnPage | null) {
+  try {
+    if (page) sessionStorage.setItem(TASK_RETURN_KEY, page);
+    else sessionStorage.removeItem(TASK_RETURN_KEY);
+  } catch {
+    // Storage disabled: the task page just offers no way back.
+  }
+}
+
 export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   needs_you: "Needs you",
   working: "Working",
@@ -1014,4 +1040,27 @@ export function setRecentShowFinished(on: boolean): void {
   } catch {
     /* storage unavailable: the toggle just won't persist */
   }
+}
+
+/** After closing a to-do: a client ticket Orbit kept open (docs/BOSUN.md
+ *  §10.8) gets a plain confirm, then the forced close. For pages without
+ *  their own inline prompt (the task page, a thread's to-do bar). */
+export async function confirmHeldOrbitClose(
+  res: { id: string; orbitClose?: import("./protocol").OrbitCloseOutcome },
+  closeInOrbit: (taskId: string) => Promise<import("./protocol").OrbitCloseOutcome>,
+): Promise<void> {
+  const oc = res.orbitClose;
+  if (!oc) return;
+  const ticket = oc.ticket ? `#${oc.ticket}` : "ticket";
+  if (oc.error) {
+    window.alert(`Done here, but Orbit ${ticket} is still open: ${oc.error}`);
+    return;
+  }
+  if (!oc.needsConfirm) return;
+  const yes = window.confirm(
+    `Orbit ${ticket} is a ${oc.origin ?? "client"} ticket, and closing it may email them. Close it in Orbit too?`,
+  );
+  if (!yes) return;
+  const out = await closeInOrbit(res.id);
+  if (!out.closed) window.alert(`Orbit kept ${ticket} open${out.error ? `: ${out.error}` : "."}`);
 }

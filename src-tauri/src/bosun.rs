@@ -39,6 +39,15 @@ mod tasks;
 pub use tasks::{mcp_bosun_task, mcp_tool_specs_for, on_thread_event};
 #[allow(unused_imports)]
 pub(crate) use tasks::*;
+#[path = "bosun_orbit.rs"]
+mod orbit;
+#[allow(unused_imports)]
+pub(crate) use orbit::*;
+#[path = "bosun_plan.rs"]
+mod plan;
+pub use plan::{mcp_bosun_plan, mcp_plan_tool_specs_for};
+#[allow(unused_imports)]
+pub(crate) use plan::*;
 
 const TICK: Duration = Duration::from_secs(30);
 /// Signal bodies are capped here, whatever the lookout sent.
@@ -100,6 +109,8 @@ pub struct BosunRegistry {
     tasks: Mutex<tasks::TasksFile>,
     /// Per task: what its agent said through `bosun_task` this turn.
     marks: Mutex<HashMap<String, tasks::AgentMark>>,
+    /// `bosun-plan.json` (BOSUN.md §11).
+    plans: Mutex<plan::PlanFile>,
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {
@@ -138,6 +149,7 @@ impl BosunRegistry {
             backoff: Mutex::new(HashMap::new()),
             tasks: Mutex::new(tasks::load_tasks(dir)),
             marks: Mutex::new(HashMap::new()),
+            plans: Mutex::new(plan::load_plans(dir)),
         })
     }
 
@@ -632,9 +644,20 @@ fn signal_from_object(
     }
 }
 
-async fn run_command(registry: &BosunRegistry, data_dir: &Path, bosun: &Bosun, lookout: &Lookout) -> LookoutRun {
+/// A command lookout's process, set up exactly as a poll runs it (env, state
+/// dir, cwd), plus `extra_env`. Extra input goes through the environment, not
+/// argv: a lookout is often a `bash -c '…; exec python3 script.py'` wrapper,
+/// which drops appended args but passes the environment on. None for other
+/// kinds.
+pub(crate) fn lookout_process(
+    registry: &BosunRegistry,
+    data_dir: &Path,
+    bosun: &Bosun,
+    lookout: &Lookout,
+    extra_env: &[(&str, String)],
+) -> Option<tokio::process::Command> {
     let LookoutKind::Command { command, args, env, cwd } = &lookout.kind else {
-        return LookoutRun::default();
+        return None;
     };
     let cwd = cwd.as_deref();
     let state_dir = registry.state_dir(&lookout.id);
@@ -649,6 +672,7 @@ async fn run_command(registry: &BosunRegistry, data_dir: &Path, bosun: &Bosun, l
         .env("BOSUN_WATERMARK", lookout.watermark.as_deref().unwrap_or(""))
         .env("BOSUN_STATE_DIR", &state_dir)
         .envs(env)
+        .envs(extra_env.iter().map(|(k, v)| (*k, v.as_str())))
         .current_dir(
             cwd.map(str::trim)
                 .filter(|c| !c.is_empty())
@@ -660,6 +684,16 @@ async fn run_command(registry: &BosunRegistry, data_dir: &Path, bosun: &Bosun, l
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     crate::agents::no_console(&mut cmd);
+    Some(cmd)
+}
+
+async fn run_command(registry: &BosunRegistry, data_dir: &Path, bosun: &Bosun, lookout: &Lookout) -> LookoutRun {
+    let Some(mut cmd) = lookout_process(registry, data_dir, bosun, lookout, &[]) else {
+        return LookoutRun::default();
+    };
+    let LookoutKind::Command { command, .. } = &lookout.kind else {
+        return LookoutRun::default();
+    };
     let output = match cmd.spawn() {
         Ok(child) => tokio::time::timeout(COMMAND_TIMEOUT, child.wait_with_output()).await,
         Err(e) => {
@@ -2348,6 +2382,7 @@ pub async fn handle(state: &ServerState, principal: &Principal, kind: &str, p: &
                     "another open to-do already tracks this item"
                 );
             }
+            let policy = orbit::OrbitClosePolicy::parse(p)?;
             let now = now_iso();
             let task = registry.update_task(&upd.task_id, |t| tasks::apply_user_update(t, &upd, &now))?;
             if task.status.is_closed() {
@@ -2356,8 +2391,36 @@ pub async fn handle(state: &ServerState, principal: &Principal, kind: &str, p: &
                 }
             }
             hub.broadcast_state("bosunTasks", None);
-            Ok(serde_json::to_value(task)?)
+            // Closing the to-do closes its ticket (§10.8). Only on the
+            // transition: a closed to-do edited again does not re-close.
+            let closing = !current.status.is_closed() && task.status.is_closed();
+            let outcome = match policy {
+                orbit::OrbitClosePolicy::Skip => None,
+                _ if !closing => None,
+                p => orbit::close_linked(state, &task, p == orbit::OrbitClosePolicy::Force).await,
+            };
+            let task = registry.task(&task.id).unwrap_or(task);
+            let mut out = serde_json::to_value(task)?;
+            if let (Some(outcome), Some(obj)) = (outcome, out.as_object_mut()) {
+                obj.insert("orbitClose".into(), serde_json::to_value(outcome)?);
+            }
+            Ok(out)
         }
+        "bosun.task.orbitClose" => {
+            // The confirm for a held-back client ticket: close it whatever its origin.
+            let task = registry.task(&str_field("taskId")?).context("unknown task")?;
+            let outcome = orbit::close_linked(state, &task, true)
+                .await
+                .context("this to-do is not linked to an Orbit ticket")?;
+            Ok(serde_json::to_value(outcome)?)
+        }
+        "bosun.plan.get" => plan::handle_get(registry, p),
+        "bosun.plan.set" => {
+            let out = plan::handle_set(registry, p)?;
+            hub.broadcast_state("bosunPlan", None);
+            Ok(out)
+        }
+        "bosun.plan.draft" => plan::handle_draft(state, principal, p).await,
         "bosun.task.work" => {
             let instruction = p.get("instruction").and_then(Value::as_str).map(str::to_string);
             let thread_id = tasks::work_task(state, principal, &str_field("taskId")?, instruction).await?;
