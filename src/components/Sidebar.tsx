@@ -600,24 +600,36 @@ function ProjectPulse({
  * Which chat switching to a project should drop you into, in the order you
  * would pick one yourself:
  *
- *  1. the one asking for you — a pending approval or an unread finish;
- *  2. else whichever is mid-turn, so you land on the work in progress;
- *  3. else the most recent chat that is still live;
- *  4. else the most recent one at all, shelf included — a project whose chats
+ *  1. the chat you last had open in this project;
+ *  2. else your most recent live chat (a Bosun's threads don't count: one of
+ *     them has nearly always just finished or is mid-turn, and landing there
+ *     every time is landing somewhere you didn't pick);
+ *  3. else the one asking for you — a pending approval or an unread finish;
+ *  4. else whichever is mid-turn, so you land on the work in progress;
+ *  5. else the most recent chat that is still live;
+ *  6. else the most recent one at all, shelf included — a project whose chats
  *     have all settled should still show you its last chat rather than
  *     stranding you in the project you just left.
  *
- * `threads` arrives newest-first, so "first match" is also "most recent" in
- * every branch. Null only when the project has no chats at all.
+ * `threads` arrives favorites first, then newest-first, so "first match" is
+ * the most recent within each. Null only when the project has no chats.
  */
 function landingThread(
   state: AppState,
   threads: readonly Thread[],
   autoSettleDays: number | null,
   now: number,
+  lastOpenedId?: string | null,
 ): Thread | null {
   if (threads.length === 0) return null;
+  // The chat you last had open here wins outright: switching back to a
+  // project means "where was I", and the attention/running rules below kept
+  // landing on whichever Bosun thread had just finished instead.
+  const lastOpened = lastOpenedId ? threads.find((t) => t.id === lastOpenedId) : undefined;
+  if (lastOpened) return lastOpened;
+  const own = threads.filter((t) => t.origin?.kind !== "bosun");
   return (
+    own.find((t) => !threadSettled(state, t, autoSettleDays, now)) ??
     threads.find((t) => threadNeedsAttention(state, t)) ??
     threads.find((t) => t.status === "running") ??
     threads.find((t) => !threadSettled(state, t, autoSettleDays, now)) ??
@@ -630,6 +642,30 @@ function landingThread(
  *  the same machine initials in the same color and be indistinguishable.
  *  Hue from a hash of the id; fixed saturation/lightness so no project shouts
  *  louder than another or fights the brass selection ring. */
+/** Last chat opened in each workspace, so the rail can return you to it.
+ *  localStorage, per install: it is where *you* were, not shared state. */
+const LS_LAST_BY_WORKSPACE = "threadknot.lastThreadByWorkspace";
+
+function lastOpenedIn(workspaceId: string): string | null {
+  try {
+    const map = JSON.parse(localStorage.getItem(LS_LAST_BY_WORKSPACE) ?? "{}") as Record<string, string>;
+    return map[workspaceId] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberOpenedIn(workspaceId: string, threadId: string) {
+  try {
+    const map = JSON.parse(localStorage.getItem(LS_LAST_BY_WORKSPACE) ?? "{}") as Record<string, string>;
+    if (map[workspaceId] === threadId) return;
+    map[workspaceId] = threadId;
+    localStorage.setItem(LS_LAST_BY_WORKSPACE, JSON.stringify(map));
+  } catch {
+    // Storage unavailable: landing falls back to the recency rules.
+  }
+}
+
 function projectAccent(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) >>> 0;
@@ -5224,6 +5260,18 @@ export const Sidebar = memo(function Sidebar({
     state.restored,
   ]);
 
+  // Note which workspace the open chat belongs to, for `landingThread`.
+  useEffect(() => {
+    const id = state.activeThreadId;
+    if (!id) return;
+    for (const [workspaceId, data] of sectionData) {
+      if (data.threads.some((t) => t.id === id)) {
+        rememberOpenedIn(workspaceId, id);
+        return;
+      }
+    }
+  }, [state.activeThreadId, sectionData]);
+
   /** Tapping a project on the rail switches to it AND opens something in it.
    *  Switching the list alone left the previous project's chat filling the
    *  screen, so the rail said one project and the pane showed another. */
@@ -5240,6 +5288,7 @@ export const Sidebar = memo(function Sidebar({
       threads,
       sidebarPrefs.autoSettleDays,
       now,
+      lastOpenedIn(id),
     );
     if (target) void actions.selectThread(target.id);
     // A project with no chats yet has nothing to land on, and leaving the last

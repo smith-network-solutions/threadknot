@@ -9,7 +9,7 @@ import {
 } from "../lib/bosun";
 import { allWorkspaces, useStore } from "../state/store";
 import { orbitTicketLabel, TaskStatusDot } from "./BosunTaskView";
-import { CheckIcon, PanelLeftIcon, XIcon } from "./icons";
+import { CheckIcon, ChevronIcon, PanelLeftIcon, XIcon } from "./icons";
 import "../styles/bosun-review.css";
 
 /** The statuses the review filters by, in the sidebar's group order. Closed
@@ -358,34 +358,43 @@ export function BosunReview() {
             ].filter(Boolean);
             const checked = selected.has(t.id);
             return (
+              // The whole row is the checkbox: on a phone the box alone was too
+              // small to hit, and a near miss opened the task instead. Opening
+              // is its own button at the right edge.
               <div key={t.id} className={`review-row${checked ? " checked" : ""}`}>
-                <label className="review-check" aria-label={`Select ${displayTitle(t)}`}>
-                  <input type="checkbox" checked={checked} disabled={busy} onChange={() => toggle(t.id)} />
-                </label>
-                <button type="button" className="review-main" onClick={() => openRow(t.id)}>
-                  <span className="review-title">{displayTitle(t) || "Untitled to-do"}</span>
-                  <span className="review-meta">
-                    <span className={`review-status s-${t.status}`}>
-                      <TaskStatusDot status={t.status} />
-                      {TASK_STATUS_LABEL[t.status]}
-                    </span>
-                    {meta.map((m, i) => (
-                      <span key={i} className="review-meta-part">
-                        {m}
+                <label className="review-pick">
+                  <input
+                    type="checkbox"
+                    className="review-box"
+                    checked={checked}
+                    disabled={busy}
+                    onChange={() => toggle(t.id)}
+                    aria-label={`Select ${displayTitle(t)}`}
+                  />
+                  <span className="review-main">
+                    <span className="review-title">{displayTitle(t) || "Untitled to-do"}</span>
+                    <span className="review-meta">
+                      <span className={`review-status s-${t.status}`}>
+                        <TaskStatusDot status={t.status} />
+                        {TASK_STATUS_LABEL[t.status]}
                       </span>
-                    ))}
+                      {meta.map((m, i) => (
+                        <span key={i} className="review-meta-part">
+                          {m}
+                        </span>
+                      ))}
+                    </span>
+                    {t.nextStep?.trim() && <span className="review-next">{t.nextStep.trim()}</span>}
                   </span>
-                  {t.nextStep?.trim() && <span className="review-next">{t.nextStep.trim()}</span>}
-                </button>
+                </label>
                 <button
                   type="button"
-                  className="icon-btn review-done"
-                  aria-label={`Mark done: ${displayTitle(t)}`}
-                  title="Mark done"
-                  disabled={busy}
-                  onClick={() => void close([t], "done")}
+                  className="review-open"
+                  aria-label={`Open ${displayTitle(t)}`}
+                  title="Open this to-do"
+                  onClick={() => openRow(t.id)}
                 >
-                  <CheckIcon size={16} />
+                  Open <ChevronIcon size={11} className="review-open-chev" />
                 </button>
               </div>
             );
