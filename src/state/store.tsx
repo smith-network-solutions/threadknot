@@ -774,6 +774,8 @@ export function threadSettled(
   now: number,
 ): boolean {
   if (ctx.activeThreadId === thread.id) return false;
+  // A starred chat stays on the list, whatever settled it.
+  if (thread.favorite) return false;
   if (thread.status === "running" || thread.status === "waiting_approval") return false;
   if (ctx.attention[thread.id]) return false;
   if (thread.settledAt) return true;

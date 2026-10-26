@@ -1250,13 +1250,14 @@ pub(crate) fn work_prompt(
             brief.push_str("\n\n");
         }
         brief.push_str(&format!(
-            "Triage chose ASK: look into it, then ask {person} ONE question before acting."
+            "Triage chose ASK: look into it, report what you found with your recommendation, and wait for {person} to reply before acting."
         ));
     }
     format!(
         "{standing}\n\n---\nYou were woken by {bosun_name} because of this signal. Do what the standing\n\
-         orders above allow, then stop. If you need a decision from {person}, ask ONE\n\
-         question with the AskUserQuestion tool rather than guessing. Do not send\n\
+         orders above allow, then stop. If you need a decision from {person}, do not\n\
+         guess and do not use AskUserQuestion: end your turn with a plain reply that\n\
+         says what you found and what you recommend; {person} answers in this thread. Do not send\n\
          email, push, or deploy unless the standing orders say you may. You may close\n\
          or complete tasks and tickets when the standing orders authorize it or when\n\
          {person} explicitly requests it, including in a response to your question.\n\

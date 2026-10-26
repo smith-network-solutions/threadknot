@@ -2120,18 +2120,32 @@ function WorkspaceSection({
     () => applyThreadOrder(active, threadOrder),
     [active, threadOrder],
   );
+  // Starred chats get their own group at the top of the workspace, outside
+  // the paging and the folders, so the one you come back to every day is
+  // always the first thing under the header instead of somewhere in a long
+  // list. They never settle (see `threadSettled`), so `active` holds them all.
+  const favorites = useMemo(
+    () => orderedActive.filter((t) => t.favorite),
+    [orderedActive],
+  );
+  const unstarred = useMemo(
+    () => orderedActive.filter((t) => !t.favorite),
+    [orderedActive],
+  );
+  const favoritesKey = `favorites:${workspace.id}`;
+  const favoritesOpen = forceOpen || !state.collapsed[favoritesKey];
 
   const shown = forceOpen
-    ? orderedActive
+    ? unstarred
     : pageActiveThreads(
-        orderedActive,
+        unstarred,
         visibleThreadCount,
         (t) =>
           threadNeedsAttention(state, t) ||
           state.activeThreadId === t.id ||
           isRecentlyKeptActive(t, now),
       );
-  const remaining = active.length - shown.length;
+  const remaining = unstarred.length - shown.length;
   const chatFolderIds = new Set(chatFolders.map((folder) => folder.id));
   const rootShown = shown.filter((thread) => {
     const assigned = chatFolderAssignments[thread.id];
@@ -2295,7 +2309,45 @@ function WorkspaceSection({
       {(open || hideHeader) && (
         <div className="project-threads" ref={threadListRef}>
           {bosunRow && <BosunWorkspaceRow {...bosunRow} />}
-          {shown.length === 0 && settled.length === 0 && !bosunRow && (
+          {favorites.length > 0 && (
+            <div className="chat-folder favorites-group">
+              <button
+                type="button"
+                className="chat-folder-head favorites-head"
+                aria-expanded={favoritesOpen}
+                onClick={() =>
+                  dispatch({ type: "toggleProject", projectId: favoritesKey })
+                }
+              >
+                <StarIcon size={14} filled className="favorites-star" />
+                <span>Favorites</span>
+                <span className="favorites-count">{favorites.length}</span>
+                <ChevronIcon size={11} open={favoritesOpen} className="row-chevron" />
+              </button>
+              {favoritesOpen && (
+                <div className="chat-folder-threads">
+                  {favorites.map((thread) => (
+                    <Fragment key={thread.id}>
+                      <ThreadRow
+                        thread={thread}
+                        active={state.activeThreadId === thread.id}
+                        view={view}
+                        folders={chatFolders}
+                        onMoveToFolder={onMoveChatToFolder}
+                        onAddFolder={(threadId) => onAddChatFolder(threadId)}
+                      />
+                      <DispatchWorkers
+                        workers={workersOf.get(thread.id) ?? []}
+                        forceOpen={forceOpen}
+                        view={view}
+                      />
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {shown.length === 0 && settled.length === 0 && favorites.length === 0 && !bosunRow && (
             <div className="project-empty">
               {forceOpen ? "no matches" : "no threads yet"}
             </div>
@@ -2326,7 +2378,7 @@ function WorkspaceSection({
             const folderThreads = shown.filter(
               (thread) => chatFolderAssignments[thread.id] === folder.id,
             );
-            const total = active.filter(
+            const total = unstarred.filter(
               (thread) => chatFolderAssignments[thread.id] === folder.id,
             ).length;
             const collapseKey = `chat-folder:${folder.id}`;
@@ -4712,10 +4764,13 @@ export const Sidebar = memo(function Sidebar({
     () => recentTasks(state.bosunTasks ?? [], bosunRecent.touches)[0]?.task ?? null,
     [state.bosunTasks, bosunRecent],
   );
-  const keepBosunInline = useMemo(
-    () => recentBosunThreadFilter(bosunRecent.touches, bosunRecent.threadTouches),
-    [bosunRecent],
-  );
+  // A starred Bosun thread is one you chose to keep at hand, so it stays in
+  // its workspace list (in the Favorites group) instead of folding into the
+  // Bosun row with the rest.
+  const keepBosunInline = useMemo(() => {
+    const recent = recentBosunThreadFilter(bosunRecent.touches, bosunRecent.threadTouches);
+    return (thread: Thread) => !!thread.favorite || recent(thread);
+  }, [bosunRecent]);
   const pickBosun = () => {
     if (bosunView && !state.activeTaskId && !state.activeThreadId && lastBosunTask) {
       actions.openTask(lastBosunTask.id);

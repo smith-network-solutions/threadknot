@@ -805,10 +805,10 @@ fn thread_events_drive_task_status() {
     // Turn ends with nobody having set a resting status: NeedsYou by default…
     assert_eq!(status_for_cue(Working, ThreadCue::TurnEnded, none), Some(NeedsYou));
     // …or the agent's last one.
-    let waiting = AgentMark { set_this_turn: false, last: Some(WaitingOnClient) };
+    let waiting = AgentMark { set_this_turn: false, last: Some(WaitingOnClient), closed_at_turn_start: false };
     assert_eq!(status_for_cue(Working, ThreadCue::TurnEnded, waiting), Some(WaitingOnClient));
     // The agent set a status this turn (it is no longer Working): kept.
-    let set = AgentMark { set_this_turn: true, last: Some(WaitingOnClient) };
+    let set = AgentMark { set_this_turn: true, last: Some(WaitingOnClient), closed_at_turn_start: false };
     assert_eq!(status_for_cue(WaitingOnClient, ThreadCue::TurnEnded, set), None);
     // A question still up when the turn ends: NeedsYou stays.
     assert_eq!(status_for_cue(NeedsYou, ThreadCue::TurnEnded, waiting), None);

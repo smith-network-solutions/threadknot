@@ -2219,6 +2219,20 @@ body.reordering { cursor: grabbing; user-select: none; }
   white-space: nowrap;
 }
 .chat-folder-threads { margin-left: 9px; }
+/* Starred chats, pinned at the top of their workspace. The count sits beside
+   the label, so the label must not stretch over it. */
+.chat-folder-head.favorites-head > span:not(.favorites-count) { flex: 0 1 auto; }
+.chat-folder-head.favorites-head .favorites-star { color: var(--brass); }
+/* Flush with the list below: these are chats, not a folder's contents, and
+   the indent cost the title most of a narrow sidebar. */
+.favorites-group { margin-left: 5px; }
+.favorites-group .chat-folder-threads { margin-left: 0; }
+.favorites-count {
+  flex: 1;
+  color: var(--sidebar-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 .chat-folder-empty {
   padding: 4px 10px 5px 15px;
   color: var(--faint);

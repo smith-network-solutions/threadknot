@@ -365,8 +365,9 @@ pending signal → `ignore` with reason `"no decision returned"`.
 
 ---
 You were woken by <bosun name> because of this signal. Do what the standing
-orders above allow, then stop. If you need a decision from <person>, ask ONE
-question with the AskUserQuestion tool rather than guessing. Do not send
+orders above allow, then stop. If you need a decision from <person>, do not
+guess and do not use AskUserQuestion: end your turn with a plain reply that
+says what you found and what you recommend; <person> answers in this thread. Do not send
 email, push, or deploy unless the standing orders say you may. You may close
 or complete tasks and tickets when the standing orders authorize it or when
 <person> explicitly requests it, including in a response to your question.

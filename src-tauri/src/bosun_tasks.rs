@@ -51,6 +51,10 @@ pub(crate) struct TasksFile {
 pub(crate) struct AgentMark {
     pub set_this_turn: bool,
     pub last: Option<TaskStatus>,
+    /// The task was already closed when the turn in flight started: someone
+    /// is still talking in a finished task's thread, so its turn end must not
+    /// put the thread away again.
+    pub closed_at_turn_start: bool,
 }
 
 pub(crate) fn load_tasks(dir: &Path) -> TasksFile {
@@ -868,10 +872,11 @@ impl BosunRegistry {
         }
     }
 
-    fn new_turn(&self, task_id: &str) {
-        if let Some(mark) = self.marks.lock().unwrap().get_mut(task_id) {
-            mark.set_this_turn = false;
-        }
+    fn new_turn(&self, task_id: &str, closed: bool) {
+        let mut marks = self.marks.lock().unwrap();
+        let mark = marks.entry(task_id.to_string()).or_default();
+        mark.set_this_turn = false;
+        mark.closed_at_turn_start = closed;
     }
 
     /// Any Orbit URL this Bosun has seen, for building links.
@@ -920,6 +925,8 @@ pub(crate) fn settle_thread(hub: &Hub, thread_id: &str) -> bool {
     let now = now_iso();
     let settled = hub.store.try_update_thread_quiet(thread_id, |t| {
         anyhow::ensure!(t.status == ThreadStatus::Idle, "busy");
+        // A favorite stays on the list until its owner un-stars it.
+        anyhow::ensure!(t.favorite != Some(true), "favorite");
         if t.settled_at.is_none() {
             t.settled_at = Some(now);
         }
@@ -954,7 +961,7 @@ pub fn on_thread_event(hub: &Hub, thread_id: &str, event: &AgentEvent) {
         return;
     }
     if cue == ThreadCue::TurnStarted {
-        registry.new_turn(&task_id);
+        registry.new_turn(&task_id, task.status.is_closed());
     }
     let mark = registry.agent_mark(&task_id);
     let mut task = task;
@@ -969,7 +976,10 @@ pub fn on_thread_event(hub: &Hub, thread_id: &str, event: &AgentEvent) {
         }
     }
     if cue == ThreadCue::TurnEnded {
-        if task.status.is_closed() {
+        // Settle only a task that closed during this turn. One that was
+        // already closed when the turn started is a finished task someone is
+        // still working in; shelving it after every reply loses the thread.
+        if task.status.is_closed() && !mark.closed_at_turn_start {
             settle_thread(hub, thread_id);
         }
         if !task.pending_updates.is_empty() {
