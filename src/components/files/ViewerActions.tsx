@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { copyText } from "../../lib/format";
 import { useStore } from "../../state/store";
-import { CheckIcon, CopyIcon, FileIcon, ImageIcon, XIcon } from "../icons";
+import { CheckIcon, CopyIcon, FileIcon, FolderIcon, ImageIcon, XIcon } from "../icons";
 
 type FileTarget =
   | { kind: "project"; projectId: string; path: string }
@@ -98,6 +98,47 @@ function ActionButton({
   );
 }
 
+/** Open the host file manager with the file selected. Desktop-only: these same
+ * viewers are served to phones and LAN browsers, which have no host shell, and
+ * a fleet artifact's path points at the machine that produced it, not this one. */
+function RevealButton({ absolutePath, unavailable }: { absolutePath: string; unavailable?: string }) {
+  const [state, setState] = useState<CopyState>("idle");
+  const [error, setError] = useState("");
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
+
+  const reveal = async () => {
+    setError("");
+    try {
+      const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      await revealItemInDir(absolutePath);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      if (timer.current) window.clearTimeout(timer.current);
+      setState("error");
+      timer.current = window.setTimeout(() => setState("idle"), 1800);
+    }
+  };
+
+  const label = state === "error" ? "Can’t open" : "Show in folder";
+  const Icon = state === "error" ? XIcon : FolderIcon;
+
+  return (
+    <button
+      type="button"
+      className={`files-action files-reveal-action ${state}`}
+      onClick={() => void reveal()}
+      disabled={Boolean(unavailable)}
+      aria-label="Show in folder"
+      title={error || unavailable || `Open the containing folder: ${absolutePath}`}
+    >
+      <Icon size={13} />
+      <span className="files-action-label">{label}</span>
+    </button>
+  );
+}
+
 /** The clipboard actions shared by project-file and artifact viewers. Pass
  * `imageUrl` when the viewer is showing an image to offer copying its pixels. */
 export function ViewerClipboardActions({
@@ -105,11 +146,14 @@ export function ViewerClipboardActions({
   fileTarget,
   pathOnly = false,
   imageUrl,
+  remote = false,
 }: {
   absolutePath: string;
   fileTarget: FileTarget;
   pathOnly?: boolean;
   imageUrl?: string | null;
+  /** The file lives on another fleet machine, so this host cannot reveal it. */
+  remote?: boolean;
 }) {
   const { state: appState } = useStore();
   const [fileState, setFileState] = useState<CopyState>("idle");
@@ -223,6 +267,16 @@ export function ViewerClipboardActions({
         state={pathState}
         title={pathError || `Copy absolute path: ${absolutePath}`}
         onClick={() => void copyPath()}
+      />
+      <RevealButton
+        absolutePath={absolutePath}
+        unavailable={
+          !appState.isTauri
+            ? "Show in folder is available in the Threadknot desktop app"
+            : remote
+              ? "This file lives on another machine"
+              : undefined
+        }
       />
     </>
   );

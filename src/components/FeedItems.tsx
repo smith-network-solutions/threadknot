@@ -280,7 +280,7 @@ function ArtifactGallery({ initial, render, onClose }: {
                 <span>{formatBytes(item.sizeBytes)}{item.description ? ` · ${item.description}` : ""}</span>
               </div>
               <div className="artifact-lightbox-actions">
-                <ViewerClipboardActions key={item.artifactId} pathOnly imageUrl={imageUrl}
+                <ViewerClipboardActions key={item.artifactId} pathOnly imageUrl={imageUrl} remote={Boolean(machineId)}
                   absolutePath={render.project ? absoluteProjectPath(render.project.path, item.relPath) : item.relPath}
                   fileTarget={{ kind: "artifact", artifactId: item.artifactId }} />
                 <button type="button" onClick={openArtifacts} title="Open in Artifacts">
@@ -301,7 +301,7 @@ function ArtifactGallery({ initial, render, onClose }: {
               </div>
             </ArtifactNavigation>
             <footer className="artifact-lightbox-mobile-actions">
-              <ViewerClipboardActions key={item.artifactId} pathOnly imageUrl={imageUrl}
+              <ViewerClipboardActions key={item.artifactId} pathOnly imageUrl={imageUrl} remote={Boolean(machineId)}
                   absolutePath={render.project ? absoluteProjectPath(render.project.path, item.relPath) : item.relPath}
                   fileTarget={{ kind: "artifact", artifactId: item.artifactId }} />
               <button type="button" onClick={openArtifacts}><PopoutIcon size={15} /> Artifacts</button>
