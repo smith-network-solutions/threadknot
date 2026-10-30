@@ -405,6 +405,7 @@ function SettledShelf({
   threads,
   forceOpen,
   inHermesView = false,
+  inStream = false,
   view,
   folders = [],
   folderAssignments = {},
@@ -416,6 +417,8 @@ function SettledShelf({
   /** Set when this shelf hangs off a Hermes gateway group; forwarded so a
    *  parked chat a local agent has taken back still greys correctly. */
   inHermesView?: boolean;
+  /** Set when this shelf closes the stream layout's mixed list. */
+  inStream?: boolean;
   /** Sidebar presentation, forwarded to each shelf row. */
   view: SidebarLayout["view"];
   folders?: ChatFolder[];
@@ -450,6 +453,7 @@ function SettledShelf({
           thread={t}
           active={state.activeThreadId === t.id}
           inHermesView={inHermesView}
+          inStream={inStream}
           view={view}
           settled
           lit={forceOpen}
@@ -693,6 +697,119 @@ function projectAccent(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return `hsl(${h % 360} 52% 60%)`;
+}
+
+/** Which project a chat belongs to, as the stream card shows it: the
+ *  workspace's name and face, or the Quick Threads home for a folderless chat. */
+function streamHome(
+  state: AppState,
+  projectId: string,
+): { id: string; name: string; image: string | undefined; quick: boolean } {
+  if (isQuickHomeProjectId(projectId))
+    return { id: projectId, name: "Quick", image: undefined, quick: true };
+  const wsId = workspaceIdForProject(state, projectId);
+  const ws = allWorkspaces(state).find((w) => w.id === wsId);
+  return {
+    id: ws?.id ?? projectId,
+    name: ws?.name ?? "Project",
+    image: ws?.image,
+    quick: false,
+  };
+}
+
+const STREAM_PAGE_SIZE = 30;
+
+/** The stream layout's whole list: every chat from every project the sidebar
+ *  is showing, plus Quick Threads, in one column of cards.
+ *
+ *  Order is recency and nothing else (starred chats first, as everywhere):
+ *  with no project headers to hold a place, the list's only job is to answer
+ *  "what was I just doing, and what moved?". Settled chats keep their shelf,
+ *  one for the whole stream, and dispatched workers still fold under the
+ *  thread that sent them. */
+function StreamSection({
+  threads,
+  autoSettleDays,
+  now,
+  view,
+}: {
+  threads: Thread[];
+  autoSettleDays: number | null;
+  now: number;
+  view: SidebarLayout["view"];
+}) {
+  const { state } = useStore();
+  const [limit, setLimit] = useState(STREAM_PAGE_SIZE);
+  const { attention, activeThreadId } = state;
+  const { active, settled } = useMemo(() => {
+    const ctx = { attention, activeThreadId };
+    const active: Thread[] = [];
+    const settled: Thread[] = [];
+    for (const t of threads) {
+      (threadSettled(ctx, t, autoSettleDays, now) ? settled : active).push(t);
+    }
+    active.sort(
+      (a, b) =>
+        (a.favorite ? 0 : 1) - (b.favorite ? 0 : 1) ||
+        cmpDesc(a.updatedAt, b.updatedAt) ||
+        cmpDesc(a.id, b.id),
+    );
+    settled.sort(
+      (a, b) =>
+        cmpDesc(a.settledAt ?? a.updatedAt, b.settledAt ?? b.updatedAt) ||
+        cmpDesc(a.id, b.id),
+    );
+    return { active, settled };
+  }, [threads, attention, activeThreadId, autoSettleDays, now]);
+  const { parents, workersOf } = useMemo(
+    () => groupDispatchChildren(active),
+    [active],
+  );
+  // Paging never hides the chat you are in or one that wants you.
+  const shown = pageActiveThreads(
+    parents,
+    limit,
+    (t) => t.id === activeThreadId || threadNeedsAttention(state, t),
+  );
+  const hidden = parents.length - shown.length;
+  if (threads.length === 0) {
+    return (
+      <div className="sidebar-empty">
+        <p>No chats yet.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="stream-list">
+      {shown.map((t) => (
+        <Fragment key={t.id}>
+          <ThreadRow
+            thread={t}
+            active={activeThreadId === t.id}
+            view={view}
+            inStream
+          />
+          <DispatchWorkers
+            workers={workersOf.get(t.id) ?? []}
+            forceOpen={false}
+            view={view}
+          />
+        </Fragment>
+      ))}
+      {hidden > 0 && (
+        <button
+          className="load-more-threads"
+          onClick={() => setLimit((n) => n + STREAM_PAGE_SIZE)}
+        >
+          <span>load more</span>
+          <span className="load-more-count">
+            {Math.min(STREAM_PAGE_SIZE, hidden)} of {hidden}
+          </span>
+        </button>
+      )}
+      <SettledShelf threads={settled} forceOpen={false} inStream view={view} />
+    </div>
+  );
 }
 
 function ProjectRail({
@@ -1111,6 +1228,7 @@ function ThreadRow({
   nested = false,
   inHermesView = false,
   inBosunView = false,
+  inStream = false,
   view,
   folders = [],
   folderId,
@@ -1137,6 +1255,10 @@ function ThreadRow({
   /** Rendered in the Bosun timeline, which mixes workspaces: the row names
    *  its workspace with a chip. */
   inBosunView?: boolean;
+  /** Rendered in the stream layout, which mixes every project into one list:
+   *  the row becomes a card led by its project's icon, so the project is the
+   *  first thing you read rather than a chip you hunt for. */
+  inStream?: boolean;
   /** Which sidebar presentation to render. Threaded down from the layout hook
    *  (a fresh useSidebarLayout() here would be a second, out-of-sync copy). */
   view: SidebarLayout["view"];
@@ -1899,6 +2021,58 @@ function ThreadRow({
   // live in the meta row, so a long title truncates against the card's full
   // width. The "N turns" hint only appears once a hover has cached this
   // thread's preview.
+  if (inStream) {
+    const home = streamHome(state, thread.projectId);
+    return (
+      <>
+        <div
+          className={`thread-row stream-card long-press-menu${active ? " active" : ""}${
+            needsAttention ? " has-attention" : ""
+          }${recede ? " recede" : ""}${settled ? " slim" : ""}${settled && lit ? " lit" : ""}${
+            isGenerating ? " is-generating" : ""
+          }${nest}${dim}`}
+          {...rowGestures}
+          {...hover.hoverProps}
+        >
+          <span className="stream-card-home" title={home.name}>
+            {home.quick ? (
+              <span className="stream-card-quick" aria-hidden>
+                <CompassIcon size={settled ? 14 : 18} />
+              </span>
+            ) : (
+              <MachineAvatar
+                image={home.image}
+                color={projectAccent(home.id)}
+                name={home.name}
+                size={settled ? 24 : 34}
+                preview={false}
+              />
+            )}
+            {statusEl}
+          </span>
+          <div className="stream-card-body">
+            <span className="stream-card-title" title={shownTitle}>
+              {shownTitle}
+            </span>
+            <div className="stream-card-meta">
+              {markEl}
+              {hermesPreview.portal}
+              <span className="stream-card-project">{home.name}</span>
+              {chipsEl}
+              {authorEl}
+              <span className="thread-row-time">{timeAgo(thread.updatedAt)}</span>
+              {settleEl}
+              {starEl}
+              {kebabEl}
+            </div>
+          </div>
+          {hover.portal}
+        </div>
+        {menuPortal}
+      </>
+    );
+  }
+
   if (card) {
     return (
       <>
@@ -4885,7 +5059,13 @@ export const Sidebar = memo(function Sidebar({
       } else if (activeKinds.length > 0 && !activeKinds.includes("agents")) {
         dispatch({ type: "closeActive" });
       }
-    } else if (activeKinds.length > 0 && !activeKinds.includes(v)) {
+    } else if (
+      activeKinds.length > 0 &&
+      !activeKinds.includes(v) &&
+      // The stream lists quick chats beside workspace ones, so coming back
+      // to it never strands the open chat.
+      !(v === "fleet" && streamLayout && activeKinds.includes("quick"))
+    ) {
       dispatch({ type: "closeActive" });
     }
   };
@@ -4996,7 +5176,10 @@ export const Sidebar = memo(function Sidebar({
   // Solo windows are project-dedicated — the agents view only exists in the
   // fleet window.
   const agentsView = showHermesAgents() && view === "agents" && !soloId;
-  const quickView = view === "quick" && !soloId;
+  // The stream layout mixes Quick Threads into its one list, so it has no
+  // separate Quick destination: a stored "quick" view reads as the stream.
+  const streamLayout = sidebarPrefs.projectLayout === "stream" && !soloId;
+  const quickView = view === "quick" && !soloId && !streamLayout;
   const bosunView = view === "bosun" && !soloId;
   const quickThreads = useMemo(
     () =>
@@ -5368,6 +5551,34 @@ export const Sidebar = memo(function Sidebar({
     [sections, soloId, layout.workspaceOrder],
   );
 
+  /** The stream layout's one list: every chat in every project on show (Bosun
+   *  threads folded the same way a workspace folds them), plus Quick Threads.
+   *  Ordering is StreamSection's job. */
+  const streamThreads = useMemo(() => {
+    if (!streamLayout) return [];
+    const seen = new Set<string>();
+    const out: Thread[] = [];
+    const add = (t: Thread) => {
+      if (seen.has(t.id)) return;
+      seen.add(t.id);
+      out.push(t);
+    };
+    for (const w of visibleWorkspaces) {
+      const threads = sectionData.get(w.id)?.threads ?? [];
+      (foldBosunThreads ? splitBosunThreads(threads, keepBosunInline).shown : threads).forEach(add);
+    }
+    quickThreads.filter((t) => threadInView(state.viewPerson, t)).forEach(add);
+    return out;
+  }, [
+    streamLayout,
+    visibleWorkspaces,
+    sectionData,
+    foldBosunThreads,
+    keepBosunInline,
+    quickThreads,
+    state.viewPerson,
+  ]);
+
   // A search hides projects, and a solo window shows one slice of one — in
   // neither case is what is on screen the list being ordered, so dragging is
   // off until the sidebar is showing the whole fleet again.
@@ -5468,6 +5679,10 @@ export const Sidebar = memo(function Sidebar({
   }, []);
 
   const [pickerMenu, setPickerMenu] = useState<MenuPoint | null>(null);
+  /** The stream toolbar's two menus: where a new chat goes, and the overflow
+   *  for the destinations that used to be a stack of buttons. */
+  const [streamNewMenu, setStreamNewMenu] = useState<MenuPoint | null>(null);
+  const [streamMoreMenu, setStreamMoreMenu] = useState<MenuPoint | null>(null);
   const [folderDialog, setFolderDialog] = useState<{
     workspaceId: string;
     moveThreadId?: string;
@@ -5726,22 +5941,34 @@ export const Sidebar = memo(function Sidebar({
       actions.openQuickDraft();
       return;
     }
+    const r = e.currentTarget.getBoundingClientRect();
+    newChatIn(wsId, { x: r.left, y: r.bottom + 4 });
+  }
+
+  /** A single online root drafts straight in; several open the machine/folder
+   *  menu at `point`. */
+  function newChatIn(wsId: string, point: MenuPoint) {
     const members = sectionData.get(wsId)?.members ?? [];
     const online = members.filter((m) => m.online);
     if (online.length === 1) {
       actions.openDraft(online[0].projectId, online[0].machineId || undefined);
       return;
     }
-    const r = e.currentTarget.getBoundingClientRect();
-    startNewThread(wsId, { x: r.left, y: r.bottom + 4 });
+    startNewThread(wsId, point);
   }
+
+  // The workspace holding the open chat, so the stream's "New chat in" menu
+  // can mark where you already are.
+  const currentWsId = openProjectId
+    ? workspaceIdForProject(state, openProjectId)
+    : undefined;
 
   return (
     <>
     <aside
       className={`sidebar${state.sidebarOpen ? " open" : ""}${
         layout.collapsed ? " collapsed" : ""
-      }${railMode ? " layout-rail" : ""}${
+      }${railMode ? " layout-rail" : ""}${streamLayout ? " layout-stream" : ""}${
         layout.view === "cards" ? " cards-view" : ""
       }${layout.view === "compact" ? " compact-view" : ""}${
         layout.bigNames ? " big-names" : ""
@@ -5837,6 +6064,96 @@ export const Sidebar = memo(function Sidebar({
 
       <PeopleRow />
 
+      {streamLayout ? (
+        // One row instead of eight: the action you take most gets the width,
+        // the rest are icons, and the destinations you visit least sit in an
+        // overflow menu. Badges ride the icons so nothing that wants you hides.
+        <div className="stream-bar">
+          {(agentsView || bosunView) && (
+            <button
+              type="button"
+              className="icon-btn stream-tool"
+              aria-label="Back to all chats"
+              title="Back to all chats"
+              onClick={() => switchView("fleet")}
+            >
+              <span aria-hidden>←</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="stream-new"
+            aria-haspopup="menu"
+            onClick={(e) => {
+              if (agentsView) {
+                actions.openQuickDraft();
+                return;
+              }
+              const r = e.currentTarget.getBoundingClientRect();
+              setStreamNewMenu({ x: r.left, y: r.bottom + 4 });
+            }}
+          >
+            <NotebookPenIcon size={16} />
+            <span>New chat</span>
+          </button>
+          <button
+            type="button"
+            className="icon-btn stream-tool"
+            aria-label="Search"
+            title="Search"
+            onClick={() => setSearch(newSearchSession())}
+          >
+            <SearchIcon size={17} />
+          </button>
+          {!soloId && state.inbox && (
+            <button
+              type="button"
+              className={`icon-btn stream-tool${state.activeTaskId === INBOX_ID ? " on" : ""}`}
+              aria-label="Notifications"
+              title="Notifications"
+              onClick={() => actions.openTask(INBOX_ID)}
+            >
+              <BellIcon size={17} />
+              {state.inbox.unread > 0 && (
+                <span className="stream-tool-count">
+                  {state.inbox.unread > 99 ? "99+" : state.inbox.unread}
+                </span>
+              )}
+            </button>
+          )}
+          {!soloId && (
+            <button
+              type="button"
+              className={`icon-btn stream-tool${bosunView ? " on" : ""}`}
+              aria-label="Bosun"
+              aria-pressed={bosunView}
+              title={
+                lastBosunTask
+                  ? `Bosun · last: ${displayTitle(lastBosunTask) || "Untitled to-do"}`
+                  : "Bosun"
+              }
+              onClick={() => (bosunView ? switchView("fleet") : pickBosun())}
+            >
+              <AnchorIcon size={17} />
+              {bosunAttention > 0 && <span className="stream-tool-dot" />}
+            </button>
+          )}
+          <button
+            type="button"
+            className={`icon-btn stream-tool${streamMoreMenu ? " on" : ""}`}
+            aria-label="More"
+            aria-haspopup="menu"
+            title="More"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setStreamMoreMenu({ x: r.left, y: r.bottom + 4 });
+            }}
+          >
+            <MoreIcon size={17} />
+            {hermesAttention > 0 && !agentsView && <span className="stream-tool-dot" />}
+          </button>
+        </div>
+      ) : (
       <div className="sidebar-launch">
         <button
           type="button"
@@ -5933,6 +6250,84 @@ export const Sidebar = memo(function Sidebar({
           </button>
         )}
       </div>
+      )}
+      {streamNewMenu && (
+        <ContextMenu
+          x={streamNewMenu.x}
+          y={streamNewMenu.y}
+          title="New chat in"
+          onClose={() => setStreamNewMenu(null)}
+          items={[
+            ...visibleWorkspaces
+              .filter((w) => !w.hidden)
+              .map((w) => ({
+                label: w.name,
+                icon: (
+                  <MachineAvatar
+                    image={w.image}
+                    color={projectAccent(w.id)}
+                    name={w.name}
+                    size={18}
+                    preview={false}
+                  />
+                ),
+                badge: w.id === currentWsId ? "current" : undefined,
+                onSelect: () => newChatIn(w.id, streamNewMenu),
+              })),
+            {
+              label: "Quick thread",
+              icon: <CompassIcon size={15} />,
+              dividerBefore: visibleWorkspaces.length > 0,
+              onSelect: () => actions.openQuickDraft(),
+            },
+          ]}
+        />
+      )}
+      {streamMoreMenu && (
+        <ContextMenu
+          x={streamMoreMenu.x}
+          y={streamMoreMenu.y}
+          onClose={() => setStreamMoreMenu(null)}
+          items={[
+            ...(!soloId
+              ? [
+                  {
+                    label: "Add workspace",
+                    icon: <FolderPlusIcon size={15} />,
+                    onSelect: onAddProject,
+                  },
+                ]
+              : []),
+            ...(state.projects.some(
+              (p) => p.id !== HERMES_HOME_PROJECT_ID && !isQuickHomeProjectId(p.id),
+            )
+              ? [
+                  {
+                    label: "Scheduled runs",
+                    icon: <ClockIcon size={15} />,
+                    badge:
+                      state.schedules.filter((s) => s.enabled).length > 0 ? String(state.schedules.filter((s) => s.enabled).length) : undefined,
+                    onSelect: onOpenSchedules,
+                  },
+                ]
+              : []),
+            ...(showHermesAgents() && !soloId
+              ? [
+                  {
+                    label: agentsView ? "Back to all chats" : "Hermes agents",
+                    icon: agentsView ? (
+                      <FolderIcon size={15} />
+                    ) : (
+                      <AgentMark agent="hermes" size={15} />
+                    ),
+                    badge: !agentsView && hermesAttention > 0 ? String(hermesAttention) : undefined,
+                    onSelect: () => switchView(agentsView ? "fleet" : "agents"),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
       {filterOpen && (
         <SidebarViewPopover
           anchorRef={filterBtnRef}
@@ -5964,7 +6359,7 @@ export const Sidebar = memo(function Sidebar({
             contentMatches={contentMatches}
             view={layout.view}
             onOpenBosun={onOpenBosun}
-            onBack={railMode ? undefined : () => switchView("fleet")}
+            onBack={railMode || streamLayout ? undefined : () => switchView("fleet")}
             workspaceFilter={bosunWsFilter}
             onClearWorkspaceFilter={() => setBosunWsFilter(null)}
           />
@@ -5990,7 +6385,15 @@ export const Sidebar = memo(function Sidebar({
             view={layout.view}
           />
         )}
-        {!quickView && !agentsView && !bosunView && !soloId && sections.length === 0 && (
+        {!quickView && !agentsView && !bosunView && projectLayout === "stream" && (
+          <StreamSection
+            threads={streamThreads}
+            autoSettleDays={sidebarPrefs.autoSettleDays}
+            now={now}
+            view={layout.view}
+          />
+        )}
+        {!quickView && !agentsView && !bosunView && !soloId && projectLayout !== "stream" && sections.length === 0 && (
           <div className="sidebar-empty">
             <p>No projects in the fleet yet.</p>
           </div>
@@ -6096,7 +6499,7 @@ export const Sidebar = memo(function Sidebar({
             ]}
           />
         )}
-        {!quickView && !agentsView && !bosunView &&
+        {!quickView && !agentsView && !bosunView && projectLayout !== "stream" &&
           laidOutWorkspaces.map((w) => {
             const data = sectionData.get(w.id) ?? {
               projects: [],

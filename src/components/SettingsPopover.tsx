@@ -160,6 +160,7 @@ const PROJECT_LAYOUT_LABELS: Record<ProjectLayout, string> = {
   accordion: "one open",
   picker: "picker",
   rail: "rail",
+  stream: "stream",
 };
 
 const PROJECT_LAYOUT_HINTS: Record<ProjectLayout, string> = {
@@ -167,6 +168,7 @@ const PROJECT_LAYOUT_HINTS: Record<ProjectLayout, string> = {
   accordion: "Opening a project closes the others. All the headers stay visible, but only one list of chats is ever on screen.",
   picker: "One project at a time, chosen from a dropdown at the top. No headers, so the chat list gets the whole sidebar.",
   rail: "A column of project icons down the left edge. One tap to switch, every project always in view with its own unread badge.",
+  stream: "Every chat from every project in one list, newest first, as cards wearing their project's icon. One slim toolbar up top instead of the button stack.",
 };
 
 /** The two recency floats, independent so you can have your chats ordered by

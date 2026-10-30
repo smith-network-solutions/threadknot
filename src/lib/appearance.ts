@@ -321,14 +321,18 @@ export function monoFontStack(id: string): string {
  *  - `rail`: a chat-app-style icon rail - a column of project avatars pinned down the
  *    left edge, the selected project's chats filling the rest. Switching is
  *    one tap with no menu, and every project stays visible (and badgeable)
- *    the whole time. */
-export type ProjectLayout = "sections" | "accordion" | "picker" | "rail";
+ *    the whole time.
+ *  - `stream`: no project layer at all. Every chat from every project in one
+ *    recency-ordered list of cards, each wearing its project's icon, under a
+ *    single compact toolbar instead of the stacked launch buttons. */
+export type ProjectLayout = "sections" | "accordion" | "picker" | "rail" | "stream";
 
 export const PROJECT_LAYOUTS: readonly ProjectLayout[] = [
   "sections",
   "accordion",
   "picker",
   "rail",
+  "stream",
 ];
 
 export interface SidebarPrefs {
