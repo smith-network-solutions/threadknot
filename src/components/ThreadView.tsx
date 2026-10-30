@@ -54,6 +54,8 @@ import {
 import { VISIBLE_TABS } from "./WorkspacePanel";
 import "../styles/workspace.css";
 import { BackToInbox } from "./InboxView";
+import { PersonAvatar } from "./PeopleRow";
+import { useAlcove } from "../lib/useAlcove";
 
 /** How close to the end we can be before showing the jump-to-present button. */
 const BOTTOM_SLACK = 90;
@@ -210,6 +212,20 @@ function ChatFindBar({
         <XIcon size={14} />
       </button>
     </div>
+  );
+}
+
+/** Alcove only: the acting person's face at the header's top-right, beside
+ *  More, as in the Alcove mockups. Display only (no handler); renders nothing
+ *  when the server has no people list. */
+function AlcoveHeadAvatar() {
+  const { state } = useStore();
+  const me = state.people.find((p) => p.id === state.actingPerson);
+  if (!me) return null;
+  return (
+    <span className="alc-head-avatar" title={me.name}>
+      <PersonAvatar person={me} size={27} preview={false} />
+    </span>
   );
 }
 
@@ -1199,6 +1215,7 @@ export function ThreadView() {
     return () => window.removeEventListener(APPEARANCE_EVENT, onAppearance);
   }, [pinToEnd]);
 
+  const alcove = useAlcove();
   const busy = thread && thread.status !== "idle";
   // Multi-lane threads get a two-row header on phones (the lane roster drops
   // to its own scrolling strip) — see the mobile `.thread-head.has-lanes` CSS.
@@ -1404,6 +1421,7 @@ export function ThreadView() {
             </>
           )}
         </div>
+        {alcove && <AlcoveHeadAvatar />}
       </header>
 
       <div

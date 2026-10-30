@@ -1,0 +1,1483 @@
+/* alcove: panes
+   The workspace panes (Files, Git, Artifacts, Browser, Terminal) as one
+   floating frosted card on the room, after Side-Panel-Opened.png: 36px glass
+   card inset from the window edge, a quiet header with pill tabs and round
+   27px controls, then pane content laid straight on the glass. Inner surfaces
+   (code, diffs, the terminal, the browser page) sit in their own rounded
+   white wells. Every rule is gated on the "workspace" skin module, the same
+   switch the arcade skin uses for its pane chrome, so turning that module off
+   leaves the panes on the stock light-family look. */
+
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) {
+  --alc-pane-pad: 16px;
+  --alc-well: rgba(255, 255, 255, 0.78);
+  --alc-well-r: 20px;
+  --alc-tile: #e6e6e6;
+  --alc-row-hover: rgba(84, 84, 84, 0.07);
+  --alc-btn: #ffffff;
+  --alc-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+/* ---- the card --------------------------------------------------------------
+   Desktop: the panel keeps its flex-basis (the split fraction still drives it)
+   and gains a margin so it floats on the room instead of hanging off a border.
+   The margin only exists while open, so a closed panel still collapses to 0. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-panel {
+  border: 0;
+  border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+  background: var(--alc-glass);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-float);
+  color: var(--alc-ink);
+}
+@media (min-width: 1024px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.side .workspace-panel,
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.stacked .workspace-panel {
+    border: 0;
+    transition:
+      flex-basis 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.16s ease,
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      margin 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.side.ws-open .workspace-panel {
+    margin: 12px 10px 10px 0;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.stacked.ws-open .workspace-panel {
+    margin: 0 10px 10px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.dragging .workspace-panel {
+    transition: none;
+  }
+
+  /* Splitter: no seam between two cards, just a small grip that shows on
+     hover. The 7px drag target itself is untouched. */
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-divider::after {
+    background: transparent;
+    border-radius: var(--alc-r-pill);
+    transition: background 0.16s ease, height 0.16s ease, width 0.16s ease;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.side .ws-divider::after {
+    width: 4px;
+    height: 44px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.stacked .ws-divider::after {
+    width: 44px;
+    height: 4px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-divider:hover::after {
+    background: rgba(84, 84, 84, 0.22);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.dragging .ws-divider::after {
+    background: var(--brass, var(--alc-blue));
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.side.dragging .ws-divider::after {
+    height: 64px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split.stacked.dragging .ws-divider::after {
+    width: 64px;
+  }
+}
+/* Phone / narrow: still a full-screen overlay, but drawn as an inset card. */
+@media (max-width: 1023px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-panel {
+    inset: 8px;
+    border-radius: 30px; corner-shape: var(--alc-corner);
+    background: rgba(250, 250, 250, 0.9);
+    -webkit-backdrop-filter: blur(22px) saturate(1.13);
+    backdrop-filter: blur(22px) saturate(1.13);
+    box-shadow: var(--alc-rim), 0 18px 50px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .main-split:not(.ws-open) .workspace-panel {
+    transform: translateX(calc(100% + 16px));
+  }
+}
+
+/* ---- header: pill tabs + round controls ----------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head {
+  gap: 7px;
+  min-height: 27px;
+  padding: 16px 14px 8px 14px;
+  border-bottom: 0;
+  background: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-tabs {
+  gap: 3px;
+  padding: 2px;
+  margin: -2px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-tab {
+  gap: 6px;
+  height: 29px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: transparent;
+  color: var(--alc-ink-4);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-tab:hover {
+  color: var(--alc-ink);
+  background: var(--alc-row-hover);
+}
+/* The active tab is the pane's title: ink, the mockup's 16px/500, sitting on
+   a white pill so it still reads as the selected tab. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-tab.on {
+  color: var(--alc-ink);
+  background: var(--alc-btn);
+  box-shadow: var(--alc-halo);
+  font-size: 15px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-tab svg {
+  opacity: 0.8;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head > .icon-btn {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  min-width: 27px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--alc-btn);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+  transition: color 0.16s ease, transform 0.16s var(--alc-ease);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head > .icon-btn:hover {
+  color: var(--alc-ink);
+  background: var(--alc-btn);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head > .icon-btn:active {
+  transform: scale(0.94);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head > .icon-btn svg {
+  width: 15px;
+  height: 15px;
+}
+/* A narrow card can't fit five labelled pills plus the title tab: the inactive
+   tabs drop to their icon (label kept for screen readers, clipped visually),
+   the active tab keeps its label as the title. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head {
+  container-type: inline-size;
+}
+@container (max-width: 470px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-tab:not(.on) {
+    width: 29px;
+    padding: 0;
+    justify-content: center;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-tab:not(.on) > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+@media (max-width: 1023px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head {
+    padding: 14px 12px 8px 12px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-tab {
+    padding: 0 9px;
+  }
+}
+@media (hover: none) and (pointer: coarse) {
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .workspace-head > .icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-stub,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-empty,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-empty,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-activity-empty {
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-empty {
+  padding: 40px 24px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-error,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-error {
+  color: var(--red);
+}
+
+/* ---- shared pane chrome: heads, pill buttons, filters --------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-head,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-head,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-head,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-sub {
+  padding: 6px var(--alc-pane-pad) 8px;
+  border-bottom: 0;
+  background: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-count,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-count {
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-repo-name {
+  color: var(--alc-ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-partial {
+  border: 0;
+  background: rgba(201, 138, 46, 0.12);
+  color: var(--amber);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Pill buttons: white, halo, no border. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-refresh,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-refresh,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-sync,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-mini,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-back,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-action,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-back,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-rescan,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-more,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-gallery-nav button,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-pick-trigger {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-btn);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-weight: 500;
+  transition: color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, transform 0.16s var(--alc-ease);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-refresh,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-refresh {
+  min-height: 29px;
+  padding: 0 13px;
+  font-size: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-sync {
+  min-height: 29px;
+  padding: 0 10px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-mini {
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-back,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-back {
+  min-height: 29px;
+  padding: 0 11px 0 8px;
+  font-size: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-refresh:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-refresh:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-sync:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-mini:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-back:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-back:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-action:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-rescan:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-more:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-gallery-nav button:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-pick-trigger:hover {
+  color: var(--alc-ink);
+  background: var(--alc-btn);
+  box-shadow: 0 0 12.8px rgba(0, 0, 0, 0.09);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-refresh:active:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-refresh:active:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-mini:active:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-action:active:not(:disabled) {
+  transform: scale(0.96);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-refresh.on,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-pick-trigger.set {
+  color: var(--alc-blue);
+  background: color-mix(in srgb, var(--alc-blue) 11%, #fff);
+  box-shadow: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-mini.danger:hover:not(:disabled) {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 9%, #fff);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-action.copied {
+  color: var(--alc-plus);
+  background: color-mix(in srgb, var(--alc-plus) 11%, #fff);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-action.error,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-delete:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-delete.armed {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 9%, #fff);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-dl,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-dl-big {
+  color: #fff;
+  background: var(--brass, var(--alc-blue));
+  border: 0;
+  border-radius: var(--alc-r-pill);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-dl:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-dl-big:hover:not(:disabled) {
+  color: #fff;
+  background: var(--brass, var(--alc-blue));
+  filter: brightness(1.06);
+}
+
+/* Search fields: white pills. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-filter,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-search {
+  min-height: 34px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+  padding-left: 13px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-filter:focus-within,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find:focus-within,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-search:focus-within {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--alc-blue) 16%, transparent), var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-filter input,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find input,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-search input {
+  color: var(--alc-ink);
+  font-size: 13px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-filter input::placeholder,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find input::placeholder,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-search input::placeholder {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find {
+  margin: 4px var(--alc-pane-pad) 6px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find button {
+  border-radius: 50%;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find button:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-find button:focus-visible {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink);
+}
+
+/* Segmented switches: a pill track with a white thumb. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-seg,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-seg {
+  gap: 2px;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.07);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-seg button,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-seg-btn {
+  min-height: 25px;
+  padding: 0 12px;
+  border-radius: var(--alc-r-pill);
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-seg button:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-seg-btn:hover {
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-seg button.on,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-seg-btn.on {
+  color: var(--alc-ink);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+}
+
+/* ---- Files tree: the sidebar's row language ------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-tree {
+  padding: 2px 8px calc(14px + var(--safe-b, 0px));
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-row {
+  min-height: 30px;
+  gap: 8px;
+  padding: 3px 9px;
+  border-radius: 15px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-row:hover {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-row:active,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-row:focus-visible {
+  background: #fff;
+  color: var(--alc-ink);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-dir > svg,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-file svg,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-dir .files-chevron svg {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-chevron {
+  color: var(--alc-ink-5);
+  transition: transform 0.24s var(--alc-ease);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-size {
+  color: var(--alc-ink-5);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-more {
+  color: var(--alc-ink-4);
+}
+
+/* ---- file viewer: the code-viewer well ------------------------------------ */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-crumb {
+  color: var(--alc-ink-4);
+  font-family: var(--alc-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-action {
+  min-height: 29px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-notice {
+  margin: 0 var(--alc-pane-pad) 6px;
+  border: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  background: rgba(201, 138, 46, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-head,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-actions {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-actions {
+  flex-shrink: 1;
+  min-width: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-body {
+  margin: 0 12px 14px;
+  border-radius: var(--alc-well-r); corner-shape: var(--alc-corner);
+  background: var(--alc-well);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code {
+  padding: 14px 15px calc(16px + var(--safe-b, 0px));
+  background: transparent;
+  color: #3d3d3d;
+  font-family: var(--alc-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+/* highlight.js ships github-dark globally; inside the light well, recolour the
+   tokens to a quiet light palette (scoped to the file viewer only). */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs {
+  color: #3d3d3d;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-comment,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-quote {
+  color: #8f8f8f;
+  font-style: italic;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-keyword,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-selector-tag,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-meta .hljs-keyword,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-doctag,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-template-tag,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-type,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-variable.language_ {
+  color: #c2410c;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-title,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-title.class_,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-title.function_,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-section {
+  color: #6d28d9;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-attr,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-attribute,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-literal,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-meta,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-number,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-operator,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-variable,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-selector-attr,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-selector-class,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-selector-id {
+  color: #1d6fd1;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-string,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-regexp,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-meta .hljs-string {
+  color: #0f7a55;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-built_in,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-symbol {
+  color: #b45309;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-name,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-tag,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-selector-pseudo {
+  color: #15803d;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-subst,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-params {
+  color: #3d3d3d;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-addition {
+  color: #1f7a3a;
+  background: rgba(63, 174, 90, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-code .hljs-deletion {
+  color: #b42318;
+  background: rgba(224, 96, 90, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-md {
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-media {
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-media video {
+  border-radius: 18px; corner-shape: var(--alc-corner);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+/* PDF: pages on a pale grey desk instead of the dark one. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-viewer,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-stage {
+  background: #ececec;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-toolbar {
+  border-bottom: 0;
+  background: rgba(255, 255, 255, 0.7);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-page {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-tool,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-zoom {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-tool:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-zoom:hover:not(:disabled) {
+  border: 0;
+  color: var(--alc-ink);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-pdf-page-shell {
+  border-radius: 6px; corner-shape: var(--alc-corner);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-download-prompt {
+  color: var(--alc-ink-3);
+}
+
+/* ---- Artifacts: the tile grid --------------------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .files-tree {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: min-content;
+  align-content: start;
+  gap: 8px;
+  padding: 4px 14px calc(84px + var(--safe-b, 0px));
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .files-tree > .files-empty {
+  grid-column: 1 / -1;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-row {
+  position: relative;
+  aspect-ratio: 1;
+  min-width: 0;
+  border-radius: 17px; corner-shape: var(--alc-corner);
+  background: var(--alc-tile);
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.05), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  transition: transform 0.16s var(--alc-ease), box-shadow 0.16s ease, background 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-row:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-row:focus-within {
+  background: #e9e9e9;
+  box-shadow: 0 5px 13px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  transform: scale(1.025);
+}
+/* The open button fills the tile: the file glyph centred on a soft white disc
+   (the mockup's inner detail), name and meta along the bottom. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-open {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 8px 8px 9px;
+  border-radius: inherit; corner-shape: inherit;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.85) 0 15px, rgba(255, 255, 255, 0.32) 16px 34%, transparent 34.5%),
+    repeating-conic-gradient(from 0deg at 50% 40%, rgba(255, 255, 255, 0.0) 0 14deg, rgba(255, 255, 255, 0.28) 14deg 15deg);
+  color: var(--alc-ink-2);
+  text-align: center;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-open:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-open:active {
+  background:
+    radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.95) 0 15px, rgba(255, 255, 255, 0.4) 16px 34%, transparent 34.5%),
+    repeating-conic-gradient(from 0deg at 50% 40%, rgba(255, 255, 255, 0.0) 0 14deg, rgba(255, 255, 255, 0.32) 14deg 15deg);
+  color: var(--alc-ink);
+  box-shadow: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-open .files-chevron-spacer {
+  display: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-open > svg {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  width: 13px;
+  height: 13px;
+  transform: translate(-50%, -50%);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-open .files-name {
+  flex: 0 0 auto;
+  width: 100%;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-open .files-size {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  color: var(--alc-ink-4);
+}
+/* Delete stays reachable on every tile (quiet until hover), as a small round
+   button in the corner. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--alc-ink-4);
+  opacity: 0.55;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-row:hover .artifact-list-delete,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-delete:focus-visible {
+  opacity: 1;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-delete:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .artifact-list-delete.armed {
+  opacity: 1;
+  border: 0;
+  color: #fff;
+  background: var(--red);
+}
+/* The grid fades and blurs out at the foot of the card. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"]:has(> .files-pane)::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 96px;
+  pointer-events: none;
+  border-radius: 0 0 var(--alc-r-card) var(--alc-r-card); corner-shape: var(--alc-corner);
+  -webkit-backdrop-filter: blur(7px);
+  backdrop-filter: blur(7px);
+  background: linear-gradient(to bottom, rgba(248, 248, 248, 0), rgba(248, 248, 248, 0.55));
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 70%);
+  mask-image: linear-gradient(to bottom, transparent, #000 70%);
+}
+@media (max-width: 520px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .ws-pane[data-zoom-pane="artifacts"] .files-tree {
+    gap: 7px;
+    padding-inline: 10px;
+  }
+}
+
+/* Artifact viewer inside the pane + its prev/next bar. The image stage stays
+   dark on purpose (white-on-transparent art needs it); only its zoom control
+   joins the pill language. Scoped to the pane + lightbox, not chat cards. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-body .artifact-media-zoom,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-body .artifact-media-zoom {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-float);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-body .artifact-media-zoom button,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-body .artifact-media-zoom button {
+  border-right: 0;
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-body .artifact-media-zoom button:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-body .artifact-media-zoom button:hover:not(:disabled) {
+  color: var(--alc-ink);
+  background: rgba(84, 84, 84, 0.07);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-body .artifact-media-zoom button:disabled,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-body .artifact-media-zoom button:disabled {
+  color: var(--alc-ink-5);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-body .artifact-media-zoom .artifact-media-full,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-body .artifact-media-zoom .artifact-media-full {
+  border-left: 1px solid rgba(84, 84, 84, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .files-viewer-body .artifact-media-zoom .artifact-media-full[aria-pressed="true"],
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-body .artifact-media-zoom .artifact-media-full[aria-pressed="true"] {
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-gallery-nav {
+  padding: 4px 12px 14px;
+  border-top: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-gallery-nav button {
+  min-height: 30px;
+  padding: 0 13px;
+  font-size: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-gallery-nav span {
+  color: var(--alc-ink-4);
+  font-weight: 500;
+}
+
+/* ---- the chat artifact lightbox ------------------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-backdrop {
+  background: rgba(242, 242, 242, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox {
+  border: 0;
+  border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+  background: rgba(250, 250, 250, 0.82);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), 0 30px 80px rgba(0, 0, 0, 0.14), 0 4px 12px rgba(0, 0, 0, 0.05);
+  animation: alc-pop-in 0.28s var(--alc-spring) both;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-head {
+  min-height: 56px;
+  padding: 14px 14px 10px 18px;
+  border-bottom: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-title strong {
+  color: var(--alc-ink);
+  font-size: 16px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-title span {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-close {
+  border: 0;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-close:hover {
+  color: var(--alc-ink);
+  background: #fff;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-actions button,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-mobile-actions button {
+  min-height: 29px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font: 500 12px/1 var(--font-ui);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-actions button:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-mobile-actions button:hover {
+  color: var(--alc-ink);
+  border: 0;
+  background: #fff;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-body {
+  margin: 0 12px 12px;
+  border-radius: 26px; corner-shape: var(--alc-corner);
+  background: var(--alc-well);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .artifact-lightbox-error {
+  margin: 0 12px 8px;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+}
+
+/* ---- Git ------------------------------------------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-trigger {
+  min-height: 29px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-trigger:hover:not(:disabled) {
+  border: 0;
+  box-shadow: 0 0 12.8px rgba(0, 0, 0, 0.09);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-head-branch {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-name {
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-scroll {
+  padding-inline: 8px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-section-title {
+  padding: 6px 8px 4px;
+  color: var(--alc-ink-4);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-section-title.conflict {
+  color: var(--red);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-row {
+  min-height: 30px;
+  border-radius: 15px; corner-shape: var(--alc-corner);
+  transition: background 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-row:hover {
+  background: var(--alc-row-hover);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-row-main {
+  padding: 5px 4px 5px 8px;
+  color: var(--alc-ink-2);
+  font-size: 13px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-row-path {
+  overflow: hidden;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-path-dir {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-path-base {
+  color: var(--alc-ink);
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter {
+  font-family: var(--alc-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-A { color: var(--alc-plus); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-D,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-U { color: var(--alc-minus); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-M,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-T,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-R,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-C { color: var(--amber); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-letter.s-\? { color: var(--alc-blue); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-card {
+  border: 0;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-card:hover:not(:disabled) {
+  background: #fff;
+  border: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-card-name {
+  color: var(--alc-ink);
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-card-path,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-card-last {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-chip {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.07);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-chip.stage,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-chip.ahead { color: var(--alc-plus); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-chip.conflict { color: var(--alc-minus); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-chip.new { color: var(--alc-blue); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-op-error {
+  border: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+}
+
+/* Commit box: a rounded white field and a pill button, floating on the glass. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-commit {
+  gap: 8px;
+  align-items: flex-end;
+  padding: 8px 12px 14px;
+  border-top: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-commit-msg {
+  min-height: 42px;
+  padding: 11px 15px;
+  border: 0;
+  border-radius: 21px; corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-halo), inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+  color: var(--alc-ink);
+  font-size: 13px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-commit-msg::placeholder {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-commit-msg:focus {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--alc-blue) 16%, transparent), var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-commit-btn {
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: var(--alc-r-pill);
+  background: var(--brass, var(--alc-blue));
+  color: #fff;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-commit-btn:disabled {
+  opacity: 1;
+  background: #e2e2e2;
+  color: var(--alc-ink-4);
+}
+
+/* Diff: a white well, green / red lines. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-path {
+  color: var(--alc-ink-3);
+  font-family: var(--alc-mono);
+  font-size: 11px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-body {
+  margin: 0 2px 12px;
+  padding: 10px 0 12px;
+  border-radius: var(--alc-well-r); corner-shape: var(--alc-corner);
+  background: var(--alc-well);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+  font-family: var(--alc-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-line {
+  padding: 0 13px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-line.add {
+  color: #1f7a3a;
+  background: rgba(63, 174, 90, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-line.del {
+  color: #b42318;
+  background: rgba(224, 96, 90, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-line.hunk {
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-line.file {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-diff-line.ctx {
+  color: #3d3d3d;
+  opacity: 1;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-file-counts .add { color: var(--alc-plus); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-file-counts .del { color: var(--alc-minus); }
+
+/* History. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-bar {
+  border-bottom: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-list {
+  padding-inline: 6px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-row {
+  border-radius: 14px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-row:hover {
+  background: var(--alc-row-hover);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-row.on {
+  background: #fff;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-subject {
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-author,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-date {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-ref {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.07);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-ref.tag { color: var(--alc-plus); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-ref.remote { color: var(--alc-blue); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-ref.head { color: var(--alc-minus); }
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-log-detail {
+  border: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-detail-scroll {
+  padding-inline: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-detail-subject {
+  color: var(--alc-ink);
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-detail-body {
+  border: 0;
+  border-radius: 16px; corner-shape: var(--alc-corner);
+  background: var(--alc-well);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-copy {
+  border-radius: var(--alc-r-pill);
+}
+
+/* ---- pane popovers: branch picker, terminal context menu, browser dialogs - */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-menu,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-ctx,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-more-menu,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-dialog-card {
+  border: 0;
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-float);
+  animation: alc-pop-in 0.25s var(--alc-spring) both;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-dialog-card {
+  border-radius: 28px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-menu,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-ctx,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-more-menu {
+  padding: 7px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-filter,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-input,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-dialog-card input,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-paste-card textarea {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.06);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-paste-card textarea {
+  border-radius: 18px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-filter:focus,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-input:focus,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-dialog-card input:focus,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-paste-card textarea:focus {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--alc-blue) 16%, transparent);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-opt,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-ctx button,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-more-action {
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-3);
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-opt:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-ctx button:hover:not(:disabled),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-more-action:hover {
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-opt.on,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-more-action.on {
+  background: #fff;
+  color: var(--alc-ink);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-group {
+  color: var(--alc-ink-4);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-dialog-shade {
+  background: rgba(242, 242, 242, 0.45);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-dialog-actions button {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-dialog-actions button.primary {
+  background: var(--brass, var(--alc-blue));
+  color: #fff;
+}
+
+/* ---- Browser --------------------------------------------------------------
+   Chrome becomes a pill address bar between round nav buttons; the page itself
+   sits in a rounded well and is never restyled. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-pane {
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-chrome {
+  gap: 6px;
+  padding: 4px 12px 8px;
+  border-bottom: 0;
+  background: transparent;
+  box-shadow: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-btn {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  color: var(--alc-ink-4);
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-btn:hover:not(:disabled):not([aria-disabled="true"]),
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-btn.on {
+  border: 0;
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-url {
+  height: 34px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-url::placeholder {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-url:focus {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--alc-blue) 16%, transparent), var(--alc-halo);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-device,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-profile {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-profile.on {
+  border: 0;
+  color: var(--alc-blue);
+  background: color-mix(in srgb, var(--alc-blue) 11%, #fff);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-connection {
+  border: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-connection.live {
+  border: 0;
+  color: var(--alc-plus);
+  background: color-mix(in srgb, var(--alc-plus) 12%, transparent);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-connection.live .browser-connection-dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--alc-plus) 14%, transparent);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-signin-note {
+  margin: 0 12px 6px;
+  border: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  background: color-mix(in srgb, var(--alc-blue) 9%, transparent);
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-signin-note span {
+  color: var(--alc-ink-3);
+}
+
+/* Tab strip: pill tabs. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tabs {
+  min-height: 31px;
+  padding: 0 10px 8px;
+  border-bottom: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tabs-scroll {
+  gap: 4px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  color: var(--alc-ink-4);
+  transition: background 0.16s ease, color 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab:hover {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab.active {
+  border: 0;
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab-main {
+  height: 28px;
+  padding-left: 11px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab-title {
+  font-size: 11.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab.active .browser-tab-state {
+  border-color: var(--alc-plus);
+  background: var(--alc-plus);
+  box-shadow: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab-close,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-new-tab {
+  border-radius: 50%;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-tab-close:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-new-tab:hover {
+  background: rgba(84, 84, 84, 0.08);
+  color: var(--alc-ink);
+}
+
+/* The page well. Only the frame around the screencast changes. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-body {
+  margin: 0 12px 14px;
+  border-radius: 24px; corner-shape: var(--alc-corner);
+  background: var(--alc-well);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-stage {
+  background: #ececec;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-empty {
+  padding: 18px 16px;
+  background: #f7f7f7;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-eyebrow {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-empty-head h3 {
+  color: var(--alc-ink);
+  font-size: 15px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-rescan {
+  height: 29px;
+  padding: 0 13px;
+  font-size: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-ports {
+  gap: 4px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-port {
+  min-height: 40px;
+  padding: 6px 13px;
+  border: 0;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: var(--alc-shadow);
+  color: var(--alc-ink);
+  transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.16s var(--alc-ease);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-port:hover {
+  border: 0;
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  transform: translateX(2px);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-port-num {
+  color: var(--alc-blue);
+  font-family: var(--alc-mono);
+  font-size: 11.5px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-port-title {
+  color: var(--alc-ink-3);
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-empty-hint {
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-activity-panel {
+  border: 0;
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.86);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-float);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-activity-panel > header {
+  border-bottom: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-panel-close {
+  border-radius: 50%;
+}
+
+/* ---- Terminal --------------------------------------------------------------
+   xterm paints its own light palette (bg #ffffff) in the light family; the
+   frame around it becomes a white rounded card so the canvas edge disappears. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .terminal-pane {
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tabs {
+  gap: 4px;
+  padding: 2px 12px 8px;
+  border-bottom: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab:hover {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab.on {
+  border: 0;
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab-label {
+  padding: 6px 6px 6px 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab-x {
+  padding: 0 10px 0 2px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab-edit {
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab-add {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-tab-add:hover {
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-frame {
+  margin: 0 12px 14px;
+  padding: 12px 6px 12px 14px;
+  border-radius: 22px; corner-shape: var(--alc-corner);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(84, 84, 84, 0.05), var(--alc-shadow);
+}
+/* xterm's stock stylesheet paints the viewport #000; the light palette only
+   covers the rows, so the strip under the last row showed as a black bar.
+   Match it to the light terminal background. */
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-host .xterm-viewport {
+  background-color: #ffffff !important;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-keys {
+  gap: 5px;
+  padding: 2px 10px calc(10px + var(--safe-b, 0px));
+  border-top: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-keys button {
+  height: 38px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-keys button.on {
+  border: 0;
+  color: #fff;
+  background: var(--brass, var(--alc-blue));
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-keys .term-key-danger {
+  color: var(--red);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-notice {
+  border: 0;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--alc-float);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-selection-bar {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--alc-float);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-selection-bar button {
+  border-radius: var(--alc-r-pill);
+}

@@ -1,0 +1,690 @@
+/* alcove: composer
+   The composer is a floating frosted card centred over the foot of the feed:
+   32px corners, a white rim and a soft lift, the room colour flat beneath it.
+   Every control on its bottom row is a quiet grey icon or text pill that gets a
+   white halo on hover; the only colour on the row is the send pill once there
+   is something to send. Its menus share the Alcove glass dropdown. */
+
+:root[data-theme="alcove"] {
+  --alc-cmp-w: 600px; /* cozy: the mockup's 528px card, scaled to Threadknot's type */
+  --alc-cmp-w-wide: 780px;
+  --alc-cmp-font: clamp(11px, calc(var(--composer-font, 16px) - 3px), 17px);
+  --alc-cmp-halo: 0 0 0 4px #ffffff, 0 2px 8px rgba(0, 0, 0, 0.04);
+  --alc-menu-shadow: var(--alc-rim), 0 4px 9.6px rgba(0, 0, 0, 0.02), 0 12px 32px rgba(0, 0, 0, 0.07);
+  --alc-track-fill: color-mix(in srgb, var(--brass) 48%, #ffffff);
+}
+
+/* ---- the dock + width ----------------------------------------------------
+   Width presets keep working: cozy (the default) is the mockup's narrow card,
+   wide is a step up, full spans the pane. They are read off the pref's own
+   variable with a style query so no script has to know about Alcove. Phones
+   keep the base docked layout (the phone block owns .composer there). */
+@media (min-width: 768px) {
+  :root[data-theme="alcove"] .composer {
+    max-width: var(--alc-cmp-w);
+    padding: 4px 22px calc(13px + var(--safe-b, 0px));
+  }
+  @container style(--composer-max-w: 1040px) {
+    :root[data-theme="alcove"] .composer { max-width: var(--alc-cmp-w-wide); }
+  }
+  @container style(--composer-max-w: 100%) {
+    :root[data-theme="alcove"] .composer { max-width: none; }
+  }
+}
+
+/* The feed scrolls under the card: a short fade into the room colour above
+   it, a light veil behind the glass, and the flat room below it. */
+:root[data-theme="alcove"] .composer-dock::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  right: 0;
+  top: -26px;
+  bottom: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--bg) 0%, transparent) 0,
+    color-mix(in srgb, var(--bg) 62%, transparent) 30px,
+    color-mix(in srgb, var(--bg) 62%, transparent) calc(100% - 44px),
+    var(--bg) calc(100% - 16px)
+  );
+}
+
+/* ---- the card -------------------------------------------------------------- */
+:root[data-theme="alcove"] .composer .composer-card {
+  background: transparent;
+  border: 0;
+  border-radius: var(--alc-r-composer); corner-shape: var(--alc-corner);
+  padding: 17px 18px 10px 20px;
+  box-shadow:
+    var(--alc-rim),
+    0 4px 9.6px rgba(0, 0, 0, 0.02),
+    0 10px 30px rgba(0, 0, 0, 0.045);
+}
+/* The frost lives on a pseudo-element, not the card: a backdrop-filter on the
+   card would make it the backdrop root for its own menus, and their glass
+   would then have nothing behind it to blur. */
+:root[data-theme="alcove"] .composer .composer-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit; corner-shape: inherit;
+  background: rgba(255, 255, 255, 0.66);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+}
+/* The glass exposure: a brighter top edge and a faint lift at the foot. */
+:root[data-theme="alcove"] .composer .composer-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit; corner-shape: inherit;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.34),
+    transparent 22px,
+    transparent calc(100% - 27px),
+    rgba(255, 255, 255, 0.24)
+  );
+}
+:root[data-theme="alcove"] .composer .composer-card > * { position: relative; z-index: 1; }
+:root[data-theme="alcove"] .composer .composer-card.file-drag {
+  box-shadow: var(--alc-rim), 0 0 0 2px color-mix(in srgb, var(--brass) 30%, transparent), 0 10px 30px rgba(0, 0, 0, 0.05);
+}
+:root[data-theme="alcove"] .composer-drop-hint {
+  border-radius: var(--alc-r-row); corner-shape: var(--alc-corner);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+:root[data-theme="alcove"][data-composer-density="compact"] .composer .composer-card {
+  padding-top: 11px;
+  padding-bottom: 7px;
+}
+
+/* ---- text ------------------------------------------------------------------
+   The live-Markdown backdrop and the textarea must share every box metric. */
+:root[data-theme="alcove"] .composer-card textarea,
+:root[data-theme="alcove"] .composer-md-backdrop {
+  font-size: var(--alc-cmp-font);
+  font-weight: 500;
+  line-height: 1.45;
+  padding: 1px 2px 4px 0;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .composer-card textarea { min-height: 20px; }
+:root[data-theme="alcove"] .composer-md-backdrop { color: var(--alc-ink); }
+:root[data-theme="alcove"] .composer-card textarea::placeholder { color: var(--alc-ink-4); opacity: 1; }
+:root[data-theme="alcove"][data-composer-density="compact"] .composer-card textarea,
+:root[data-theme="alcove"][data-composer-density="compact"] .composer-md-backdrop {
+  padding-top: 0;
+  padding-bottom: 3px;
+}
+
+/* Notes above the card: warnings, hand-back, attach errors. */
+:root[data-theme="alcove"] .composer-warn,
+:root[data-theme="alcove"] .composer-handback,
+:root[data-theme="alcove"] .attach-err {
+  padding: 0 14px 7px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ---- bottom row -------------------------------------------------------------- */
+:root[data-theme="alcove"] .composer-strip { gap: 6px; padding-top: 9px; }
+:root[data-theme="alcove"][data-composer-density="compact"] .composer-strip { padding-top: 6px; }
+:root[data-theme="alcove"] .composer-left { gap: 4px; margin-left: -2px; }
+:root[data-theme="alcove"] .composer-actions { gap: 8px; }
+:root[data-theme="alcove"] .composer-card button > svg { stroke-width: 1.7; }
+:root[data-theme="alcove"] .composer-card .mark { stroke-width: 0; }
+
+/* Plus: a thin grey glyph, no plate. */
+:root[data-theme="alcove"] .cset-trigger,
+:root[data-theme="alcove"] .composer-card .mic-btn,
+:root[data-theme="alcove"] .composer-card .ctx-ring {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: transparent;
+  color: var(--alc-ink-4);
+  transition:
+    background 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    transform 160ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .cset-trigger > svg { width: 18px; height: 18px; stroke-width: 1.6; }
+:root[data-theme="alcove"] .composer-card .mic-btn > svg { width: 17px; height: 17px; }
+:root[data-theme="alcove"] .composer-card .ctx-ring svg { width: 15px; height: 15px; }
+:root[data-theme="alcove"] .cset-trigger:hover:not(:disabled),
+:root[data-theme="alcove"] .composer-card .mic-btn:hover:not(:disabled),
+:root[data-theme="alcove"] .composer-card .ctx-ring:hover {
+  background: #ffffff;
+  box-shadow: var(--alc-cmp-halo);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .cset-trigger:active:not(:disabled),
+:root[data-theme="alcove"] .composer-card .mic-btn:active:not(:disabled) { transform: scale(1.08); }
+:root[data-theme="alcove"] .cset-trigger:disabled:hover { background: transparent; box-shadow: none; }
+
+/* Dictation live: a soft red pill that widens to hold the clock. */
+:root[data-theme="alcove"] .composer-card .mic-btn.recording {
+  width: auto;
+  padding: 0 8px 0 5px;
+  gap: 4px;
+  background: var(--red-dim);
+  color: var(--red);
+  box-shadow: none;
+}
+:root[data-theme="alcove"] .composer-card .mic-btn.working { color: var(--brass); }
+:root[data-theme="alcove"] .composer-card .mic-time { font-size: 10.5px; font-weight: 500; }
+:root[data-theme="alcove"] .composer-card .voice-btn.live {
+  background: var(--teal-dim);
+  color: var(--teal);
+}
+:root[data-theme="alcove"] .composer-card .ctx-track { stroke: rgba(84, 84, 84, 0.16); }
+
+/* Mode / Access (and the AI pill): quiet grey text pills. */
+:root[data-theme="alcove"] .composer-card .pill-trigger {
+  height: 24px;
+  gap: 4px;
+  padding: 0 7px 0 5px;
+  border-radius: var(--alc-r-pill);
+  background: transparent;
+  color: var(--alc-ink-4);
+  transition: background 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+:root[data-theme="alcove"] .composer-card .pill-trigger-icon { color: inherit; }
+:root[data-theme="alcove"] .composer-card .pill-trigger-icon > svg { width: 15px; height: 15px; stroke-width: 1.7; }
+:root[data-theme="alcove"] .composer-card .pill-trigger-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .composer-card .pill-trigger:hover,
+:root[data-theme="alcove"] .composer-card .pill-trigger.on {
+  background: #ffffff;
+  box-shadow: var(--alc-cmp-halo);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .composer-card .pill-trigger:hover .pill-trigger-icon,
+:root[data-theme="alcove"] .composer-card .pill-trigger.on .pill-trigger-icon { color: inherit; }
+
+/* The AI pill: provider mark, model in ink, effort lighter, a chevron. */
+:root[data-theme="alcove"] .composer-card .ai-trigger { padding: 0 6px 0 3px; gap: 5px; }
+:root[data-theme="alcove"] .composer-card .ai-trigger > .mark { width: 18px; height: 18px; }
+:root[data-theme="alcove"] .composer-card .mark-codex,
+:root[data-theme="alcove"] .composer .pill-menu .mark-codex { color: var(--alc-codex); }
+:root[data-theme="alcove"] .ai-trigger-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .ai-trigger-model { color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .ai-trigger-effort { color: var(--alc-ink-4); font-size: 10.5px; }
+:root[data-theme="alcove"] .composer-card .ai-trigger-caret {
+  margin-left: 1px;
+  color: var(--alc-ink-4);
+  stroke-width: 2.1;
+  transition: transform 180ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .ai-trigger.on .ai-trigger-caret { transform: rotate(180deg); }
+
+/* ---- send / stop / queue ------------------------------------------------------
+   Idle: a small grey arrow. Ready: a blue 36x22 pill with a soft blue shadow.
+   Running: a dark grey disc holding a square. */
+:root[data-theme="alcove"] .composer-card .send-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--alc-r-pill);
+  transition:
+    width 240ms cubic-bezier(0.22, 1.32, 0.36, 1),
+    height 240ms cubic-bezier(0.22, 1.32, 0.36, 1),
+    background 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    transform 160ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .composer-card .send-btn > svg { width: 17px; height: 17px; stroke-width: 1.9; }
+:root[data-theme="alcove"] .composer-card .send-btn:disabled {
+  background: transparent;
+  color: var(--alc-ink-4);
+  box-shadow: none;
+}
+:root[data-theme="alcove"] .composer-card .send-btn:not(:disabled):not(.stop) {
+  width: 36px;
+  background: var(--brass);
+  color: #ffffff;
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--brass) 26%, transparent);
+}
+:root[data-theme="alcove"] .composer-card .send-btn:not(:disabled):not(.stop) > svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.4;
+}
+:root[data-theme="alcove"] .composer-card .send-btn:not(:disabled):not(.stop):hover {
+  filter: none;
+  background: color-mix(in srgb, var(--brass) 88%, #ffffff);
+}
+:root[data-theme="alcove"] .composer-card .send-btn:not(:disabled):active { transform: scale(1.08); }
+:root[data-theme="alcove"] .composer-card .send-btn.stop {
+  width: 24px;
+  height: 24px;
+  background: var(--alc-ink-2);
+  color: #ffffff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12) !important;
+}
+:root[data-theme="alcove"] .composer-card .send-btn.stop > svg { width: 13px; height: 13px; }
+:root[data-theme="alcove"] .composer-card .send-btn.stop:hover { background: #3f3f3f; }
+
+/* ---- attachments --------------------------------------------------------------
+   Images: 58px rounded tiles with a small white x badge overhanging the corner.
+   Files: a white text pill. */
+:root[data-theme="alcove"] .composer-attachments { gap: 9px; padding: 3px 2px 12px 0; }
+:root[data-theme="alcove"] .attach-chip:not(.attach-chip-file) { width: 58px; }
+:root[data-theme="alcove"] .attach-chip .attach-image-frame {
+  width: 58px;
+  height: 58px;
+  border-radius: var(--alc-r-row); corner-shape: var(--alc-corner);
+  background: #e8e8e8;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+:root[data-theme="alcove"] .attach-chip img { object-fit: cover; border-radius: var(--alc-r-row); corner-shape: var(--alc-corner); }
+:root[data-theme="alcove"] .attach-chip:not(.attach-chip-file) .attach-chip-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .attach-chip .attach-remove {
+  top: -5px;
+  right: -5px;
+  width: 17px;
+  height: 17px;
+  background: #ffffff;
+  color: var(--alc-ink-2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  transition: transform 160ms var(--alc-ease), color 160ms ease;
+}
+:root[data-theme="alcove"] .attach-chip .attach-remove > svg { width: 9px; height: 9px; stroke-width: 2.6; }
+:root[data-theme="alcove"] .attach-chip .attach-remove:hover {
+  background: #ffffff;
+  color: var(--alc-ink);
+  transform: scale(1.08);
+}
+:root[data-theme="alcove"] .attach-chip-file {
+  height: 30px;
+  padding: 0 26px 0 11px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .composer-attachments .attach-chip-file .attach-remove { top: calc(50% - 8.5px); right: 7px; box-shadow: none; background: rgba(84, 84, 84, 0.08); }
+:root[data-theme="alcove"] .attach-file-info {
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+/* Queued follow-ups and reply context: quiet grey lines above the input. */
+:root[data-theme="alcove"] .queued-messages { margin: 0 0 9px; border-bottom-color: rgba(84, 84, 84, 0.08); }
+:root[data-theme="alcove"] .queued-message-mark { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .queued-message-label { color: var(--alc-ink-2); font-weight: 500; font-size: 11px; }
+:root[data-theme="alcove"] .queued-message-text { color: var(--alc-ink-4); font-size: 11px; }
+:root[data-theme="alcove"] .queued-message-attachments { color: var(--alc-ink-4); font-family: var(--font-ui); }
+:root[data-theme="alcove"] .queued-message-remove:hover,
+:root[data-theme="alcove"] .reply-context-close:hover {
+  background: #ffffff;
+  box-shadow: var(--alc-cmp-halo);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .reply-context { border-radius: var(--alc-r-row); corner-shape: var(--alc-corner); }
+:root[data-theme="alcove"] .dictation-busy {
+  border: 0;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+
+/* "Build in a workspace" tray: a light glass band across the card's top. */
+:root[data-theme="alcove"] .composer .build-workspace-tray {
+  margin: -17px -18px 12px -20px;
+  border-radius: 31px 31px 14px 14px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.55);
+  border-bottom-color: rgba(84, 84, 84, 0.06);
+}
+:root[data-theme="alcove"] .build-workspace-label { color: var(--alc-ink-4); font-weight: 500; }
+:root[data-theme="alcove"] .build-workspace-button {
+  background: rgba(84, 84, 84, 0.06);
+  color: var(--alc-ink-2);
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .build-workspace-button:hover { background: #ffffff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .build-workspace-button.primary {
+  background: var(--brass);
+  color: #ffffff;
+}
+
+/* ---- menus ----------------------------------------------------------------------
+   The Alcove dropdown: thin white glass, 22px corners, 8px padding, rows with
+   14px corners; the active row is a white plate. Opens with the scale+blur pop. */
+@keyframes alc-cmp-pop-x {
+  from { opacity: 0; filter: blur(18px); transform: translateX(-50%) scale(0.88); }
+  to { opacity: 1; filter: blur(0); transform: translateX(-50%) scale(1); }
+}
+
+:root[data-theme="alcove"] .pill-menu,
+:root[data-theme="alcove"] .agent-menu,
+:root[data-theme="alcove"] .slash-pop,
+:root[data-theme="alcove"] .build-workspace-menu,
+:root[data-theme="alcove"] .ctx-pop {
+  border: 0;
+  background: var(--alc-glass-thin);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-menu-shadow);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .pill-menu,
+:root[data-theme="alcove"] .agent-menu,
+:root[data-theme="alcove"] .build-workspace-menu {
+  padding: 8px;
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  transform-origin: bottom left;
+  animation: alc-pop-in 250ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .pill-menu { bottom: calc(100% + 12px); min-width: 230px; }
+:root[data-theme="alcove"] .ai-menu,
+:root[data-theme="alcove"] .build-workspace-menu { transform-origin: bottom right; }
+:root[data-theme="alcove"] .agent-menu.down { transform-origin: top left; }
+
+:root[data-theme="alcove"] .pill-menu-label {
+  padding: 7px 10px 4px;
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .pill-menu-sep { margin: 6px 5px; background: rgba(84, 84, 84, 0.08); }
+
+:root[data-theme="alcove"] .pill-opt,
+:root[data-theme="alcove"] .agent-option,
+:root[data-theme="alcove"] .build-workspace-menu button {
+  gap: 9px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border-radius: var(--alc-r-row); corner-shape: var(--alc-corner);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+:root[data-theme="alcove"] .pill-opt.compact { min-height: 31px; padding: 0 10px; gap: 9px; }
+:root[data-theme="alcove"] .pill-opt:hover:not(:disabled),
+:root[data-theme="alcove"] .agent-option:hover,
+:root[data-theme="alcove"] .build-workspace-menu button:hover {
+  background: var(--alc-hover);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .pill-opt.on,
+:root[data-theme="alcove"] .agent-option.on {
+  background: #ffffff;
+  color: var(--alc-ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+:root[data-theme="alcove"] .pill-opt-icon { width: 18px; color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .pill-opt.compact .pill-opt-icon { color: var(--alc-ink-5); }
+:root[data-theme="alcove"] .pill-opt-icon > svg { width: 17px; height: 17px; }
+:root[data-theme="alcove"] .pill-opt-icon > svg:not(.mark) { stroke-width: 1.7; }
+:root[data-theme="alcove"] .pill-opt-icon > svg:not(.mark) { width: 15px; height: 15px; }
+:root[data-theme="alcove"] .pill-opt.on .pill-opt-icon,
+:root[data-theme="alcove"] .pill-opt.compact .pill-opt-icon:has(> .mark) { color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .pill-opt-title { font-size: 12.5px; font-weight: 500; letter-spacing: 0; }
+:root[data-theme="alcove"] .pill-opt-desc { font-size: 10.5px; color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .pill-opt-check { width: 13px; height: 13px; color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .pill-opt .cset-opt-tag,
+:root[data-theme="alcove"] .agent-option .agent-off { color: var(--alc-ink-4); font-family: var(--font-ui); }
+
+/* The AI menu: narrow like the mockup, and its rows flow so the effort choices
+   can sit side by side as one slider. */
+:root[data-theme="alcove"] .ai-menu {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  width: 236px;
+  min-width: 0;
+  max-height: min(calc(100vh - 110px), 640px);
+  overflow-x: hidden;
+}
+:root[data-theme="alcove"] .ai-menu > * { flex: 0 0 100%; }
+
+/* Effort slider. Each effort option is one segment of a track: everything up
+   to the chosen one is the blue fill, the chosen one carries the white knob
+   and its name floats above it, the rest show a faint notch. Still one
+   radio button per level, so clicking anywhere on the track picks that level. */
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]) {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 26px;
+  height: 26px;
+  margin: 18px 0 6px;
+  padding: 4px 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  justify-content: center;
+  overflow: visible;
+}
+:root[data-theme="alcove"] .ai-menu .pill-menu-label + .pill-opt:has(path[d="M12 15.5l3.4-3"]) {
+  margin-left: 8px;
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]):not(:has(+ .pill-opt path[d="M12 15.5l3.4-3"])) {
+  margin-right: 8px;
+}
+/* The track itself is each segment's ::before; the end segments round off. */
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"])::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 4px;
+  bottom: 4px;
+  background: #ececec;
+  transition: background 160ms ease;
+}
+:root[data-theme="alcove"] .ai-menu .pill-menu-label + .pill-opt:has(path[d="M12 15.5l3.4-3"])::before {
+  border-radius: var(--alc-r-pill) 0 0 var(--alc-r-pill);
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]):not(:has(+ .pill-opt path[d="M12 15.5l3.4-3"]))::before {
+  border-radius: 0 var(--alc-r-pill) var(--alc-r-pill) 0;
+}
+/* Filled: every level before the chosen one, and the chosen one up to its knob. */
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]):has(~ .pill-opt.on path[d="M12 15.5l3.4-3"])::before {
+  background: var(--alc-track-fill);
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt.on:has(path[d="M12 15.5l3.4-3"])::before {
+  background: linear-gradient(90deg, var(--alc-track-fill) 50%, #ececec 50%);
+}
+:root[data-theme="alcove"] .ai-menu .pill-menu-label + .pill-opt:has(path[d="M12 15.5l3.4-3"]):has(~ .pill-opt.on path[d="M12 15.5l3.4-3"])::before,
+:root[data-theme="alcove"] .ai-menu .pill-menu-label + .pill-opt.on:has(path[d="M12 15.5l3.4-3"])::before {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--brass) 30%, #ffffff), var(--alc-track-fill));
+}
+:root[data-theme="alcove"] .ai-menu .pill-menu-label + .pill-opt.on:has(path[d="M12 15.5l3.4-3"])::before {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--brass) 30%, #ffffff), var(--alc-track-fill) 50%, #ececec 50%);
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt.on:has(path[d="M12 15.5l3.4-3"]):not(:has(+ .pill-opt path[d="M12 15.5l3.4-3"]))::before {
+  background: var(--alc-track-fill);
+}
+/* Notch on the unfilled levels; the knob on the chosen one. */
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"])::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brass) 40%, #b9b9b9);
+  opacity: 0.7;
+  transform: translate(-50%, -50%);
+  transition: transform 200ms var(--alc-spring), opacity 140ms ease;
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]):has(~ .pill-opt.on path[d="M12 15.5l3.4-3"])::after { opacity: 0; }
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]):hover:not(.on)::after {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.6);
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt.on:has(path[d="M12 15.5l3.4-3"])::after {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: #ffffff;
+  opacity: 1;
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.1);
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]) .pill-opt-icon,
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]) .pill-opt-check { display: none; }
+/* Level names stay in the accessible name; only the chosen one is shown,
+   floating over its knob ("Effort  High"). */
+:root[data-theme="alcove"] .ai-menu .pill-opt:has(path[d="M12 15.5l3.4-3"]) .pill-opt-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt.on:has(path[d="M12 15.5l3.4-3"]) .pill-opt-text {
+  left: 50%;
+  bottom: calc(100% + 1px);
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  transform: translateX(-50%);
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt.on:has(path[d="M12 15.5l3.4-3"]) .pill-opt-title {
+  color: var(--alc-ink-4);
+  font-size: 10.5px;
+}
+/* Keep a level name from running off the track ends. */
+:root[data-theme="alcove"] .ai-menu .pill-menu-label + .pill-opt.on:has(path[d="M12 15.5l3.4-3"]) .pill-opt-text {
+  left: 0;
+  transform: none;
+}
+:root[data-theme="alcove"] .ai-menu .pill-opt.on:has(path[d="M12 15.5l3.4-3"]):not(:has(+ .pill-opt path[d="M12 15.5l3.4-3"])) .pill-opt-text {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* Agent picker used outside the composer bar (same Alcove dropdown). */
+:root[data-theme="alcove"] .agent-option { width: 100%; display: flex; align-items: center; }
+
+/* Slash commands: a glass shelf above the typing line. */
+:root[data-theme="alcove"] .slash-pop {
+  bottom: calc(100% + 14px);
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  transform-origin: bottom center;
+  animation: alc-cmp-pop-x 250ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .slash-pop-head {
+  padding: 11px 16px 7px;
+  border-bottom: 0;
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .slash-pop-mark {
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--alc-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .slash-pop-hint { color: var(--alc-ink-5); }
+:root[data-theme="alcove"] .slash-pop-list { gap: 2px; padding: 0 8px 8px; }
+:root[data-theme="alcove"] .slash-option {
+  padding: 8px 10px;
+  border-radius: var(--alc-r-row); corner-shape: var(--alc-corner);
+  color: var(--alc-ink-2);
+  transition: background 150ms ease;
+}
+:root[data-theme="alcove"] .slash-option:hover { background: var(--alc-hover); }
+:root[data-theme="alcove"] .slash-option.selected {
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+:root[data-theme="alcove"] .slash-option-name {
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+}
+:root[data-theme="alcove"] .slash-option-label { font-size: 12px; font-weight: 500; color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .slash-option-detail { color: var(--alc-ink-4); }
+
+/* Context-window pill. */
+:root[data-theme="alcove"] .ctx-pop {
+  padding: 8px 10px 8px 16px;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-glass);
+  animation: alc-cmp-pop-x 250ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .ctx-pop-title { color: var(--alc-ink-2); font-weight: 500; }
+:root[data-theme="alcove"] .ctx-pop-nums { color: var(--alc-ink-4); font-family: var(--font-ui); font-weight: 500; }
+:root[data-theme="alcove"] .ctx-compact-btn {
+  border: 0;
+  background: #ffffff;
+  color: var(--alc-ink-2);
+  font-weight: 500;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .ctx-compact-btn:hover { background: #ffffff; color: var(--alc-ink); box-shadow: var(--alc-cmp-halo); }
+:root[data-theme="alcove"] .ctx-bar { background: var(--alc-track); }
+
+/* ---- phone --------------------------------------------------------------------
+   The base phone layout docks the card at the bottom edge; Alcove keeps that,
+   with a slightly smaller radius so the card still reads as one piece. */
+@media (max-width: 767px) {
+  :root[data-theme="alcove"] .composer .composer-card {
+    border-radius: 26px; corner-shape: var(--alc-corner);
+    padding: 14px 14px 9px 16px;
+  }
+  :root[data-theme="alcove"] .composer .build-workspace-tray {
+    margin: -14px -14px 10px -16px;
+    border-radius: 25px 25px 12px 12px; corner-shape: var(--alc-corner);
+  }
+  :root[data-theme="alcove"] .ai-trigger-effort { display: none; }
+  :root[data-theme="alcove"] .composer-card .pill-trigger-label { font-size: 11px; }
+}

@@ -46,6 +46,7 @@ import {
   XIcon,
 } from "./icons";
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
+import { useAlcove } from "../lib/useAlcove";
 import { highlightMarkdown } from "../lib/markdownHighlight";
 import { markJustSent } from "../lib/justSent";
 import { formatReply, replyPreview, type ReplyTarget } from "../lib/reply";
@@ -402,6 +403,11 @@ const ACCESS_OPTIONS: PickerOption<Access>[] = [
   },
 ];
 
+/** "GPT-6.1-Sol" → "6.1 Sol", the way the Alcove pill names a model. */
+function alcoveModelName(label: string): string {
+  return label.replace(/^GPT[-\s]?/i, "").replace(/-/g, " ");
+}
+
 /**
  * Right-side pill (a picture of the current AI) that opens one menu for every
  * setting that belongs to the AI: which one, which model, how hard it thinks,
@@ -430,6 +436,9 @@ function AgentModelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const alcove = useAlcove();
+  const modelLabel = modelOptions.find((o) => o.selected)?.label;
+  const effortLabel = effortOptions.find((o) => o.selected)?.label;
 
   useEffect(() => {
     if (!open) return;
@@ -459,6 +468,13 @@ function AgentModelPicker({
         onClick={() => setOpen((v) => !v)}
       >
         <AgentMark agent={agent} size={20} />
+        {alcove && modelLabel && (
+          <span className="ai-trigger-label">
+            <span className="ai-trigger-model">{alcoveModelName(modelLabel)}</span>
+            {effortLabel && <span className="ai-trigger-effort">{effortLabel}</span>}
+            <ChevronIcon size={11} open className="ai-trigger-caret" />
+          </span>
+        )}
       </button>
       {open && (
         <div className="pill-menu ai-menu" role="menu">

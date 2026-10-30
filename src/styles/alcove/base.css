@@ -1,0 +1,94 @@
+/* ---- palette + shared tokens ------------------------------------------------
+   Pale grey room, white frosted glass on top of it, near-black ink. Alcove is a
+   light-family palette, so every data-family="light" surface rule in
+   styles.css already applies; this file re-declares the neutrals and the glass
+   recipe every other alcove file draws from. --brass is still user-driven
+   (applyAppearance swaps the default brass for --alc-blue). */
+:root[data-theme="alcove"] {
+  --bg: #f2f2f2;
+  --bg-raise: #f7f7f7;
+  --panel: #fafafa;
+  --panel-2: #f1f1f1;
+  --panel-3: #ebebeb;
+  --line: rgba(84, 84, 84, 0.08);
+  --line-2: rgba(84, 84, 84, 0.14);
+  --text: #1f1f1f;
+  --dim: #616161;
+  --faint: #898989;
+  --teal: #31947f;
+  --teal-dim: rgba(49, 148, 127, 0.12);
+  --red: #e0605a;
+  --red-dim: rgba(224, 96, 90, 0.12);
+  --amber: #c98a2e;
+  --blue: #3396fe;
+
+  /* Theme-local. Ink ramp from the mockups: title, body, secondary, hint. */
+  --alc-ink: #1f1f1f;
+  --alc-ink-2: #545454;
+  --alc-ink-3: #616161;
+  --alc-ink-4: #898989;
+  --alc-ink-5: #b4b4b4;
+  /* Brand marks: the user bubble / send blue, then the two provider tints the
+     usage bars and marks use (codex periwinkle, claude terracotta). */
+  --alc-blue: #3396fe;
+  --alc-codex: #7186ff;
+  --alc-claude: #d87856;
+  --alc-plus: #3fae5a;
+  --alc-minus: #e0605a;
+  /* The glass recipe. A surface is --alc-glass fill + --alc-blur behind +
+     --alc-rim (the 1px white edge light) + --alc-shadow. --alc-halo is the
+     soft all-round glow on small round controls (pills, icon buttons). */
+  --alc-glass: rgba(255, 255, 255, 0.6);
+  --alc-glass-thin: rgba(255, 255, 255, 0.38);
+  --alc-glass-strong: rgba(255, 255, 255, 0.78);
+  --alc-hover: rgba(255, 255, 255, 0.72);
+  --alc-active: #ffffff;
+  --alc-blur: blur(13px) saturate(1.13);
+  --alc-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.58);
+  --alc-shadow: 0 4px 9.6px rgba(0, 0, 0, 0.02);
+  --alc-float: 0 10px 30px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.03);
+  --alc-halo: 0 0 12.8px rgba(0, 0, 0, 0.05);
+  --alc-track: #e2e2e2;
+  /* Radii: the big floating cards, menus, rows, pills. */
+  --alc-r-card: 36px;
+  --alc-r-composer: 32px;
+  --alc-r-menu: 22px;
+  --alc-r-row: 14px;
+  --alc-r-pill: 999px;
+  /* Corner smoothing, as in the reference: 60% = superellipse(1.6), the
+     iOS-style continuous corner. Applied wherever an alcove rule sets a card,
+     menu or row radius; pills and circles stay round, as they do there.
+     Webviews without corner-shape (WebKit) fall back to plain border-radius. */
+  --alc-smoothing: 60;
+  --alc-corner: superellipse(calc(1 + var(--alc-smoothing) / 100));
+  /* Motion: the overshoot every Alcove popover opens with. */
+  --alc-spring: cubic-bezier(0.2, 1.25, 0.35, 1);
+  --alc-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+:root[data-theme="alcove"] * { scrollbar-color: rgba(84, 84, 84, 0.18) transparent; }
+:root[data-theme="alcove"] *::-webkit-scrollbar-thumb {
+  background: rgba(84, 84, 84, 0.18);
+  border-color: transparent;
+}
+:root[data-theme="alcove"] ::selection {
+  background: color-mix(in srgb, var(--alc-blue) 20%, transparent);
+}
+
+/* The room: one flat pale grey behind everything. Floating cards sit on it. */
+:root[data-theme="alcove"] body,
+:root[data-theme="alcove"] .app {
+  background: var(--bg);
+  color: var(--alc-ink);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Shared opening motion for every Alcove popover. */
+@keyframes alc-pop-in {
+  from { opacity: 0; filter: blur(18px); transform: scale(0.88); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] * { animation-duration: 1ms !important; }
+}

@@ -1,0 +1,1152 @@
+/* alcove: thread
+   The conversation pane: a flat pale room with no header bar. The title floats
+   as a white pill at top centre, the workspace panels collapse behind a round
+   More button (the phone header's own WorkspaceMenu, shown on desktop too),
+   messages sit in a narrow centred column, and every tool/activity record is a
+   compact white glass row. Ungated: the thread is not one of the skin modules. */
+
+:root[data-theme="alcove"] {
+  --alc-col: 600px; /* lines up with the Alcove composer card (cozy) */
+  --alc-card: rgba(255, 255, 255, 0.68);
+  --alc-card-shadow: 0 3px 10px rgba(0, 0, 0, 0.025);
+  --alc-code-bg: rgba(255, 255, 255, 0.72);
+  --alc-r-tool: 12px;
+}
+
+/* ---- the room --------------------------------------------------------------- */
+:root[data-theme="alcove"] .thread-pane,
+:root[data-theme="alcove"] .empty-pane { background: var(--bg); }
+:root[data-theme="alcove"] .feed-scroll { background: transparent; }
+
+/* ---- header ------------------------------------------------------------------ */
+:root[data-theme="alcove"] .thread-head {
+  border-bottom: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+:root[data-theme="alcove"] .thread-head::after { display: none; }
+
+/* Round 27px controls: More, Review (where it is still a pill) and the rest. */
+:root[data-theme="alcove"] .thread-head .head-pill {
+  display: inline-grid;
+  place-items: center;
+  width: 27px;
+  min-width: 27px;
+  height: 27px;
+  min-height: 27px;
+  padding: 0;
+  gap: 0;
+  border-radius: 50%;
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+  font-size: 0;
+  transition: background 160ms ease, color 160ms ease, transform 160ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .thread-head .head-pill > span { display: none; }
+:root[data-theme="alcove"] .thread-head .head-pill svg { width: 15px; height: 15px; }
+/* The mockup's More is a horizontal "•••". */
+:root[data-theme="alcove"] .thread-head .head-tab-menu .head-pill svg { transform: rotate(90deg); }
+:root[data-theme="alcove"] .thread-head .head-pill:hover:not(:disabled),
+:root[data-theme="alcove"] .thread-head .head-pill:focus-visible:not(:disabled) {
+  background: #fff;
+  color: #424242;
+}
+:root[data-theme="alcove"] .thread-head .head-pill:active:not(:disabled) { transform: scale(1.08); }
+:root[data-theme="alcove"] .thread-head .head-pill.on {
+  background: #fff;
+  color: var(--alc-ink);
+}
+
+:root[data-theme="alcove"] .alc-head-avatar {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .alc-head-avatar .sidebar-avatar {
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  border: 0;
+  background: #fff;
+  box-shadow: none;
+  color: var(--alc-ink-3);
+  font-size: 9.5px !important;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+:root[data-theme="alcove"] .alc-head-avatar .sidebar-avatar.has-color {
+  box-shadow: inset 0 0 0 1.5px var(--machine-color);
+}
+:root[data-theme="alcove"] .alc-head-avatar .sidebar-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+:root[data-theme="alcove"] .head-status {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--alc-ink-4);
+}
+
+:root[data-theme="alcove"] .thread-title {
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .title-input {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+  box-shadow: var(--alc-halo), 0 0 0 2px color-mix(in srgb, var(--alc-blue) 22%, transparent);
+  color: var(--alc-ink);
+  font-weight: 500;
+}
+
+:root[data-theme="alcove"] .thread-project-path {
+  font-family: var(--font-ui);
+  color: var(--alc-ink-5);
+  letter-spacing: 0;
+  transition: color 140ms ease;
+}
+:root[data-theme="alcove"] .thread-project-path:hover { color: var(--alc-ink-3); }
+:root[data-theme="alcove"] .thread-project-path.copied { color: var(--alc-blue); }
+:root[data-theme="alcove"] .feed-project-caption { font-family: var(--font-ui); color: var(--alc-ink-5); }
+:root[data-theme="alcove"] .feed-project-caption::before { color: var(--alc-ink-4); }
+
+:root[data-theme="alcove"] .back-to-inbox {
+  border-radius: var(--alc-r-pill);
+  color: var(--alc-ink-4);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+@media (min-width: 768px) {
+  /* The header stops being a bar: it floats over the top of the feed, which
+     scrolls under a soft frosted fade (the mockup's top glass). */
+  /* Inbox / Bosun task panes reuse .thread-head (.task-head); they keep an
+     in-flow header so their own toolbars are not covered. */
+  :root[data-theme="alcove"] .thread-head:not(.task-head) {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 20;
+    min-height: 66px;
+    align-items: flex-start;
+    gap: 15px;
+    padding: 20px 28px 0 24px;
+    pointer-events: none;
+  }
+  :root[data-theme="alcove"] .thread-head:not(.task-head)::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0 0 auto;
+    height: 92px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, rgba(242, 242, 242, 0.9), rgba(242, 242, 242, 0.5) 56%, transparent);
+    -webkit-backdrop-filter: blur(11px);
+    backdrop-filter: blur(11px);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0 55%, transparent);
+    mask-image: linear-gradient(to bottom, #000 0 55%, transparent);
+  }
+  :root[data-theme="alcove"] .thread-head:not(.task-head) > *,
+  :root[data-theme="alcove"] .thread-head:not(.task-head) .head-tab-menu { pointer-events: auto; }
+
+  /* Right cluster: (status) ... Review/parley · More · avatar. More is the
+     header's WorkspaceMenu, normally phone-only; it toggles the same panels
+     through the same dispatch as the inline pills, which hide. */
+  :root[data-theme="alcove"] .thread-head .head-tab-pills { display: none; }
+  :root[data-theme="alcove"] .thread-head .head-tab-menu { display: inline-flex; order: 3; }
+  :root[data-theme="alcove"] .thread-head .head-status { order: 1; height: 27px; }
+  :root[data-theme="alcove"] .thread-head .ws-toggles { order: 2; margin-left: auto; gap: 15px; }
+  :root[data-theme="alcove"] .thread-head .alc-head-avatar { order: 4; }
+  /* Review is a row in the More menu whenever that menu exists. */
+  :root[data-theme="alcove"] .thread-head:has(.head-tab-menu) .review-pill { display: none; }
+
+  /* The title pill, centred on the pane regardless of the side clusters. */
+  :root[data-theme="alcove"] .thread-head:not(.quick-thread-head):not(.task-head) .thread-head-main {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    width: max-content;
+    max-width: calc(100% - 300px);
+  }
+  :root[data-theme="alcove"] .thread-head .thread-title {
+    position: relative;
+    height: 27px;
+    max-width: 100%;
+    padding: 0 15px 0 11px;
+    gap: 6px;
+    overflow: visible;
+    border-radius: var(--alc-r-pill);
+    background: #fff;
+    box-shadow: var(--alc-halo);
+    font-size: 12.5px;
+    line-height: 1;
+  }
+  :root[data-theme="alcove"] .thread-head .thread-name { line-height: 1.25; }
+  :root[data-theme="alcove"] .thread-head .title-agent-mark { width: 16px; height: 16px; }
+  /* Rename hangs just outside the pill so the pill stays a clean capsule. */
+  :root[data-theme="alcove"] .thread-head .title-edit {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 6px);
+    display: grid;
+    place-items: center;
+    width: 23px;
+    height: 23px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--alc-hover);
+    box-shadow: var(--alc-halo);
+    color: var(--alc-ink-4);
+    transform: translateY(-50%);
+    transition: opacity 140ms ease;
+  }
+  :root[data-theme="alcove"] .thread-head .title-edit:hover { color: var(--alc-ink); background: #fff; }
+  :root[data-theme="alcove"] .thread-head .title-input {
+    height: 27px;
+    padding: 0 14px;
+    font-size: 12.5px;
+    text-align: center;
+  }
+  /* The directory: a quiet click-to-copy line under the pill. */
+  :root[data-theme="alcove"] .thread-head-meta { display: flex; justify-content: center; max-width: 100%; }
+  :root[data-theme="alcove"] .thread-head .thread-project-path {
+    max-width: 100%;
+    margin-top: 0;
+    font-size: 10px;
+    font-weight: 500;
+  }
+  :root[data-theme="alcove"] .thread-head .thread-project-path::before { content: none; }
+
+  /* Quick threads centre the Chat/Build capsule instead, so their title stays
+     at the left as a pill. */
+  :root[data-theme="alcove"] .thread-head.quick-thread-head .thread-head-main {
+    flex: 0 1 auto;
+    max-width: calc(50% - 110px);
+  }
+  :root[data-theme="alcove"] .thread-head.quick-thread-head .thread-title { width: fit-content; }
+  :root[data-theme="alcove"] .quick-mode-tabs { top: 18px; }
+
+  :root[data-theme="alcove"] .feed-inner { padding-top: 78px; }
+  :root[data-theme="alcove"] .thread-pane:has(> .quick-thread-head) .feed-inner { padding-top: 84px; }
+}
+
+@media (max-width: 767px) {
+  /* Phones keep the real in-flow bar; it just wears the room colour. */
+  :root[data-theme="alcove"] .thread-head {
+    background: rgba(242, 242, 242, 0.86);
+    -webkit-backdrop-filter: var(--alc-blur);
+    backdrop-filter: var(--alc-blur);
+  }
+  :root[data-theme="alcove"] .thread-head .head-pill,
+  :root[data-theme="alcove"] .head-cluster .hamburger {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+  }
+  :root[data-theme="alcove"] .head-cluster .hamburger {
+    border-radius: 50%;
+    background: var(--alc-hover);
+    box-shadow: var(--alc-halo);
+    color: var(--alc-ink-3);
+  }
+  :root[data-theme="alcove"] .alc-head-avatar { display: none; }
+  /* The round-pill display above must not resurrect the phone's hidden Review. */
+  :root[data-theme="alcove"] .thread-head .review-pill { display: none; }
+  :root[data-theme="alcove"] .device-chip {
+    border: 0;
+    border-radius: var(--alc-r-pill);
+    background: #fff;
+    color: var(--alc-ink-3);
+    box-shadow: var(--alc-halo);
+  }
+}
+
+/* ---- More dropdown (.thread-menu.ws-menu) ------------------------------------ */
+:root[data-theme="alcove"] .thread-menu.ws-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 210px;
+  min-width: 0;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-float);
+  color: var(--alc-ink);
+  transform-origin: top right;
+  animation: alc-pop-in 0.28s var(--alc-spring) both;
+}
+/* Mockup order: Browser first, then Files, Git, Artifacts, Terminal. */
+:root[data-theme="alcove"] .thread-menu.ws-menu > .thread-menu-item:nth-child(4) { order: -1; }
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item {
+  min-height: 34px;
+  gap: 11px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 12px; corner-shape: var(--alc-corner);
+  background: transparent;
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: background 160ms ease, color 160ms ease;
+}
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item svg {
+  width: 17px;
+  height: 17px;
+  color: var(--alc-ink);
+  stroke-width: 1.8;
+}
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item:hover:not(:disabled) {
+  background: var(--alc-hover);
+}
+/* The open panel is the highlighted row (the mockup's Artifacts). */
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.on,
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.on:hover {
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.on svg { color: var(--alc-ink); }
+:root[data-theme="alcove"] .thread-menu.ws-menu .ws-menu-check { display: none; }
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.divided {
+  position: relative;
+  margin-top: 9px;
+  border-top: 0;
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.divided::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 6px;
+  right: 6px;
+  height: 1px;
+  background: rgba(84, 84, 84, 0.1);
+}
+:root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.divided svg { color: var(--alc-ink-3); }
+
+/* ---- feed column ------------------------------------------------------------- */
+:root[data-theme="alcove"] .feed-inner {
+  max-width: calc(var(--alc-col) + 44px);
+  gap: 14px;
+}
+:root[data-theme="alcove"] .msg-assistant,
+:root[data-theme="alcove"] .row-card,
+:root[data-theme="alcove"] .thinking-block,
+:root[data-theme="alcove"] .approval-card,
+:root[data-theme="alcove"] .approval-resolved,
+:root[data-theme="alcove"] .question-card,
+:root[data-theme="alcove"] .question-resolved,
+:root[data-theme="alcove"] .turn-divider,
+:root[data-theme="alcove"] .handoff-divider,
+:root[data-theme="alcove"] .brief-divider,
+:root[data-theme="alcove"] .feed-note,
+:root[data-theme="alcove"] .artifact-card { max-width: 100%; }
+
+/* ---- user message ------------------------------------------------------------ */
+:root[data-theme="alcove"] .msg-user-wrap .msg-time-user {
+  order: -1;
+  margin: 0 3px 5px 0;
+}
+:root[data-theme="alcove"] .msg-user,
+:root[data-theme="alcove"] .msg-user:not(.image-only) {
+  max-width: min(78%, 560px);
+  padding: 9px 15px;
+  border: 0;
+  border-radius: 21px; corner-shape: var(--alc-corner);
+  background: var(--alc-blue);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.42;
+}
+:root[data-theme="alcove"] .msg-user .md p { margin: 0.3em 0; }
+:root[data-theme="alcove"] .msg-user .md :not(pre) > code,
+:root[data-theme="alcove"] .msg-user .md .inline-code {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+:root[data-theme="alcove"] .msg-user .md .code-block { background: rgba(255, 255, 255, 0.94); }
+:root[data-theme="alcove"] .msg-user .md .code-pre code { color: #383a42; }
+:root[data-theme="alcove"] .msg-user-midturn {
+  color: var(--alc-ink-4);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 1;
+}
+:root[data-theme="alcove"] .msg-reply-reference {
+  border-left-color: color-mix(in srgb, var(--alc-blue) 45%, transparent);
+}
+:root[data-theme="alcove"] .msg-reply {
+  color: var(--alc-ink-4);
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .msg-reply:hover,
+:root[data-theme="alcove"] .msg-reply:focus-visible,
+:root[data-theme="alcove"] .msg-copy:hover,
+:root[data-theme="alcove"] .msg-copy:focus-visible {
+  border-color: transparent;
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+}
+
+/* Inserted images: rounded tiles with a soft lift. */
+:root[data-theme="alcove"] .msg-user-attachments { gap: 8px; }
+:root[data-theme="alcove"] .msg-user-image,
+:root[data-theme="alcove"] .msg-user-attachments img {
+  border: 0;
+  border-radius: 24px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"] .msg-user-image {
+  overflow: hidden;
+  background: #e7e7e7;
+  box-shadow: -5px 6px 14px rgba(0, 0, 0, 0.09);
+}
+:root[data-theme="alcove"] .msg-user-attachments.gallery .msg-user-image,
+:root[data-theme="alcove"] .msg-user-attachments.gallery img { border-radius: 18px; corner-shape: var(--alc-corner); }
+
+/* Timestamps: 10px UI grey, not mono. */
+:root[data-theme="alcove"] .msg-time {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--alc-ink-4);
+}
+
+/* ---- assistant message ------------------------------------------------------- */
+:root[data-theme="alcove"] .msg-assistant {
+  color: var(--alc-ink-3);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+/* Meta row: provider mark, time, "Thought for ..." — the trailing desktop
+   timestamp moves up into it. */
+:root[data-theme="alcove"] .assistant-head {
+  gap: 9px;
+  min-height: 17px;
+  margin-bottom: 6px;
+}
+:root[data-theme="alcove"] .assistant-head > .msg-time-mobile {
+  display: inline-flex;
+  order: 1;
+  margin: 0;
+}
+:root[data-theme="alcove"] .msg-assistant > .msg-time-assistant:not(.msg-time-mobile) { display: none; }
+:root[data-theme="alcove"] .assistant-head > .msg-time-mobile::before { content: none; }
+:root[data-theme="alcove"] .assistant-thought-stat {
+  order: 2;
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .assistant-thought-stat > svg { display: none; }
+:root[data-theme="alcove"] .speaker-chip {
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--alc-ink-3);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .speaker-chip-mark {
+  width: 17px;
+  height: 17px;
+  background: color-mix(in srgb, var(--lane-color, var(--alc-codex)) 16%, #fff);
+  color: var(--lane-color, var(--alc-codex));
+}
+/* One agent on the thread: the mark alone says who, as in the mockup. Multi-
+   lane threads (.has-lanes) keep the name so the lanes stay distinguishable. */
+:root[data-theme="alcove"] .thread-pane:not(:has(> .thread-head.has-lanes)) .speaker-chip { font-size: 0; gap: 0; }
+:root[data-theme="alcove"] .msg-copy { top: -6px; }
+:root[data-theme="alcove"] .stream-caret { background: var(--alc-blue); border-radius: 2px; corner-shape: var(--alc-corner); width: 6px; }
+
+/* ---- markdown ---------------------------------------------------------------- */
+:root[data-theme="alcove"] .md strong,
+:root[data-theme="alcove"] .question-prompt { color: #2c2c2c; font-weight: 600; }
+:root[data-theme="alcove"] .md h1,
+:root[data-theme="alcove"] .md h2,
+:root[data-theme="alcove"] .md h3 {
+  color: var(--alc-ink);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:root[data-theme="alcove"] .md h4 { color: var(--alc-ink-2); font-weight: 600; }
+:root[data-theme="alcove"] .md li::marker { color: var(--alc-ink-5); }
+:root[data-theme="alcove"] .md a {
+  color: var(--alc-blue);
+  border-bottom-color: color-mix(in srgb, var(--alc-blue) 30%, transparent);
+}
+:root[data-theme="alcove"] .md blockquote {
+  border-left: 2px solid rgba(84, 84, 84, 0.16);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .md hr { border-top-color: rgba(84, 84, 84, 0.1); }
+:root[data-theme="alcove"] .md :not(pre) > code,
+:root[data-theme="alcove"] .md .inline-code {
+  padding: 0.12em 0.42em;
+  border: 0;
+  border-radius: 6px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.08);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .md-file-link {
+  color: var(--alc-blue);
+  border-bottom-color: color-mix(in srgb, var(--alc-blue) 45%, transparent);
+}
+:root[data-theme="alcove"] .md-table-wrap {
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  background: var(--alc-card);
+  box-shadow: var(--alc-rim), var(--alc-card-shadow);
+}
+:root[data-theme="alcove"] .md table { font-size: 13px; }
+:root[data-theme="alcove"] .md th,
+:root[data-theme="alcove"] .md td {
+  border: 0;
+  border-bottom: 1px solid rgba(84, 84, 84, 0.08);
+  padding: 7px 12px;
+}
+:root[data-theme="alcove"] .md tr:last-child td { border-bottom: 0; }
+:root[data-theme="alcove"] .md th {
+  background: transparent;
+  color: var(--alc-ink-4);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .md img { border-radius: 18px; corner-shape: var(--alc-corner); }
+
+/* Code blocks: light, rounded glass with a github-light token palette (the
+   app ships github-dark globally; this only recolours inside the feed). */
+:root[data-theme="alcove"] .code-block {
+  border: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  background: var(--alc-code-bg);
+  box-shadow: var(--alc-rim), var(--alc-card-shadow);
+}
+:root[data-theme="alcove"] .code-bar {
+  padding: 5px 8px 5px 14px;
+  border-bottom: 1px solid rgba(84, 84, 84, 0.07);
+  background: transparent;
+}
+:root[data-theme="alcove"] .code-lang {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .code-copy {
+  border-radius: var(--alc-r-pill);
+  font-family: var(--font-ui);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .code-copy:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .code-pre { font-size: 12.5px; }
+:root[data-theme="alcove"] .code-pre code.hljs,
+:root[data-theme="alcove"] .code-pre code { color: #24292f; }
+:root[data-theme="alcove"] .code-block .code-pre::-webkit-scrollbar-thumb {
+  background: rgba(84, 84, 84, 0.18);
+  border-color: transparent;
+}
+:root[data-theme="alcove"] .code-pre .hljs-comment,
+:root[data-theme="alcove"] .code-pre .hljs-quote { color: #8b949e; font-style: italic; }
+:root[data-theme="alcove"] .code-pre .hljs-keyword,
+:root[data-theme="alcove"] .code-pre .hljs-selector-tag,
+:root[data-theme="alcove"] .code-pre .hljs-type,
+:root[data-theme="alcove"] .code-pre .hljs-template-tag,
+:root[data-theme="alcove"] .code-pre .hljs-doctag,
+:root[data-theme="alcove"] .code-pre .hljs-meta .hljs-keyword { color: #cf222e; }
+:root[data-theme="alcove"] .code-pre .hljs-string,
+:root[data-theme="alcove"] .code-pre .hljs-regexp,
+:root[data-theme="alcove"] .code-pre .hljs-meta .hljs-string { color: #0a3069; }
+:root[data-theme="alcove"] .code-pre .hljs-title,
+:root[data-theme="alcove"] .code-pre .hljs-title.class_,
+:root[data-theme="alcove"] .code-pre .hljs-title.function_,
+:root[data-theme="alcove"] .code-pre .hljs-section { color: #8250df; }
+:root[data-theme="alcove"] .code-pre .hljs-number,
+:root[data-theme="alcove"] .code-pre .hljs-literal,
+:root[data-theme="alcove"] .code-pre .hljs-attr,
+:root[data-theme="alcove"] .code-pre .hljs-attribute,
+:root[data-theme="alcove"] .code-pre .hljs-variable,
+:root[data-theme="alcove"] .code-pre .hljs-template-variable,
+:root[data-theme="alcove"] .code-pre .hljs-built_in,
+:root[data-theme="alcove"] .code-pre .hljs-symbol,
+:root[data-theme="alcove"] .code-pre .hljs-selector-attr,
+:root[data-theme="alcove"] .code-pre .hljs-selector-class,
+:root[data-theme="alcove"] .code-pre .hljs-selector-id,
+:root[data-theme="alcove"] .code-pre .hljs-meta { color: #0550ae; }
+:root[data-theme="alcove"] .code-pre .hljs-name,
+:root[data-theme="alcove"] .code-pre .hljs-tag,
+:root[data-theme="alcove"] .code-pre .hljs-selector-pseudo { color: #116329; }
+:root[data-theme="alcove"] .code-pre .hljs-params,
+:root[data-theme="alcove"] .code-pre .hljs-subst,
+:root[data-theme="alcove"] .code-pre .hljs-punctuation { color: #24292f; }
+:root[data-theme="alcove"] .code-pre .hljs-addition { color: #116329; background: rgba(63, 174, 90, 0.12); }
+:root[data-theme="alcove"] .code-pre .hljs-deletion { color: #82071e; background: rgba(224, 96, 90, 0.12); }
+:root[data-theme="alcove"] .code-pre .hljs-emphasis { font-style: italic; }
+:root[data-theme="alcove"] .code-pre .hljs-strong { font-weight: 600; }
+
+/* ---- tool / activity cards --------------------------------------------------- */
+/* Full-width white glass rows: line icon, 11px grey label, chevron right. */
+:root[data-theme="alcove"] .row-card,
+:root[data-theme="alcove"] .row-card:hover,
+:root[data-theme="alcove"] .tool-row:not(.is-error),
+:root[data-theme="alcove"] .tool-row:not(.is-error):hover,
+:root[data-theme="alcove"] .subagent-row,
+:root[data-theme="alcove"] .subagent-row.status-error {
+  border: 0;
+  border-radius: var(--alc-r-tool); corner-shape: var(--alc-corner);
+  background: var(--alc-card);
+  box-shadow: var(--alc-rim), var(--alc-card-shadow);
+}
+:root[data-theme="alcove"] .row-card:hover,
+:root[data-theme="alcove"] .tool-row:not(.is-error):hover { background: rgba(255, 255, 255, 0.82); }
+:root[data-theme="alcove"] .row-head,
+:root[data-theme="alcove"] .tool-row .row-head,
+:root[data-theme="alcove"] .row-head-btn {
+  min-height: 34px;
+  gap: 8px;
+  padding: 0 12px 0 11px;
+}
+:root[data-theme="alcove"] .diff-head { padding: 0; }
+:root[data-theme="alcove"] .row-head:not(:disabled):hover,
+:root[data-theme="alcove"] .row-head-btn:hover { background: transparent; }
+:root[data-theme="alcove"] .row-glyph { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .row-glyph svg { width: 15px; height: 15px; }
+:root[data-theme="alcove"] .row-name,
+:root[data-theme="alcove"] .diff-card .row-name {
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #777;
+}
+:root[data-theme="alcove"] .diff-card .row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .row-detail {
+  font-size: 11px;
+  color: var(--alc-ink-5);
+}
+:root[data-theme="alcove"] .row-chevron { color: #999; }
+:root[data-theme="alcove"] .tool-row.is-live .row-glyph,
+:root[data-theme="alcove"] .subagent-row.status-running .row-glyph { color: var(--alc-blue); }
+:root[data-theme="alcove"] .tool-spin {
+  border-color: var(--alc-track);
+  border-top-color: var(--alc-blue);
+}
+:root[data-theme="alcove"] .tool-flag,
+:root[data-theme="alcove"] .subagent-type,
+:root[data-theme="alcove"] .diff-repo {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  padding: 1px 7px;
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .tool-flag { background: color-mix(in srgb, var(--alc-minus) 12%, transparent); color: var(--alc-minus); }
+:root[data-theme="alcove"] .subagent-type,
+:root[data-theme="alcove"] .diff-repo { background: rgba(84, 84, 84, 0.07); color: var(--alc-ink-3); }
+:root[data-theme="alcove"] .subagent-elapsed { font-family: var(--font-ui); color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .subagent-check { color: var(--alc-plus); }
+
+/* File edit: "+201" green, "-0" red. */
+:root[data-theme="alcove"] .diff-stat {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .diff-stat .plus { color: #80bf74; }
+:root[data-theme="alcove"] .diff-stat .minus { color: #d98282; }
+:root[data-theme="alcove"] .diff-head .copy-btn { border-radius: 50%; }
+
+/* Errors keep their shape: a red-tinted row. */
+:root[data-theme="alcove"] .tool-row.is-error {
+  border: 0;
+  border-radius: var(--alc-r-tool); corner-shape: var(--alc-corner);
+  background: color-mix(in srgb, var(--alc-minus) 6%, rgba(255, 255, 255, 0.7));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--alc-minus) 22%, transparent), var(--alc-card-shadow);
+}
+:root[data-theme="alcove"] .tool-row.is-error .row-glyph,
+:root[data-theme="alcove"] .tool-row.is-error .row-name { color: var(--alc-minus); }
+
+/* Expanded bodies: light, still monospace, still scrollable. */
+:root[data-theme="alcove"] .tool-input-wrap,
+:root[data-theme="alcove"] .tool-output-wrap {
+  border-top: 1px solid rgba(84, 84, 84, 0.07);
+  background: transparent;
+}
+:root[data-theme="alcove"] .tool-section-label {
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .tool-input { color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .tool-output,
+:root[data-theme="alcove"] .tool-output-wrap .tool-output {
+  margin: 4px 8px 8px;
+  border: 0;
+  border-radius: 9px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.05);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .tool-row.is-error .tool-output { color: #b8443f; }
+:root[data-theme="alcove"] .tool-output-note {
+  border-top: 1px solid rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .copy-btn { border-radius: 8px; corner-shape: var(--alc-corner); color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .copy-btn:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .copy-btn.floating {
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .diff-body {
+  border-top: 1px solid rgba(84, 84, 84, 0.07);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .diff-add { background: rgba(63, 174, 90, 0.1); color: #2f7d43; }
+:root[data-theme="alcove"] .diff-del { background: rgba(224, 96, 90, 0.1); color: #b8443f; }
+:root[data-theme="alcove"] .diff-hunk { background: color-mix(in srgb, var(--alc-blue) 7%, transparent); color: var(--alc-blue); }
+:root[data-theme="alcove"] .diff-file { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .diff-ctx { color: #777; }
+:root[data-theme="alcove"] .subagent-body {
+  border-top: 1px solid rgba(84, 84, 84, 0.07);
+  background: transparent;
+}
+:root[data-theme="alcove"] .subagent-line-text { color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .subagent-line-tag {
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .subagent-line.kind-tool .subagent-line-tag { color: var(--alc-ink-3); }
+:root[data-theme="alcove"] .subagent-line.kind-prompt .subagent-line-tag { color: var(--alc-blue); }
+
+/* Thinking: a quiet grey disclosure. */
+:root[data-theme="alcove"] .thinking-head {
+  color: var(--alc-ink-4);
+  font-size: 11px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .thinking-head:hover { color: var(--alc-ink-3); }
+:root[data-theme="alcove"] .thinking-label { font-style: normal; letter-spacing: 0; }
+:root[data-theme="alcove"] .thinking-body {
+  border-left: 1px solid rgba(84, 84, 84, 0.12);
+  color: var(--alc-ink-4);
+}
+
+/* "Working" — the live progress row, after the mockup's Compacting card: a
+   white row with a thin blue bar running across it. */
+:root[data-theme="alcove"] .working-row {
+  min-height: 34px;
+  gap: 9px;
+  padding: 0 14px 0 12px;
+  border-radius: var(--alc-r-tool); corner-shape: var(--alc-corner);
+  background: var(--alc-card);
+  box-shadow: var(--alc-rim), var(--alc-card-shadow);
+  color: #777;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+}
+:root[data-theme="alcove"] .working-signal i { background: var(--alc-blue); }
+:root[data-theme="alcove"] .working-copy strong { font-weight: 500; color: #777; }
+:root[data-theme="alcove"] .working-copy em { color: var(--alc-ink-5); font-size: 10.5px; }
+:root[data-theme="alcove"] .working-sweep {
+  flex: 1;
+  width: auto;
+  min-width: 48px;
+  height: 4px;
+  margin-left: 4px;
+  border-radius: 3px; corner-shape: var(--alc-corner);
+  background: #e8e8e8;
+}
+:root[data-theme="alcove"] .working-sweep::after {
+  width: 40%;
+  border-radius: inherit; corner-shape: inherit;
+  background: #6997ef;
+  box-shadow: none;
+}
+
+/* Approvals and questions: a white glass card; the accent marks the action. */
+:root[data-theme="alcove"] .approval-card,
+:root[data-theme="alcove"] .question-card {
+  border: 0;
+  border-radius: 22px; corner-shape: var(--alc-corner);
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.78);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-float);
+}
+:root[data-theme="alcove"] .approval-glyph { color: var(--amber); }
+:root[data-theme="alcove"] .approval-kind,
+:root[data-theme="alcove"] .question-eyebrow,
+:root[data-theme="alcove"] .question-step {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  padding: 2px 8px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .approval-kind { background: color-mix(in srgb, var(--amber) 12%, transparent); color: var(--amber); }
+:root[data-theme="alcove"] .question-eyebrow { background: color-mix(in srgb, var(--alc-blue) 10%, transparent); color: var(--alc-blue); }
+:root[data-theme="alcove"] .question-step { background: rgba(84, 84, 84, 0.07); color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .approval-title { color: var(--alc-ink); font-weight: 500; }
+:root[data-theme="alcove"] .approval-detail { color: var(--alc-ink-3); }
+:root[data-theme="alcove"] .question-hint,
+:root[data-theme="alcove"] .opt-desc { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .mono-block {
+  border: 0;
+  border-radius: 12px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.05);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .approval-card .btn,
+:root[data-theme="alcove"] .question-card .btn {
+  min-height: 30px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .approval-card .btn.tone-allow,
+:root[data-theme="alcove"] .question-card .btn.tone-allow {
+  background: var(--alc-blue);
+  color: #fff;
+  box-shadow: 0 3px 8px rgba(51, 150, 254, 0.26);
+}
+:root[data-theme="alcove"] .approval-card .btn.tone-allowAlways,
+:root[data-theme="alcove"] .approval-card .btn.tone-deny,
+:root[data-theme="alcove"] .question-card .btn:not(.tone-allow) {
+  background: #fff;
+  color: var(--alc-ink-2);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .approval-card .btn.tone-deny:not(:disabled):hover { color: var(--alc-minus); background: #fff; }
+:root[data-theme="alcove"] .question-option {
+  border: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.04);
+}
+:root[data-theme="alcove"] .question-option:not(:disabled):hover { background: rgba(84, 84, 84, 0.07); }
+:root[data-theme="alcove"] .question-option.on {
+  background: color-mix(in srgb, var(--alc-blue) 10%, #fff);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--alc-blue) 40%, transparent);
+}
+:root[data-theme="alcove"] .opt-marker { border-color: rgba(84, 84, 84, 0.22); color: var(--alc-blue); }
+:root[data-theme="alcove"] .question-option.on .opt-marker {
+  border-color: var(--alc-blue);
+  background: color-mix(in srgb, var(--alc-blue) 18%, transparent);
+}
+:root[data-theme="alcove"] .opt-key {
+  border: 0;
+  border-radius: 6px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.07);
+  font-family: var(--font-ui);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .question-other {
+  border: 0;
+  border-radius: 12px; corner-shape: var(--alc-corner);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .question-other:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--alc-blue) 35%, transparent); }
+:root[data-theme="alcove"] .approval-resolved { color: var(--alc-plus); }
+:root[data-theme="alcove"] .approval-resolved.denied { color: var(--alc-minus); }
+:root[data-theme="alcove"] .approval-resolved,
+:root[data-theme="alcove"] .question-resolved { font-size: 12px; font-weight: 500; }
+:root[data-theme="alcove"] .question-resolved { color: var(--alc-blue); }
+:root[data-theme="alcove"] .approval-resolved span,
+:root[data-theme="alcove"] .question-resolved span { color: var(--alc-ink-4); }
+
+/* Artifacts: a rounded media tile with a soft lift. */
+:root[data-theme="alcove"] .artifact-card {
+  border: 0;
+  border-radius: 24px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--alc-rim), 0 6px 16px rgba(0, 0, 0, 0.06);
+}
+:root[data-theme="alcove"] .artifact-inline-preview {
+  border-bottom: 1px solid rgba(84, 84, 84, 0.07);
+  background: #ececec;
+}
+
+/* Turn stats, notes, dividers. */
+:root[data-theme="alcove"] .turn-meta {
+  gap: 10px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--alc-ink-5);
+}
+:root[data-theme="alcove"] .turn-stat > svg { color: var(--alc-ink-5); }
+:root[data-theme="alcove"] .turn-line { background: rgba(84, 84, 84, 0.1); }
+:root[data-theme="alcove"] .handoff-chip,
+:root[data-theme="alcove"] .brief-chip {
+  border: 0;
+  padding: 4px 11px;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .brief-chip:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .brief-body {
+  border: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  background: var(--alc-card);
+  box-shadow: var(--alc-rim), var(--alc-card-shadow);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .feed-note {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .note-status { font-style: normal; }
+:root[data-theme="alcove"] .feed-note button {
+  color: var(--alc-ink-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:root[data-theme="alcove"] .note-error {
+  border: 0;
+  border-radius: var(--alc-r-tool); corner-shape: var(--alc-corner);
+  padding: 9px 13px;
+  background: color-mix(in srgb, var(--alc-minus) 7%, rgba(255, 255, 255, 0.7));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--alc-minus) 20%, transparent);
+  color: #b8443f;
+}
+
+/* ---- empty state ------------------------------------------------------------- */
+:root[data-theme="alcove"] .feed-empty { margin-top: 27vh; }
+:root[data-theme="alcove"] .feed-empty > p,
+:root[data-theme="alcove"] .empty-work-on {
+  color: var(--alc-ink-2);
+  font-size: 27px;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -1.25px;
+}
+:root[data-theme="alcove"] .feed-empty > p { animation: alc-thread-title-in 270ms var(--alc-ease) both; }
+/* Headline on its own line, the two pickers as quiet pills beneath it. */
+:root[data-theme="alcove"] .empty-work-on {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 16px 8px;
+  animation: alc-thread-title-in 270ms var(--alc-ease) both;
+}
+:root[data-theme="alcove"] .empty-work-on-prefix {
+  flex-basis: 100%;
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .empty-project-picker,
+:root[data-theme="alcove"] .empty-model-picker {
+  margin: 0;
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"] .empty-project-trigger,
+:root[data-theme="alcove"] .empty-model-trigger {
+  height: 29px;
+  gap: 6px;
+  padding: 0 12px 0 14px;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-glass);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-2);
+  font: 500 12px/1 var(--font-ui);
+  letter-spacing: 0;
+  transition: background 160ms ease, color 160ms ease;
+}
+:root[data-theme="alcove"] .empty-project-trigger:hover,
+:root[data-theme="alcove"] .empty-model-trigger:hover,
+:root[data-theme="alcove"] .empty-project-trigger[aria-expanded="true"],
+:root[data-theme="alcove"] .empty-model-trigger[aria-expanded="true"] { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .empty-project-trigger:focus-visible,
+:root[data-theme="alcove"] .empty-model-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--alc-blue) 45%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--alc-r-pill);
+}
+:root[data-theme="alcove"] .empty-model-using,
+:root[data-theme="alcove"] .empty-model-name,
+:root[data-theme="alcove"] .empty-model-chevron,
+:root[data-theme="alcove"] .empty-project-chevron { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .empty-project-menu,
+:root[data-theme="alcove"] .empty-model-menu {
+  gap: 2px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-float);
+  animation: alc-thread-menu-in 0.28s var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .empty-project-option,
+:root[data-theme="alcove"] .empty-model-option {
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 12px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-2);
+  font: 500 12.5px/1.2 var(--font-ui);
+}
+:root[data-theme="alcove"] .empty-project-option:hover,
+:root[data-theme="alcove"] .empty-project-option:focus-visible,
+:root[data-theme="alcove"] .empty-model-option:hover,
+:root[data-theme="alcove"] .empty-model-option:focus-visible { background: var(--alc-hover); color: var(--alc-ink); }
+:root[data-theme="alcove"] .empty-project-option.selected,
+:root[data-theme="alcove"] .empty-model-option.selected { background: rgba(84, 84, 84, 0.07); color: var(--alc-ink); }
+:root[data-theme="alcove"] .empty-model-option-name { color: var(--alc-ink-4); }
+
+@keyframes alc-thread-title-in {
+  from { opacity: 0; filter: blur(9px); transform: scale(0.985); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+/* The empty-state menus centre with translateX(-50%), so pop in around it. */
+@keyframes alc-thread-menu-in {
+  from { opacity: 0; filter: blur(18px); transform: translateX(-50%) scale(0.88); }
+  to { opacity: 1; filter: blur(0); transform: translateX(-50%) scale(1); }
+}
+
+/* ---- floating chips over the feed ------------------------------------------- */
+/* "Present ⌄": a small glass pill above the composer. */
+:root[data-theme="alcove"] .jump-present,
+:root[data-theme="alcove"] .jump-present:hover {
+  height: 30px;
+  gap: 5px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-glass);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-halo);
+  color: #777;
+  font-size: 12.5px;
+  font-weight: 500;
+  animation: alc-present-in 230ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+:root[data-theme="alcove"] .jump-present:hover { background: #fff; color: var(--alc-ink); }
+@keyframes alc-present-in {
+  from { opacity: 0; filter: blur(7px); transform: translateX(-50%) scale(0.86); }
+  to { opacity: 1; filter: blur(0); transform: translateX(-50%) scale(1); }
+}
+
+/* Find in chat: a glass capsule; matches get a soft blue ring. */
+:root[data-theme="alcove"] .chat-find {
+  min-height: 42px;
+  border: 0;
+  border-radius: 23px; corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-float);
+}
+:root[data-theme="alcove"] .chat-find input { font-weight: 500; color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .chat-find input::placeholder { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .chat-find-count { font-family: var(--font-ui); color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .chat-find-nav,
+:root[data-theme="alcove"] .chat-find-close { border-radius: 50%; color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .chat-find-nav:hover:not(:disabled),
+:root[data-theme="alcove"] .chat-find-close:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .feed-find-item.is-match {
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  outline-color: color-mix(in srgb, var(--alc-blue) 22%, transparent);
+}
+:root[data-theme="alcove"] .feed-find-item.is-current {
+  outline-color: color-mix(in srgb, var(--alc-blue) 70%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--alc-blue) 9%, transparent);
+}
+
+/* ---- spacing fixes ------------------------------------------------------------ */
+/* Feed items that render nothing (context_usage etc.) would double the gap. */
+:root[data-theme="alcove"] .feed-find-item:empty { display: none; }
+/* A run of tool rows stacks tightly, like the mockup's card column. */
+:root[data-theme="alcove"] .feed-find-item:has(> .row-card) + .feed-find-item:has(> .row-card) { margin-top: -7px; }
+
+/* Quick threads' Chat/Build capsule: a glass track with a white thumb. */
+:root[data-theme="alcove"] .quick-mode-tabs {
+  padding: 3px;
+  background: var(--alc-glass);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  box-shadow: var(--alc-rim), var(--alc-halo);
+}
+:root[data-theme="alcove"] .quick-mode-tabs button {
+  min-height: 25px;
+  padding: 4px 16px;
+  color: var(--alc-ink-4);
+  font: 500 12px/1 var(--font-ui);
+}
+:root[data-theme="alcove"] .quick-mode-tabs button.active { color: var(--alc-ink); }
+:root[data-theme="alcove"] .quick-mode-indicator {
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}

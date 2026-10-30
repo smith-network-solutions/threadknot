@@ -5,6 +5,8 @@ import "./lib/renderTrace";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+// Alcove skin: every rule is scoped to :root[data-theme="alcove"], inert elsewhere.
+import "./styles/alcove/index.css";
 import { applyAppearance } from "./lib/appearance";
 import { installKeyboardInset } from "./lib/viewport";
 

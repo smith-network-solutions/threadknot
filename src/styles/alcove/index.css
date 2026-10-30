@@ -1,0 +1,12 @@
+/* ================= alcove =================
+   Frosted glass on pale grey, after the Alcove mockups. Every selector in these
+   files is rooted at :root[data-theme="alcove"], so the other themes render
+   byte-identical. Parts follow the arcade skin's module switches
+   (data-skin-off): "cards" gates the sidebar, "workspace" the side panes,
+   "usage" the meters. Split by area so each file stays readable. */
+@import "./base.css";
+@import "./sidebar.css";
+@import "./thread.css";
+@import "./composer.css";
+@import "./overlays.css";
+@import "./panes.css";

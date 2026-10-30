@@ -1,0 +1,1108 @@
+/* alcove: sidebar
+   The sidebar is a floating frosted card on the pale room, not a full-height
+   panel. The aside itself goes transparent and inset; the card is painted by
+   its ::before (so the rail layout can float its project column as a second,
+   narrow card beside it, the way Sidebar-Minimized.png floats its rail).
+   Everything is gated on the "cards" module except the usage meters, which
+   ride the "usage" module. Desktop geometry is scoped to >=768px; the phone
+   drawer keeps its full-bleed slide-over and only takes the palette. */
+
+/* ---- palette inside the sidebar ------------------------------------------ */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
+  --text: var(--alc-ink);
+  --dim: var(--alc-ink-2);
+  --faint: var(--alc-ink-4);
+  --sidebar-muted: var(--alc-ink-4);
+  --sidebar-copy-size: 13px;
+  --alc-sb-card-left: 0px;
+  --alc-sb-pad: 10px;
+  background: transparent;
+  border-right: 0;
+  color: var(--alc-ink-4);
+}
+
+/* The card. z-index -1 inside the sidebar's own stacking context (it already
+   carries position + z-index) puts it under every child. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 var(--alc-sb-card-left);
+  z-index: -1;
+  border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+  background: var(--alc-glass);
+  box-shadow: var(--alc-rim), var(--alc-shadow), 0 0 22px rgba(0, 0, 0, 0.035);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  pointer-events: none;
+}
+
+@media (min-width: 768px) {
+  /* Inset from the window: the card floats on the room. Margins on a stretched
+     flex item shorten it, so no height math is needed. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
+    margin: 10px 2px 10px 8px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar > *:not(.project-rail):not(.sidebar-resize):not(.sidebar-brand):not(.sidebar-settings):not(.stream-bar) {
+    padding-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
+    padding-right: var(--alc-sb-pad);
+  }
+  /* Rail layout: the project column becomes its own narrow card; the main card
+     starts after it. --rail-w keeps driving the base insets. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.layout-rail {
+    --rail-w: 62px;
+    --alc-sb-card-left: var(--rail-w);
+  }
+}
+
+/* ---- top row: Search pill + round icon buttons ----------------------------
+   The launch stack wraps: Search (a pill that takes the line) and New chat (a
+   round icon) share the first line, every other destination drops to its own
+   quiet row below. The brand row's two controls (view options, collapse) are
+   lifted out of flow onto the right end of that same first line; the
+   decorative wordmark is hidden. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand {
+  position: absolute;
+  z-index: 3;
+  top: 17px;
+  right: var(--alc-sb-pad);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .brand-wordmark {
+  display: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
+  position: static;
+  transform: none;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 27px;
+  height: 27px;
+  min-height: 27px;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+  transition: background 0.14s ease, color 0.14s ease, transform 0.2s var(--alc-spring);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn svg,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat svg {
+  width: 14px;
+  height: 14px;
+  color: currentColor;
+  opacity: 1;
+  stroke-width: 1.8;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat:hover {
+  background: var(--alc-active);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn:active,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat:active {
+  transform: scale(0.92);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .sidebar-filter-btn.active,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .sidebar-filter-btn.on {
+  background: var(--alc-active);
+  color: var(--brass);
+}
+/* "New chat" keeps its label for assistive tech; it is just not drawn. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px 8px;
+  padding-top: 17px;
+  padding-bottom: 6px;
+}
+/* Room on the first line for the two lifted brand buttons (2 x 27 + gaps). */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
+  order: 1;
+  margin-right: 66px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-launch .sidebar-action.new-chat {
+  margin-right: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-people {
+  padding-top: 17px;
+  padding-right: calc(var(--alc-sb-pad) + 66px);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-launch {
+  padding-top: 8px;
+}
+
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open {
+  order: 0;
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  min-height: 27px;
+  height: 27px;
+  margin: 0;
+  padding: 0 12px 0 30px;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open:hover {
+  background: var(--alc-active);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open svg {
+  position: absolute;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  color: var(--alc-ink-4);
+  opacity: 1;
+  stroke-width: 1.7;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open > span:first-of-type {
+  flex: none;
+  text-align: center;
+}
+
+/* The rest of the destinations: quiet rows, a notch under a thread row. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action {
+  order: 2;
+  flex: 1 0 100%;
+  gap: 8px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 10px 0 7px;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch > .sidebar-action:nth-child(3) {
+  margin-top: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action svg {
+  width: 14px;
+  height: 14px;
+  color: var(--alc-ink-4);
+  opacity: 1;
+  stroke-width: 1.8;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action:active {
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.on {
+  background: var(--alc-active);
+  color: var(--alc-ink);
+}
+
+/* Counts and dots stay visible, as small quiet capsules. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .inbox-unread-count,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .usermenu-count {
+  flex: none;
+  min-width: 18px;
+  height: 15px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-blue);
+  box-shadow: none;
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .usermenu-count {
+  background: rgba(84, 84, 84, 0.1);
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .usermenu-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--alc-blue);
+  box-shadow: none;
+}
+
+/* ---- stream layout's one-line bar ----------------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar {
+  gap: 6px;
+  padding-top: 17px;
+  padding-bottom: 6px;
+  padding-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
+  padding-right: calc(var(--alc-sb-pad) + 66px);
+  border: 0;
+  background: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool {
+  position: relative;
+  flex: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new svg {
+  width: 14px;
+  height: 14px;
+  color: var(--alc-ink-4);
+}
+/* New chat is the mockup's round icon here too; the label stays for AT. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new {
+  position: relative;
+  flex: none;
+  width: 27px;
+  height: 27px;
+  min-height: 27px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new:hover {
+  background: var(--alc-active);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool {
+  width: 27px;
+  height: 27px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool.on {
+  background: var(--alc-active);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool svg {
+  width: 14px;
+  height: 14px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool-count {
+  top: -4px;
+  right: -6px;
+  min-width: 14px;
+  height: 12px;
+  padding: 0 3px;
+  border: 0;
+  background: var(--alc-blue);
+  color: #fff;
+  font-size: 7.5px;
+  font-weight: 600;
+  line-height: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool-dot {
+  background: var(--alc-blue);
+  box-shadow: none;
+}
+
+/* ---- the list ------------------------------------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-scroll {
+  padding-top: 8px;
+}
+@media (min-width: 768px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.layout-rail .sidebar-scroll {
+    padding-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
+  }
+}
+
+/* Workspace label: "Test Workspace ⌄", small and grey. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker {
+  margin: 4px 0 4px;
+  padding: 0 4px 0 0;
+  background: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker:hover {
+  background: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-btn {
+  gap: 5px;
+  padding: 3px 3px;
+  color: #777;
+  font-size: 10px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-btn:hover {
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-btn svg {
+  width: 10px;
+  height: 10px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-count {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--alc-ink-5);
+  font-family: var(--font-ui);
+  font-size: 8px;
+  font-weight: 500;
+}
+
+/* Thread rows: 15px mark, 13px/500 grey title, white pill when open. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row {
+  gap: 6px;
+  min-height: 30px;
+  margin: 2px 0 0;
+  padding: 0 10px 0 6px;
+  border-radius: 17px; corner-shape: var(--alc-corner);
+  background: transparent;
+  color: var(--alc-ink-4);
+  transition: background 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row:hover {
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.active,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.active:hover {
+  background: var(--alc-active);
+  color: var(--alc-ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.025);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-main {
+  gap: 6px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-title {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.005em;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 16px), transparent);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.active .thread-row-title {
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.has-attention .thread-row-title {
+  color: var(--alc-ink);
+  font-weight: 600;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-time {
+  color: var(--alc-ink-4);
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-slot {
+  width: 16px;
+  height: 16px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-visual > svg,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-visual > .mark {
+  width: 15px;
+  height: 15px;
+}
+/* Provider tints from the mockups: codex periwinkle, claude terracotta. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .mark-codex { color: var(--alc-codex); }
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .mark-claude { color: var(--alc-claude); }
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row .icon-btn {
+  color: var(--alc-ink-4);
+  border-radius: 50%;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row .icon-btn:hover {
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-attention-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--alc-blue);
+  box-shadow: none;
+}
+
+/* Bosun's per-workspace summary row: a thread row in shape, a hair quieter. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row {
+  gap: 6px;
+  min-height: 28px;
+  margin: 2px 0 0;
+  padding: 0 10px 0 6px;
+  border-radius: 17px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-3);
+  font-size: 12px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row:hover {
+  background: rgba(255, 255, 255, 0.58);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row .bosun-mark {
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row-text {
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--alc-blue);
+  box-shadow: none;
+}
+
+/* "Show more" and the settled shelf: small grey links under the list. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .load-more-threads,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .dispatch-shelf,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf {
+  width: auto;
+  min-height: 22px;
+  margin: 4px 0 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 11px; corner-shape: var(--alc-corner);
+  background: none;
+  color: #777;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .load-more-threads:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .dispatch-shelf:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf:hover {
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf svg {
+  width: 11px;
+  height: 11px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf-count,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .load-more-count {
+  padding: 0;
+  background: none;
+  color: var(--alc-ink-5);
+  font-family: var(--font-ui);
+  font-size: 8px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.slim {
+  min-height: 28px;
+  opacity: 0.7;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.slim:hover {
+  opacity: 1;
+}
+
+/* ---- project rail: a narrow glass card of round avatars ------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-rail {
+  gap: 2px;
+  padding: 14px 6px;
+  border-right: 0;
+  background: transparent;
+}
+@media (min-width: 768px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-rail {
+    width: calc(var(--rail-w) - 8px);
+    border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+    background: var(--alc-glass);
+    box-shadow: var(--alc-rim), var(--alc-shadow), 0 0 22px rgba(0, 0, 0, 0.035);
+    -webkit-backdrop-filter: var(--alc-blur);
+    backdrop-filter: var(--alc-blur);
+  }
+}
+/* The sticky home block needs an opaque floor to scroll avatars under: the
+   glass over the flat room resolves to this. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-home {
+  gap: 2px;
+  padding-bottom: 6px;
+  background: #fafafa;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-divider {
+  width: 22px;
+  margin: 4px auto 2px;
+  background: rgba(84, 84, 84, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item {
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  opacity: 0.82;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item:hover {
+  opacity: 1;
+  background: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item.on {
+  opacity: 1;
+  background: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-pip {
+  display: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item .sidebar-avatar,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item .machine-avatar,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item .machine-avatar.has-color,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-avatar,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-quick-face,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-stash-face {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  transition: box-shadow 0.16s ease, transform 0.2s var(--alc-spring), background 0.16s ease;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item .machine-avatar img,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-avatar img {
+  border-radius: 50%;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-quick-face svg {
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item:hover .sidebar-avatar,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item:hover .rail-quick-face,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item:hover .rail-stash-face {
+  background: var(--alc-active);
+  transform: scale(1.06);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item.on .sidebar-avatar,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item.on .rail-avatar,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-quick.on .rail-quick-face {
+  background: var(--alc-active);
+  box-shadow:
+    0 0 0 2px var(--alc-active),
+    0 0 0 3.5px color-mix(in srgb, var(--brass) 55%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.06);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-ring {
+  border-radius: 50%;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-dot {
+  border-color: #fafafa;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-dot.lit {
+  background: var(--alc-blue);
+}
+
+/* ---- footer: usage meters + settings -------------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-meter {
+  margin: 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chips {
+  gap: 6px 10px;
+  min-height: 0;
+  padding: 8px 9px;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chips:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chips[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.45);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip {
+  gap: 5px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip > svg {
+  width: 13px;
+  height: 13px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-bar {
+  height: 4px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--alc-track);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-bar-fill {
+  border-radius: inherit; corner-shape: inherit;
+  background: var(--alc-ink-5);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip:has(> .mark-codex) .usage-bar-fill { background: var(--alc-codex); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip:has(> .mark-claude) .usage-bar-fill { background: var(--alc-claude); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-bar-fill.hot { background: var(--alc-minus); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip > .mark-codex { color: var(--alc-codex); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip > .mark-claude { color: var(--alc-claude); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip-pct {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 8px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip-pct.hot { color: var(--alc-minus); }
+
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-action.sidebar-settings {
+  gap: 8px;
+  min-height: 28px;
+  margin-top: 0;
+  margin-bottom: 14px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  font-weight: 500;
+}
+/* The padding rule above sets the inline insets on the sidebar's children;
+   the settings button wants them as margins so its hover pill is inset too. */
+@media (min-width: 768px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar > .sidebar-action.sidebar-settings.sidebar-settings {
+    margin-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
+    margin-right: var(--alc-sb-pad);
+    padding-left: 9px;
+    padding-right: 10px;
+  }
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-action.sidebar-settings svg {
+  width: 14px;
+  height: 14px;
+  color: var(--alc-ink-4);
+  opacity: 1;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-action.sidebar-settings:hover {
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--alc-ink-2);
+}
+
+/* ---- collapsed: a narrow glass rail of round icons (Sidebar-Minimized.png) --
+   The base collapse animates the sidebar to zero width and floats a re-open
+   handle (.sidebar-reveal) over the header. Here it stops at a 56px card
+   instead: the handle docks at the rail's top, then Search, New chat and the
+   other destinations as round icons, then each chat as its provider mark, and
+   Settings at the foot. Labels stay in the DOM (accessible names), just not
+   drawn. The project rail, list headers and usage bars wait for the full
+   sidebar. */
+@media (min-width: 768px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed {
+    --alc-sb-card-left: 0px;
+    width: 56px;
+    min-width: 56px;
+    overflow: hidden;
+    pointer-events: auto;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed > *:not(.project-rail):not(.sidebar-resize):not(.sidebar-brand):not(.sidebar-settings):not(.stream-bar) {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .project-rail,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-brand,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-people,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .usage-meter,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .project-picker,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .load-more-threads,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .settled-shelf,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-empty,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row-title,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row-sub,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .bosun-ws-row-text,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .dispatch-shelf,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .project-head {
+    display: none;
+  }
+
+  /* The re-open handle docks at the top of the rail. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal {
+    top: 22px;
+    left: 22px;
+    width: 27px;
+    height: 27px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--alc-hover);
+    box-shadow: var(--alc-halo);
+    color: var(--alc-ink-4);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    transition: background 0.14s ease, color 0.14s ease;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal:hover {
+    background: var(--alc-active);
+    color: var(--alc-ink-2);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* The header no longer has to clear a floating handle. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .app:has(.sidebar.collapsed) .thread-head {
+    padding-left: 20px;
+  }
+
+  /* Launch stack: one centred column of round icons. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-bar {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    padding: 57px 0 6px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.search-open,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.new-chat,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-bar .stream-new,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed > .sidebar-action.sidebar-settings.sidebar-settings {
+    position: relative;
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 27px;
+    height: 27px;
+    min-height: 27px;
+    margin: 0;
+    padding: 0;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: none;
+    color: var(--alc-ink-4);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.search-open,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.new-chat {
+    background: var(--alc-hover);
+    box-shadow: var(--alc-halo);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.new-chat {
+    order: 0;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.search-open {
+    order: -1;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch > .sidebar-action:nth-child(3) {
+    margin-top: 10px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action:hover,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-bar .stream-new:hover,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed > .sidebar-action.sidebar-settings.sidebar-settings:hover {
+    background: var(--alc-active);
+    color: var(--alc-ink-2);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action svg,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.search-open svg {
+    position: static;
+    width: 14px;
+    height: 14px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action > span:not(.inbox-unread-count):not(.usermenu-count):not(.usermenu-dot),
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-bar .stream-new > span,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed > .sidebar-settings > span:not(.usermenu-dot) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* Counts ride the icon as a corner badge. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .inbox-unread-count,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .usermenu-count {
+    position: absolute;
+    top: -3px;
+    left: 15px;
+    min-width: 14px;
+    height: 12px;
+    padding: 0 3px;
+    font-size: 7.5px;
+    line-height: 12px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .usermenu-dot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+  }
+
+  /* The list: each chat as its provider mark. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-scroll {
+    padding: 6px 0 12px;
+    scrollbar-width: none;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .bosun-ws-row {
+    justify-content: center;
+    width: 28px;
+    min-height: 28px;
+    height: 28px;
+    margin: 4px auto 0;
+    padding: 0;
+    border-radius: 10px; corner-shape: var(--alc-corner);
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row-main {
+    justify-content: center;
+    gap: 0;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row.active {
+    background: rgba(84, 84, 84, 0.07);
+    box-shadow: none;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row .agent-mark-visual > svg,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row .agent-mark-visual > .mark {
+    width: 16px;
+    height: 16px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed > .sidebar-action.sidebar-settings.sidebar-settings {
+    margin: 0 auto 14px;
+  }
+}
+
+/* ---- section / accordion headers ---------------------------------------- */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head {
+  min-height: 26px;
+  margin-top: 8px;
+  border-radius: 13px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-toggle {
+  gap: 5px;
+  color: #777;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-toggle svg {
+  width: 11px;
+  height: 11px;
+  color: var(--alc-ink-5);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-name {
+  color: #777;
+  font-size: 10.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head:hover .project-name {
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-count {
+  color: var(--alc-ink-5);
+  font-family: var(--font-ui);
+  font-size: 8px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-local-chip,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-server-chip,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-chip {
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink-4);
+  font-size: 8px;
+  font-weight: 500;
+  line-height: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head .icon-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--alc-ink-4);
+}
+
+/* ---- stream layout cards ------------------------------------------------ */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card {
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 10px 6px 7px;
+  border-radius: 17px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-home .sidebar-avatar {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-home .sidebar-avatar img {
+  border-radius: 50%;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-title {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card.active .stream-card-title {
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-project {
+  color: var(--alc-ink-4);
+  font-size: 9.5px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-meta .agent-mark-visual > svg,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-meta .agent-mark-visual > .mark {
+  width: 12px;
+  height: 12px;
+}
+@media (min-width: 768px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-card-body {
+    display: none;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-card {
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    min-height: 34px;
+    margin: 4px auto 0;
+    padding: 3px;
+    border-radius: 50%;
+  }
+}
+
+/* ---- usage details popover (portaled to <body>) --------------------------
+   The ref's usage menu: a frosted dropdown that springs open, heading with the
+   provider mark, thin rounded bars in the provider tint. */
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop {
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-rim), var(--alc-float);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  color: var(--alc-ink-2);
+  transform-origin: bottom center;
+  animation: alc-pop-in 250ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider + .usage-provider,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-pop-foot {
+  border-top-color: rgba(84, 84, 84, 0.08);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider-name {
+  gap: 7px;
+  color: var(--alc-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider-name svg {
+  width: 15px;
+  height: 15px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .mark-codex { color: var(--alc-codex); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .mark-claude { color: var(--alc-claude); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-plan {
+  padding: 1px 7px;
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-label,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-pct,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-count,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-cost-tag {
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-label {
+  color: var(--alc-ink-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-pct {
+  color: var(--alc-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-reset,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-count,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-age,
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-error {
+  color: var(--alc-ink-4);
+  font-size: 9.5px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar {
+  height: 5px;
+  border: 0;
+  border-radius: 4px; corner-shape: var(--alc-corner);
+  background: rgba(31, 31, 31, 0.1);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar-fill {
+  border-radius: inherit; corner-shape: inherit;
+  background: #759cf4;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider:has(.mark-codex) .usage-bar-fill { background: var(--alc-codex); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider:has(.mark-claude) .usage-bar-fill { background: var(--alc-claude); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar-fill.warn { background: var(--amber); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar-fill.hot { background: var(--alc-minus); }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-refresh {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-size: 10px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-refresh:hover {
+  background: var(--alc-active);
+  color: var(--alc-ink);
+}
+
+/* ---- phone drawer ----------------------------------------------------------
+   Full-bleed slide-over above a dimming backdrop: translucent glass would let
+   the backdrop and the chat show through, so the drawer gets the solid colour
+   the glass resolves to on the room, and no floating card. */
+@media (max-width: 767px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
+    background: #fafafa;
+    box-shadow: 18px 0 50px rgba(0, 0, 0, 0.12);
+    --alc-sb-pad: 8px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar::before {
+    display: none;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-brand {
+    top: calc(14px + env(safe-area-inset-top, 0px));
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-launch,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-bar {
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    padding-right: 8px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-brand .icon-btn,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new {
+    width: 34px;
+    height: 34px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open {
+    height: 34px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
+    margin-right: 80px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-bar {
+    padding-right: 88px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-action.sidebar-settings {
+    margin: 0 8px calc(10px + var(--safe-b, 0px));
+  }
+}

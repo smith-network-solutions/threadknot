@@ -9,7 +9,15 @@ import { traceMark } from "./renderTrace";
 /** The theme palettes. "dark" (original) and "light" are unchanged; the four
  *  extra ids are curated data-theme blocks in styles.css. "light" and "solar"
  *  are the light-family palettes (pale backgrounds), the rest are dark. */
-export type Theme = "dark" | "midnight" | "slate" | "carbon" | "light" | "solar" | "arcade";
+export type Theme =
+  | "dark"
+  | "midnight"
+  | "slate"
+  | "carbon"
+  | "light"
+  | "solar"
+  | "arcade"
+  | "alcove";
 export type TermCursorStyle = "block" | "bar" | "underline";
 
 /** The 10 neutral palette CSS vars a custom theme may override, WITHOUT the
@@ -181,6 +189,7 @@ export const THEMES: readonly ThemeInfo[] = [
   { id: "light", label: "Light", dark: false, preview: { bg: "#f3f5f9", panel: "#ffffff", accentDefault: "#b07322" } },
   { id: "solar", label: "Solar", dark: false, preview: { bg: "#f4efe4", panel: "#fffdf7", accentDefault: "#b07322" } },
   { id: "arcade", label: "Retro-Tech", dark: true, preview: { bg: "#04030c", panel: "#0b0820", accentDefault: "#ff3d8a" } },
+  { id: "alcove", label: "Alcove", dark: false, preview: { bg: "#f2f2f2", panel: "#fafafa", accentDefault: "#3396fe" } },
 ];
 
 /** The bg color each palette lands on, for the browser/PWA theme-color meta. */
@@ -192,9 +201,10 @@ const THEME_BG: Record<Theme, string> = {
   light: "#f3f5f9",
   solar: "#f4efe4",
   arcade: "#04030c",
+  alcove: "#f2f2f2",
 };
 
-const LIGHT_FAMILY: ReadonlySet<Theme> = new Set<Theme>(["light", "solar"]);
+const LIGHT_FAMILY: ReadonlySet<Theme> = new Set<Theme>(["light", "solar", "alcove"]);
 
 /** True for the pale-background palettes (light, solar). Callers that only knew
  *  about "light" (e.g. the terminal palette) use this to stay correct. */
@@ -293,6 +303,10 @@ export const MONO_FONTS: readonly FontOption[] = [
   { id: "anonymous", label: "Anonymous Pro", stack: '"Anonymous Pro", ui-monospace, monospace', google: "Anonymous+Pro:wght@400;700" },
   { id: "redhatmono", label: "Red Hat Mono", stack: '"Red Hat Mono", ui-monospace, monospace', google: "Red+Hat+Mono:wght@400;700" },
 ];
+
+/** The Alcove skin's own face, used in place of the default UI font. */
+const ALCOVE_ACCENT = { brass: "#3396fe", hi: "#1a7ae0", dim: "rgba(51, 150, 254, 0.14)" };
+const ALCOVE_FONT_STACK = '"Instrument Sans", "Segoe UI", system-ui, sans-serif';
 
 /** Resolve a font id to its catalog entry, falling back to the list's first
  *  entry (the default) when the id is unknown. Exported so the FontPicker and
@@ -1109,13 +1123,23 @@ export function applyAppearance(
   }
   // Accent: derive the --brass trio from the chosen accent for this family.
   // Custom themes carry their own accent; presets use the Appearance's.
-  const { brass, hi, dim } = brassTrio(custom ? custom.accent : a.accent, lightFamily);
+  // Alcove's blue stands in for the default brass, the same way its font does.
+  // Set as an exact trio: the light family's custom-hex path would darken it.
+  const alcoveDefault = !custom && paletteTheme === "alcove" && a.accent === "brass";
+  const { brass, hi, dim } = alcoveDefault
+    ? ALCOVE_ACCENT
+    : brassTrio(custom ? custom.accent : a.accent, lightFamily);
   root.style.setProperty("--brass", brass);
   root.style.setProperty("--brass-hi", hi);
   root.style.setProperty("--brass-dim", dim);
   root.style.setProperty("--accent-ink", accentInk(brass));
   // Fonts: inline stacks win over the :root defaults in styles.css.
-  root.style.setProperty("--font-ui", uiFontStack(a.fontUi));
+  // Alcove is drawn in Instrument Sans: it stands in for the default face only,
+  // so a font the user picked themselves still wins.
+  root.style.setProperty(
+    "--font-ui",
+    paletteTheme === "alcove" && a.fontUi === UI_FONTS[0].id ? ALCOVE_FONT_STACK : uiFontStack(a.fontUi),
+  );
   root.style.setProperty("--font-mono", monoFontStack(a.fontMono));
   // Ensure the chosen webfonts are actually fetched so they resolve at boot
   // (a no-op for the default @import / system families). The terminal font is
@@ -1129,6 +1153,11 @@ export function applyAppearance(
   if (paletteTheme === "arcade") {
     ensureFontLoaded({ google: "Bungee" });
     ensureFontLoaded({ google: "Silkscreen" });
+  }
+  // Alcove sets every surface in Instrument Sans; code stays on the user's mono
+  // choice. See src/styles/alcove/.
+  if (paletteTheme === "alcove") {
+    ensureFontLoaded({ google: "Instrument+Sans:wght@400..700" });
   }
   // Composer size knobs: a separate preference record, but applied from here so
   // main.tsx's single boot call still lands every root-level var.

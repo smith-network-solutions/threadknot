@@ -8,6 +8,8 @@ import type { SkinModule } from "./appearance";
 // the bundle rather than a runtime fetch that could 404 offline.
 import characterSelectShot from "../assets/skins/retro-tech/character-select.png";
 import roundSplashShot from "../assets/skins/retro-tech/round-splash.png";
+import alcoveContentShot from "../assets/skins/alcove/with-content.png";
+import alcoveModelMenuShot from "../assets/skins/alcove/model-menu.png";
 
 export interface SkinModuleInfo {
   id: SkinModule;
@@ -69,6 +71,16 @@ export const CURATED_SKINS: readonly CuratedSkin[] = [
     screenshots: [
       { src: characterSelectShot, caption: "Reviewer roster, character-select style" },
       { src: roundSplashShot, caption: "ROUND N splash when a review kicks off" },
+    ],
+  },
+  {
+    id: "alcove",
+    name: "Alcove",
+    description:
+      "Soft frosted glass on pale grey: a floating rounded sidebar, the thread title as a centred pill, pill-shaped chat bubbles, a floating composer card and glass menus with blur behind them, all set in Instrument Sans. Every part is a separate switch, so you can keep the look and leave your sidebar or panes as they are.",
+    screenshots: [
+      { src: alcoveContentShot, caption: "A conversation in Alcove" },
+      { src: alcoveModelMenuShot, caption: "Model and effort picker" },
     ],
   },
 ];

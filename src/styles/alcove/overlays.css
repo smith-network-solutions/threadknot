@@ -1,0 +1,1417 @@
+/* alcove: overlays
+   Everything that floats above the room: the thread search, every dropdown /
+   context menu / hover card, modals and dialogs, the Settings screen, toasts
+   and the panels that open over the app (Bosun, Schedules, voice). One recipe
+   throughout: white frosted glass (--alc-glass + --alc-blur), a 1px white rim,
+   a soft float shadow, big radii, pill controls, Instrument Sans in quiet greys.
+   Not styled here (owned by the other alcove files): the header More dropdown
+   (.ws-menu), composer popovers (.pill-menu, .agent-menu, .slash-pop,
+   .ctx-pop), the usage popover, and the pane overlays (artifact lightbox,
+   browser dialog, git branch menu, terminal context menu). */
+
+:root[data-theme="alcove"] {
+  /* Overlay-local tokens. The scrim is the "+BG Blur" behind the search and
+     every modal: a faint white wash with the room blurred through it. */
+  --alc-ov-scrim: rgba(242, 242, 242, 0.42);
+  --alc-ov-scrim-blur: blur(10px) saturate(1.06);
+  --alc-ov-card: rgba(255, 255, 255, 0.66);
+  --alc-ov-card-shadow: 0 22px 52px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03);
+  --alc-ov-menu-shadow: 0 10px 28px rgba(0, 0, 0, 0.07), 0 2px 6px rgba(0, 0, 0, 0.03);
+  --alc-ov-divider: rgba(84, 84, 84, 0.1);
+  --alc-ov-field: rgba(255, 255, 255, 0.9);
+}
+
+/* ============================================================================
+   1. Thread search: a centered glass card over a blurred room
+   ----------------------------------------------------------------------------
+   The panel is rendered inside the sidebar (absolute over its box). Here it
+   becomes a fixed, centered card. The sidebar is lifted above the main pane
+   while it is open and loses anything that would make it the containing block
+   for a fixed child (filter / transform / backdrop-filter). The card's own
+   background is transparent: the glass lives on ::after and the full-window
+   scrim on ::before, both at z-index -1 inside the panel's stacking context,
+   so the panel itself never needs a filter or transform (which would shrink
+   the fixed scrim to the card). The children animate in instead. */
+:root[data-theme="alcove"] .sidebar.search-mode {
+  z-index: 60;
+  filter: none;
+  transform: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-theme="alcove"] .search-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  width: min(452px, calc(100vw - 32px));
+  height: min(520px, calc(100dvh - 64px));
+  margin: auto;
+  padding: 22px 22px 14px !important;
+  background: transparent;
+  isolation: isolate;
+  animation: none;
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .search-panel::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background: var(--alc-ov-scrim);
+  backdrop-filter: var(--alc-ov-scrim-blur);
+  -webkit-backdrop-filter: var(--alc-ov-scrim-blur);
+  animation: alc-ov-fade 0.2s ease-out both;
+}
+:root[data-theme="alcove"] .search-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--alc-rim), 0 22px 52px rgba(0, 0, 0, 0.1);
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+  animation: alc-ov-card-in 0.32s var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .search-panel > * {
+  /* backwards, not both: a held filter: blur(0) would make every child a
+     backdrop root and kill the glass of the chip menus inside. */
+  animation: alc-pop-in 0.32s var(--alc-spring) backwards;
+}
+
+/* Head: the heading and glyph stay for assistive tech; the round close sits
+   beside the search pill, top right, like the mockup's ×. */
+:root[data-theme="alcove"] .search-panel-head {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  z-index: 9;
+  padding: 0;
+  gap: 0;
+}
+:root[data-theme="alcove"] .search-panel-glyph,
+:root[data-theme="alcove"] .search-panel-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .search-panel-close {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.04);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .search-panel-close:hover {
+  background: #fff;
+  color: var(--alc-ink-2);
+}
+
+/* The query card dissolves: its textarea becomes the white search pill and the
+   chip / run row hangs under it as a row of small pills. */
+:root[data-theme="alcove"] .composer-card.search-panel-card {
+  display: block;
+  margin: 0 50px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-theme="alcove"] .composer-card.search-panel-card::before,
+:root[data-theme="alcove"] .composer-card.search-panel-card::after {
+  display: none;
+}
+:root[data-theme="alcove"] .search-panel-card textarea {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  max-height: 120px;
+  padding: 9px 18px;
+  border: 0;
+  border-radius: 19px; corner-shape: var(--alc-corner);
+  background: var(--alc-ov-field);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.04);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
+  resize: none;
+  outline: none;
+}
+:root[data-theme="alcove"] .search-panel-card textarea:focus {
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.06);
+}
+:root[data-theme="alcove"] .search-panel-card textarea::placeholder {
+  color: var(--alc-ink-4);
+  opacity: 1;
+}
+:root[data-theme="alcove"] .search-panel-card-row {
+  margin: 10px -50px 0 0;
+  padding: 0 2px;
+  gap: 5px;
+}
+:root[data-theme="alcove"] .search-panel-card-row .search-scope-toggle,
+:root[data-theme="alcove"] .search-panel-card-row .search-model,
+:root[data-theme="alcove"] .search-panel-run,
+:root[data-theme="alcove"] .search-panel-card .search-panel-mic {
+  height: 27px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 11.4px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .search-panel-card-row .search-scope-toggle:hover,
+:root[data-theme="alcove"] .search-panel-card-row .search-model:hover,
+:root[data-theme="alcove"] .search-panel-run.global:hover:not(:disabled),
+:root[data-theme="alcove"] .search-panel-card .search-panel-mic:hover:not(:disabled) {
+  background: #fff;
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .search-panel-run:not(.global) {
+  background: var(--alc-blue);
+  color: #fff;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--alc-blue) 28%, transparent);
+}
+:root[data-theme="alcove"] .search-panel-run:not(.global):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--alc-blue) 88%, #000);
+  color: #fff;
+}
+:root[data-theme="alcove"] .search-panel-run:disabled { opacity: 0.5; }
+:root[data-theme="alcove"] .search-panel-progress {
+  margin: 10px 8px 0;
+  background: var(--alc-track);
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"] .search-panel-status {
+  padding: 10px 2px 6px 8px;
+  border-bottom: 0;
+  color: var(--alc-ink-4);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .search-panel-step {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .search-panel-step:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .search-panel-list {
+  margin: 0 -8px;
+  padding: 4px 8px 8px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+}
+:root[data-theme="alcove"] .search-panel-empty {
+  color: var(--alc-ink-4);
+  font-size: 12px;
+}
+
+/* Result rows: provider mark, grey 13px title, tiny relative time at right. */
+:root[data-theme="alcove"] .search-result {
+  padding: 0 12px;
+  min-height: 34px;
+  border: 0;
+  border-radius: var(--alc-r-row); corner-shape: var(--alc-corner);
+  transition: background 0.14s ease;
+}
+:root[data-theme="alcove"] .search-result + .search-result { margin-top: 2px; }
+:root[data-theme="alcove"] .search-panel-list .search-result { padding: 0 12px; border-radius: var(--alc-r-row); corner-shape: var(--alc-corner); }
+:root[data-theme="alcove"] .search-result:hover { background: rgba(255, 255, 255, 0.72); }
+:root[data-theme="alcove"] .search-result.active {
+  background: #fff;
+  border: 0;
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .search-result-line {
+  min-height: 34px;
+  gap: 9px;
+}
+:root[data-theme="alcove"] .search-result-mark { width: 16px; height: 16px; }
+:root[data-theme="alcove"] .search-result-title,
+:root[data-theme="alcove"] .search-panel-list .search-result-title {
+  color: var(--alc-ink-3);
+  font-size: 13px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .search-result.active .search-result-title { color: var(--alc-ink); }
+:root[data-theme="alcove"] .search-result-time {
+  color: var(--alc-ink-4);
+  font-size: 8.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .search-panel-list .search-result-line { flex-wrap: nowrap; }
+:root[data-theme="alcove"] .search-panel-list .search-result-project {
+  order: 0;
+  flex: none;
+  flex-basis: auto;
+  max-width: 96px;
+  margin: 0;
+  color: var(--alc-ink-5);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .search-result-reason,
+:root[data-theme="alcove"] .search-result-snippet {
+  margin-left: 25px;
+  padding-bottom: 6px;
+  color: var(--alc-ink-4);
+  font-size: 11px;
+}
+:root[data-theme="alcove"] .search-result-highlight {
+  background: color-mix(in srgb, var(--alc-blue) 16%, transparent);
+  color: inherit;
+}
+
+@keyframes alc-ov-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes alc-ov-card-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ============================================================================
+   2. Dropdowns, context menus, popovers
+   ---------------------------------------------------------------------------- */
+:root[data-theme="alcove"] .ctx-menu,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu),
+:root[data-theme="alcove"] .search-scope-menu,
+:root[data-theme="alcove"] .settle-confirm,
+:root[data-theme="alcove"] .changelog-pop,
+:root[data-theme="alcove"] .theme-picker-pop,
+:root[data-theme="alcove"] .font-menu,
+:root[data-theme="alcove"] .hover-card {
+  padding: 8px;
+  border: 0;
+  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  background: var(--alc-glass);
+  box-shadow: var(--alc-rim), var(--alc-ov-menu-shadow);
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  animation: alc-pop-in 0.26s var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .search-scope-menu,
+:root[data-theme="alcove"] .font-menu,
+:root[data-theme="alcove"] .settle-confirm {
+  /* These open over text, not over the room: a denser frost keeps rows legible. */
+  background: rgba(255, 255, 255, 0.84);
+}
+:root[data-theme="alcove"] .ctx-menu { transform-origin: top left; gap: 1px; min-width: 188px; }
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) { transform-origin: top left; min-width: 188px; }
+
+/* Rows */
+:root[data-theme="alcove"] .ctx-item,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item,
+:root[data-theme="alcove"] .search-scope-menu button,
+:root[data-theme="alcove"] .font-option {
+  min-height: 34px;
+  padding: 0 11px;
+  gap: 10px;
+  border: 0;
+  border-radius: 12px; corner-shape: var(--alc-corner);
+  background: transparent;
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+:root[data-theme="alcove"] .ctx-item svg,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item svg {
+  color: var(--alc-ink-2);
+  stroke-width: 1.8;
+}
+:root[data-theme="alcove"] .ctx-item:hover:not(:disabled),
+:root[data-theme="alcove"] .ctx-item:focus-visible,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item:hover:not(:disabled),
+:root[data-theme="alcove"] .search-scope-menu button:hover,
+:root[data-theme="alcove"] .font-option:hover,
+:root[data-theme="alcove"] .font-option.active {
+  background: var(--alc-hover);
+  color: var(--alc-ink);
+  outline: none;
+}
+:root[data-theme="alcove"] .ctx-item:active:not(:disabled),
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item:active:not(:disabled) {
+  background: #fff;
+}
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item:hover svg { color: var(--alc-ink); }
+:root[data-theme="alcove"] .search-scope-menu button.on,
+:root[data-theme="alcove"] .font-option.on {
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"] .ctx-item.danger,
+:root[data-theme="alcove"] .ctx-item.danger svg {
+  color: var(--alc-minus);
+}
+:root[data-theme="alcove"] .ctx-item.danger:hover:not(:disabled),
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item.danger:hover,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item.danger.armed {
+  background: rgba(224, 96, 90, 0.1);
+  color: var(--alc-minus);
+}
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item.danger:hover svg,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item.danger.armed svg {
+  color: var(--alc-minus);
+}
+
+/* Dividers, titles, section heads */
+:root[data-theme="alcove"] .ctx-item.divided,
+:root[data-theme="alcove"] .ctx-section.divided,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item.divided {
+  position: relative;
+  margin-top: 9px;
+  padding-top: 0;
+  border-top: 0;
+  border-radius: 12px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"] .ctx-item.divided::before,
+:root[data-theme="alcove"] .ctx-section.divided::before,
+:root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item.divided::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 11px;
+  right: 11px;
+  height: 1px;
+  background: var(--alc-ov-divider);
+  pointer-events: none;
+}
+:root[data-theme="alcove"] .ctx-section.divided { padding-top: 10px; }
+:root[data-theme="alcove"] .ctx-item.inset { padding-left: 32px; }
+:root[data-theme="alcove"] .ctx-title,
+:root[data-theme="alcove"] .thread-menu-title {
+  padding: 6px 11px 7px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--alc-ov-divider);
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .ctx-section {
+  padding: 8px 11px 4px;
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .ctx-section svg { color: var(--alc-ink-4); opacity: 1; }
+:root[data-theme="alcove"] .ctx-badge {
+  border: 0;
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+:root[data-theme="alcove"] .ctx-badge.local {
+  background: color-mix(in srgb, var(--alc-blue) 13%, transparent);
+  color: var(--alc-blue);
+}
+
+/* The sidebar view-options popover and the folder picker reuse .thread-menu
+   but carry form rows; keep their contents in the Alcove type. */
+:root[data-theme="alcove"] .sidebar-view-pop {
+  color: var(--alc-ink-2);
+  font-size: 12px;
+}
+
+/* Settle confirm: a tiny glass card with two pills. */
+:root[data-theme="alcove"] .settle-confirm {
+  width: 216px;
+  padding: 12px 12px 10px;
+}
+:root[data-theme="alcove"] .settle-confirm-text {
+  padding: 0 4px;
+  color: var(--alc-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .settle-confirm-actions button {
+  height: 27px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-size: 11.4px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .settle-confirm-cancel:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .settle-confirm-go,
+:root[data-theme="alcove"] .settle-confirm-actions .settle-confirm-go {
+  background: var(--alc-blue);
+  color: #fff;
+}
+:root[data-theme="alcove"] .settle-confirm-actions .settle-confirm-go:hover {
+  background: color-mix(in srgb, var(--alc-blue) 88%, #000);
+}
+
+/* Hover cards (thread preview, people / machine cards). Never interactive,
+   so a quicker, smaller pop. */
+:root[data-theme="alcove"] .hover-card {
+  padding: 13px 14px;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  animation-duration: 0.22s;
+}
+:root[data-theme="alcove"] .hover-card-title {
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .hover-card-meta-line,
+:root[data-theme="alcove"] .hover-card-foot,
+:root[data-theme="alcove"] .hover-card-summary {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .hover-card-foot { border-top-color: var(--alc-ov-divider); }
+:root[data-theme="alcove"] .hover-card-quote,
+:root[data-theme="alcove"] .hover-card-you {
+  border-radius: 12px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.6);
+  border-color: transparent;
+  color: var(--alc-ink-2);
+}
+
+/* Avatar hover preview: the name pill reads as an Alcove tooltip. */
+:root[data-theme="alcove"] .avatar-preview-name {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: #fff;
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 11.4px;
+  font-weight: 500;
+}
+
+/* Changelog + theme picker popovers. */
+:root[data-theme="alcove"] .changelog-pop { border-radius: 26px; corner-shape: var(--alc-corner); padding: 14px; }
+:root[data-theme="alcove"] .changelog-head {
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .changelog-entry {
+  border-color: var(--alc-ov-divider);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .theme-picker-pop { border-radius: 26px; corner-shape: var(--alc-corner); }
+
+/* ============================================================================
+   3. Modals and dialogs
+   ---------------------------------------------------------------------------- */
+:root[data-theme="alcove"] .modal-backdrop,
+:root[data-theme="alcove"] .settings-screen-backdrop,
+:root[data-theme="alcove"] .vb-backdrop,
+:root[data-theme="alcove"] .vs-backdrop {
+  background: var(--alc-ov-scrim);
+  backdrop-filter: var(--alc-ov-scrim-blur);
+  -webkit-backdrop-filter: var(--alc-ov-scrim-blur);
+}
+:root[data-theme="alcove"] .modal,
+:root[data-theme="alcove"] .vb-modal {
+  border: 0;
+  border-radius: 30px; corner-shape: var(--alc-corner);
+  padding: 22px 24px 20px;
+  background: var(--alc-ov-card);
+  box-shadow: var(--alc-rim), var(--alc-ov-card-shadow);
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  animation: alc-pop-in 0.34s var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .modal-head {
+  margin-bottom: 14px;
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .modal-head .icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .modal-head .icon-btn:hover { background: #fff; color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .modal-actions {
+  margin-top: 18px;
+  gap: 8px;
+}
+:root[data-theme="alcove"] .modal-error {
+  color: var(--alc-minus);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+/* Buttons: pills. Primary = blue; secondary = white with a halo. */
+:root[data-theme="alcove"] .modal .btn,
+:root[data-theme="alcove"] .settings-screen .btn,
+:root[data-theme="alcove"] .settings-sheet .btn,
+:root[data-theme="alcove"] .vb-modal .btn {
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: background 0.14s ease, color 0.14s ease, transform 0.18s var(--alc-spring);
+}
+:root[data-theme="alcove"] .modal .btn:not(:disabled):hover,
+:root[data-theme="alcove"] .settings-screen .btn:not(:disabled):hover,
+:root[data-theme="alcove"] .settings-sheet .btn:not(:disabled):hover,
+:root[data-theme="alcove"] .vb-modal .btn:not(:disabled):hover {
+  background: #fff;
+  color: var(--alc-ink);
+  filter: none;
+}
+:root[data-theme="alcove"] .modal .btn:not(:disabled):active,
+:root[data-theme="alcove"] .settings-screen .btn:not(:disabled):active { transform: scale(0.96); }
+:root[data-theme="alcove"] .modal .btn.tone-allow,
+:root[data-theme="alcove"] .settings-screen .btn.tone-allow,
+:root[data-theme="alcove"] .settings-sheet .btn.tone-allow,
+:root[data-theme="alcove"] .vb-modal .btn.tone-allow {
+  background: var(--alc-blue);
+  color: #fff;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--alc-blue) 26%, transparent);
+}
+:root[data-theme="alcove"] .modal .btn.tone-allow:not(:disabled):hover,
+:root[data-theme="alcove"] .settings-screen .btn.tone-allow:not(:disabled):hover,
+:root[data-theme="alcove"] .settings-sheet .btn.tone-allow:not(:disabled):hover,
+:root[data-theme="alcove"] .vb-modal .btn.tone-allow:not(:disabled):hover {
+  background: color-mix(in srgb, var(--alc-blue) 88%, #000);
+  color: #fff;
+}
+:root[data-theme="alcove"] .modal .btn.tone-allowAlways {
+  background: color-mix(in srgb, var(--alc-blue) 12%, #fff);
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"] .modal .btn.tone-danger,
+:root[data-theme="alcove"] .settings-screen .btn.tone-danger {
+  background: var(--alc-minus);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(224, 96, 90, 0.24);
+}
+:root[data-theme="alcove"] .modal .btn.tone-danger:not(:disabled):hover,
+:root[data-theme="alcove"] .settings-screen .btn.tone-danger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--alc-minus) 88%, #000);
+  color: #fff;
+}
+:root[data-theme="alcove"] .modal .btn.tone-deny:not(:disabled):hover {
+  background: rgba(224, 96, 90, 0.1);
+  color: var(--alc-minus);
+}
+
+/* Inputs: pills (single line) / soft rounded wells (multi-line). */
+:root[data-theme="alcove"] .modal-input,
+:root[data-theme="alcove"] .modal input[type="text"],
+:root[data-theme="alcove"] .modal input[type="url"],
+:root[data-theme="alcove"] .modal input[type="search"],
+:root[data-theme="alcove"] .modal input[type="password"],
+:root[data-theme="alcove"] .modal input:not([type]),
+:root[data-theme="alcove"] .modal select,
+:root[data-theme="alcove"] .settings-input,
+:root[data-theme="alcove"] .ss-content input[type="text"],
+:root[data-theme="alcove"] .ss-content input[type="url"],
+:root[data-theme="alcove"] .ss-content input[type="password"],
+:root[data-theme="alcove"] .ss-content input[type="number"],
+:root[data-theme="alcove"] .ss-content input:not([type]),
+:root[data-theme="alcove"] .dir-newfolder input {
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-ov-field);
+  box-shadow: inset 0 0 0 1px rgba(84, 84, 84, 0.06), 0 2px 8px rgba(0, 0, 0, 0.025);
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  outline: none;
+  transition: box-shadow 0.14s ease;
+}
+:root[data-theme="alcove"] .modal textarea,
+:root[data-theme="alcove"] .ss-content textarea {
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 16px; corner-shape: var(--alc-corner);
+  background: var(--alc-ov-field);
+  box-shadow: inset 0 0 0 1px rgba(84, 84, 84, 0.06);
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  outline: none;
+}
+:root[data-theme="alcove"] .modal-input:focus,
+:root[data-theme="alcove"] .modal input:focus,
+:root[data-theme="alcove"] .modal select:focus,
+:root[data-theme="alcove"] .modal textarea:focus,
+:root[data-theme="alcove"] .settings-input:focus,
+:root[data-theme="alcove"] .ss-content input:focus,
+:root[data-theme="alcove"] .ss-content textarea:focus,
+:root[data-theme="alcove"] .dir-newfolder input:focus {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--alc-blue) 45%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--alc-blue) 14%, transparent);
+}
+:root[data-theme="alcove"] .modal-input::placeholder,
+:root[data-theme="alcove"] .modal input::placeholder,
+:root[data-theme="alcove"] .ss-content input::placeholder { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .modal input[type="checkbox"],
+:root[data-theme="alcove"] .ss-content input[type="checkbox"],
+:root[data-theme="alcove"] .modal input[type="radio"],
+:root[data-theme="alcove"] .ss-content input[type="radio"] {
+  accent-color: var(--alc-blue);
+}
+
+/* Directory picker, link chooser, remove-machine body: soft wells, not boxes. */
+:root[data-theme="alcove"] .dir-path,
+:root[data-theme="alcove"] .link-open-url {
+  border: 0;
+  border-radius: 16px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .dir-path code { color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .dir-list {
+  border: 0;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(84, 84, 84, 0.05);
+  padding: 6px;
+}
+:root[data-theme="alcove"] .dir-entry {
+  min-height: 32px;
+  border-radius: 12px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+}
+:root[data-theme="alcove"] .dir-entry svg { color: var(--alc-ink-4); opacity: 1; }
+:root[data-theme="alcove"] .dir-entry:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .confirm-remove-body { color: var(--alc-ink-3); font-size: 13px; }
+:root[data-theme="alcove"] .confirm-remove-body strong { color: var(--alc-ink); font-weight: 600; }
+:root[data-theme="alcove"] .link-open-actions .settings-toggle {
+  min-height: 46px;
+  border-radius: 23px; corner-shape: var(--alc-corner);
+  font-size: 13px;
+}
+
+/* ============================================================================
+   4. Settings
+   ----------------------------------------------------------------------------
+   A big glass card. The nav column is a quiet list of pills; the active one is
+   white. Labels go from mono caps to quiet grey Instrument Sans; toggles,
+   segments, steppers and selects become pills. */
+:root[data-theme="alcove"] .settings-screen {
+  border: 0;
+  border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+  background: rgba(247, 247, 247, 0.72);
+  box-shadow: var(--alc-rim), 0 30px 80px rgba(0, 0, 0, 0.1), 0 6px 18px rgba(0, 0, 0, 0.04);
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .settings-screen:not(.closing) {
+  animation: alc-pop-in 0.38s var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .settings-sheet {
+  background: rgba(247, 247, 247, 0.9);
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  box-shadow: var(--alc-rim), 0 -10px 40px rgba(0, 0, 0, 0.08);
+}
+:root[data-theme="alcove"] .ss-head {
+  min-height: 62px;
+  padding: 16px 18px 12px 28px;
+  border-bottom: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"] .ss-title {
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .ss-title { display: inline-block; text-transform: lowercase; }
+:root[data-theme="alcove"] .ss-title::first-letter { text-transform: uppercase; }
+:root[data-theme="alcove"] .ss-head-sub { color: var(--alc-ink-4); font-size: 12px; }
+:root[data-theme="alcove"] .ss-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .ss-close:hover { background: #fff; color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .ss-nav {
+  width: 214px;
+  gap: 2px;
+  padding: 4px 12px 16px 14px;
+  border-right: 0;
+  background: transparent;
+}
+:root[data-theme="alcove"] .ss-nav-item {
+  padding: 8px 14px;
+  border-radius: 16px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-3);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+:root[data-theme="alcove"] .ss-nav-item:hover {
+  transform: none;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .ss-nav-item.on {
+  background: #fff;
+  color: var(--alc-ink);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .ss-nav-sub {
+  color: var(--alc-ink-4);
+  font-size: 10.5px;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .ss-nav-item.on .ss-nav-sub { color: var(--alc-ink-4); opacity: 1; }
+:root[data-theme="alcove"] .ss-content {
+  margin: 0 14px 14px 0;
+  padding: 22px 26px calc(26px + var(--safe-b, 0px));
+  border-radius: 28px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: var(--alc-rim), var(--alc-shadow);
+}
+:root[data-theme="alcove"] .settings-sheet .ss-content {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+:root[data-theme="alcove"] .ss-content .settings-block + .settings-block {
+  border-top: 1px solid var(--alc-ov-divider);
+}
+:root[data-theme="alcove"] .settings-head {
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .settings-label {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .settings-row {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .settings-value {
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .settings-hint,
+:root[data-theme="alcove"] .settings-help {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+}
+
+/* Toggles and segments: pills. Off = white with a halo; on = blue. */
+:root[data-theme="alcove"] .settings-toggle,
+:root[data-theme="alcove"] .settings-select {
+  min-height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 11.4px;
+  font-weight: 500;
+  transition: background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease, transform 0.18s var(--alc-spring);
+}
+:root[data-theme="alcove"] .settings-toggle:hover:not(:disabled),
+:root[data-theme="alcove"] .settings-select:hover {
+  background: #fff;
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .settings-toggle:active:not(:disabled) { transform: scale(0.95); }
+:root[data-theme="alcove"] .settings-toggle.on {
+  background: var(--alc-blue);
+  color: #fff;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--alc-blue) 26%, transparent);
+}
+:root[data-theme="alcove"] .settings-toggle.primary {
+  background: var(--alc-blue);
+  color: #fff;
+}
+:root[data-theme="alcove"] .settings-toggle.danger {
+  background: rgba(224, 96, 90, 0.1);
+  color: var(--alc-minus);
+  box-shadow: none;
+}
+/* Segmented groups (two or more options) sit in one grey track, like an iOS
+   segmented control; a lone toggle inside .settings-seg stays a plain pill. */
+:root[data-theme="alcove"] .settings-seg:has(> .settings-toggle + .settings-toggle) {
+  gap: 2px;
+  padding: 2px;
+  border-radius: 15px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.07);
+}
+:root[data-theme="alcove"] .settings-seg:has(> .settings-toggle + .settings-toggle) > .settings-toggle {
+  min-height: 24px;
+  background: transparent;
+  box-shadow: none;
+}
+:root[data-theme="alcove"] .settings-seg:has(> .settings-toggle + .settings-toggle) > .settings-toggle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.6);
+}
+:root[data-theme="alcove"] .settings-seg:has(> .settings-toggle + .settings-toggle) > .settings-toggle.on {
+  background: #fff;
+  color: var(--alc-ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+:root[data-theme="alcove"] .settings-step-val {
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .settings-step-btn {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .settings-step-btn:hover:not(:disabled) { background: #fff; color: var(--alc-ink); }
+
+/* Theme gallery + skins: glass tiles with the active one ringed in blue. */
+:root[data-theme="alcove"] .theme-card,
+:root[data-theme="alcove"] .skin-card,
+:root[data-theme="alcove"] .lib-card,
+:root[data-theme="alcove"] .machine-card {
+  border: 0;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: var(--alc-halo);
+  font-family: var(--font-ui);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .theme-card:hover,
+:root[data-theme="alcove"] .skin-card:hover { background: #fff; }
+:root[data-theme="alcove"] .theme-card.on,
+:root[data-theme="alcove"] .skin-card.on {
+  background: #fff;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--alc-blue) 70%, transparent), var(--alc-halo);
+}
+:root[data-theme="alcove"] .theme-card-swatches { border-radius: 12px; corner-shape: var(--alc-corner); overflow: hidden; }
+:root[data-theme="alcove"] .theme-card-name,
+:root[data-theme="alcove"] .skin-card-name {
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .skin-card-desc,
+:root[data-theme="alcove"] .skin-card-hint,
+:root[data-theme="alcove"] .skin-module-hint { color: var(--alc-ink-4); font-family: var(--font-ui); }
+:root[data-theme="alcove"] .skin-card-active-tag {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: color-mix(in srgb, var(--alc-blue) 13%, transparent);
+  color: var(--alc-blue);
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .font-trigger {
+  min-height: 30px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .font-trigger:hover { background: #fff; }
+
+/* ============================================================================
+   5. Toasts
+   ---------------------------------------------------------------------------- */
+:root[data-theme="alcove"] .toast {
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 22px; corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-rim), var(--alc-ov-menu-shadow);
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+  font-family: var(--font-ui);
+  animation: alc-pop-in 0.34s var(--alc-spring) both;
+  transform-origin: top right;
+}
+:root[data-theme="alcove"] .toast:hover { background: #fff; }
+:root[data-theme="alcove"] .toast-title { color: var(--alc-ink); font-weight: 500; font-size: 12.5px; }
+:root[data-theme="alcove"] .toast-body { color: var(--alc-ink-4); font-size: 11.5px; }
+
+/* Skin parts list + the skin preview modal (screenshot carousel). */
+:root[data-theme="alcove"] .skin-card { padding: 14px 16px 14px; }
+:root[data-theme="alcove"] .skin-card-modules-label,
+:root[data-theme="alcove"] .skin-preview-modules-label {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .skin-module-row + .skin-module-row { border-top-color: var(--alc-ov-divider); }
+:root[data-theme="alcove"] .skin-module-label,
+:root[data-theme="alcove"] .portrait-agent-name,
+:root[data-theme="alcove"] .portrait-name {
+  color: var(--alc-ink-2);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .skin-market { border-top-color: var(--alc-ov-divider); }
+:root[data-theme="alcove"] .skin-market-blurb { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .modal.skin-preview {
+  width: min(860px, 94vw);
+  border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+  padding: 24px 26px 22px;
+}
+:root[data-theme="alcove"] .skin-preview-title {
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .skin-preview-stage {
+  border: 0;
+  border-radius: 24px; corner-shape: var(--alc-corner);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px rgba(84, 84, 84, 0.06);
+}
+:root[data-theme="alcove"] .skin-preview-nav {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-size: 18px;
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+}
+:root[data-theme="alcove"] .skin-preview-nav:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .skin-preview-caption { color: var(--alc-ink-4); font-size: 11.5px; }
+:root[data-theme="alcove"] .skin-preview-dot {
+  border: 0;
+  background: rgba(84, 84, 84, 0.16);
+}
+:root[data-theme="alcove"] .skin-preview-dot.on { background: var(--alc-blue); }
+:root[data-theme="alcove"] .skin-preview-desc { color: var(--alc-ink-3); font-size: 12.5px; }
+:root[data-theme="alcove"] .portrait-thumb { border-radius: 50%; }
+
+/* ============================================================================
+   6. Panels that open as modals: Schedules, Bosun, review, profile, pairing
+   ---------------------------------------------------------------------------- */
+:root[data-theme="alcove"] .sched-row {
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .sched-name { color: var(--alc-ink); font-weight: 500; }
+:root[data-theme="alcove"] .sched-project,
+:root[data-theme="alcove"] .sched-dispatch-chip {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .sched-row-when,
+:root[data-theme="alcove"] .sched-last,
+:root[data-theme="alcove"] .sched-hint,
+:root[data-theme="alcove"] .sched-optional { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .sched-row-when svg { color: var(--alc-ink-4); opacity: 1; }
+:root[data-theme="alcove"] .sched-next { color: var(--alc-blue); }
+:root[data-theme="alcove"] .sched-view { color: var(--alc-blue); text-decoration: none; }
+:root[data-theme="alcove"] .sched-view:hover { text-decoration: underline; }
+:root[data-theme="alcove"] .sched-row-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .sched-row-actions .icon-btn:hover { background: #fff; color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .sched-empty { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .sched-empty svg { color: var(--alc-ink-5); opacity: 1; }
+:root[data-theme="alcove"] .sched-label,
+:root[data-theme="alcove"] .ctl-label,
+:root[data-theme="alcove"] .profile-section-label {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .sched-form textarea,
+:root[data-theme="alcove"] .sched-form input[type="text"],
+:root[data-theme="alcove"] .sched-form input[type="time"],
+:root[data-theme="alcove"] .sched-form select,
+:root[data-theme="alcove"] .sched-controls select {
+  border: 0;
+  border-radius: 16px; corner-shape: var(--alc-corner);
+  background: var(--alc-ov-field);
+  box-shadow: inset 0 0 0 1px rgba(84, 84, 84, 0.06);
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  color-scheme: light;
+}
+:root[data-theme="alcove"] .sched-form input[type="text"],
+:root[data-theme="alcove"] .sched-form input[type="time"],
+:root[data-theme="alcove"] .sched-form select,
+:root[data-theme="alcove"] .sched-controls select { border-radius: var(--alc-r-pill); padding-inline: 14px; }
+:root[data-theme="alcove"] .sched-day,
+:root[data-theme="alcove"] .sched-machine {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .sched-day:hover,
+:root[data-theme="alcove"] .sched-machine:hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .sched-day.on,
+:root[data-theme="alcove"] .sched-machine.on {
+  background: var(--alc-blue);
+  color: #fff;
+}
+:root[data-theme="alcove"] .sched-preview {
+  border: 0;
+  border-radius: 16px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--alc-ink-3);
+}
+/* The generic segmented control (.seg / .seg-btn) inside overlays. */
+:root[data-theme="alcove"] .modal .seg,
+:root[data-theme="alcove"] .ss-content .seg {
+  padding: 2px;
+  gap: 2px;
+  border: 0;
+  border-radius: 15px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.07);
+}
+:root[data-theme="alcove"] .modal .seg-btn,
+:root[data-theme="alcove"] .ss-content .seg-btn {
+  min-height: 24px;
+  padding: 0 12px;
+  border-radius: 13px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 11.4px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .modal .seg-btn.on,
+:root[data-theme="alcove"] .ss-content .seg-btn.on {
+  background: #fff;
+  color: var(--alc-ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+:root[data-theme="alcove"] .bosun-section-head,
+:root[data-theme="alcove"] .bosun-card-head {
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+:root[data-theme="alcove"] .bosun-card {
+  border: 0;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--alc-halo);
+}
+:root[data-theme="alcove"] .bosun-code,
+:root[data-theme="alcove"] .bosun-stderr {
+  border: 0;
+  border-radius: 14px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.6);
+}
+:root[data-theme="alcove"] .pair-phone-code,
+:root[data-theme="alcove"] .profile-preview {
+  border-color: transparent;
+  border-radius: 20px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--alc-halo);
+}
+
+/* ============================================================================
+   7. Notifications inbox
+   ----------------------------------------------------------------------------
+   The list becomes a column of glass cards on the room; unread is a blue dot,
+   not an amber edge. The header itself belongs to thread.css. */
+:root[data-theme="alcove"] .inbox-tools {
+  justify-content: center;
+  padding: 10px 16px 6px;
+  border-bottom: 0;
+}
+:root[data-theme="alcove"] .inbox-tabs {
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.07);
+}
+:root[data-theme="alcove"] .inbox-tab {
+  min-height: 27px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .inbox-tab:hover { color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .inbox-tab.on {
+  background: #fff;
+  color: var(--alc-ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+:root[data-theme="alcove"] .inbox-tab-count,
+:root[data-theme="alcove"] .inbox-unread-count {
+  background: var(--alc-blue);
+  color: #fff;
+  font-weight: 600;
+}
+:root[data-theme="alcove"] .inbox-readall {
+  min-height: 27px;
+  height: 27px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 11.4px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .inbox-readall:not(:disabled):hover {
+  background: #fff;
+  color: var(--alc-ink);
+  border-color: transparent;
+}
+:root[data-theme="alcove"] .inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px 16px 120px;
+}
+:root[data-theme="alcove"] .inbox-row {
+  position: relative;
+  flex: none;
+  padding: 2px 10px 2px 0;
+  border: 0;
+  border-radius: 22px; corner-shape: var(--alc-corner);
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: var(--alc-rim);
+  transition: background 0.14s ease, box-shadow 0.14s ease;
+}
+:root[data-theme="alcove"] .inbox-row:hover { background: rgba(255, 255, 255, 0.8); }
+:root[data-theme="alcove"] .inbox-row.unread {
+  border: 0;
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-rim), var(--alc-shadow), var(--alc-halo);
+}
+:root[data-theme="alcove"] .inbox-row.unread::before {
+  content: "";
+  position: absolute;
+  top: 19px;
+  left: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--alc-blue);
+  pointer-events: none;
+}
+:root[data-theme="alcove"] .inbox-main {
+  gap: 3px;
+  padding: 12px 8px 13px 22px;
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .inbox-top { font-size: 11px; color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .inbox-kind { color: var(--alc-ink-3); font-weight: 600; }
+:root[data-theme="alcove"] .inbox-row.k-approval_request .inbox-kind,
+:root[data-theme="alcove"] .inbox-row.k-question_request .inbox-kind { color: var(--amber); }
+:root[data-theme="alcove"] .inbox-row.k-error .inbox-kind { color: var(--alc-minus); }
+:root[data-theme="alcove"] .inbox-count { color: var(--alc-ink-3); font-weight: 600; }
+:root[data-theme="alcove"] .inbox-when { font-size: 10px; }
+:root[data-theme="alcove"] .inbox-title { color: var(--alc-ink); font-size: 13.5px; font-weight: 500; }
+:root[data-theme="alcove"] .inbox-row:not(.unread) .inbox-title { color: var(--alc-ink-3); }
+:root[data-theme="alcove"] .inbox-body { color: var(--alc-ink-4); font-size: 12px; }
+:root[data-theme="alcove"] .inbox-markread {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--alc-ink-5);
+}
+:root[data-theme="alcove"] .inbox-markread:hover { background: #fff; color: var(--alc-plus); box-shadow: var(--alc-halo); }
+:root[data-theme="alcove"] .back-to-inbox { color: var(--alc-blue); }
+
+/* ============================================================================
+   8. Voice session (full-screen stage + docked mini)
+   ---------------------------------------------------------------------------- */
+:root[data-theme="alcove"] .vs-backdrop {
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.7) 0%, rgba(242, 242, 242, 0.6) 70%);
+}
+:root[data-theme="alcove"] .vs-phase {
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .vs-stage.vs-listening .vs-phase { color: var(--alc-blue); }
+:root[data-theme="alcove"] .vs-stage.vs-error .vs-phase { color: var(--alc-minus); }
+:root[data-theme="alcove"] .vs-detail,
+:root[data-theme="alcove"] .vs-transcript { color: var(--alc-ink-4); font-family: var(--font-ui); }
+:root[data-theme="alcove"] .vs-btn,
+:root[data-theme="alcove"] .vs-mini-btn {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .vs-btn:not(:disabled):hover,
+:root[data-theme="alcove"] .vs-mini-btn:not(:disabled):hover { background: #fff; color: var(--alc-ink); }
+:root[data-theme="alcove"] .vs-btn.on,
+:root[data-theme="alcove"] .vs-mini-btn.on { background: var(--alc-blue); color: #fff; }
+:root[data-theme="alcove"] .vs-end:not(:disabled):hover,
+:root[data-theme="alcove"] .vs-mini-btn.vs-end:not(:disabled):hover { background: rgba(224, 96, 90, 0.12); color: var(--alc-minus); }
+:root[data-theme="alcove"] .vs-error {
+  border: 0;
+  border-radius: 22px; corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-rim), var(--alc-ov-menu-shadow);
+}
+:root[data-theme="alcove"] .vs-mini {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-rim), var(--alc-ov-menu-shadow);
+  backdrop-filter: var(--alc-blur);
+  -webkit-backdrop-filter: var(--alc-blur);
+}
+:root[data-theme="alcove"] .vs-mini-phase { color: var(--alc-ink-3); font-family: var(--font-ui); letter-spacing: 0; }
+
+/* Settings → Machines / Servers cards. */
+:root[data-theme="alcove"] .machine-card { border-radius: 24px; corner-shape: var(--alc-corner); }
+:root[data-theme="alcove"] .machine-card-title { color: var(--alc-ink); font-weight: 500; }
+:root[data-theme="alcove"] .machine-card-sub { color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .machine-badge,
+:root[data-theme="alcove"] .machine-pill {
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: rgba(84, 84, 84, 0.07);
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme="alcove"] .machine-badge {
+  background: color-mix(in srgb, var(--alc-blue) 12%, transparent);
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"] .machine-pill.online {
+  background: rgba(49, 148, 127, 0.1);
+  color: var(--teal);
+}
+:root[data-theme="alcove"] .machine-cta {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--alc-r-pill);
+  background: var(--alc-blue);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--alc-blue) 24%, transparent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .machine-cta:hover { background: color-mix(in srgb, var(--alc-blue) 88%, #000); }
+:root[data-theme="alcove"] .machine-kebab {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .machine-kebab:hover { background: rgba(255, 255, 255, 0.9); color: var(--alc-ink-2); }
