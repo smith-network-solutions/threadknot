@@ -5,8 +5,15 @@
    (data-skin-off): "cards" gates the sidebar, "workspace" the side panes,
    "usage" the meters. Split by area so each file stays readable. */
 @import "./base.css";
+@import "./glass.css";
 @import "./sidebar.css";
 @import "./thread.css";
 @import "./composer.css";
+/* After composer.css: it styles the default bar, this styles the card the
+   skin replaces it with, and the two share a few class names. */
+@import "./glass-composer.css";
 @import "./overlays.css";
 @import "./panes.css";
+/* Last: the press re-declares transitions the files above would otherwise
+   override. See the note at the top of it. */
+@import "./glass-press.css";

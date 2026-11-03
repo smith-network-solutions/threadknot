@@ -19,9 +19,24 @@ const WINDOW_MS = 4000;
 
 let sentAt = 0;
 
+type Listener = () => void;
+const listeners = new Set<Listener>();
+
 /** Composer: a message just left this client. */
 export function markJustSent(): void {
   sentAt = Date.now();
+  for (const listener of listeners) listener();
+}
+
+/** Watch for sends from this client.
+ *
+ *  Separate from `claimJustSent`, which is a one-shot the first mounting bubble
+ *  consumes. The feed needs to know at the moment of the send — before the
+ *  backend has echoed anything — so it can glide to the end rather than
+ *  teleport there once the bubble lands. */
+export function onJustSent(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 /** Feed: is this mounting user bubble the one we just sent? Consumes the

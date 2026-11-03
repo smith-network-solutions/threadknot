@@ -94,6 +94,8 @@ import { TASK_REVIEW_ID, TASK_TODAY_ID, displayTitle, stripTitleMarks, touchBosu
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
 import { PairBrowser } from "./components/PairBrowser";
+import { TooltipLayer } from "./components/alcove/TooltipLayer";
+import { useAlcove } from "./lib/useAlcove";
 
 function makeActions(
   client: ThreadknotClient,
@@ -2353,7 +2355,18 @@ function maybeNotify(
     });
   }
   const id = noticeSeq++;
-  dispatch({ type: "noticeAdd", notice: { id, threadId: frame.threadId, title, body } });
+  dispatch({
+    type: "noticeAdd",
+    notice: {
+      id,
+      threadId: frame.threadId,
+      title,
+      body,
+      agent: thread?.agent,
+      kind: frame.event.kind,
+      at: Date.now(),
+    },
+  });
   setTimeout(() => dispatch({ type: "noticeDismiss", id }), 8000);
 }
 
@@ -2363,6 +2376,9 @@ export default function App() {
   // tracer names the cause by watching dispatch. Identity-stable, and the exact
   // same function when tracing is off.
   const dispatch = useMemo(() => traceDispatch(baseDispatch), [baseDispatch]);
+  // Which notification surface to mount: the Alcove skin's top-centre card or
+  // the corner stack every other skin uses.
+  const alcove = useAlcove();
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
   /** Non-null → the folder browser is open for a new workspace, on this
    *  machine (machineId undefined) or on a peer. */
@@ -3008,6 +3024,8 @@ export default function App() {
         </div>
         {/* "Where should this link open?" chooser for clicked http(s) links. */}
         <LinkOpenModal />
+        {/* The skin's single shared tooltip bubble; triggers publish to it. */}
+        {alcove && <TooltipLayer />}
         {/* Voice Parlay overlay: mounted at the root so it survives thread
             navigation; visibility is store state fed by voice.state frames. */}
         {state.voice.open && <VoiceSession />}
@@ -3016,7 +3034,10 @@ export default function App() {
             {state.conn === "connecting" ? "connecting to server…" : "offline — retrying…"}
           </div>
         )}
-        {state.notices.length > 0 && (
+        {/* Alcove states the same thing as one card centred over the chat
+            column, mounted by MainSplit so it lines up with the conversation
+            rather than the window. Every other skin keeps the corner stack. */}
+        {!alcove && state.notices.length > 0 && (
           <div className="toast-stack">
             {state.notices.map((n) => (
               <button

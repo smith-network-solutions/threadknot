@@ -162,7 +162,6 @@ export function BosunTaskView() {
           <button
             type="button"
             className="task-back-review"
-            title="Back to Review to-dos"
             onClick={() => actions.openTask(TASK_REVIEW_ID)}
           >
             ← Review
@@ -172,7 +171,6 @@ export function BosunTaskView() {
           <button
             type="button"
             className="task-back-review"
-            title="Back to Today"
             onClick={() => actions.openTask(TASK_TODAY_ID)}
           >
             ← Today
@@ -184,7 +182,6 @@ export function BosunTaskView() {
         type="button"
         className="icon-btn task-close"
         aria-label="Close to-do"
-        title="Close"
         onClick={() => actions.openTask(null)}
       >
         <XIcon size={15} />
@@ -310,7 +307,7 @@ export function BosunTaskView() {
   if (due) meta.push(<span key="due" className={overdue ? "task-meta-overdue" : undefined}>{due}</span>);
   if (t.orbit && ticket) {
     meta.push(
-      <a key="orbit" className="task-meta-link" href={t.orbit.url} target="_blank" rel="noreferrer" title={`Open in Orbit (${t.orbit.org})`}>
+      <a key="orbit" className="task-meta-link" href={t.orbit.url} target="_blank" rel="noreferrer">
         Orbit {ticket}
       </a>,
     );
@@ -372,7 +369,6 @@ export function BosunTaskView() {
             aria-expanded={menu?.kind === "status"}
             disabled={!!busy}
             onClick={openMenu("status")}
-            title="Change status"
           >
             <TaskStatusDot status={t.status} />
             {TASK_STATUS_LABEL[t.status]}
@@ -385,7 +381,6 @@ export function BosunTaskView() {
             className={`task-head-done${closed ? " reopen" : ""}`}
             disabled={!!busy}
             onClick={() => setStatus(closed ? "todo" : "done")}
-            title={closed ? "Reopen this to-do" : "Mark this to-do done"}
           >
             {closed ? "Reopen" : (<><CheckIcon size={13} /> Done</>)}
           </button>
@@ -417,7 +412,6 @@ export function BosunTaskView() {
                 <button
                   className="icon-btn task-title-edit"
                   aria-label="Rename to-do"
-                  title="Rename"
                   onClick={() => {
                     setTitleDraft(displayTitle(t));
                     setEditing(true);
@@ -499,7 +493,6 @@ export function BosunTaskView() {
                 className="btn tone-allow task-primary"
                 disabled={!!busy}
                 onClick={() => void run("open", () => actions.selectThread(t.threadId!))}
-                title={thread ? undefined : "The thread is not loaded here yet; opening asks its machine"}
               >
                 Open conversation
               </button>
@@ -509,7 +502,6 @@ export function BosunTaskView() {
                 className="btn tone-allow task-primary"
                 disabled={!!busy || threadBusy}
                 onClick={() => void run("work", () => actions.workTask(t.id))}
-                title={`${bosunName} picks this up and takes it as far as the standing orders allow`}
               >
                 <PlayIcon size={11} /> {busy === "work" ? "Starting…" : "Work on it"}
               </button>
@@ -521,7 +513,6 @@ export function BosunTaskView() {
                   className="btn tone-deny"
                   disabled={!!busy || threadBusy}
                   onClick={() => void run("work", () => actions.workTask(t.id))}
-                  title={threadBusy ? `${bosunName} is already working on this` : `Start a new turn: ${bosunName} picks this up again`}
                 >
                   <PlayIcon size={11} /> {busy === "work" ? "Starting…" : threadBusy ? "Working…" : "Work on it"}
                 </button>
@@ -536,7 +527,6 @@ export function BosunTaskView() {
                   type="button"
                   className="btn tone-deny task-more"
                   aria-label="More actions"
-                  title="Snooze, drop, delete"
                   aria-haspopup="menu"
                   aria-expanded={menu?.kind === "more"}
                   disabled={!!busy}
@@ -629,14 +619,13 @@ export function BosunTaskView() {
                   <dd className="task-source">
                     <span className="task-source-kind">{t.source.kind || "unknown"}</span>
                     {t.source.url ? (
-                      <a className="task-link" href={t.source.url} target="_blank" rel="noreferrer" title={t.source.url}>
+                      <a className="task-link" href={t.source.url} target="_blank" rel="noreferrer">
                         {t.source.url}
                       </a>
                     ) : t.source.path ? (
                       <button
                         type="button"
                         className="task-link"
-                        title={copied ? "Copied" : `Copy ${t.source.path}`}
                         onClick={() =>
                           void copyText(t.source.path!).then((ok) => {
                             if (!ok) return;
@@ -657,7 +646,7 @@ export function BosunTaskView() {
                     <>
                       <dt>Orbit</dt>
                       <dd>
-                        <a className="task-link" href={t.orbit.url} target="_blank" rel="noreferrer" title={t.orbit.url}>
+                        <a className="task-link" href={t.orbit.url} target="_blank" rel="noreferrer">
                           {ticket} · {t.orbit.org} · {t.orbit.taskId}
                         </a>
                       </dd>

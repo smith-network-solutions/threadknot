@@ -394,7 +394,7 @@ export function BosunToday() {
             </button>
           )}
         </div>
-        <button type="button" className="icon-btn" aria-label="Close Today" title="Close" onClick={() => actions.openTask(null)}>
+        <button type="button" className="icon-btn" aria-label="Close Today" onClick={() => actions.openTask(null)}>
           <XIcon size={15} />
         </button>
       </header>
@@ -490,7 +490,7 @@ export function BosunToday() {
                       }}
                     />
                   ) : (
-                    <button type="button" className="today-block-title" title="Edit block" onClick={() => setEditingBlock(b.id)}>
+                    <button type="button" className="today-block-title" onClick={() => setEditingBlock(b.id)}>
                       {blockTime(b) && <span className="today-block-time">{blockTime(b)}</span>}
                       <span className="today-block-name">{b.title || "Untitled block"}</span>
                     </button>
@@ -761,7 +761,7 @@ function PlanRow(props: {
                 ))}
               </select>
             )}
-            <button type="button" className="btn bosun-small-btn today-remove" onClick={props.onRemove} title="Take it off today's plan; the to-do stays open">
+            <button type="button" className="btn bosun-small-btn today-remove" onClick={props.onRemove}>
               <TrashIcon size={11} /> Remove
             </button>
           </div>
@@ -806,7 +806,7 @@ function BlockEditor({
         <button type="button" className="btn bosun-small-btn" onClick={onCancel}>
           Cancel
         </button>
-        <button type="button" className="icon-btn today-block-delete" aria-label="Delete block" title="Delete block" onClick={onDelete}>
+        <button type="button" className="icon-btn today-block-delete" aria-label="Delete block" onClick={onDelete}>
           <TrashIcon size={12} />
         </button>
       </div>

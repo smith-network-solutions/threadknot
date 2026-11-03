@@ -145,7 +145,6 @@ function BosunRow({ bosun, onEdit }: { bosun: Bosun; onEdit: () => void }) {
         <button
           type="button"
           className={`settings-toggle ${bosun.enabled ? "on" : ""}`}
-          title={bosun.enabled ? "Pause this Bosun" : "Resume this Bosun"}
           onClick={() => void actions.updateBosun({ bosunId: bosun.id, enabled: !bosun.enabled })}
         >
           {bosun.enabled ? "on" : "off"}
@@ -153,13 +152,13 @@ function BosunRow({ bosun, onEdit }: { bosun: Bosun; onEdit: () => void }) {
         <button
           type="button"
           className="icon-btn"
-          title="Run now: check every lookout, then wake"
+          aria-label="Run now: check every lookout, then wake"
           disabled={running}
           onClick={() => void runNow()}
         >
           <PlayIcon size={13} />
         </button>
-        <button type="button" className="icon-btn" title="Edit" onClick={onEdit}>
+        <button type="button" className="icon-btn" aria-label="Edit" onClick={onEdit}>
           <PencilIcon size={13} />
         </button>
         <DangerButton
@@ -296,7 +295,7 @@ function TestResultView({ result }: { result: TestResult | { error: string } }) 
             </thead>
             <tbody>
               {result.signals.map((s) => (
-                <tr key={s.id} title={s.body.slice(0, 400)}>
+                <tr key={s.id}>
                   <td>{s.kind}</td>
                   <td>{s.title}</td>
                   <td>{s.hints?.workspace ?? ""}</td>
@@ -376,7 +375,6 @@ function LookoutEditor({
         <button
           type="button"
           className={`settings-toggle ${lookout.enabled ? "on" : ""}`}
-          title={lookout.enabled ? "Disable this lookout" : "Enable this lookout"}
           onClick={() => onChange({ ...lookout, enabled: !lookout.enabled })}
         >
           {lookout.enabled ? "on" : "off"}
@@ -386,7 +384,6 @@ function LookoutEditor({
             type="button"
             className="btn bosun-small-btn"
             disabled={!bosunId || testing}
-            title={bosunId ? "Run once; nothing is queued" : "Save the Bosun first"}
             onClick={() => void test()}
           >
             {testing ? "Testing…" : "Test"}
@@ -782,7 +779,7 @@ function BosunForm({
         <button
           type="button"
           className="bosun-avatar-btn"
-          title={draft.image ? "Change avatar" : "Add an avatar"}
+          aria-label={draft.image ? "Change avatar" : "Add an avatar"}
           onClick={() =>
             void pickAvatarImage()
               .then((img) => img && patch({ image: img }))
@@ -804,7 +801,6 @@ function BosunForm({
         <button
           type="button"
           className={`settings-toggle ${draft.enabled ? "on" : ""}`}
-          title={draft.enabled ? "Enabled" : "Paused"}
           onClick={() => patch({ enabled: !draft.enabled })}
         >
           {draft.enabled ? "on" : "off"}

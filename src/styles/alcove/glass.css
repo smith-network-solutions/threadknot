@@ -1,0 +1,316 @@
+/* ---- the glass primitives --------------------------------------------------
+   The surface, corner, tooltip and popover the ported Alcove components render
+   (src/components/alcove/). Values come from the design prototype's styles.css.
+
+   Scoped to the skin on purpose. The class names here are generic — .glass,
+   .tooltip, .dropdown-menu — so leaving them unscoped would have them reach
+   into any other skin that ever grows an element by one of those names. The
+   Dropdown portals its menu to <body>, which is still inside :root, so the
+   scope follows it there. */
+
+/* An iOS-style continuous corner where the webview has corner-shape, and a
+   plain border-radius everywhere else (WebKit still lacks it). */
+:root[data-theme="alcove"] .corner-smoothing {
+  corner-shape: superellipse(calc(1 + var(--corner-smoothing, 60) / 100));
+}
+
+/* ---- surface --------------------------------------------------------------
+   Exposure 150 is deliberately brighter than CSS alpha can represent: it
+   brightens only the backdrop and adds a refracted highlight, so the content
+   above it keeps its normal contrast. */
+/* Rest is .50 clear. Pressing a surface takes it to exposure 100 — brighter
+   backdrop, stronger shine — and grows it, both over 340ms. The grow is on
+   `scale`, not `transform`, so a surface that is already positioned with a
+   transform (the docked card, a centred pill) keeps its placement. */
+:root[data-theme="alcove"] .glass,
+:root[data-theme="alcove"] .glass-surface {
+  --glass-alpha: 0.50;
+  --glass-brightness: 1;
+  position: relative;
+  isolation: isolate;
+  background: rgb(255 255 255 / var(--glass-alpha));
+  box-shadow: var(--alc-shadow);
+  -webkit-backdrop-filter: blur(10.53px) saturate(1.07) brightness(var(--glass-brightness));
+  backdrop-filter: blur(10.53px) saturate(1.07) brightness(var(--glass-brightness));
+  transition:
+    background 340ms var(--alc-ease),
+    box-shadow 340ms var(--alc-ease),
+    -webkit-backdrop-filter 340ms var(--alc-ease),
+    backdrop-filter 340ms var(--alc-ease),
+    scale 340ms var(--alc-ease),
+    transform 340ms var(--alc-ease);
+}
+/* The press. Everything made of glass answers the same way — except the
+   composer card: it is a text field, and scaling it every time the cursor
+   lands in it would move the words under the caret. It gets the exposure
+   change without the grow. */
+:root[data-theme="alcove"] .glass:active,
+:root[data-theme="alcove"] .glass-surface:active {
+  --glass-alpha: 0.62;
+  --glass-brightness: 1.05;
+  scale: 1.08;
+  transition:
+    background 60ms var(--alc-ease),
+    -webkit-backdrop-filter 60ms var(--alc-ease),
+    backdrop-filter 60ms var(--alc-ease),
+    scale 60ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .glass:active::after,
+:root[data-theme="alcove"] .glass-surface:active::after {
+  background:
+    radial-gradient(76% 58% at 14% -8%, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.2) 30%, transparent 58%),
+    radial-gradient(46% 58% at 106% 96%, rgba(255, 255, 255, 0.28) 0%, transparent 53%);
+  opacity: 0.7;
+}
+/* Containers are not pressables. A popover already animates on open and
+   close, and the Dropdown closes on the same click, so a press-grow here just
+   flashes mid-dismiss. */
+:root[data-theme="alcove"] .composer-card:active,
+:root[data-theme="alcove"] .dropdown-menu:active,
+:root[data-theme="alcove"] .model-menu__row-panel:active,
+:root[data-theme="alcove"] .model-menu__effort-panel:active { scale: 1; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .glass:active,
+  :root[data-theme="alcove"] .glass-surface:active { scale: 1; }
+}
+:root[data-theme="alcove"] .glass--25 { --glass-alpha: 0.25; --glass-brightness: 1.02; }
+:root[data-theme="alcove"] .glass--100 { --glass-alpha: 0.62; --glass-brightness: 1.05; }
+:root[data-theme="alcove"] .glass--150 {
+  --glass-alpha: 0.78;
+  --glass-brightness: 1.16;
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.035);
+}
+/* The 1px edge light. */
+:root[data-theme="alcove"] .glass::before,
+:root[data-theme="alcove"] .glass-surface::before {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: inherit;
+  corner-shape: inherit;
+}
+/* The shine: a highlight off the top-left, a weaker one off the bottom-right. */
+:root[data-theme="alcove"] .glass::after,
+:root[data-theme="alcove"] .glass-surface::after {
+  position: absolute;
+  z-index: 0;
+  inset: 1px;
+  pointer-events: none;
+  content: "";
+  border-radius: inherit;
+  corner-shape: inherit;
+  background:
+    radial-gradient(72% 54% at 14% -8%, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.16) 29%, transparent 57%),
+    radial-gradient(44% 54% at 106% 96%, rgba(255, 255, 255, 0.18) 0%, transparent 52%);
+  mix-blend-mode: soft-light;
+  opacity: 0.54;
+}
+:root[data-theme="alcove"] .glass--150::after {
+  background:
+    radial-gradient(76% 58% at 14% -8%, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.2) 30%, transparent 58%),
+    radial-gradient(46% 58% at 106% 96%, rgba(255, 255, 255, 0.28) 0%, transparent 53%);
+  opacity: 0.7;
+  transform: scale(1.012);
+}
+:root[data-theme="alcove"] .glass > * { position: relative; z-index: 2; }
+
+/* ---- tooltip -------------------------------------------------------------
+   One bubble for the whole app (components/alcove/TooltipLayer.tsx): the
+   trigger is just a box that publishes its rect, and the bubble travels. The
+   white tail intentionally meets the glass shine.
+
+   Position comes in as left/top in viewport coordinates plus an explicit
+   width; the per-placement percentage offset below is what turns that one
+   pair of numbers into the right corner for each direction. */
+:root[data-theme="alcove"] .tooltip { position: relative; display: inline-flex; }
+:root[data-theme="alcove"] .tooltip-layer {
+  position: fixed;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  /* Side padding is written inline by the layer: it is part of the width the
+     bubble animates between, and a long label earns more of it. */
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 12.8px rgba(0, 0, 0, 0.05);
+  color: var(--alc-ink);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  filter: blur(5px);
+  pointer-events: none;
+  scale: 0.86;
+  transition: opacity 150ms ease, filter 190ms ease, scale 210ms var(--alc-spring);
+}
+/* Travel and resize only once it is actually up. While hidden the position
+   must jump: the next tooltip would otherwise slide in from wherever the last
+   one happened to sit. */
+:root[data-theme="alcove"] .tooltip-layer.is-visible {
+  opacity: 1;
+  filter: blur(0);
+  scale: 1;
+  transition:
+    left 260ms var(--alc-ease),
+    top 260ms var(--alc-ease),
+    width 260ms var(--alc-ease),
+    padding 260ms var(--alc-ease),
+    opacity 150ms ease,
+    filter 190ms ease,
+    scale 210ms var(--alc-spring);
+}
+/* The words change mid-flight: out as the bubble leaves the old control, in
+   as it arrives. Keep the duration in step with SWAP_MS in TooltipLayer.tsx. */
+:root[data-theme="alcove"] .tooltip-layer__label {
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+:root[data-theme="alcove"] .tooltip-layer.is-swapping .tooltip-layer__label {
+  opacity: 0;
+  filter: blur(6px);
+}
+/* Measured, never seen: the width the bubble is about to animate to. */
+:root[data-theme="alcove"] .tooltip-layer__measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .tooltip-tail {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  border-radius: 1px;
+  background: #fff;
+  corner-shape: superellipse(2);
+  rotate: 45deg;
+}
+:root[data-theme="alcove"] .tooltip-layer[data-placement="bottom"] {
+  translate: -50% 0;
+  transform-origin: top center;
+}
+:root[data-theme="alcove"] .tooltip-layer[data-placement="bottom"] .tooltip-tail { top: -6px; left: calc(50% - 6px); }
+:root[data-theme="alcove"] .tooltip-layer[data-placement="top"] {
+  translate: -50% -100%;
+  transform-origin: bottom center;
+}
+:root[data-theme="alcove"] .tooltip-layer[data-placement="top"] .tooltip-tail { bottom: -6px; left: calc(50% - 6px); }
+:root[data-theme="alcove"] .tooltip-layer[data-placement="right"] {
+  translate: 0 -50%;
+  transform-origin: left center;
+}
+:root[data-theme="alcove"] .tooltip-layer[data-placement="right"] .tooltip-tail { top: calc(50% - 6px); left: -6px; }
+:root[data-theme="alcove"] .tooltip-layer[data-placement="left"] {
+  translate: -100% -50%;
+  transform-origin: right center;
+}
+:root[data-theme="alcove"] .tooltip-layer[data-placement="left"] .tooltip-tail { top: calc(50% - 6px); right: -6px; }
+
+/* ---- popover -------------------------------------------------------------
+   Positioned in fixed viewport coordinates by Dropdown.tsx; the rules here are
+   only appearance, geometry and the open/close motion. */
+:root[data-theme="alcove"] .dropdown { position: relative; display: inline-flex; }
+:root[data-theme="alcove"] .dropdown-trigger { display: inline-flex; }
+:root[data-theme="alcove"] .dropdown-menu.glass-surface {
+  z-index: 900;
+  width: 298px;
+  padding: 10px;
+  overflow: visible;
+  border-radius: 38px;
+  /* Fill does most of the work of making a menu readable; the blur only
+     softens what is behind it. At 0.38 a saturated backdrop — a blue bubble,
+     a code block — came through strongly enough to tint the rows. 0.84 pushes
+     it back without touching the frost, which stays at 14.4px.
+
+     saturate(1): the usual glass recipe boosts saturation to make the material
+     look lively, and that is what was lighting up the blues underneath. The
+     menu is a reading surface, so it takes the backdrop's colours as they are. */
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 5px 13px rgba(0, 0, 0, 0.04);
+  color: var(--alc-ink-4);
+  -webkit-backdrop-filter: blur(14.4px) saturate(1) brightness(1.03);
+  backdrop-filter: blur(14.4px) saturate(1) brightness(1.03);
+  animation: dropdown-in 250ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .dropdown-tail {
+  position: absolute;
+  z-index: -1;
+  width: 15px;
+  height: 15px;
+  border-radius: 1px;
+  background: #fff;
+  corner-shape: superellipse(2);
+  rotate: 45deg;
+}
+/* The menu is portalled and placed in fixed coordinates, so only the
+   transform-origin and the tail depend on the placement. */
+:root[data-theme="alcove"] .dropdown-menu[data-placement="top-left"],
+:root[data-theme="alcove"] .dropdown-menu[data-placement="top-center"],
+:root[data-theme="alcove"] .dropdown-menu[data-placement="top-right"] {
+  transform-origin: var(--dropdown-trigger-center, 50%) 100%;
+}
+:root[data-theme="alcove"] .dropdown-menu[data-placement="bottom-left"],
+:root[data-theme="alcove"] .dropdown-menu[data-placement="bottom-center"],
+:root[data-theme="alcove"] .dropdown-menu[data-placement="bottom-right"] {
+  transform-origin: var(--dropdown-trigger-center, 50%) 0;
+}
+:root[data-theme="alcove"] .dropdown-menu[data-tail-position="top-left"] .dropdown-tail { top: -7px; left: 25px; }
+:root[data-theme="alcove"] .dropdown-menu[data-tail-position="top-right"] .dropdown-tail { top: -7px; right: 25px; }
+:root[data-theme="alcove"] .dropdown-menu[data-tail-position="bottom-left"] .dropdown-tail { bottom: -7px; left: 25px; }
+:root[data-theme="alcove"] .dropdown-menu[data-tail-position="bottom-right"] .dropdown-tail { right: 25px; bottom: -7px; }
+:root[data-theme="alcove"] .dropdown-menu[data-state="closing"] {
+  pointer-events: none;
+  animation: dropdown-out 250ms cubic-bezier(0.4, 0, 0.8, 0.2) both;
+}
+@keyframes dropdown-in {
+  from { opacity: 0; filter: blur(24px); scale: 0.86; }
+  to { opacity: 1; filter: blur(0); scale: 1; }
+}
+@keyframes dropdown-out {
+  from { opacity: 1; filter: blur(0); scale: 1; }
+  to { opacity: 0; filter: blur(24px); scale: 0.86; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .dropdown-menu.glass-surface,
+  :root[data-theme="alcove"] .dropdown-menu[data-state="closing"] { animation-duration: 1ms; }
+  :root[data-theme="alcove"] .tooltip-layer,
+  :root[data-theme="alcove"] .tooltip-layer.is-visible,
+  :root[data-theme="alcove"] .tooltip-layer__label { transition: none; }
+}
+
+/* ---- the face --------------------------------------------------------------
+   Instrument Sans everywhere in the skin. --font-ui already carries it (see
+   applyAppearance), but form controls do not inherit font from their ancestors
+   in any browser, so buttons, inputs and the draft field have to be told.
+
+   Code keeps the user's mono deliberately: diffs, the terminal and code blocks
+   rely on a fixed advance width, and a proportional face breaks the column
+   alignment they are read by. */
+:root[data-theme="alcove"],
+:root[data-theme="alcove"] button,
+:root[data-theme="alcove"] input,
+:root[data-theme="alcove"] textarea,
+:root[data-theme="alcove"] select,
+:root[data-theme="alcove"] optgroup {
+  font-family: var(--font-ui);
+  font-synthesis: none;
+}
+:root[data-theme="alcove"] code,
+:root[data-theme="alcove"] pre,
+:root[data-theme="alcove"] kbd,
+:root[data-theme="alcove"] samp,
+:root[data-theme="alcove"] .xterm,
+:root[data-theme="alcove"] [class*="mono"] {
+  font-family: var(--font-mono);
+}
+
+/* The draft's own size and weight live in glass-composer.css, which loads
+   after this file — setting them here too would only be overridden. */

@@ -292,7 +292,6 @@ function SkinPreviewModal({
             type="button"
             className="settings-toggle primary"
             disabled={active}
-            title={active ? "This skin is already applied." : undefined}
             onClick={onApply}
           >
             {active ? "applied" : "apply skin"}
@@ -404,11 +403,6 @@ function SkinMarketRow({ a }: { a: Appearance }) {
           type="button"
           className="settings-toggle"
           disabled={!activeCustom}
-          title={
-            activeCustom
-              ? `Download ${activeCustom.name} as JSON.`
-              : "Apply a theme you crafted in the Theme Studio first: presets and skins are built in, so there is nothing to export."
-          }
           onClick={exportTheme}
         >
           export theme
@@ -416,7 +410,6 @@ function SkinMarketRow({ a }: { a: Appearance }) {
         <button
           type="button"
           className="settings-toggle"
-          title="Load a .threadknot-theme.json file into your crafted themes."
           onClick={() => fileRef.current?.click()}
         >
           import
@@ -467,7 +460,6 @@ function PortraitRow({
       <button
         type="button"
         className="settings-toggle portrait-set"
-        title={`Pick a picture for ${label}.`}
         onClick={() => fileRef.current?.click()}
       >
         {url ? "change" : "upload"}
@@ -476,7 +468,6 @@ function PortraitRow({
         <button
           type="button"
           className="settings-toggle portrait-clear"
-          title={`Remove the picture for ${label}.`}
           onClick={() => setPortrait(slotKey, null)}
         >
           {defaultUrl ? "reset" : "clear"}
@@ -609,7 +600,6 @@ function SkinsBlock() {
             <div
               key={skin.id}
               className={`skin-card ${active ? "on" : ""}`}
-              title={skin.description}
             >
               <div className="skin-card-head">
                 <span className="skin-card-name">{skin.name}</span>
@@ -617,7 +607,6 @@ function SkinsBlock() {
                 {award.earned && skin.id === "arcade" && (
                   <span
                     className="skin-card-crest"
-                    title={`${CREST_NAME} · awarded on this machine`}
                   >
                     <Crest size={15} title={CREST_NAME} />
                   </span>
@@ -630,7 +619,6 @@ function SkinsBlock() {
                   type="button"
                   className="settings-toggle skin-apply-btn"
                   disabled={active}
-                  title={active ? "Already applied." : `Apply ${skin.name}.`}
                   onClick={() => applySkin(skin)}
                 >
                   {active ? "applied" : "apply"}

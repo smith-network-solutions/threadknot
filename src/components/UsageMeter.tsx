@@ -178,7 +178,6 @@ export function UsageMeter() {
         className="usage-chips"
         aria-label="Provider usage"
         aria-expanded={open}
-        title="Subscription usage"
         onClick={() => setOpen((v) => !v)}
       >
         {shown.map((u) => {

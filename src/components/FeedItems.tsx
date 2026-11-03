@@ -1,7 +1,7 @@
 import { findThread, useFeedStore } from "../state/store";
 import { ArtifactNavigation } from "./artifacts/ArtifactNavigation";
 import { absoluteProjectPath, ViewerClipboardActions } from "./files/ViewerActions";
-import { memo, useEffect, useState, type Dispatch, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type Dispatch, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { FeedItem } from "../state/feed";
 import type { Action, AppState, ThreadknotActions } from "../state/store";
@@ -114,7 +114,6 @@ export function CopyButton({
     <button
       type="button"
       className={className}
-      title={label}
       aria-label={label}
       onClick={async (e) => {
         if (stop) e.stopPropagation();
@@ -132,6 +131,37 @@ export function CopyButton({
       {className.includes("copy-pill") && <span>{done ? "Copied" : "Copy"}</span>}
     </button>
   );
+}
+
+/** True for a card that showed up while you were watching, false for one read
+ *  back from history.
+ *
+ *  The entrance animation is only right for live work. A thread opening mounts
+ *  its whole visible transcript at once, and paging older history in mounts a
+ *  screenful more — animating those would be a storm of blur every time you
+ *  scrolled up. The item's own timestamp separates the two, and it is read
+ *  once at mount so a re-render never replays the entrance. */
+const ARRIVAL_WINDOW_MS = 4000;
+/** Mirrors the collapse animation in the Alcove skin (alc-row-close). */
+const ROW_CLOSE_MS = 200;
+
+/** What a row calls a tool.
+ *
+ *  The wire name is whatever the harness calls it — Bash, PowerShell, shell,
+ *  exec_command — so one thread that touched two harnesses showed four names
+ *  for the same act. The row says what happened; the exact invocation is in
+ *  the card's own body, one click away. */
+function toolLabel(name: string): string {
+  return /(bash|powershell|shell|exec|terminal|command)/i.test(name) ? "Shell command" : name;
+}
+
+function useArriving(timestamp?: string): boolean {
+  const [arriving] = useState(() => {
+    if (!timestamp) return false;
+    const at = Date.parse(timestamp);
+    return Number.isFinite(at) && Date.now() - at < ARRIVAL_WINDOW_MS;
+  });
+  return arriving;
 }
 
 // ---- diff ---------------------------------------------------------------
@@ -283,13 +313,13 @@ function ArtifactGallery({ initial, render, onClose }: {
                 <ViewerClipboardActions key={item.artifactId} pathOnly imageUrl={imageUrl}
                   absolutePath={render.project ? absoluteProjectPath(render.project.path, item.relPath) : item.relPath}
                   fileTarget={{ kind: "artifact", artifactId: item.artifactId }} />
-                <button type="button" onClick={openArtifacts} title="Open in Artifacts">
+                <button type="button" onClick={openArtifacts}>
                   <ArchiveIcon size={14} /><span>Artifacts</span>
                 </button>
-                  <button type="button" onClick={download} disabled={!render.http} title="Download file">
+                  <button type="button" onClick={download} disabled={!render.http}>
                   <DownloadIcon size={14} /><span>Download</span>
                 </button>
-                <button type="button" onClick={() => setViewerOpen(false)} title="Close preview">
+                <button type="button" onClick={() => setViewerOpen(false)}>
                   <XIcon size={15} /><span>Close</span>
                 </button>
               </div>
@@ -334,14 +364,13 @@ function ArtifactCard({
               className="artifact-preview-hit"
               onClick={() => setViewerOpen(true)}
               aria-label={`Open ${item.name} in chat`}
-              title="Open large preview"
             />
           )}
         </div>
         <div className="artifact-card-foot">
           <span className="artifact-type-badge" aria-hidden="true">{typeLabel}</span>
           <div className="artifact-card-copy">
-            <strong title={item.name}>{item.name}</strong>
+            <strong>{item.name}</strong>
             <span>
               {item.description ?? (item.op === "modified" ? "Updated file" : "New file")}
               <i>·</i>{formatBytes(item.sizeBytes)}
@@ -447,12 +476,26 @@ function ToolRow({
   render: FeedRenderContext;
 }) {
   const [open, setOpen] = useState(false);
+  // Closing is a state, not just the absence of open: React would drop the
+  // body from the DOM on the same tick and there would be nothing left to
+  // animate out. The body stays mounted, marked, for the length of the
+  // collapse — and the timer is cleared on unmount so a card that scrolls out
+  // of the window mid-collapse does not set state on a dead component.
+  const [closing, setClosing] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    },
+    [],
+  );
   // A replayed card carries an elided output; the full text is fetched the
   // first time someone actually opens it, so a long log stays cheap to load
   // without ever losing what the agent printed.
   const [full, setFull] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
   const [fullDetail, setFullDetail] = useState<string | null>(null);
+  const arriving = useArriving(item.timestamp);
   const threadId = render.threadId;
   if (item.subagent) return <SubagentCard item={item} />;
   const hasDetail = item.detail.trim().length > 0;
@@ -463,6 +506,24 @@ function ToolRow({
   const body = full ?? item.output;
   const expand = () => {
     const next = !open;
+    if (!next) {
+      // Collapse: hold the body for the exit animation, then drop it.
+      setClosing(true);
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = window.setTimeout(() => {
+        closeTimerRef.current = null;
+        setClosing(false);
+        setOpen(false);
+      }, ROW_CLOSE_MS);
+      return;
+    }
+    if (closeTimerRef.current !== null) {
+      // Reopened mid-collapse: cancel the exit rather than letting it finish
+      // and yank the body out from under the reopen.
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+      setClosing(false);
+    }
     setOpen(next);
     if (next && fullDetail === null && item.detail.includes("call detail elided — expand to load") && threadId) {
       void render.actions.toolDetail(threadId, item.callId).then(setFullDetail).catch(() => undefined);
@@ -477,7 +538,11 @@ function ToolRow({
     }
   };
   return (
-    <div className={`row-card tool-row${item.isError ? " is-error" : ""}${item.done ? "" : " is-live"}`}>
+    <div
+      className={`row-card tool-row${item.isError ? " is-error" : ""}${
+        item.done ? "" : " is-live"
+      }${arriving ? " is-arriving" : ""}`}
+    >
       <button
         className="row-head"
         onClick={() => expandable && expand()}
@@ -485,14 +550,13 @@ function ToolRow({
         aria-expanded={expandable ? open : undefined}
       >
         <span className="row-glyph"><ToolGlyph name={item.name} /></span>
-        <span className="row-name">{item.name}</span>
-        {item.detail && <span className="row-detail">{item.detail}</span>}
+        <span className="row-name">{toolLabel(item.name)}</span>
         {!item.done && <span className="tool-spin" aria-label="running" />}
         {item.isError && <span className="tool-flag">err</span>}
-        {expandable && <ChevronIcon size={13} open={open} className="row-chevron" />}
+        {expandable && <ChevronIcon size={13} open={open && !closing} className="row-chevron" />}
       </button>
       {open && expandable && (
-        <div className="tool-body">
+        <div className={`tool-body${closing ? " is-closing" : ""}`}>
           {hasDetail && (
             <div className="tool-input-wrap">
               <div className="tool-section-label">call</div>
@@ -672,7 +736,7 @@ function TurnDivider({ item }: { item: Extract<FeedItem, { type: "turn_end" }> }
       {metrics.length > 0 && (
         <span className="turn-meta" aria-label="Turn details">
           {metrics.map((metric) => (
-            <span className="turn-stat" key={metric.key} title={metric.label} aria-label={`${metric.label}: ${metric.value}`}>
+            <span className="turn-stat" key={metric.key} aria-label={`${metric.label}: ${metric.value}`}>
               {metric.icon}
               <span>{metric.value}</span>
             </span>
@@ -754,7 +818,6 @@ function BriefDivider({
           className="brief-chip"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          title={open ? "Hide the brief" : "Show the brief this agent was given"}
         >
           <ShieldIcon size={11} />
           {label}
@@ -782,7 +845,6 @@ function MessageTime({
     <time
       className={`msg-time msg-time-${side}${mobile ? " msg-time-mobile" : ""}`}
       dateTime={timestamp}
-      title={full}
       aria-label={`Sent ${full}`}
     >
       {formatMessageTime(timestamp)}
@@ -799,7 +861,6 @@ function MessageImage({ url, name }: { url: string; name: string }) {
       target="_blank"
       rel="noreferrer"
       aria-label={`Open ${name}`}
-      title={`Open ${name}`}
     >
       {failed ? (
         <span className="msg-user-image-fallback">
@@ -838,7 +899,6 @@ function ReplyReference({
         key={`${path}-${start}`}
         type="button"
         className="msg-reply-reference-file"
-        title={`Open ${path} in Files`}
         onClick={(event) => {
           event.stopPropagation();
           onOpenFile(path);
@@ -859,6 +919,60 @@ function ReplyReference({
   );
 }
 
+/** True while the bubble's text occupies a single line.
+ *
+ *  A one-line bubble is a pill; anything taller keeps the rounded box. CSS
+ *  cannot count lines, so the bubble counts its own — from the line boxes the
+ *  engine actually laid out, not from height against line-height. Height
+ *  arithmetic has to guess at the padding, paragraph margins and leading of
+ *  whichever skin is loaded, and guesses wrong the moment a skin changes one.
+ *
+ *  Only text nodes are measured. A Range over an element's contents also
+ *  reports the rectangles of the block boxes inside it, and a block's rect
+ *  sits a pixel or two above the line box it contains — enough to read as a
+ *  second line, which is exactly how this first got it wrong.
+ *
+ *  Re-measured on resize: the pane width, the composer font size and a
+ *  streaming edit all change the answer, and none of them re-render this. */
+function useOneLine() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [oneLine, setOneLine] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const range = document.createRange();
+      const lines: { top: number; bottom: number }[] = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.nodeValue?.trim()) continue;
+        range.selectNodeContents(node);
+        for (const rect of Array.from(range.getClientRects())) {
+          if (rect.height <= 0) continue;
+          // Runs on one line share a line box, so they overlap vertically;
+          // wrapped lines never do. Inline code and other size changes shift
+          // a run's top by a pixel or two without making it a new line.
+          const line = lines.find(
+            (l) => Math.min(l.bottom, rect.bottom) - Math.max(l.top, rect.top) > rect.height / 2,
+          );
+          if (line) {
+            line.top = Math.min(line.top, rect.top);
+            line.bottom = Math.max(line.bottom, rect.bottom);
+          } else {
+            lines.push({ top: rect.top, bottom: rect.bottom });
+          }
+        }
+      }
+      setOneLine(lines.length === 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, oneLine };
+}
+
 function UserMessage({
   item,
   render,
@@ -876,6 +990,7 @@ function UserMessage({
   // Scrollback and messages from other devices find the beacon empty and mount
   // silently.
   const [justSent] = useState(claimJustSent);
+  const { ref: textRef, oneLine } = useOneLine();
   return (
     <div className={`msg-user-wrap${justSent ? " just-sent" : ""}`}>
       {item.midTurn && <div className="msg-user-midturn">added while working</div>}
@@ -887,8 +1002,8 @@ function UserMessage({
         />
       )}
       {hasText && (
-        <div className="msg-user">
-          <div className="msg-user-text">
+        <div className={`msg-user${oneLine ? " one-line" : ""}`}>
+          <div className="msg-user-text" ref={textRef}>
             <Markdown text={messageText} breaks onOpenFile={render.onOpenFile} />
           </div>
           <CopyButton value={messageText} label="Copy message" className="copy-btn msg-user-copy" />
@@ -932,7 +1047,7 @@ export const FeedItemView = memo(function FeedItemView({
           <div className="assistant-head">
             <SpeakerChip speaker={item.speaker} participants={render.participants} />
             {thoughtTime && (
-              <span className="assistant-thought-stat" title="Thought time">
+              <span className="assistant-thought-stat">
                 <BrainIcon size={12} />
                 Thought for {thoughtTime}
               </span>

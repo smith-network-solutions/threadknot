@@ -121,7 +121,6 @@ export function InboxView() {
           type="button"
           className="icon-btn"
           aria-label="Close notifications"
-          title="Close"
           onClick={() => actions.openTask(null)}
         >
           <XIcon size={15} />
@@ -188,7 +187,6 @@ export function InboxView() {
                     type="button"
                     className="icon-btn inbox-markread"
                     aria-label={`Mark read: ${e.threadTitle || e.title}`}
-                    title="Mark read"
                     onClick={() =>
                       void actions.markInboxRead(
                         g.threadId ? { threadId: g.threadId } : { ids: g.entries.map((x) => x.id) },
@@ -215,7 +213,6 @@ export function BackToInbox({ threadId }: { threadId: string }) {
     <button
       type="button"
       className="back-to-inbox"
-      title="Back to notifications"
       onClick={() => actions.openTask(INBOX_ID)}
     >
       ← Notifications

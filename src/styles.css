@@ -108,7 +108,14 @@
 
 * { box-sizing: border-box; }
 
-html, body { height: 100%; }
+/* The window itself never scrolls. #root is exactly one viewport tall and .app
+   clips, so any page-level scroll range is something that escaped that clip —
+   an absolutely positioned child whose containing block ended up being the
+   viewport rather than a pane. Without this the webview will happily drag the
+   whole interface — sidebar included — up by however far that stray box
+   overhangs, which reads as the app coming unstuck from the window. Clip it at
+   the viewport so a layout slip stays a clipped box instead of a scroll. */
+html, body { height: 100%; overflow: hidden; }
 
 body {
   margin: 0;
@@ -2485,6 +2492,8 @@ body.reordering { cursor: grabbing; user-select: none; }
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.18); }
 }
+/* Same reason as the halo: these throb for the whole of a run. */
+.rail-dot.lit { will-change: transform, opacity; }
 
 /* Northern Lights: one soft emerald halo behind the 34px workspace face.
    Size from the face, not the button: the mobile rail has a narrower hit area. */
@@ -2507,8 +2516,12 @@ body.reordering { cursor: grabbing; user-select: none; }
   inset: 0;
   border-radius: 11px;
   background: conic-gradient(#c8ffe0, #42ffc0, #126951, #8affd5, #c8ffe0);
-  filter: blur(2px);
+  filter: blur(3px);
   box-shadow: 0 0 19px #48ffb94d;
+  /* Its own layer, so a frame of the halo does not repaint the rail it sits
+     in — the rail carries a backdrop-filter, and re-reading that backdrop is
+     far more expensive than the halo itself. */
+  will-change: transform, opacity;
 }
 .underway .rail-aurora { animation: rail-northern-lights 6s ease-in-out infinite; }
 .rail-item.rail-running {
@@ -2533,9 +2546,14 @@ body.reordering { cursor: grabbing; user-select: none; }
 .rail-item.on { border-color: transparent; }
 .rail-dot { z-index: 2; }
 .rail-dot.lit { animation: project-throb 1.1s ease-in-out infinite; }
+/* Transform and opacity only. This runs for as long as any workspace is
+   underway — which is most of a working day — and the previous version
+   animated `filter: blur()`, re-blurring the halo on every one of those
+   frames. Transform and opacity are the two properties the compositor can
+   animate without repainting; the blur is now a constant on the element. */
 @keyframes rail-northern-lights {
-  0%, 100% { transform: scale(.98) rotate(-3deg); filter: blur(2px); }
-  50% { transform: scale(1.07) rotate(3deg); filter: blur(4px); }
+  0%, 100% { transform: scale(.98) rotate(-3deg); opacity: 0.85; }
+  50% { transform: scale(1.07) rotate(3deg); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .underway .rail-aurora, .rail-dot.lit { animation: none; }
@@ -4968,10 +4986,6 @@ body.reordering { cursor: grabbing; user-select: none; }
   transition: color 180ms ease;
 }
 .quick-mode-tabs button.active { color: var(--text); }
-.quick-mode-tabs button:focus-visible {
-  outline: 2px solid var(--brass);
-  outline-offset: 1px;
-}
 .quick-mode-indicator {
   position: absolute;
   z-index: 0;
@@ -5337,9 +5351,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   color: var(--dim);
 }
 .chat-find-nav:hover:not(:disabled),
-.chat-find-close:hover,
-.chat-find-nav:focus-visible,
-.chat-find-close:focus-visible {
+.chat-find-close:hover {
   color: var(--text);
   background: var(--panel-3);
 }
@@ -5405,11 +5417,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font: inherit;
   letter-spacing: inherit;
 }
-.empty-project-trigger:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brass) 75%, transparent);
-  outline-offset: 5px;
-  border-radius: 3px;
-}
 .empty-project-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5454,8 +5461,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.empty-project-option:hover,
-.empty-project-option:focus-visible {
+.empty-project-option:hover {
   outline: none;
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--text);
@@ -5480,11 +5486,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   color: var(--dim);
   font: 500 12px/1.35 var(--font-ui);
   letter-spacing: 0;
-}
-.empty-model-trigger:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brass) 75%, transparent);
-  outline-offset: 4px;
-  border-radius: 3px;
 }
 .empty-model-using { color: var(--faint); }
 .empty-model-name {
@@ -5543,8 +5544,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   text-align: right;
   text-overflow: ellipsis;
 }
-.empty-model-option:hover,
-.empty-model-option:focus-visible {
+.empty-model-option:hover {
   outline: none;
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--text);
@@ -5741,8 +5741,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font: inherit;
   text-align: left;
 }
-.msg-reply-reference-file:hover,
-.msg-reply-reference-file:focus-visible {
+.msg-reply-reference-file:hover {
   background: color-mix(in srgb, var(--brass) 14%, transparent);
   border-bottom-style: solid;
   outline: none;
@@ -5758,8 +5757,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   font: inherit;
   text-align: left;
 }
-.md-file-link:hover,
-.md-file-link:focus-visible {
+.md-file-link:hover {
   background: color-mix(in srgb, var(--brass) 14%, transparent);
   border-bottom-style: solid;
   outline: none;
@@ -5770,12 +5768,20 @@ span.title-agent-mark { width: 16px; height: 16px; }
   color: var(--accent-ink);
   background: var(--brass);
   border: none;
-  border-radius: 16px;
+  border-radius: 24px;
   padding: 9px 14px;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 13.5px;
+  /* What you read is the size you typed it at: both message sides take the
+     composer's own font size (Settings > Composer), so the three never drift. */
+  font-size: var(--composer-font, 16px);
 }
+
+/* One line reads as a tag, not a paragraph, so it gets the pill. Two or
+   more keep the rounded box — a pill drawn around a block of text bows
+   its sides away from the words. .one-line comes from the bubble measuring
+   itself; see useOneLine in FeedItems.tsx. */
+.msg-user.one-line { border-radius: 999px; }
 
 /* The bubble's Markdown. `.md` is tuned for the dark feed, and most of its
    accents (brass bullets, blue links, brass-on-panel code) vanish on a brass
@@ -5826,21 +5832,19 @@ span.title-agent-mark { width: 16px; height: 16px; }
   opacity: 0;
   transition: color 0.12s, background 0.12s, border-color 0.12s, opacity 0.12s;
 }
-.msg-reply:hover,
-.msg-reply:focus-visible {
+.msg-reply:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   border-color: color-mix(in srgb, var(--text) 10%, transparent);
   outline: none;
 }
-.msg-user-wrap:hover .msg-reply,
-.msg-reply:focus-visible { opacity: 1; }
+.msg-user-wrap:hover .msg-reply { opacity: 1; }
 
 /* assistant message */
 
 .msg-assistant {
   max-width: 74ch;
-  font-size: 14px;
+  font-size: var(--composer-font, 16px);
   position: relative;
 }
 .assistant-head {
@@ -5904,8 +5908,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   border-radius: 999px;
   opacity: 0;
 }
-.msg-copy:hover,
-.msg-copy:focus-visible {
+.msg-copy:hover {
   background: color-mix(in srgb, var(--text) 9%, transparent);
   border-color: color-mix(in srgb, var(--text) 10%, transparent);
   outline: none;
@@ -6174,12 +6177,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   text-align: left;
 }
 .row-head:not(:disabled):hover { background: rgba(155, 170, 210, 0.05); }
-.row-head:focus-visible,
-.row-head-btn:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brass) 70%, transparent);
-  outline-offset: -2px;
-}
-
 .row-glyph {
   display: inline-flex;
   flex: none;
@@ -6250,8 +6247,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   cursor: zoom-in;
 }
 .artifact-preview-hit:hover { background: rgba(242, 201, 138, 0.025); }
-.artifact-preview-hit:focus-visible { outline: 2px solid var(--brass); outline-offset: -3px; }
-
 .artifact-preview-image {
   display: block;
   width: 100%;
@@ -6308,7 +6303,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
 /* Focusable for keyboard zoom/pan, but the focus ring would frame the whole
    image; the controls carry their own. */
 .artifact-zoom-stage:focus { outline: none; }
-.artifact-zoom-stage:focus-visible { outline: 1px solid var(--brass, #c08b3e); outline-offset: -1px; }
 /* In fullscreen the stage IS the screen, so it supplies its own backdrop and
    keeps the controls clear of the very bottom edge. */
 .artifact-zoom-stage:fullscreen {
@@ -7534,8 +7528,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   border-radius: 50%;
   color: var(--faint);
 }
-.queued-message-remove:hover,
-.queued-message-remove:focus-visible {
+.queued-message-remove:hover {
   background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
   outline: none;
@@ -7711,8 +7704,7 @@ span.title-agent-mark { width: 16px; height: 16px; }
   border-radius: 50%;
   color: var(--faint);
 }
-.reply-context-close:hover,
-.reply-context-close:focus-visible {
+.reply-context-close:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
   outline: none;
@@ -7762,7 +7754,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .build-workspace-button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 11%, transparent); }
 .build-workspace-button.primary { color: var(--text); background: var(--brass-dim); }
-.build-workspace-button:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
 .build-workspace-picker { position: relative; }
 .build-workspace-menu {
   position: absolute;
@@ -9208,7 +9199,6 @@ span.title-agent-mark { width: 16px; height: 16px; }
   user-select: none;
 }
 .avatar-dropzone:hover,
-.avatar-dropzone:focus-visible,
 .avatar-dropzone.drag {
   border-color: var(--brass);
   background: var(--brass-dim);
@@ -11860,8 +11850,9 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   color: var(--accent-ink);
   background: var(--brass);
   border: none;
-  border-radius: 16px;
+  border-radius: 24px;
 }
+:root[data-family="light"] .msg-user.one-line:not(.image-only) { border-radius: 999px; }
 
 /* tool/diff row container: the dark translucent card would float oddly in a
    light feed. Give it a light panel so the header text (which follows the
@@ -12770,20 +12761,6 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
 :root[data-theme="arcade"] .composer-card select:focus {
   box-shadow: 0 0 16px -2px var(--glow-soft);
 }
-/* Keyboard focus is a lit outline, not the browser's default ring — except
-   where a container already owns the focus affordance. The composer's textarea
-   sets outline:none in the base stylesheet on purpose: the whole card lights up
-   through :focus-within, so a ring around the textarea draws a second box
-   inside the first and reads as an input nested in an input. Its edge is the
-   card's edge. */
-:root[data-theme="arcade"] :focus-visible {
-  outline: 2px solid var(--brass);
-  outline-offset: 1px;
-}
-:root[data-theme="arcade"] .composer-card textarea:focus-visible {
-  outline: none;
-}
-
 /* ---- type: Bungee for the signage -------------------------------------------
    Loaded lazily by applyAppearance when this theme is active. Body copy keeps
    the user's chosen UI font; only the loud bits go arcade. The headings that
@@ -14370,7 +14347,7 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   color: var(--text);
   outline: none;
 }
-.bl-input:focus-visible { border-color: var(--brass); }
+.bl-input:focus { border-color: var(--brass); }
 .bl-input.mono { font-family: var(--font-mono); font-size: 12.5px; }
 .bl-field-hint {
   max-width: 54ch;
@@ -15216,8 +15193,7 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--brass) 85%, #000);
   opacity: 0;
 }
-.msg-user:hover .msg-user-copy,
-.msg-user-copy:focus-visible { opacity: 1; }
+.msg-user:hover .msg-user-copy { opacity: 1; }
 .msg-user-copy:hover { background: color-mix(in srgb, var(--brass) 70%, #000); color: var(--accent-ink); }
 @media (hover: none) {
   .msg-user-copy { opacity: 0.85; }

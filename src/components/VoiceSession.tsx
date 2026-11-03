@@ -202,7 +202,7 @@ export function VoiceSession() {
         <button
           type="button"
           className="vs-mini-knot"
-          title="Open the voice conversation"
+          aria-label="Open the voice conversation"
           onClick={() => dispatch({ type: "voiceMinimized", minimized: false })}
         >
           <VoiceKnotCanvas frame={frame} size={72} />
@@ -214,7 +214,6 @@ export function VoiceSession() {
               type="button"
               className={`vs-mini-btn ${muted ? "on" : ""}`}
               disabled={!sessionId}
-              title={muted ? "Unmute" : "Mute"}
               onClick={() =>
                 sessionId &&
                 void actions.setVoiceMuted(sessionId, !muted).catch(() => undefined)
@@ -226,7 +225,6 @@ export function VoiceSession() {
               <button
                 type="button"
                 className="vs-mini-btn"
-                title="Interrupt the reply"
                 onClick={() =>
                   void actions.interruptVoice(sessionId).catch(() => undefined)
                 }
@@ -234,7 +232,7 @@ export function VoiceSession() {
                 stop
               </button>
             )}
-            <button type="button" className="vs-mini-btn vs-end" title="End the conversation" onClick={end}>
+            <button type="button" className="vs-mini-btn vs-end" onClick={end}>
               end
             </button>
           </div>
@@ -306,7 +304,6 @@ export function VoiceSession() {
             type="button"
             className="vs-btn"
             disabled={!sessionId}
-            title="Keep talking while you work — dock to the corner (Esc)"
             onClick={() => dispatch({ type: "voiceMinimized", minimized: true })}
           >
             minimize
@@ -315,7 +312,6 @@ export function VoiceSession() {
             type="button"
             className={`vs-btn ${muted ? "on" : ""}`}
             disabled={!sessionId}
-            title="Mute the microphone (M)"
             onClick={() =>
               sessionId &&
               void actions.setVoiceMuted(sessionId, !muted).catch(() => undefined)
@@ -327,14 +323,13 @@ export function VoiceSession() {
             type="button"
             className="vs-btn"
             disabled={!sessionId || !canInterrupt}
-            title="Interrupt the reply (Space)"
             onClick={() =>
               sessionId && void actions.interruptVoice(sessionId).catch(() => undefined)
             }
           >
             interrupt
           </button>
-          <button type="button" className="vs-btn vs-end" title="End the conversation" onClick={end}>
+          <button type="button" className="vs-btn vs-end" onClick={end}>
             end conversation
           </button>
         </div>

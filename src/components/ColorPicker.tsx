@@ -253,13 +253,11 @@ export function ColorPicker({
         <span
           className={`cp-swatch${value ? "" : " none"}`}
           style={value ? { background: value } : undefined}
-          title={value ?? "no color"}
         />
         {eyeDropper && (
           <button
             type="button"
             className="icon-btn cp-eyedrop"
-            title="Pick a color from the screen"
             aria-label="Pick a color from the screen"
             onClick={() => {
               // Chromium-only API; open() rejects when the user presses Esc.
@@ -300,7 +298,6 @@ export function ColorPicker({
             type="button"
             className={`color-swatch${value?.toLowerCase() === c ? " on" : ""}`}
             style={{ background: c }}
-            title={c}
             aria-label={`Accent color ${c}`}
             onClick={() => commitHex(c)}
           />
@@ -308,7 +305,6 @@ export function ColorPicker({
         <button
           type="button"
           className={`color-swatch clear${value ? "" : " on"}`}
-          title="no color"
           aria-label="No accent color"
           onClick={() => {
             lastEmitRef.current = null;

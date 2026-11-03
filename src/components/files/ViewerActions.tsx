@@ -89,8 +89,7 @@ function ActionButton({
       className={`files-action files-copy-action ${state}`}
       onClick={onClick}
       disabled={disabled}
-      aria-label={idleLabel}
-      title={state === "error" ? `${label}. ${title}` : title}
+      aria-label={state === "error" ? `${label}. ${title}` : idleLabel}
     >
       <Icon size={13} />
       <span className="files-action-label">{label}</span>

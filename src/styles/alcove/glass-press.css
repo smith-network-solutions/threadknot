@@ -1,0 +1,149 @@
+/* The ripple's radius. Registering it gives it a type, which is what lets it
+   animate at all — an unregistered custom property jumps. Browsers without
+   @property (older WebKitGTK) simply get the fully-open gradient, which is the
+   press without the sweep rather than no press. */
+@property --alc-press-r {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+/* ---- the press -------------------------------------------------------------
+   Imported LAST, deliberately. Every control here is also styled by one of the
+   files above, and those rules declare their own `transition` at the same
+   specificity — which silently drops `scale` from the transition list and
+   makes the press jump instead of animate. At the ~80ms a real click holds
+   :active, an un-animated jump is invisible, which is exactly how this
+   finished up looking like no animation at all. Loading last keeps the
+   transition that matters.
+
+   The shape of it: rest is .65 clear; pressing goes to exposure 100 — brighter
+   fill, brighter backdrop — and grows 8%. In fast (60ms) so a quick click
+   actually reaches the pressed state, out slow (340ms) so the release is the
+   part you see. `scale`, not `transform`, so controls already placed with a
+   transform keep their position. */
+
+:root[data-theme="alcove"] .thread-head .thread-title,
+:root[data-theme="alcove"] .thread-head .title-edit,
+:root[data-theme="alcove"] .sidebar-action,
+:root[data-theme="alcove"] .thread-row,
+:root[data-theme="alcove"] .empty-project-trigger,
+:root[data-theme="alcove"] .empty-model-trigger,
+:root[data-theme="alcove"] .quick-mode-tabs button,
+:root[data-theme="alcove"] .chat-find button,
+:root[data-theme="alcove"] .cset-trigger,
+:root[data-theme="alcove"] .pill-trigger,
+:root[data-theme="alcove"] .ai-trigger,
+:root[data-theme="alcove"] .mic-btn,
+:root[data-theme="alcove"] .send-btn,
+:root[data-theme="alcove"] .ctx-item,
+:root[data-theme="alcove"] .pill-opt,
+:root[data-theme="alcove"] .agent-option,
+:root[data-theme="alcove"] .slash-option,
+:root[data-theme="alcove"] .composer-anchor .composer-card,
+:root[data-theme="alcove"] .composer-anchor .composer-icon,
+:root[data-theme="alcove"] .composer-anchor .model-select,
+:root[data-theme="alcove"] .composer-anchor .send-control,
+:root[data-theme="alcove"] .composer-anchor .composer-image__remove,
+:root[data-theme="alcove"] .attachment-menu__option,
+:root[data-theme="alcove"] .model-menu__item,
+:root[data-theme="alcove"] .model-menu__permission-option,
+:root[data-theme="alcove"] .glass,
+:root[data-theme="alcove"] .glass-surface {
+  --alc-press-r: 0%;
+  --press-x: 50%;
+  --press-y: 50%;
+  /* Layered over whatever background-color the element already has, so this
+     never fights the rules that colour it. */
+  background-image: radial-gradient(
+    circle at var(--press-x) var(--press-y),
+    rgba(255, 255, 255, 0.62) 0%,
+    rgba(255, 255, 255, 0.26) calc(var(--alc-press-r) / 2),
+    rgba(255, 255, 255, 0) var(--alc-press-r)
+  );
+  transition-property:
+    background-color, box-shadow, color, -webkit-backdrop-filter, backdrop-filter, scale,
+    --alc-press-r !important;
+  transition-duration: 370ms !important;
+  transition-timing-function: var(--alc-ease) !important;
+}
+
+:root[data-theme="alcove"] .thread-head .thread-title:active,
+:root[data-theme="alcove"] .thread-head .title-edit:active,
+:root[data-theme="alcove"] .sidebar-action:active,
+:root[data-theme="alcove"] .thread-row:active,
+:root[data-theme="alcove"] .empty-project-trigger:active,
+:root[data-theme="alcove"] .empty-model-trigger:active,
+:root[data-theme="alcove"] .quick-mode-tabs button:active,
+:root[data-theme="alcove"] .chat-find button:active,
+:root[data-theme="alcove"] .cset-trigger:active,
+:root[data-theme="alcove"] .pill-trigger:active,
+:root[data-theme="alcove"] .ai-trigger:active,
+:root[data-theme="alcove"] .mic-btn:active,
+:root[data-theme="alcove"] .send-btn:active,
+:root[data-theme="alcove"] .ctx-item:active,
+:root[data-theme="alcove"] .pill-opt:active,
+:root[data-theme="alcove"] .agent-option:active,
+:root[data-theme="alcove"] .slash-option:active,
+:root[data-theme="alcove"] .composer-anchor .composer-card:active,
+:root[data-theme="alcove"] .composer-anchor .composer-icon:active,
+:root[data-theme="alcove"] .composer-anchor .model-select:active,
+:root[data-theme="alcove"] .composer-anchor .send-control:active,
+:root[data-theme="alcove"] .composer-anchor .composer-image__remove:active,
+:root[data-theme="alcove"] .attachment-menu__option:active,
+:root[data-theme="alcove"] .model-menu__item:active,
+:root[data-theme="alcove"] .model-menu__permission-option:active,
+:root[data-theme="alcove"] .glass:active,
+:root[data-theme="alcove"] .glass-surface:active {
+  --glass-alpha: 0.62;
+  --glass-brightness: 1.05;
+  --alc-press-r: 150%;
+  -webkit-backdrop-filter: blur(11.7px) saturate(1.13) brightness(1.05) !important;
+  backdrop-filter: blur(11.7px) saturate(1.13) brightness(1.05) !important;
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.035) !important;
+  scale: 1.08 !important;
+  /* The geometry snaps so a quick click reaches it; the exposure sweeps open
+     over the full duration, which is the part being looked at. Per-property
+     durations, in the order listed above. */
+  transition-duration: 90ms, 90ms, 90ms, 90ms, 90ms, 90ms, 370ms !important;
+}
+/* The card grows from its own foot, so the press reads as the card being
+   pushed rather than the whole dock jumping. */
+:root[data-theme="alcove"] .composer-anchor .composer-card {
+  transform-origin: center bottom;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-card:active { scale: 1.015 !important; }
+/* Popovers already animate themselves open and closed, and the Dropdown closes
+   on the same click — a press-grow here only flashes mid-dismiss. */
+:root[data-theme="alcove"] .dropdown-menu:active,
+:root[data-theme="alcove"] .model-menu__row-panel:active,
+:root[data-theme="alcove"] .model-menu__effort-panel:active { scale: 1 !important; }
+/* They keep their own frost through the press, too. The recipe above is
+   !important and :active matches ancestors, so without this every click on a
+   row re-saturated the whole menu and thinned its blur for as long as the
+   button was held. */
+:root[data-theme="alcove"] .dropdown-menu:active {
+  -webkit-backdrop-filter: blur(14.4px) saturate(1) brightness(1.03) !important;
+  backdrop-filter: blur(14.4px) saturate(1) brightness(1.03) !important;
+}
+
+/* A press on a control inside the card is that control's press, not the
+   card's. CSS :active matches ancestors too, so pressing the send button or
+   the plus was lighting up the whole composer behind it. */
+:root[data-theme="alcove"] .composer-anchor .composer-card:has(.composer-icon:active),
+:root[data-theme="alcove"] .composer-anchor .composer-card:has(.model-select:active),
+:root[data-theme="alcove"] .composer-anchor .composer-card:has(.send-control:active),
+:root[data-theme="alcove"] .composer-anchor .composer-card:has(.composer-image__remove:active),
+:root[data-theme="alcove"] .composer-anchor .composer-card:has(button:active) {
+  --alc-press-r: 0% !important;
+  --glass-alpha: 0.5 !important;
+  --glass-brightness: 1 !important;
+  scale: 1 !important;
+  background-image: none !important;
+  /* Back to the card's resting frost, not `none`: the card itself carries the
+     backdrop-filter now (see glass-composer.css), so switching it off here
+     would flash the glass away for as long as the button is held. */
+  -webkit-backdrop-filter: blur(10.53px) saturate(1.07) brightness(1) !important;
+  backdrop-filter: blur(10.53px) saturate(1.07) brightness(1) !important;
+  box-shadow: var(--alc-rim), 0 4px 9.6px rgba(0, 0, 0, 0.02), 0 10px 30px rgba(0, 0, 0, 0.045) !important;
+}

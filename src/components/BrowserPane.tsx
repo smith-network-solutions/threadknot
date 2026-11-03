@@ -808,14 +808,6 @@ export function BrowserPane({
   const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
   const attachedId = thread?.settings.browserProfileId ?? "";
   const attached = profiles.find((profile) => profile.id === attachedId) ?? null;
-  const profileTitle = attached
-    ? attached.origins.includes("*")
-      ? `Signed in as ${attached.name} — this browser keeps the login and may visit any site`
-      : `Signed in as ${attached.name} — this browser may only visit ${attached.origins.join(", ")}`
-    : profilesLoaded && attachedId
-      ? "This chat points at a signed-in profile that no longer exists (it was deleted). Switch to Disposable, or attach another profile."
-      : "Disposable browser: nothing stays signed in. Pick a profile to keep a login.";
-
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
@@ -1070,13 +1062,13 @@ export function BrowserPane({
         </div>
       )}
       <div className="browser-chrome">
-        <button type="button" className="browser-btn" onClick={() => send({ type: "back" })} aria-label="Back" title="Back">
+        <button type="button" className="browser-btn" onClick={() => send({ type: "back" })} aria-label="Back">
           <BackIcon />
         </button>
-        <button type="button" className="browser-btn" onClick={() => send({ type: "forward" })} aria-label="Forward" title="Forward">
+        <button type="button" className="browser-btn" onClick={() => send({ type: "forward" })} aria-label="Forward">
           <FwdIcon />
         </button>
-        <button type="button" className="browser-btn" onClick={() => send({ type: "reload" })} aria-label="Reload" title="Reload">
+        <button type="button" className="browser-btn" onClick={() => send({ type: "reload" })} aria-label="Reload">
           <ReloadIcon />
         </button>
         <button
@@ -1085,7 +1077,6 @@ export function BrowserPane({
           onClick={() => void toggleFullscreen()}
           aria-label={fullscreen ? "Exit browser fullscreen" : "Enter browser fullscreen"}
           aria-pressed={fullscreen}
-          title={fullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
         >
           {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
         </button>
@@ -1123,7 +1114,7 @@ export function BrowserPane({
           onBlur={() => setEditing(false)}
         />
 
-        <span className={`browser-connection ${connection}`} title={`Browser engine: ${connection}`}>
+        <span className={`browser-connection ${connection}`}>
           <span className="browser-connection-dot" />
         </span>
 
@@ -1135,7 +1126,6 @@ export function BrowserPane({
             aria-label="More browser controls"
             aria-expanded={moreOpen}
             aria-haspopup="dialog"
-            title="More browser controls"
           >
             <MoreIcon />
             {activities.length > 0 && !activityOpen && <span className="browser-activity-count">{activities.length}</span>}
@@ -1179,7 +1169,6 @@ export function BrowserPane({
                       value={attachedId}
                       onChange={(event) => attachProfile(event.target.value)}
                       aria-label="Signed-in browser profile"
-                      title={profileTitle}
                     >
                       <option value="">Disposable browser</option>
                       {profilesLoaded && attachedId && !attached && (
@@ -1246,7 +1235,6 @@ export function BrowserPane({
                 role="tab"
                 aria-selected={tab.active}
                 className="browser-tab-main"
-                title={tab.url}
                 onClick={() => {
                   if (!tab.active) send({ type: "switchTab", id: tab.id });
                 }}
@@ -1269,7 +1257,6 @@ export function BrowserPane({
           type="button"
           className="browser-new-tab"
           aria-label="New browser tab"
-          title="New browser tab"
           onClick={() => send({ type: "newTab" })}
         >
           +

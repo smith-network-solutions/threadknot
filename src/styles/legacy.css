@@ -402,11 +402,6 @@
   border-color: var(--lc-gold);
   color: var(--lc-gold);
 }
-.lc-chip:focus-visible {
-  outline: 2px solid var(--lc-gold);
-  outline-offset: 2px;
-}
-
 .lc-hud {
   flex: none;
   display: flex;
@@ -876,10 +871,6 @@
 }
 .lc-handle-go:hover {
   background: rgba(45, 225, 194, 0.12);
-}
-.lc-handle-go:focus-visible {
-  outline: 2px solid var(--lc-gold);
-  outline-offset: 2px;
 }
 .lc-card-win .lc-card-heading {
   color: #fff;

@@ -1,0 +1,20 @@
+/* No focus rings, anywhere. Imported last so it outranks every skin.
+ *
+ * WHY: a click leaves the control focused, and Chromium flips into keyboard
+ * modality on the next key down — Ctrl, Shift and Caps Lock included. Pressing
+ * a modifier therefore lit a ring around whatever you had clicked minutes
+ * earlier, with nothing on screen to explain it. The feature stylesheets no
+ * longer carry a single :focus-visible rule; this is what stops the browser's
+ * own ring showing through where a custom one used to sit.
+ *
+ * Text fields are untouched: their :focus border tint says "you are typing
+ * here", it is drawn with border-color, and none of it is a ring.
+ *
+ * Deliberate trade-off: keyboard-only navigation now has no visible focus.
+ * Dropping this import is all it takes to get the browser's ring back.
+ */
+:focus,
+:focus-visible,
+:focus-within {
+  outline: none !important;
+}

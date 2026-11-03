@@ -178,11 +178,6 @@ export function PairPhoneModal({
                     key={option}
                     type="button"
                     className={`settings-toggle${target === option ? " primary" : ""}`}
-                    title={
-                      option === "lan"
-                        ? "For a phone on this network"
-                        : "For a phone anywhere, through this machine's public address"
-                    }
                     onClick={() => {
                       if (option === target) return;
                       setTarget(option);

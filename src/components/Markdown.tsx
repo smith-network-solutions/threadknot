@@ -116,7 +116,6 @@ function markdownComponents(onOpenFile?: (path: string) => void): Components {
         <button
           type="button"
           className="md-file-link"
-          title={`Open ${filePath} in Files`}
           onClick={() => {
             onOpenFile?.(filePath);
           }}

@@ -832,7 +832,6 @@ export function LegacyCircuit({ onExit }: { onExit: () => void }) {
           <button
             type="button"
             className="lc-chip lc-zoom-level"
-            title="Ctrl + scroll, or Ctrl + 0 to reset"
             aria-label={`Zoom ${Math.round(zoom * 100)} percent, click to reset`}
             onClick={() => {
               setZoom(1);

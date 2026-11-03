@@ -883,11 +883,6 @@
   padding: 4px 0 8px;
   outline: none;
 }
-
-.git-log-list:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--brass, #d9a35c);
-}
-
 /* One commit: graph | subject + refs | author | date. Fixed height so the
    graph strokes meet row to row. */
 .git-log-row {

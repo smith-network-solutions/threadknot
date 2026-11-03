@@ -142,13 +142,13 @@ function FileFindBar({
       <span className="files-find-count" aria-live="polite">
         {query.trim() ? (matchCount > 0 ? `${matchCount} match${matchCount === 1 ? "" : "es"}` : "No matches") : "Find"}
       </span>
-      <button type="button" aria-label="Previous match" title="Previous match" disabled={matchCount === 0} onClick={onPrevious}>
+      <button type="button" aria-label="Previous match" disabled={matchCount === 0} onClick={onPrevious}>
         <ChevronIcon size={13} className="files-find-prev" />
       </button>
-      <button type="button" aria-label="Next match" title="Next match" disabled={matchCount === 0} onClick={onNext}>
+      <button type="button" aria-label="Next match" disabled={matchCount === 0} onClick={onNext}>
         <ChevronIcon size={13} className="files-find-next" />
       </button>
-      <button type="button" aria-label="Close find" title="Close find (Escape)" onClick={onClose}>
+      <button type="button" aria-label="Close find" onClick={onClose}>
         <XIcon size={13} />
       </button>
     </div>
@@ -272,7 +272,7 @@ export function FileViewer({
           <ChevronIcon size={14} />
           <span>Files</span>
         </button>
-        <span className="files-crumb" title={path}>
+        <span className="files-crumb">
           {path}
         </span>
         <div className="files-viewer-actions">
@@ -286,7 +286,6 @@ export function FileViewer({
             className="files-action files-dl"
             onClick={download}
             disabled={!http}
-            title="Download file"
           >
             <DownloadIcon size={13} />
             <span className="files-action-label">Download</span>

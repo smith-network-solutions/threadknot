@@ -52,7 +52,7 @@ function DiffView({
           <button type="button" className="git-back" onClick={onBack}>
             <ChevronIcon size={12} className="git-back-chev" /> Back
           </button>
-          <span className="git-diff-path" title={path}>{path}</span>
+          <span className="git-diff-path">{path}</span>
           {scope === "staged" && <span className="git-chip stage">staged</span>}
           {diff.meta?.truncated && <span className="git-chip warn">truncated</span>}
         </div>
@@ -199,8 +199,8 @@ function FileRow({
   const title = entry.origPath ? `${entry.origPath} → ${entry.path}` : entry.path;
   return (
     <div className="git-row">
-      <button type="button" className="git-row-main" onClick={onOpen} title={title}>
-        <span className={`git-letter s-${letter}`} title={statusLabel(letter)}>{letter}</span>
+      <button type="button" className="git-row-main" onClick={onOpen}>
+        <span className={`git-letter s-${letter}`}>{letter}</span>
         <PathLabel path={entry.path} />
       </button>
       <span className="git-row-actions">{actionsSlot}</span>
@@ -311,7 +311,7 @@ function RepoView({
               <ChevronIcon size={12} className="git-back-chev" /> Repos
             </button>
           )}
-          <span className="git-repo-name" title={repo.relPath || "."}>{repo.name}</span>
+          <span className="git-repo-name">{repo.name}</span>
           <div className="git-seg" role="tablist" aria-label="Repository view">
             <button
               type="button"
@@ -340,7 +340,6 @@ function RepoView({
               setRefreshTick((n) => n + 1);
             }}
             disabled={busy}
-            title="Refresh"
           >
             Refresh
           </button>
@@ -365,7 +364,6 @@ function RepoView({
               className="git-sync"
               onClick={() => void run(() => actions.gitPull(repo.id))}
               disabled={busy}
-              title="git pull --ff-only"
             >
               <DownloadCloudIcon size={13} />
               {status.behind > 0 ? ` ${status.behind}` : ""}
@@ -375,7 +373,6 @@ function RepoView({
               className="git-sync"
               onClick={() => void run(() => actions.gitPush(repo.id))}
               disabled={busy}
-              title="git push"
             >
               <UploadIcon size={13} />
               {status.ahead > 0 ? ` ${status.ahead}` : ""}
@@ -396,7 +393,6 @@ function RepoView({
                   .finally(() => setBusy(false));
               }}
               disabled={busy}
-              title="Create a pull request for this branch (gh pr create)"
             >
               PR
             </button>
@@ -768,7 +764,7 @@ function CommitSheet({
       </div>
       <footer className="git-commit git-sheet-foot">
         {!done && (
-          <label className="git-sheet-link" title="Stamp each commit with a shared Threadknot-Change trailer">
+          <label className="git-sheet-link">
             <input
               type="checkbox"
               checked={link}
@@ -928,7 +924,7 @@ function RepoCard({ repo, onOpen }: { repo: GitRepoInfo; onOpen: () => void }) {
             {dirty === 0 && (repo.conflicted ?? 0) === 0 && <span className="git-chip clean">clean</span>}
           </div>
           {repo.lastCommit && (
-            <div className="git-card-last" title={repo.lastCommit.subject}>
+            <div className="git-card-last">
               <span className="git-card-hash">{repo.lastCommit.hash}</span> {repo.lastCommit.subject}
             </div>
           )}
@@ -1052,7 +1048,6 @@ export function GitPane({ project, active }: { project: Project; active: boolean
             className="git-refresh"
             onClick={() => void load()}
             disabled={loading}
-            title="Rescan for repos"
           >
             Refresh
           </button>

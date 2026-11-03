@@ -195,13 +195,12 @@ function RefChip({ r, onPick }: { r: GitRef; onPick?: (name: string) => void }) 
       : `${r.kind === "tag" ? "tag" : `${r.kind} branch`} ${r.name}${r.current ? " (checked out)" : ""}`;
   const cls = `git-ref ${r.kind}${r.current ? " current" : ""}`;
   if (!onPick || r.kind === "tag" || r.kind === "head") {
-    return <span className={cls} title={title}>{r.name}</span>;
+    return <span className={cls}>{r.name}</span>;
   }
   return (
     <button
       type="button"
       className={cls}
-      title={`${title} — click to show only this branch`}
       onClick={(e) => {
         e.stopPropagation();
         onPick(r.name);
@@ -316,7 +315,7 @@ function CopyHash({ hash }: { hash: string }) {
     <button
       type="button"
       className="git-copy"
-      title={`Copy ${hash}`}
+      aria-label={`Copy ${hash}`}
       onClick={() => {
         void copyText(hash).then((ok) => {
           if (!ok) return;
@@ -391,13 +390,13 @@ function CommitDetails({
           <>
             <h3 className="git-detail-subject">{details.subject}</h3>
             <div className="git-detail-meta">
-              <span className="git-detail-hash" title={details.hash}>{details.short}</span>
+              <span className="git-detail-hash">{details.short}</span>
               <CopyHash hash={details.hash} />
-              <span title={details.authorEmail}>{details.author}</span>
+              <span>{details.author}</span>
               <span className="git-detail-sep">·</span>
-              <span title={formatFullDateTime(details.at)}>{formatCompactDateTime(details.at)}</span>
+              <span>{formatCompactDateTime(details.at)}</span>
               {details.committer !== details.author && (
-                <span className="git-detail-committer" title={formatFullDateTime(details.committedAt)}>
+                <span className="git-detail-committer">
                   committed by {details.committer}
                 </span>
               )}
@@ -427,10 +426,9 @@ function CommitDetails({
                   <button
                     type="button"
                     className="git-row-main"
-                    title={f.origPath ? `${f.origPath} → ${f.path}` : f.path}
                     onClick={() => onOpenFile(f)}
                   >
-                    <span className={`git-letter s-${f.status}`} title={statusLabel(f.status)}>{f.status}</span>
+                    <span className={`git-letter s-${f.status}`}>{f.status}</span>
                     <PathLabel path={f.path} />
                     <span className="git-file-counts">
                       {f.binary && <span>bin</span>}
@@ -471,8 +469,8 @@ function CommitFileDiff({
           <button type="button" className="git-back" onClick={onBack}>
             <ChevronIcon size={12} className="git-back-chev" /> Files
           </button>
-          <span className="git-diff-path" title={file.path}>{file.path}</span>
-          <span className={`git-letter s-${file.status}`} title={statusLabel(file.status)}>{file.status}</span>
+          <span className="git-diff-path">{file.path}</span>
+          <span className={`git-letter s-${file.status}`}>{file.status}</span>
           {diff.meta?.truncated && <span className="git-chip warn">truncated</span>}
         </div>
       </header>
@@ -670,7 +668,7 @@ export function GitLogView({
           >
             <GraphCell row={rows[i]} merge={merge} lanes={lanes} />
             <span className="git-log-subject">
-              <span className="git-log-subject-text" title={c.subject}>{c.subject}</span>
+              <span className="git-log-subject-text">{c.subject}</span>
               {c.refs.length > 0 && (
                 <span className="git-log-refs">
                   {c.refs.map((r) => (
@@ -679,8 +677,8 @@ export function GitLogView({
                 </span>
               )}
             </span>
-            <span className="git-log-author" title={c.authorEmail}>{c.author}</span>
-            <span className="git-log-date" title={formatFullDateTime(c.at)}>
+            <span className="git-log-author">{c.author}</span>
+            <span className="git-log-date">
               {formatCompactDateTime(c.at)}
             </span>
           </div>

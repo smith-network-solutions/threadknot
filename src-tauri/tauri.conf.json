@@ -17,7 +17,8 @@
         "minWidth": 400,
         "minHeight": 500,
         "decorations": true,
-        "resizable": true
+        "resizable": true,
+        "additionalBrowserArgs": "--disable-backgrounding-occluded-windows --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion"
       }
     ],
     "security": {

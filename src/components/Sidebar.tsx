@@ -618,7 +618,6 @@ function ProjectPulse({
       className={`project-pulse pulse-${activity}`}
       role="status"
       aria-label={label}
-      title={label}
     />
   );
 }
@@ -900,7 +899,6 @@ function ProjectRail({
                 ? " — working"
                 : ""
           }${quickRunning && quickActivity === "attention" ? ` — ${quickRunning} running` : ""}`}
-          title={`Quick threads${quickRunning ? ` — ${quickRunning} running` : ""}`}
           onClick={onPickQuick}
         >
           <span className="rail-pip" aria-hidden />
@@ -920,7 +918,6 @@ function ProjectRail({
           }`}
           aria-current={bosunOn ? "true" : undefined}
           aria-label={`Bosun${bosunAttention > 0 ? " — needs you" : ""}`}
-          title="Bosun"
           onClick={onPickBosun}
         >
           <span className="rail-pip" aria-hidden />
@@ -956,7 +953,6 @@ function ProjectRail({
                   ? " — working"
                   : ""
             }${running && activity === "attention" ? ` — ${running} running` : ""}`}
-            title={`${w.name}${w.hidden ? " (hidden)" : ""}${running ? ` — ${running} thread${running === 1 ? "" : "s"} running` : ""}`}
             aria-haspopup="menu"
             onClick={() => onPick(w.id)}
             onContextMenu={(e) => {
@@ -1005,9 +1001,6 @@ function ProjectRail({
           aria-label={`${hidden.length} hidden project${
             hidden.length === 1 ? "" : "s"
           }${stashActivity === "attention" ? " — one needs you" : ""}${stashRunning ? ` — ${stashRunning} running` : ""}`}
-          title={`${hidden.length} hidden project${
-            hidden.length === 1 ? "" : "s"
-          }${stashRunning ? ` — ${stashRunning} running` : ""}`}
           // Anchored to the tile, not the pointer, like the picker bar's menu:
           // the list flies out beside the button it came from, and a keyboard
           // activation (clientX/clientY of 0) doesn't drop it in the corner.
@@ -1191,7 +1184,6 @@ export function DangerButton({
     <button
       className={`icon-btn danger-btn${armed ? " armed" : ""}`}
       aria-label={label}
-      title={armed ? "Click again to confirm" : label}
       onClick={(e) => {
         e.stopPropagation();
         if (armed) onConfirm();
@@ -1205,19 +1197,6 @@ export function DangerButton({
       )}
     </button>
   );
-}
-
-/** Hover text for the star, on the row and in the kebab menu alike.
- *
- *  Says what the star DOES rather than only naming it. The star's one real
- *  consequence is that it takes the chat off the idle clock (`threadSettled`
- *  rule 3) — a bare "Favorite" never told anyone that, which left the feature
- *  undiscoverable to exactly the person who wanted it. Exported so both call
- *  sites read from one string instead of drifting apart. */
-export function starTitle(favorite: boolean): string {
-  return favorite
-    ? "Unfavorite — lets this chat settle itself once it goes quiet"
-    : "Favorite — keeps this chat off the settled shelf until you file it";
 }
 
 function ThreadRow({
@@ -1571,7 +1550,6 @@ function ThreadRow({
   const statusEl = (
     <span
       className={`status-slot${hasStatusIndicator ? " has-indicator" : ""}`}
-      title={isGenerating ? "Generating" : needsAttention ? "Unread activity" : undefined}
     >
       <span
         className={`status-dot st-${thread.status}${needsAttention ? " unread" : ""}`}
@@ -1672,12 +1650,12 @@ function ThreadRow({
   const chipsEl = (
     <>
       {bosunWorkspaceName && (
-        <span className="thread-chip bosun-ws-chip" title={`in ${bosunWorkspaceName}`}>
+        <span className="thread-chip bosun-ws-chip">
           {bosunWorkspaceName}
         </span>
       )}
       {bosunOrigin?.dayLog && (
-        <span className="thread-chip bosun-log-tag" title={`${bosunOrigin.bosunName}'s day log`}>
+        <span className="thread-chip bosun-log-tag">
           log
         </span>
       )}
@@ -1688,13 +1666,12 @@ function ThreadRow({
       {!inHermesView && onHermes && gatewayName && (
         <span
           className="thread-chip hermes-chip"
-          title={`worked by ${gatewayName}${hermesStatus ? ` — ${hermesPresence(hermesStatus).label}` : ""}`}
         >
           {gatewayName}
         </span>
       )}
       {dormant && (
-        <span className="thread-chip hermes-chip off" title={`handed back to ${thread.agent}`}>
+        <span className="thread-chip hermes-chip off">
           on {thread.agent}
         </span>
       )}
@@ -1704,11 +1681,10 @@ function ThreadRow({
         <span
           className="thread-chip-dot"
           style={{ background: peerColor }}
-          title={chipTitle}
         />
       )}
       {isRemote && (
-        <span className={`thread-chip${peer?.online ? "" : " off"}`} title={chipTitle}>
+        <span className={`thread-chip${peer?.online ? "" : " off"}`}>
           {peer?.name ?? "remote"}
         </span>
       )}
@@ -1724,13 +1700,6 @@ function ThreadRow({
         aria-label={settled ? "Bring back to the list" : "Settle thread"}
         aria-haspopup={settled ? undefined : "dialog"}
         aria-expanded={settled ? undefined : settleConfirmPos !== null}
-        title={
-          settled
-            ? "Bring back to the list"
-            : canSettle
-              ? "Settle — park this chat in the shelf"
-              : `Can't settle: ${busyReason}`
-        }
         onClick={(e) => {
           e.stopPropagation();
           if (!canSettle) return;
@@ -1799,7 +1768,6 @@ function ThreadRow({
       className={`icon-btn thread-star${thread.favorite ? " on" : ""}`}
       aria-label={thread.favorite ? "Unfavorite thread" : "Favorite thread"}
       aria-pressed={!!thread.favorite}
-      title={starTitle(!!thread.favorite)}
       onClick={(e) => {
         e.stopPropagation();
         void actions.setThreadFavorite(thread.id, !thread.favorite);
@@ -1816,7 +1784,6 @@ function ThreadRow({
       aria-label="Thread actions"
       aria-haspopup="menu"
       aria-expanded={menuOpen}
-      title="Thread actions"
       onClick={(e) => {
         e.stopPropagation();
         setMenuAnchor((a) => (a === null ? "kebab" : null));
@@ -1921,7 +1888,6 @@ function ThreadRow({
               type="button"
               role="menuitem"
               className="thread-menu-item"
-              title={starTitle(!!thread.favorite)}
               onClick={() => {
                 closeMenu();
                 void actions.setThreadFavorite(thread.id, !thread.favorite);
@@ -2034,7 +2000,7 @@ function ThreadRow({
           {...rowGestures}
           {...hover.hoverProps}
         >
-          <span className="stream-card-home" title={home.name}>
+          <span className="stream-card-home">
             {home.quick ? (
               <span className="stream-card-quick" aria-hidden>
                 <CompassIcon size={settled ? 14 : 18} />
@@ -2051,7 +2017,7 @@ function ThreadRow({
             {statusEl}
           </span>
           <div className="stream-card-body">
-            <span className="stream-card-title" title={shownTitle}>
+            <span className="stream-card-title">
               {shownTitle}
             </span>
             <div className="stream-card-meta">
@@ -2099,7 +2065,6 @@ function ThreadRow({
             {hermesPreview.portal}
             <span
               className="thread-card-title"
-              title={shownTitle}
             >
               {shownTitle}
             </span>
@@ -2146,7 +2111,7 @@ function ThreadRow({
             {hermesPreview.portal}
             <span
               className="thread-row-title"
-              title={shownTitle}
+              key={shownTitle}
             >
               {shownTitle}
             </span>
@@ -2185,7 +2150,7 @@ function ThreadRow({
         {hermesPreview.portal}
         <span
           className="thread-row-title"
-          title={shownTitle}
+          key={shownTitle}
         >
           {shownTitle}
         </span>
@@ -2307,7 +2272,6 @@ function ChatFolderGroup({
             role="button"
             tabIndex={-1}
             aria-label={`Drag to move ${folder.name}`}
-            title="Drag to reorder"
             draggable={false}
             {...reorder.handle}
           >
@@ -2358,7 +2322,6 @@ function ChatFolderGroup({
               type="button"
               className="icon-btn"
               aria-label={`Rename ${folder.name}`}
-              title="Rename folder"
               onClick={(e) => {
                 e.stopPropagation();
                 setRenaming(true);
@@ -2701,7 +2664,6 @@ function WorkspaceSection({
             role="button"
             tabIndex={-1}
             aria-label={`Drag to move ${workspace.name}`}
-            title="Drag to reorder"
             draggable={false}
             {...reorder.handle}
           >
@@ -2740,7 +2702,7 @@ function WorkspaceSection({
                 actually do — but which box a chat will run on is not something
                 to leave the reader to infer from the roots. */}
             {guestServer && (
-              <span className="project-server-chip" title={`on ${guestServer.name}`}>
+              <span className="project-server-chip">
                 {guestServer.name}
               </span>
             )}
@@ -2768,7 +2730,7 @@ function WorkspaceSection({
         {showLocalBadge && !renaming && (
           // "You are here": a root of this workspace lives on this machine.
           // Reuses the thread-chip language, tinted with the brass accent.
-          <span className="thread-chip project-local-chip" title="A folder of this workspace is on this machine">
+          <span className="thread-chip project-local-chip">
             this machine
           </span>
         )}
@@ -2776,7 +2738,6 @@ function WorkspaceSection({
           <button
             className="icon-btn"
             aria-label="Open in its own window"
-            title="Open in its own window (or drag the row out)"
             onClick={(e) => {
               e.stopPropagation();
               void openProjectWindow(primary);
@@ -3022,7 +2983,6 @@ function HermesGroup({
             className={`project-name hermes-agent-name${
               presence?.kind === "offline" ? " hermes-offline" : ""
             }`}
-            title={presence ? `${name}: ${presence.title}` : name}
           >
             {name}
           </span>
@@ -3038,7 +2998,6 @@ function HermesGroup({
           <button
             className="icon-btn"
             aria-label={`New chat with ${name}`}
-            title={`New chat with ${name}`}
             onClick={() => actions.openHermesDraft(id)}
           >
             <PlusIcon size={13} />
@@ -3286,7 +3245,6 @@ function BosunTaskList({
             <button
               type="button"
               className={`btn bosun-small-btn bosun-today-btn${state.activeTaskId === TASK_TODAY_ID ? " on" : ""}`}
-              title="Today's plan: your to-dos in time blocks, ticked off as you go"
               onClick={() => actions.openTask(TASK_TODAY_ID)}
             >
               Today
@@ -3295,7 +3253,6 @@ function BosunTaskList({
           <button
             type="button"
             className="btn bosun-small-btn bosun-review-btn"
-            title="Every open to-do with its full title, to close many at once"
             onClick={() => actions.openTask(TASK_REVIEW_ID)}
           >
             Review
@@ -3323,7 +3280,6 @@ function BosunTaskList({
             type="button"
             className="icon-btn"
             aria-label="Show every workspace"
-            title="Show every workspace"
             onClick={onClearWorkspaceFilter}
           >
             <XIcon size={11} />
@@ -3360,7 +3316,6 @@ function BosunTaskList({
                 className={`recent-finished-toggle${showFinished ? " on" : ""}`}
                 aria-pressed={showFinished}
                 onClick={() => setShowFinished(!showFinished)}
-                title={showFinished ? "Hide finished to-dos from Recent" : "Show finished to-dos in Recent"}
               >
                 {showFinished ? "Hide finished" : `Show finished (${finishedHidden})`}
               </button>
@@ -3417,7 +3372,7 @@ function RecentHint({ recent }: { recent: RecentTask }) {
   if (running) return <span className="task-row-hint working">working…</span>;
   if (recent.replied)
     return (
-      <span className="task-row-hint replied" title={`Updated ${timeAgo(recent.task.updatedAt)}`}>
+      <span className="task-row-hint replied">
         replied
       </span>
     );
@@ -3452,13 +3407,13 @@ function TaskRow({
     >
       <TaskStatusDot status={task.status} />
       <span className="task-row-main">
-        <span className="task-row-title" title={title}>
+        <span className="task-row-title">
           {title}
         </span>
         <span className="task-row-meta">
           {taskMetaLine(task, workspaceName)}
           {ticket && (
-            <span className="task-orbit-ref" title={task.orbit?.url}>
+            <span className="task-orbit-ref">
               {" · "}
               {ticket}
             </span>
@@ -3580,7 +3535,6 @@ function BosunWorkspaceRow({
     <button
       type="button"
       className={`bosun-ws-row${label.muted && !attention ? " muted" : ""}`}
-      title={`Open ${name}'s to-dos for this workspace`}
       onClick={onOpen}
     >
       <BosunMark image={image} size={16} />
@@ -3963,7 +3917,6 @@ function WorkspaceRootsModal({
               {m.projectId === workspace.id ? (
                 <span
                   className="settings-value dim"
-                  title="The workspace's original folder — it anchors the workspace"
                 >
                   original
                 </span>
@@ -3972,7 +3925,6 @@ function WorkspaceRootsModal({
                   type="button"
                   className="settings-toggle"
                   disabled={busy}
-                  title="Remove this folder from the workspace (nothing is deleted — it becomes its own workspace on its machine)"
                   onClick={() => void detach(m)}
                 >
                   remove
@@ -3990,11 +3942,6 @@ function WorkspaceRootsModal({
               type="button"
               className="settings-toggle"
               disabled={busy || !mc.online}
-              title={
-                mc.online
-                  ? `Browse ${mc.label}'s folders`
-                  : `${mc.label} is offline`
-              }
               onClick={() =>
                 setPickingOn({ machineId: mc.machineId, label: mc.label })
               }
@@ -4252,7 +4199,6 @@ function SidebarResizeHandle({
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize sidebar"
-      title="Drag to resize · double-click to reset"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -4475,14 +4421,12 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
 function SearchChip({
   className,
   label,
-  title,
   open,
   onToggle,
   children,
 }: {
   className?: string;
   label: string;
-  title?: string;
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
@@ -4494,7 +4438,6 @@ function SearchChip({
         className="search-scope-toggle"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={title}
         onClick={onToggle}
       >
         <span>{label}</span>
@@ -4545,7 +4488,6 @@ function SearchChips({
       <SearchChip
         className="search-model"
         label={modelLabel}
-        title="Model that reads the conversations"
         open={menu === "model"}
         onToggle={() => setMenu(menu === "model" ? null : "model")}
       >
@@ -4785,7 +4727,6 @@ function ThreadSearchPanel({
           type="button"
           className="icon-btn search-panel-close"
           aria-label="Close search"
-          title="Close search (keeps the open chat)"
           onClick={onClose}
         >
           <XIcon size={16} />
@@ -4837,15 +4778,6 @@ function ThreadSearchPanel({
               disabled={micBusy}
               aria-pressed={mic === "recording"}
               aria-label="Dictate"
-              title={
-                mic === "recording"
-                  ? "Stop and transcribe (Esc discards)"
-                  : mic === "transcribing"
-                    ? "Turning your words into text…"
-                    : mic === "starting"
-                      ? "Opening the microphone…"
-                      : "Dictate: click to record, click again to transcribe"
-              }
               onClick={() => (mic === "recording" ? void stopDictating() : void startDictating())}
             >
               <MicIcon size={16} />
@@ -4861,7 +4793,6 @@ function ThreadSearchPanel({
             className={`search-panel-run global${search.globalLoading ? " searching" : ""}`}
             disabled={!canRun || search.globalLoading}
             aria-busy={search.globalLoading}
-            title="Search titles and conversation text by words (Enter)"
             onClick={search.runGlobal}
           >
             {search.globalLoading && <span className="search-panel-spinner" aria-hidden="true" />}
@@ -4872,7 +4803,6 @@ function ThreadSearchPanel({
             className={`search-panel-run${search.loading ? " searching" : ""}`}
             disabled={!canRun || search.loading}
             aria-busy={search.loading}
-            title="Use your prompt to find matching conversations with the selected model (Ctrl/Cmd+Enter)"
             onClick={() => void search.runAi()}
           >
             {search.loading && <span className="search-panel-spinner" aria-hidden="true" />}
@@ -4898,11 +4828,11 @@ function ThreadSearchPanel({
               Searching conversation text…
             </>
           ) : micError ? (
-            <span className="error" title={micError}>
+            <span className="error">
               {micError}
             </span>
           ) : typeof search.statusText === "object" && search.statusText ? (
-            <span className="error" title={search.statusText.error}>
+            <span className="error">
               Search failed: {search.statusText.error}
             </span>
           ) : (
@@ -4916,7 +4846,6 @@ function ThreadSearchPanel({
           type="button"
           className="icon-btn search-panel-step"
           aria-label="Previous result"
-          title="Previous result"
           disabled={rows.length < 2}
           onClick={() => step(-1)}
         >
@@ -4926,7 +4855,6 @@ function ThreadSearchPanel({
           type="button"
           className="icon-btn search-panel-step"
           aria-label="Next result"
-          title="Next result"
           disabled={rows.length < 2}
           onClick={() => step(1)}
         >
@@ -6034,7 +5962,6 @@ export const Sidebar = memo(function Sidebar({
           aria-label="View options"
           aria-haspopup="dialog"
           aria-expanded={filterOpen}
-          title="View options"
           onClick={() => setFilterOpen((v) => !v)}
         >
           <FilterIcon size={18} />
@@ -6049,7 +5976,6 @@ export const Sidebar = memo(function Sidebar({
           type="button"
           className="icon-btn sidebar-collapse-btn"
           aria-label={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
-          title={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
           onClick={() => {
             if (window.matchMedia("(max-width: 767px)").matches) {
               dispatch({ type: "sidebar", open: false });
@@ -6074,7 +6000,6 @@ export const Sidebar = memo(function Sidebar({
               type="button"
               className="icon-btn stream-tool"
               aria-label="Back to all chats"
-              title="Back to all chats"
               onClick={() => switchView("fleet")}
             >
               <span aria-hidden>←</span>
@@ -6100,7 +6025,6 @@ export const Sidebar = memo(function Sidebar({
             type="button"
             className="icon-btn stream-tool"
             aria-label="Search"
-            title="Search"
             onClick={() => setSearch(newSearchSession())}
           >
             <SearchIcon size={17} />
@@ -6110,7 +6034,6 @@ export const Sidebar = memo(function Sidebar({
               type="button"
               className={`icon-btn stream-tool${state.activeTaskId === INBOX_ID ? " on" : ""}`}
               aria-label="Notifications"
-              title="Notifications"
               onClick={() => actions.openTask(INBOX_ID)}
             >
               <BellIcon size={17} />
@@ -6127,11 +6050,6 @@ export const Sidebar = memo(function Sidebar({
               className={`icon-btn stream-tool${bosunView ? " on" : ""}`}
               aria-label="Bosun"
               aria-pressed={bosunView}
-              title={
-                lastBosunTask
-                  ? `Bosun · last: ${displayTitle(lastBosunTask) || "Untitled to-do"}`
-                  : "Bosun"
-              }
               onClick={() => (bosunView ? switchView("fleet") : pickBosun())}
             >
               <AnchorIcon size={17} />
@@ -6143,7 +6061,6 @@ export const Sidebar = memo(function Sidebar({
             className={`icon-btn stream-tool${streamMoreMenu ? " on" : ""}`}
             aria-label="More"
             aria-haspopup="menu"
-            title="More"
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               setStreamMoreMenu({ x: r.left, y: r.bottom + 4 });
@@ -6175,7 +6092,6 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className={`sidebar-action inbox-open${state.activeTaskId === INBOX_ID ? " on" : ""}`}
-            title="Every notification, so none slips past"
             onClick={() => actions.openTask(INBOX_ID)}
           >
             <BellIcon size={18} />
@@ -6231,7 +6147,6 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className="sidebar-action"
-            title={lastBosunTask ? `Bosun · last: ${displayTitle(lastBosunTask) || "Untitled to-do"}` : undefined}
             onClick={pickBosun}
           >
             <AnchorIcon size={18} />
@@ -6457,7 +6372,7 @@ export const Sidebar = memo(function Sidebar({
                 {(() => {
                   const guest = workspaceServer(state, pickedWorkspace);
                   return guest ? (
-                    <span className="project-server-chip" title={`on ${guest.name}`}>
+                    <span className="project-server-chip">
                       {guest.name}
                     </span>
                   ) : null;
@@ -6623,7 +6538,7 @@ export const Sidebar = memo(function Sidebar({
       >
         <GearIcon size={18} />
         <span>Settings</span>
-        {updateReady && <span className="usermenu-dot" title={updateHint} />}
+        {updateReady && <span className="usermenu-dot" />}
       </button>
       {showSettings && (
         <SettingsScreen onClose={() => setShowSettings(false)} />
@@ -6994,7 +6909,6 @@ export const Sidebar = memo(function Sidebar({
           type="button"
           className="sidebar-reveal"
           aria-label="Show sidebar"
-          title="Show sidebar"
           onClick={() => updateLayout({ collapsed: false })}
         >
           <PanelLeftIcon size={17} />

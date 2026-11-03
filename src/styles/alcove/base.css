@@ -43,14 +43,19 @@
   --alc-glass-strong: rgba(255, 255, 255, 0.78);
   --alc-hover: rgba(255, 255, 255, 0.72);
   --alc-active: #ffffff;
-  --alc-blur: blur(13px) saturate(1.13);
+  --alc-blur: blur(11.7px) saturate(1.13);
   --alc-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.58);
   --alc-shadow: 0 4px 9.6px rgba(0, 0, 0, 0.02);
   --alc-float: 0 10px 30px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.03);
   --alc-halo: 0 0 12.8px rgba(0, 0, 0, 0.05);
   --alc-track: #e2e2e2;
   /* Radii: the big floating cards, menus, rows, pills. */
-  --alc-r-card: 36px;
+  /* 36px authored under the prototype's 1.485 scale = 52px as drawn. */
+  /* The title capsule's height: a one-line .msg-user, less 5%. Both the pill
+     and its edit button read this, so they cannot drift apart. */
+  --alc-title-h: calc((var(--alc-cmp-font, 17px) * 2.02 + 18px) * 0.95);
+  --alc-title-font: calc(var(--alc-cmp-font, 17px) * 0.95);
+  --alc-r-card: 52px;
   --alc-r-composer: 32px;
   --alc-r-menu: 22px;
   --alc-r-row: 14px;

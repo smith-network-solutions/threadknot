@@ -62,11 +62,6 @@ export function NewWorkspaceModal({
               type="button"
               className="settings-toggle"
               disabled={!mc.online}
-              title={
-                mc.online
-                  ? `Pick a folder on ${mc.label}`
-                  : `${mc.label} is offline`
-              }
               onClick={() => onChoose({ machineId: mc.machineId, label: mc.label })}
             >
               {mc.label}
@@ -85,11 +80,6 @@ export function NewWorkspaceModal({
                   type="button"
                   className="settings-toggle"
                   disabled={!mc.online}
-                  title={
-                    mc.online
-                      ? `Create it on ${mc.label}. It stays in their catalog — nothing is stored on this machine.`
-                      : `${mc.label} is offline`
-                  }
                   onClick={() => onChoose({ machineId: mc.machineId, label: mc.label })}
                 >
                   {mc.label}

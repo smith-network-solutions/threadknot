@@ -79,7 +79,7 @@ function AgentRow({
                 <span className="agent-hud-badge is-agent">
                   {AGENT_LABEL[d.agent] ?? d.agent}
                 </span>
-                <span className="agent-hud-badge is-machine" title={d.machineId}>
+                <span className="agent-hud-badge is-machine">
                   {d.machineName}
                 </span>
               </>

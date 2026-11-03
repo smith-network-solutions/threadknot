@@ -54,6 +54,7 @@ import {
 import { VISIBLE_TABS } from "./WorkspacePanel";
 import "../styles/workspace.css";
 import { BackToInbox } from "./InboxView";
+import { onJustSent } from "../lib/justSent";
 import { PersonAvatar } from "./PeopleRow";
 import { useAlcove } from "../lib/useAlcove";
 
@@ -186,7 +187,6 @@ function ChatFindBar({
         type="button"
         className="chat-find-nav"
         aria-label="Previous match"
-        title="Previous match"
         disabled={matchCount === 0}
         onClick={onPrevious}
       >
@@ -196,7 +196,6 @@ function ChatFindBar({
         type="button"
         className="chat-find-nav"
         aria-label="Next match"
-        title="Next match"
         disabled={matchCount === 0}
         onClick={onNext}
       >
@@ -206,7 +205,6 @@ function ChatFindBar({
         type="button"
         className="chat-find-close"
         aria-label="Close find"
-        title="Close find (Escape)"
         onClick={onClose}
       >
         <XIcon size={14} />
@@ -223,7 +221,7 @@ function AlcoveHeadAvatar() {
   const me = state.people.find((p) => p.id === state.actingPerson);
   if (!me) return null;
   return (
-    <span className="alc-head-avatar" title={me.name}>
+    <span className="alc-head-avatar">
       <PersonAvatar person={me} size={27} preview={false} />
     </span>
   );
@@ -298,9 +296,8 @@ function WorkspaceMenu({
         className={`head-pill${open || openTab ? " on" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Workspace panels"
-        title="Workspace panels"
-        disabled={!project}
+        aria-label={project ? "Workspace panels" : "Thread actions"}
+        disabled={!project && !thread}
         onClick={() => setOpen((v) => !v)}
       >
         <MoreIcon size={16} />
@@ -308,16 +305,16 @@ function WorkspaceMenu({
       {reviewOpen && thread && (
         <ReviewDialog thread={thread} onClose={() => setReviewOpen(false)} />
       )}
-      {open && pos && project &&
+      {open && pos && (project || thread) &&
         createPortal(
           <div
             ref={popRef}
             className="thread-menu ws-menu"
             role="menu"
-            aria-label="Workspace panels"
+            aria-label={project ? "Workspace panels" : "Thread actions"}
             style={{ top: pos.top, left: pos.left }}
           >
-            {VISIBLE_TABS.map(({ id, label, Icon }) => {
+            {project && VISIBLE_TABS.map(({ id, label, Icon }) => {
               const active = openTab === id;
               return (
                 <button
@@ -345,16 +342,15 @@ function WorkspaceMenu({
                 </button>
               );
             })}
-            {/* Review lives here on phones rather than as its own header pill —
+            {/* Review lives here rather than as its own header pill —
                 the header only has room for the one cluster. `divided` sets it
                 off from the panel toggles above: it opens a dialog, it doesn't
                 toggle a panel. */}
             <button
               type="button"
               role="menuitem"
-              className="thread-menu-item divided"
+              className={`thread-menu-item${project ? " divided" : ""}`}
               disabled={!!reviewBlocked}
-              title={reviewBlocked ?? "Review with another agent"}
               onClick={() => {
                 setOpen(false);
                 setReviewOpen(true);
@@ -573,6 +569,27 @@ export function ThreadView() {
   const { state, dispatch, actions } = useFeedStore();
   const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
   const draft = state.draft;
+
+  // The prototype's chat swap (alcove App.tsx's `isChatTransitioning`): the
+  // conversation goes out through a blur and the next one arrives through it.
+  //
+  // Only the arrival runs here. The prototype plays the first half by holding
+  // the swap back 220ms — it can, with chats that are local mock objects. A
+  // thread switch in Threadknot is a real navigation, and 220ms of dead time
+  // on every one of them is a bad trade for the half of an effect it buys.
+  // The arrival is free: the content has already changed, so it only has to
+  // come in blurred, which it does on the prototype's own curve.
+  const [arriving, setArriving] = useState(false);
+  const shownThreadId = useRef(state.activeThreadId);
+  useEffect(() => {
+    if (shownThreadId.current === state.activeThreadId) return;
+    shownThreadId.current = state.activeThreadId;
+    setArriving(true);
+    // Outlives the 220ms animation, so the class is only ever removed from a
+    // finished one — taking it off mid-flight would snap the feed into place.
+    const settled = window.setTimeout(() => setArriving(false), 260);
+    return () => window.clearTimeout(settled);
+  }, [state.activeThreadId]);
   const project = resolveProjectView(
     state,
     thread ? thread.projectId : draft?.projectId,
@@ -629,6 +646,14 @@ export function ThreadView() {
 
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const titleStrutRef = useRef<HTMLSpanElement>(null);
+  const [titleSlotWidth, setTitleSlotWidth] = useState<number | null>(null);
+
+  const restingTitle = thread ? displayTitle(thread) : "";
+  useLayoutEffect(() => {
+    const strut = titleStrutRef.current;
+    if (strut) setTitleSlotWidth(strut.scrollWidth);
+  }, [editing, titleDraft, restingTitle]);
   const [quickMode, setQuickMode] = useState<"chat" | "build">("chat");
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -658,6 +683,14 @@ export function ThreadView() {
   // handler below).
   const zoomRef = useRef(getAppliedZoom());
   const scrollFeedRef = useRef<string | null>(null);
+  // A send is waiting for its bubble: the next growth of the feed glides to the
+  // end instead of teleporting. Expires on its own so a send that never lands
+  // cannot animate some later arrival.
+  const sendGlideUntilRef = useRef(0);
+  // A glide is in flight. pinToEnd must not fire while it is — a hard pin mid
+  // animation is exactly the teleport the glide exists to avoid.
+  const glidingRef = useRef(false);
+  const glideEndTimerRef = useRef<number | null>(null);
   const loadedFeedId =
     state.activeThreadId && state.feedThreadId === state.activeThreadId
       ? state.activeThreadId
@@ -894,7 +927,6 @@ export function ThreadView() {
     return next;
   }, [state.feed]);
   const subagents = feedDerived.subagents;
-  const runningSubagents = subagents.filter((subagent) => subagent.status === "running").length;
   const feedParticipants = useMemo(
     () => (thread ? threadParticipants(thread) : []),
     [thread?.participants, thread?.agent, thread?.settings],
@@ -944,7 +976,7 @@ export function ThreadView() {
     pinRafRef.current = window.requestAnimationFrame(() => {
       pinRafRef.current = null;
       const el = scrollRef.current;
-      if (!el || !stickRef.current) return;
+      if (!el || !stickRef.current || glidingRef.current) return;
       const end = Math.max(0, el.scrollHeight - el.clientHeight);
       // Layout/scroll anchoring can move scrollTop without user input. Only
       // gesture handlers release stickRef; geometry here must never do so.
@@ -954,6 +986,56 @@ export function ThreadView() {
       clientHeightRef.current = el.clientHeight;
     });
   }, []);
+
+  /** Travel to the end the way a reader would: a glide, not a cut.
+   *
+   *  Used for sends. The hard pin is right for streaming output — it runs many
+   *  times a second and any animation there would be a permanent blur — but a
+   *  send is one deliberate act, and teleporting the feed under it loses the
+   *  connection between what you typed and the bubble that answers for it. */
+  const glideToEnd = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      pinToEnd();
+      return;
+    }
+    glidingRef.current = true;
+    if (glideEndTimerRef.current !== null) window.clearTimeout(glideEndTimerRef.current);
+    // Smooth scrolling reports no completion. The window outlasts the
+    // animation so streaming output cannot snap the feed mid-glide, and the
+    // pin that closes it lands us exactly on the end.
+    glideEndTimerRef.current = window.setTimeout(() => {
+      glideEndTimerRef.current = null;
+      glidingRef.current = false;
+      pinToEnd();
+    }, 600);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [pinToEnd]);
+
+  // A send always means "I am at the present now", wherever the reader was in
+  // history. The glide is armed rather than performed outright: nothing is
+  // appended optimistically, so the bubble does not exist yet and the end we
+  // want is the one the echo creates.
+  useEffect(() => {
+    const stop = onJustSent(() => {
+      stickRef.current = true;
+      manualAwayRef.current = false;
+      setAtPresent(true);
+      sendGlideUntilRef.current = Date.now() + 4000;
+      glideToEnd();
+    });
+    return () => {
+      stop();
+      if (glideEndTimerRef.current !== null) {
+        window.clearTimeout(glideEndTimerRef.current);
+        glideEndTimerRef.current = null;
+      }
+    };
+  }, [glideToEnd]);
 
   // Feed updates can arrive many times per second. Keep this effect free of
   // synchronous scrollHeight/clientHeight reads: the pin callback below runs
@@ -980,8 +1062,17 @@ export function ThreadView() {
     // so its end is the match's context rather than the present, and live
     // traffic would otherwise drag them there mid-search. Find with no match
     // still follows the tail as usual.
-    if (stickRef.current && activeFindPos < 0) pinToEnd();
-  }, [loadedFeedId, feedLen, state.feed, pinToEnd, activeFindPos]);
+    if (stickRef.current && activeFindPos < 0) {
+      if (Date.now() < sendGlideUntilRef.current) {
+        // The echo of our own send: ride down to it once, then hand the feed
+        // back to the pin for whatever the agent streams next.
+        sendGlideUntilRef.current = 0;
+        glideToEnd();
+      } else {
+        pinToEnd();
+      }
+    }
+  }, [loadedFeedId, feedLen, state.feed, pinToEnd, glideToEnd, activeFindPos]);
 
   const jumpToPresent = useCallback(() => {
     const el = scrollRef.current;
@@ -1014,6 +1105,9 @@ export function ThreadView() {
   const leavePresent = useCallback(() => {
     manualAwayRef.current = true;
     stickRef.current = false;
+    // Moving by hand outranks a send glide, in flight or merely armed.
+    glidingRef.current = false;
+    sendGlideUntilRef.current = 0;
     // Feed/resize work may already have queued a bottom pin for this frame.
     // Cancel it at gesture time so it cannot race the native wheel movement.
     if (pinRafRef.current !== null) {
@@ -1239,7 +1333,7 @@ export function ThreadView() {
   }
 
   return (
-    <section className="thread-pane">
+    <section className={`thread-pane${arriving ? " is-arriving" : ""}`}>
       <header
         ref={threadHeadRef}
         className={`thread-head${hasLanes ? " has-lanes" : ""}${quickHome ? " quick-thread-head" : ""}`}
@@ -1257,7 +1351,7 @@ export function ThreadView() {
                 opens that panel, so it should not read as a generic menu. */}
             <PanelLeftIcon size={18} />
           </button>
-          {!hermesHome && !quickHome && (
+          {thread && (
             <div className="head-tab-menu">
               <WorkspaceMenu
                 project={project}
@@ -1269,55 +1363,63 @@ export function ThreadView() {
           )}
         </div>
         <div className="thread-head-main">
-          {thread && editing ? (
-            <input
-              className="title-input"
-              autoFocus
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={() => {
-                setEditing(false);
-                const t = titleDraft.trim();
-                if (t && t !== thread.title && t !== displayTitle(thread)) void actions.renameThread(thread.id, t);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                if (e.key === "Escape") setEditing(false);
-              }}
-            />
-          ) : (
-            <h1 className="thread-title">
-              {agentInfo &&
-                (hermesAvatar ? (
-                  <span className="chip-avatar title-agent-mark" {...chipPreview.hoverProps}>
-                    <img src={hermesAvatar} alt="" />
-                  </span>
-                ) : (
-                  <AgentMark agent={agentInfo.id} size={15} className="title-agent-mark" />
-                ))}
+          <h1 className={`thread-title${thread && editing ? " is-editing" : ""}`}>
+            {agentInfo &&
+              (hermesAvatar ? (
+                <span className="chip-avatar title-agent-mark" {...chipPreview.hoverProps}>
+                  <img src={hermesAvatar} alt="" />
+                </span>
+              ) : (
+                <AgentMark agent={agentInfo.id} size={15} className="title-agent-mark" />
+              ))}
+            <span
+              className="thread-name-slot"
+              style={titleSlotWidth === null ? undefined : { width: titleSlotWidth }}
+            >
               <span
                 className="thread-name"
-                title={thread ? displayTitle(thread) || "Untitled thread" : undefined}
+                ref={titleStrutRef}
+                key={thread && editing ? "editing" : thread ? displayTitle(thread) : ""}
+                aria-hidden={thread && editing ? true : undefined}
               >
-                {thread
-                  ? displayTitle(thread) || "Untitled thread"
-                  : quickHome
-                    ? "New quick thread"
-                    : "New thread"}
+                {thread && editing
+                  ? titleDraft || " "
+                  : thread
+                    ? displayTitle(thread) || "Untitled thread"
+                    : quickHome
+                      ? "New quick thread"
+                      : "New thread"}
               </span>
-              {thread && (
-                <button
-                  className="icon-btn title-edit"
-                  aria-label="Rename thread"
-                  onClick={() => {
-                    setTitleDraft(displayTitle(thread));
-                    setEditing(true);
+              {thread && editing && (
+                <input
+                  className="title-input"
+                  autoFocus
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onBlur={() => {
+                    setEditing(false);
+                    const t = titleDraft.trim();
+                    if (t && t !== thread.title && t !== displayTitle(thread)) void actions.renameThread(thread.id, t);
                   }}
-                >
-                  <PencilIcon size={13} />
-                </button>
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") setEditing(false);
+                  }}
+                />
               )}
-            </h1>
+            </span>
+          </h1>
+          {thread && !editing && (
+            <button
+              className="icon-btn title-edit"
+              aria-label="Rename thread"
+              onClick={() => {
+                setTitleDraft(displayTitle(thread));
+                setEditing(true);
+              }}
+            >
+              <PencilIcon size={20} />
+            </button>
           )}
           {project?.path && !hermesHome && !quickHome && (
             /* A plain block on desktop, where the chip is hidden and this
@@ -1326,11 +1428,6 @@ export function ThreadView() {
             <div className="thread-head-meta">
               <span
                 className={`device-chip${deviceOffline ? " off" : ""}`}
-                title={
-                  deviceIsRemote
-                    ? `Runs on ${deviceName}${deviceOffline ? " (offline)" : ""}`
-                    : `Runs on this machine (${deviceName})`
-                }
               >
                 {deviceColor && (
                   <span
@@ -1392,7 +1489,7 @@ export function ThreadView() {
             <>
               {/* Desktop: one pill (icon + label) per panel. Hidden on phones. */}
               <div className="head-tab-pills">
-                {VISIBLE_TABS.map(({ id, label, Icon }) => {
+                {project && VISIBLE_TABS.map(({ id, label, Icon }) => {
                   const openTab = project ? state.workspace[project.id] ?? null : null;
                   const active = openTab === id;
                   return (
@@ -1401,7 +1498,6 @@ export function ThreadView() {
                       type="button"
                       className={`head-pill${active ? " on" : ""}`}
                       aria-pressed={active}
-                      title={label}
                       disabled={!project}
                       onClick={() =>
                         project &&
@@ -1559,7 +1655,6 @@ export function ThreadView() {
           {project?.path && !hermesHome && !quickHome && !(feedLen === 0 && projectDraft) && (
             <div
               className="feed-project-caption"
-              title={project.path}
               aria-label={`Project directory: ${project.path}`}
             >
               {elidePathMiddle(project.path)}
@@ -1611,24 +1706,6 @@ export function ThreadView() {
               />
             );
           })}
-          {busy && (
-            <div className="working-row">
-              <span className="working-signal" aria-hidden="true">
-                <i /><i /><i />
-              </span>
-              <span className="working-copy">
-                <strong>
-                  {thread!.status === "waiting_approval"
-                    ? "Holding for approval"
-                    : runningSubagents > 0
-                      ? "Waiting on a child agent"
-                      : "Working"}
-                </strong>
-                <em>{runningSubagents > 0 ? "still in motion…" : "following the thread…"}</em>
-              </span>
-              <span className="working-sweep" aria-hidden="true" />
-            </div>
-          )}
         </div>
       </div>
 
@@ -1639,7 +1716,6 @@ export function ThreadView() {
           <button
             type="button"
             className="jump-present"
-            title="Jump to the newest activity"
             aria-label="Scroll to the newest activity"
             onClick={jumpToPresent}
           >
@@ -1669,7 +1745,6 @@ function ProjectPath({ path }: { path: string }) {
     <button
       type="button"
       className={`thread-project-path copyable${copied ? " copied" : ""}`}
-      title={copied ? "Copied" : `Copy ${path}`}
       aria-label={`Copy project directory: ${path}`}
       onClick={() =>
         void copyText(path).then((ok) => {
@@ -1718,7 +1793,6 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
         <button
           type="button"
           className="bosun-origin-task"
-          title="Back to Today"
           onClick={() => {
             setSidebarView("bosun");
             actions.openTask(TASK_TODAY_ID);
@@ -1731,7 +1805,6 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
         <button
           type="button"
           className="bosun-origin-task"
-          title="The to-do's page: summary, status, history"
           onClick={() => {
             setSidebarView("bosun");
             actions.openTask(taskId!);
@@ -1745,7 +1818,6 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
           type="button"
           className={`bosun-origin-done${taskClosed ? " closed" : ""}`}
           disabled={closing}
-          title={taskClosed ? "Reopen the to-do" : "Mark the to-do done"}
           onClick={toggleDone}
         >
           {taskClosed ? "Done · reopen" : "✓ Mark done"}
@@ -1753,20 +1825,18 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
       )}
       <span
         className="bosun-origin-chip"
-        title={origin.dayLog ? `${origin.bosunName}'s day log` : `opened by ${origin.bosunName}`}
       >
         <BosunMark image={image} size={12} />
         {origin.bosunName} · {origin.dayLog ? "log" : origin.signalKind}
       </span>
       {url ? (
-        <a className="bosun-origin-ref" href={url} target="_blank" rel="noreferrer" title={url}>
+        <a className="bosun-origin-ref" href={url} target="_blank" rel="noreferrer">
           {url}
         </a>
       ) : path ? (
         <button
           type="button"
           className="bosun-origin-ref"
-          title={copied ? "Copied" : `Copy ${path}`}
           onClick={() =>
             void copyText(path).then((ok) => {
               if (!ok) return;

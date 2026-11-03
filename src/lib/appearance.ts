@@ -306,7 +306,8 @@ export const MONO_FONTS: readonly FontOption[] = [
 
 /** The Alcove skin's own face, used in place of the default UI font. */
 const ALCOVE_ACCENT = { brass: "#3396fe", hi: "#1a7ae0", dim: "rgba(51, 150, 254, 0.14)" };
-const ALCOVE_FONT_STACK = '"Instrument Sans", "Segoe UI", system-ui, sans-serif';
+const ALCOVE_FONT_STACK =
+  '"Instrument Sans Variable", "Instrument Sans", "Segoe UI", system-ui, sans-serif';
 
 /** Resolve a font id to its catalog entry, falling back to the list's first
  *  entry (the default) when the id is unknown. Exported so the FontPicker and
@@ -1134,11 +1135,12 @@ export function applyAppearance(
   root.style.setProperty("--brass-dim", dim);
   root.style.setProperty("--accent-ink", accentInk(brass));
   // Fonts: inline stacks win over the :root defaults in styles.css.
-  // Alcove is drawn in Instrument Sans: it stands in for the default face only,
-  // so a font the user picked themselves still wins.
+  // Alcove is drawn in Instrument Sans, full stop. It used to yield to a font
+  // the user had picked themselves; the skin is a single typographic design
+  // and every size in it is tuned to this face, so it now sets it outright.
   root.style.setProperty(
     "--font-ui",
-    paletteTheme === "alcove" && a.fontUi === UI_FONTS[0].id ? ALCOVE_FONT_STACK : uiFontStack(a.fontUi),
+    paletteTheme === "alcove" ? ALCOVE_FONT_STACK : uiFontStack(a.fontUi),
   );
   root.style.setProperty("--font-mono", monoFontStack(a.fontMono));
   // Ensure the chosen webfonts are actually fetched so they resolve at boot
@@ -1155,10 +1157,10 @@ export function applyAppearance(
     ensureFontLoaded({ google: "Silkscreen" });
   }
   // Alcove sets every surface in Instrument Sans; code stays on the user's mono
-  // choice. See src/styles/alcove/.
-  if (paletteTheme === "alcove") {
-    ensureFontLoaded({ google: "Instrument+Sans:wght@400..700" });
-  }
+  // choice. See src/styles/alcove/. The face is bundled
+  // (@fontsource-variable/instrument-sans, imported from main.tsx) rather than
+  // fetched, so the skin renders the same with no network — nothing else in the
+  // app needs an internet connection to look right either.
   // Composer size knobs: a separate preference record, but applied from here so
   // main.tsx's single boot call still lands every root-level var.
   applyComposerPrefs();

@@ -61,16 +61,6 @@
   border-color: var(--line-2, rgba(155, 170, 210, 0.18));
   background: var(--panel-3, #1a2030);
 }
-
-.browser-btn:focus-visible,
-.browser-rescan:focus-visible,
-.browser-panel-close:focus-visible,
-.browser-more-action:focus-visible,
-.browser-more-fields select:focus-visible {
-  outline: 2px solid var(--brass, #d9a35c);
-  outline-offset: 1px;
-}
-
 .browser-btn:disabled,
 .browser-btn[aria-disabled="true"] {
   opacity: 0.4;
@@ -379,14 +369,6 @@
   font: inherit;
   cursor: pointer;
 }
-
-.browser-tab-main:focus-visible,
-.browser-tab-close:focus-visible,
-.browser-new-tab:focus-visible {
-  outline: 1px solid var(--brass, #d9a35c);
-  outline-offset: -2px;
-}
-
 .browser-tab-state {
   flex: 0 0 auto;
   width: 6px;
@@ -476,11 +458,6 @@
   cursor: default;
   box-shadow: 0 0 0 1px rgba(155, 170, 210, 0.1), 0 18px 45px rgba(0, 0, 0, 0.24);
 }
-
-.browser-canvas:focus-visible {
-  box-shadow: 0 0 0 2px var(--brass, #d9a35c), 0 18px 45px rgba(0, 0, 0, 0.24);
-}
-
 /* ---- live agent presence ------------------------------------------------- */
 
 .browser-agent-hud {
@@ -1210,8 +1187,7 @@
   color: var(--text, #d8dde9);
   text-align: left;
 }
-.browser-vault-item:hover,
-.browser-vault-item:focus-visible {
+.browser-vault-item:hover {
   border-color: var(--brass, #c08b3e);
   outline: none;
 }

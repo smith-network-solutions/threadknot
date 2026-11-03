@@ -7,6 +7,9 @@ import { InboxView, INBOX_ID } from "./InboxView";
 import { TASK_REVIEW_ID, TASK_TODAY_ID } from "../lib/bosun";
 import { BosunToday } from "./BosunToday";
 import { WorkspacePanel, type WorkspaceOrient } from "./WorkspacePanel";
+import { CompletionToasts } from "./CompletionToast";
+import { revealThreadWorkspace } from "../lib/sidebarView";
+import { useAlcove } from "../lib/useAlcove";
 import "../styles/main-split.css";
 
 const LS_ORIENT = "threadknot.ws.orient";
@@ -35,7 +38,11 @@ function loadFrac(): number {
  * `side`, height when `stacked`). Persisted to localStorage.
  */
 export const MainSplit = memo(function MainSplit() {
-  const { state } = useStore();
+  const { state, dispatch, actions } = useStore();
+  // Alcove's notification card lives in here rather than at the window's
+  // corner: it is centred on the chat column, which only this box knows the
+  // width of (the workspace panel takes --ws-frac of it).
+  const alcove = useAlcove();
 
   // Mirror WorkspacePanel's own visibility guard so the divider only shows when
   // the panel is actually rendered.
@@ -153,6 +160,18 @@ export const MainSplit = memo(function MainSplit() {
         <div
           className={`ws-drag-mask ${orient}`}
           aria-hidden="true"
+        />
+      )}
+      {alcove && (
+        <CompletionToasts
+          // Nothing is announced about the conversation already on screen —
+          // the answer is right there, and a card over it only covers it up.
+          notices={state.notices.filter((n) => n.threadId !== state.activeThreadId)}
+          onOpen={(n) => {
+            dispatch({ type: "noticeDismiss", id: n.id });
+            revealThreadWorkspace();
+            void actions.selectThread(n.threadId);
+          }}
         />
       )}
     </div>

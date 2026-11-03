@@ -13,9 +13,19 @@
   --dim: var(--alc-ink-2);
   --faint: var(--alc-ink-4);
   --sidebar-muted: var(--alc-ink-4);
-  --sidebar-copy-size: 13px;
+  /* Row hover/selection. A tint rather than more white: the card underneath is
+     already white glass, so a white row has no edge to read against it. */
+  --alc-row-hover: #f1f1f1;
+  /* The prototype draws this at 12.35px under a 1.485 scale — 18px as it
+     actually appears. Threadknot does not scale, so it gets the rendered
+     size, not the authored one. The same is true of every measurement in
+     this file; see the note on the card below. */
+  --sidebar-copy-size: 18px;
+  /* A wider default so the larger rows are not crowded. Only a default: the
+     sidebar is drag-resizable and an inline width beats this. */
+  --sidebar-w: 340px;
   --alc-sb-card-left: 0px;
-  --alc-sb-pad: 10px;
+  --alc-sb-pad: 15px;
   background: transparent;
   border-right: 0;
   color: var(--alc-ink-4);
@@ -40,7 +50,7 @@
   /* Inset from the window: the card floats on the room. Margins on a stretched
      flex item shorten it, so no height math is needed. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
-    margin: 10px 2px 10px 8px;
+    margin: 14.5px 2px 14.5px 11.6px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar > *:not(.project-rail):not(.sidebar-resize):not(.sidebar-brand):not(.sidebar-settings):not(.stream-bar) {
     padding-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
@@ -49,7 +59,7 @@
   /* Rail layout: the project column becomes its own narrow card; the main card
      starts after it. --rail-w keeps driving the base insets. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.layout-rail {
-    --rail-w: 62px;
+    --rail-w: 84px;
     --alc-sb-card-left: var(--rail-w);
   }
 }
@@ -63,11 +73,11 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand {
   position: absolute;
   z-index: 3;
-  top: 17px;
+  top: 24.6px;
   right: var(--alc-sb-pad);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8.7px;
   padding: 0;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .brand-wordmark {
@@ -80,9 +90,11 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 27px;
-  height: 27px;
-  min-height: 27px;
+  /* The same 40.6px the destination rows below stand at, so the top line and
+     the rows it sits over share one height. */
+  width: 40.6px;
+  height: 40.6px;
+  min-height: 40.6px;
   margin: 0;
   padding: 0;
   border-radius: 50%;
@@ -93,8 +105,8 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn svg,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat svg {
-  width: 14px;
-  height: 14px;
+  width: 20.3px;
+  height: 20.3px;
   color: currentColor;
   opacity: 1;
   stroke-width: 1.8;
@@ -127,24 +139,25 @@
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
-  gap: 1px 8px;
-  padding-top: 17px;
-  padding-bottom: 6px;
+  gap: 1px 11.6px;
+  padding-top: 24.6px;
+  padding-bottom: 8.7px;
 }
-/* Room on the first line for the two lifted brand buttons (2 x 27 + gaps). */
+/* Room on the first line for the lifted brand buttons (button + gap), which
+   grew with the rest of the row. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
   order: 1;
-  margin-right: 66px;
+  margin-right: 49.3px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-launch .sidebar-action.new-chat {
   margin-right: 0;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-people {
-  padding-top: 17px;
-  padding-right: calc(var(--alc-sb-pad) + 66px);
+  padding-top: 24.6px;
+  padding-right: calc(var(--alc-sb-pad) + 95.7px);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-launch {
-  padding-top: 8px;
+  padding-top: 11.6px;
 }
 
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open {
@@ -152,56 +165,70 @@
   position: relative;
   flex: 1 1 0;
   min-width: 0;
-  justify-content: center;
-  min-height: 27px;
-  height: 27px;
+  justify-content: flex-start;
+  gap: 7px;
+  min-height: 40.6px;
+  height: 40.6px;
   margin: 0;
-  padding: 0 12px 0 30px;
-  border-radius: var(--alc-r-pill);
+  padding: 0 11px;
+  /* A true pill, not the skin's squircle: the generic .sidebar-action rule
+     below sets corner-shape, and a superellipse at a 999px radius reads as a
+     flattened box rather than a round end. Search is the one control here
+     whose ends should be circular. */
+  border-radius: var(--alc-r-pill); corner-shape: round;
   background: rgba(255, 255, 255, 0.5);
   box-shadow: var(--alc-halo);
   color: var(--alc-ink-4);
-  font-size: 12px;
+  font-size: 17.7px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open:hover {
   background: var(--alc-active);
   color: var(--alc-ink-2);
 }
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action:not(.search-open):not(.new-chat):hover {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink-2);
+}
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open svg {
-  position: absolute;
-  left: 10px;
-  width: 15px;
-  height: 15px;
+  position: static;
+  flex: none;
+  width: 18px;
+  height: 18px;
   color: var(--alc-ink-4);
   opacity: 1;
   stroke-width: 1.7;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open > span:first-of-type {
-  flex: none;
-  text-align: center;
+  flex: 1;
+  font-size: 16px;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The rest of the destinations: quiet rows, a notch under a thread row. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action {
   order: 2;
   flex: 1 0 100%;
-  gap: 8px;
-  min-height: 28px;
+  gap: 11.6px;
+  min-height: 40.6px;
   margin: 0;
-  padding: 0 10px 0 7px;
-  border-radius: 14px; corner-shape: var(--alc-corner);
+  padding: 0 14.5px 0 10.2px;
+  border-radius: 20.3px; corner-shape: var(--alc-corner);
   color: var(--alc-ink-4);
-  font-size: 12px;
+  font-size: 17.7px;
   font-weight: 500;
   transition: background 0.14s ease, color 0.14s ease;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch > .sidebar-action:nth-child(3) {
-  margin-top: 12px;
+  margin-top: 17.4px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action svg {
-  width: 14px;
-  height: 14px;
+  width: 20.3px;
+  height: 20.3px;
   color: var(--alc-ink-4);
   opacity: 1;
   stroke-width: 1.8;
@@ -220,16 +247,16 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .inbox-unread-count,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .usermenu-count {
   flex: none;
-  min-width: 18px;
-  height: 15px;
-  padding: 0 5px;
+  min-width: 26.1px;
+  height: 21.8px;
+  padding: 0 7.2px;
   border: 0;
   border-radius: var(--alc-r-pill);
   background: var(--alc-blue);
   box-shadow: none;
   color: #fff;
   font-family: var(--font-ui);
-  font-size: 9px;
+  font-size: 13.4px;
   font-weight: 600;
   line-height: 15px;
   text-align: center;
@@ -240,19 +267,19 @@
   color: var(--alc-ink-3);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .usermenu-dot {
-  width: 6px;
-  height: 6px;
+  width: 8.7px;
+  height: 8.7px;
   background: var(--alc-blue);
   box-shadow: none;
 }
 
 /* ---- stream layout's one-line bar ----------------------------------------- */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar {
-  gap: 6px;
-  padding-top: 17px;
-  padding-bottom: 6px;
+  gap: 8.7px;
+  padding-top: 24.6px;
+  padding-bottom: 8.7px;
   padding-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
-  padding-right: calc(var(--alc-sb-pad) + 66px);
+  padding-right: calc(var(--alc-sb-pad) + 95.7px);
   border: 0;
   background: none;
 }
@@ -261,8 +288,8 @@
   flex: none;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new svg {
-  width: 14px;
-  height: 14px;
+  width: 20.3px;
+  height: 20.3px;
   color: var(--alc-ink-4);
 }
 /* New chat is the mockup's round icon here too; the label stays for AT. */
@@ -277,9 +304,9 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new {
   position: relative;
   flex: none;
-  width: 27px;
-  height: 27px;
-  min-height: 27px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -292,8 +319,8 @@
   background: var(--alc-active);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool {
-  width: 27px;
-  height: 27px;
+  width: 39.1px;
+  height: 39.1px;
   border: 0;
   border-radius: 50%;
   background: var(--alc-hover);
@@ -306,19 +333,19 @@
   color: var(--alc-ink-2);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool svg {
-  width: 14px;
-  height: 14px;
+  width: 20.3px;
+  height: 20.3px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool-count {
   top: -4px;
   right: -6px;
-  min-width: 14px;
-  height: 12px;
-  padding: 0 3px;
+  min-width: 20.3px;
+  height: 17.4px;
+  padding: 0 4.3px;
   border: 0;
   background: var(--alc-blue);
   color: #fff;
-  font-size: 7.5px;
+  font-size: 12.2px;
   font-weight: 600;
   line-height: 12px;
 }
@@ -329,7 +356,7 @@
 
 /* ---- the list ------------------------------------------------------------- */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-scroll {
-  padding-top: 8px;
+  padding-top: 11.6px;
 }
 @media (min-width: 768px) {
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.layout-rail .sidebar-scroll {
@@ -339,50 +366,50 @@
 
 /* Workspace label: "Test Workspace ⌄", small and grey. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker {
-  margin: 4px 0 4px;
-  padding: 0 4px 0 0;
+  margin: 5.8px 0 5.8px;
+  padding: 0 5.8px 0 0;
   background: none;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker:hover {
   background: none;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-btn {
-  gap: 5px;
-  padding: 3px 3px;
+  gap: 7.2px;
+  padding: 4.3px 4.3px;
   color: #777;
-  font-size: 10px;
+  font-size: 14.6px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-btn:hover {
   color: var(--alc-ink-2);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-btn svg {
-  width: 10px;
-  height: 10px;
+  width: 14.5px;
+  height: 14.5px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-picker-count {
-  padding: 0 4px;
+  padding: 0 5.8px;
   border: 0;
   background: none;
   color: var(--alc-ink-5);
   font-family: var(--font-ui);
-  font-size: 8px;
+  font-size: 12.2px;
   font-weight: 500;
 }
 
 /* Thread rows: 15px mark, 13px/500 grey title, white pill when open. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row {
-  gap: 6px;
-  min-height: 30px;
+  gap: 8.7px;
+  min-height: 43.5px;
   margin: 2px 0 0;
-  padding: 0 10px 0 6px;
-  border-radius: 17px; corner-shape: var(--alc-corner);
+  padding: 0 14.5px 0 8.7px;
+  border-radius: 24.6px; corner-shape: var(--alc-corner);
   background: transparent;
   color: var(--alc-ink-4);
-  transition: background 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+  transition: background 0.16s ease, color 0.16s ease, opacity 0.16s ease;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row:hover {
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--alc-row-hover);
   color: var(--alc-ink-2);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.active,
@@ -392,11 +419,11 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.025);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-main {
-  gap: 6px;
+  gap: 8.7px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-title {
   color: inherit;
-  font-size: 13px;
+  font-size: 18.9px;
   font-weight: 500;
   line-height: 1.1;
   letter-spacing: -0.005em;
@@ -413,19 +440,19 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-time {
   color: var(--alc-ink-4);
-  font-size: 8px;
+  font-size: 12.2px;
   font-weight: 500;
   letter-spacing: 0;
   white-space: nowrap;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-slot {
-  width: 16px;
-  height: 16px;
+  width: 23.2px;
+  height: 23.2px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-visual > svg,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-visual > .mark {
-  width: 15px;
-  height: 15px;
+  width: 21.8px;
+  height: 21.8px;
 }
 /* Provider tints from the mockups: codex periwinkle, claude terracotta. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .mark-codex { color: var(--alc-codex); }
@@ -439,21 +466,21 @@
   color: var(--alc-ink-2);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-attention-dot {
-  width: 6px;
-  height: 6px;
+  width: 8.7px;
+  height: 8.7px;
   background: var(--alc-blue);
   box-shadow: none;
 }
 
 /* Bosun's per-workspace summary row: a thread row in shape, a hair quieter. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row {
-  gap: 6px;
-  min-height: 28px;
+  gap: 8.7px;
+  min-height: 40.6px;
   margin: 2px 0 0;
-  padding: 0 10px 0 6px;
-  border-radius: 17px; corner-shape: var(--alc-corner);
+  padding: 0 14.5px 0 8.7px;
+  border-radius: 24.6px; corner-shape: var(--alc-corner);
   color: var(--alc-ink-3);
-  font-size: 12px;
+  font-size: 17.7px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row:hover {
   background: rgba(255, 255, 255, 0.58);
@@ -465,8 +492,8 @@
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .bosun-ws-row-dot {
-  width: 6px;
-  height: 6px;
+  width: 8.7px;
+  height: 8.7px;
   background: var(--alc-blue);
   box-shadow: none;
 }
@@ -476,15 +503,15 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .dispatch-shelf,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf {
   width: auto;
-  min-height: 22px;
-  margin: 4px 0 0;
-  padding: 0 6px;
+  min-height: 31.9px;
+  margin: 5.8px 0 0;
+  padding: 0 8.7px;
   border: 0;
-  border-radius: 11px; corner-shape: var(--alc-corner);
+  border-radius: 15.9px; corner-shape: var(--alc-corner);
   background: none;
   color: #777;
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: 14.6px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .load-more-threads:hover,
@@ -494,8 +521,8 @@
   color: var(--alc-ink-2);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf svg {
-  width: 11px;
-  height: 11px;
+  width: 15.9px;
+  height: 15.9px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf-count,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .load-more-count {
@@ -503,10 +530,10 @@
   background: none;
   color: var(--alc-ink-5);
   font-family: var(--font-ui);
-  font-size: 8px;
+  font-size: 12.2px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.slim {
-  min-height: 28px;
+  min-height: 40.6px;
   opacity: 0.7;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row.slim:hover {
@@ -516,13 +543,13 @@
 /* ---- project rail: a narrow glass card of round avatars ------------------- */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-rail {
   gap: 2px;
-  padding: 14px 6px;
+  padding: 20.3px 8.7px;
   border-right: 0;
   background: transparent;
 }
 @media (min-width: 768px) {
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .project-rail {
-    width: calc(var(--rail-w) - 8px);
+    width: calc(var(--rail-w) - 11.6px);
     border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
     background: var(--alc-glass);
     box-shadow: var(--alc-rim), var(--alc-shadow), 0 0 22px rgba(0, 0, 0, 0.035);
@@ -534,16 +561,16 @@
    glass over the flat room resolves to this. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-home {
   gap: 2px;
-  padding-bottom: 6px;
+  padding-bottom: 8.7px;
   background: #fafafa;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-divider {
-  width: 22px;
-  margin: 4px auto 2px;
+  width: 31.9px;
+  margin: 5.8px auto 2px;
   background: rgba(84, 84, 84, 0.1);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item {
-  height: 42px;
+  height: 60.9px;
   border: 0;
   border-radius: 50%;
   background: none;
@@ -566,14 +593,14 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-avatar,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-quick-face,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-stash-face {
-  width: 32px;
-  height: 32px;
+  width: 46.4px;
+  height: 46.4px;
   border: 0;
   border-radius: 50%;
   background: var(--alc-hover);
   box-shadow: var(--alc-halo);
   color: var(--alc-ink-3);
-  font-size: 10px;
+  font-size: 14.6px;
   font-weight: 600;
   letter-spacing: 0;
   transition: box-shadow 0.16s ease, transform 0.2s var(--alc-spring), background 0.16s ease;
@@ -615,26 +642,26 @@
   margin: 0;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chips {
-  gap: 6px 10px;
+  gap: 8.7px 14.5px;
   min-height: 0;
-  padding: 8px 9px;
-  border-radius: 14px; corner-shape: var(--alc-corner);
+  padding: 11.6px 13px;
+  border-radius: 20.3px; corner-shape: var(--alc-corner);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chips:hover,
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chips[aria-expanded="true"] {
   background: rgba(255, 255, 255, 0.45);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip {
-  gap: 5px;
+  gap: 7.2px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip > svg {
-  width: 13px;
-  height: 13px;
+  width: 18.8px;
+  height: 18.8px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-bar {
-  height: 4px;
+  height: 5.8px;
   border: 0;
-  border-radius: 99px;
+  border-radius: 143.5px;
   background: var(--alc-track);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-bar-fill {
@@ -649,21 +676,21 @@
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip-pct {
   color: var(--alc-ink-4);
   font-family: var(--font-ui);
-  font-size: 8px;
+  font-size: 12.2px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .sidebar .usage-chip-pct.hot { color: var(--alc-minus); }
 
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-action.sidebar-settings {
-  gap: 8px;
-  min-height: 28px;
+  gap: 11.6px;
+  min-height: 40.6px;
   margin-top: 0;
-  margin-bottom: 14px;
+  margin-bottom: 20.3px;
   padding-top: 0;
   padding-bottom: 0;
-  border-radius: 14px; corner-shape: var(--alc-corner);
+  border-radius: 20.3px; corner-shape: var(--alc-corner);
   color: var(--alc-ink-4);
-  font-size: 12px;
+  font-size: 17.7px;
   font-weight: 500;
 }
 /* The padding rule above sets the inline insets on the sidebar's children;
@@ -672,13 +699,13 @@
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar > .sidebar-action.sidebar-settings.sidebar-settings {
     margin-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
     margin-right: var(--alc-sb-pad);
-    padding-left: 9px;
-    padding-right: 10px;
+    padding-left: 13px;
+    padding-right: 14.5px;
   }
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-action.sidebar-settings svg {
-  width: 14px;
-  height: 14px;
+  width: 20.3px;
+  height: 20.3px;
   color: var(--alc-ink-4);
   opacity: 1;
 }
@@ -698,8 +725,8 @@
 @media (min-width: 768px) {
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed {
     --alc-sb-card-left: 0px;
-    width: 56px;
-    min-width: 56px;
+    width: 81.2px;
+    min-width: 81.2px;
     overflow: hidden;
     pointer-events: auto;
   }
@@ -725,10 +752,10 @@
 
   /* The re-open handle docks at the top of the rail. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal {
-    top: 22px;
-    left: 22px;
-    width: 27px;
-    height: 27px;
+    top: 31.9px;
+    left: 31.9px;
+    width: 39.1px;
+    height: 39.1px;
     border: 0;
     border-radius: 50%;
     background: var(--alc-hover);
@@ -743,12 +770,12 @@
     color: var(--alc-ink-2);
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal svg {
-    width: 14px;
-    height: 14px;
+    width: 20.3px;
+    height: 20.3px;
   }
   /* The header no longer has to clear a floating handle. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .app:has(.sidebar.collapsed) .thread-head {
-    padding-left: 20px;
+    padding-left: 29px;
   }
 
   /* Launch stack: one centred column of round icons. */
@@ -757,8 +784,8 @@
     flex-direction: column;
     flex-wrap: nowrap;
     align-items: center;
-    gap: 6px;
-    padding: 57px 0 6px;
+    gap: 8.7px;
+    padding: 82.6px 0 8.7px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.search-open,
@@ -769,9 +796,9 @@
     display: grid;
     place-items: center;
     flex: none;
-    width: 27px;
-    height: 27px;
-    min-height: 27px;
+    width: 39.1px;
+    height: 39.1px;
+    min-height: 39.1px;
     margin: 0;
     padding: 0;
     border-radius: 50%;
@@ -791,7 +818,7 @@
     order: -1;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch > .sidebar-action:nth-child(3) {
-    margin-top: 10px;
+    margin-top: 14.5px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action:hover,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-bar .stream-new:hover,
@@ -802,8 +829,8 @@
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action svg,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action.search-open svg {
     position: static;
-    width: 14px;
-    height: 14px;
+    width: 20.3px;
+    height: 20.3px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-launch .sidebar-action > span:not(.inbox-unread-count):not(.usermenu-count):not(.usermenu-dot),
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-bar .stream-new > span,
@@ -820,22 +847,22 @@
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .usermenu-count {
     position: absolute;
     top: -3px;
-    left: 15px;
-    min-width: 14px;
-    height: 12px;
-    padding: 0 3px;
-    font-size: 7.5px;
+    left: 21.8px;
+    min-width: 20.3px;
+    height: 17.4px;
+    padding: 0 4.3px;
+    font-size: 12.2px;
     line-height: 12px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .usermenu-dot {
     position: absolute;
-    top: 3px;
-    right: 3px;
+    top: 4.3px;
+    right: 4.3px;
   }
 
   /* The list: each chat as its provider mark. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-scroll {
-    padding: 6px 0 12px;
+    padding: 8.7px 0 17.4px;
     scrollbar-width: none;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .sidebar-scroll::-webkit-scrollbar {
@@ -844,12 +871,12 @@
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .bosun-ws-row {
     justify-content: center;
-    width: 28px;
-    min-height: 28px;
-    height: 28px;
-    margin: 4px auto 0;
+    width: 40.6px;
+    min-height: 40.6px;
+    height: 40.6px;
+    margin: 5.8px auto 0;
     padding: 0;
-    border-radius: 10px; corner-shape: var(--alc-corner);
+    border-radius: 14.5px; corner-shape: var(--alc-corner);
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row-main {
     justify-content: center;
@@ -861,32 +888,32 @@
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row .agent-mark-visual > svg,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .thread-row .agent-mark-visual > .mark {
-    width: 16px;
-    height: 16px;
+    width: 23.2px;
+    height: 23.2px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed > .sidebar-action.sidebar-settings.sidebar-settings {
-    margin: 0 auto 14px;
+    margin: 0 auto 20.3px;
   }
 }
 
 /* ---- section / accordion headers ---------------------------------------- */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head {
-  min-height: 26px;
-  margin-top: 8px;
-  border-radius: 13px; corner-shape: var(--alc-corner);
+  min-height: 37.7px;
+  margin-top: 11.6px;
+  border-radius: 18.8px; corner-shape: var(--alc-corner);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-toggle {
-  gap: 5px;
+  gap: 7.2px;
   color: #777;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-toggle svg {
-  width: 11px;
-  height: 11px;
+  width: 15.9px;
+  height: 15.9px;
   color: var(--alc-ink-5);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-name {
   color: #777;
-  font-size: 10.5px;
+  font-size: 15.2px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head:hover .project-name {
@@ -895,26 +922,26 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-count {
   color: var(--alc-ink-5);
   font-family: var(--font-ui);
-  font-size: 8px;
+  font-size: 12.2px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-local-chip,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-server-chip,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-chip {
-  padding: 0 6px;
+  padding: 0 8.7px;
   border: 0;
   border-radius: var(--alc-r-pill);
   background: rgba(84, 84, 84, 0.07);
   color: var(--alc-ink-4);
-  font-size: 8px;
+  font-size: 12.2px;
   font-weight: 500;
   line-height: 14px;
   letter-spacing: 0;
   text-transform: none;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head .icon-btn {
-  width: 22px;
-  height: 22px;
+  width: 31.9px;
+  height: 31.9px;
   border-radius: 50%;
   color: var(--alc-ink-4);
 }
@@ -922,19 +949,19 @@
 /* ---- stream layout cards ------------------------------------------------ */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card {
   align-items: flex-start;
-  gap: 9px;
-  padding: 7px 10px 6px 7px;
-  border-radius: 17px; corner-shape: var(--alc-corner);
+  gap: 13px;
+  padding: 10.2px 14.5px 8.7px 10.2px;
+  border-radius: 24.6px; corner-shape: var(--alc-corner);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-home .sidebar-avatar {
-  width: 28px;
-  height: 28px;
+  width: 40.6px;
+  height: 40.6px;
   border: 0;
   border-radius: 50%;
   background: var(--alc-hover);
   box-shadow: var(--alc-halo);
   color: var(--alc-ink-3);
-  font-size: 9.5px;
+  font-size: 14px;
   font-weight: 600;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-home .sidebar-avatar img {
@@ -942,7 +969,7 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-title {
   color: inherit;
-  font-size: 13px;
+  font-size: 18.9px;
   font-weight: 500;
   line-height: 1.3;
 }
@@ -951,12 +978,12 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-project {
   color: var(--alc-ink-4);
-  font-size: 9.5px;
+  font-size: 14px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-meta .agent-mark-visual > svg,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-card-meta .agent-mark-visual > .mark {
-  width: 12px;
-  height: 12px;
+  width: 17.4px;
+  height: 17.4px;
 }
 @media (min-width: 768px) {
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-card-body {
@@ -964,11 +991,11 @@
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.collapsed .stream-card {
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    min-height: 34px;
-    margin: 4px auto 0;
-    padding: 3px;
+    width: 49.3px;
+    height: 49.3px;
+    min-height: 49.3px;
+    margin: 5.8px auto 0;
+    padding: 4.3px;
     border-radius: 50%;
   }
 }
@@ -977,7 +1004,7 @@
    The ref's usage menu: a frosted dropdown that springs open, heading with the
    provider mark, thin rounded bars in the provider tint. */
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop {
-  padding: 12px 14px;
+  padding: 17.4px 20.3px;
   border: 0;
   border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
   background: var(--alc-glass-strong);
@@ -993,23 +1020,23 @@
   border-top-color: rgba(84, 84, 84, 0.08);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider-name {
-  gap: 7px;
+  gap: 10.2px;
   color: var(--alc-ink);
-  font-size: 12.5px;
+  font-size: 18.3px;
   font-weight: 600;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider-name svg {
-  width: 15px;
-  height: 15px;
+  width: 21.8px;
+  height: 21.8px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .mark-codex { color: var(--alc-codex); }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .mark-claude { color: var(--alc-claude); }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-plan {
-  padding: 1px 7px;
+  padding: 1px 10.2px;
   background: rgba(84, 84, 84, 0.07);
   color: var(--alc-ink-3);
   font-family: var(--font-ui);
-  font-size: 8.5px;
+  font-size: 12.2px;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -1021,12 +1048,12 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-label {
   color: var(--alc-ink-3);
-  font-size: 11px;
+  font-size: 15.9px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-pct {
   color: var(--alc-ink);
-  font-size: 11px;
+  font-size: 15.9px;
   font-weight: 600;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-reset,
@@ -1034,12 +1061,12 @@
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-age,
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-error {
   color: var(--alc-ink-4);
-  font-size: 9.5px;
+  font-size: 14px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar {
-  height: 5px;
+  height: 7.2px;
   border: 0;
-  border-radius: 4px; corner-shape: var(--alc-corner);
+  border-radius: 5.8px; corner-shape: var(--alc-corner);
   background: rgba(31, 31, 31, 0.1);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar-fill {
@@ -1051,13 +1078,13 @@
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar-fill.warn { background: var(--amber); }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar-fill.hot { background: var(--alc-minus); }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-refresh {
-  padding: 3px 10px;
+  padding: 4.3px 14.5px;
   border: 0;
   border-radius: var(--alc-r-pill);
   background: var(--alc-hover);
   box-shadow: var(--alc-halo);
   color: var(--alc-ink-3);
-  font-size: 10px;
+  font-size: 14.6px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-refresh:hover {
@@ -1079,30 +1106,50 @@
     display: none;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-brand {
-    top: calc(14px + env(safe-area-inset-top, 0px));
+    top: calc(20.3px + env(safe-area-inset-top, 0px));
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-launch,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-bar {
-    padding-top: calc(14px + env(safe-area-inset-top, 0px));
-    padding-right: 8px;
+    padding-top: calc(20.3px + env(safe-area-inset-top, 0px));
+    padding-right: 11.6px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-brand .icon-btn,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new {
-    width: 34px;
-    height: 34px;
+    width: 49.3px;
+    height: 49.3px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open {
-    height: 34px;
+    height: 49.3px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
-    margin-right: 80px;
+    margin-right: 116px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-bar {
-    padding-right: 88px;
+    padding-right: 127.6px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-action.sidebar-settings {
-    margin: 0 8px calc(10px + var(--safe-b, 0px));
+    margin: 0 11.6px calc(14.5px + var(--safe-b, 0px));
+  }
+}
+
+/* ---- no collapse control ---------------------------------------------------
+   The Alcove sidebar does not collapse, so the control for it goes. Desktop
+   only, deliberately: on a phone the drawer is full width with no backdrop to
+   tap, and this button is the only way back out of it — see the note on it in
+   Sidebar.tsx. Hidden rather than removed from the markup, so every other skin
+   keeps its collapse control. */
+@media (min-width: 768px) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .sidebar-collapse-btn { display: none; }
+}
+
+/* The sidebar's copy of the same arrival — see the note in thread.css. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-title {
+  animation: alc-thread-title-in 270ms var(--alc-ease) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-title {
+    animation-duration: 1ms;
   }
 }

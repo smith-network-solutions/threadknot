@@ -134,9 +134,12 @@
   width: 100%;
   min-height: 38px;
   max-height: 120px;
-  padding: 9px 18px;
+  padding: 9px 20px;
   border: 0;
-  border-radius: 19px; corner-shape: var(--alc-corner);
+  /* Fully round, matching the sidebar's search pill. Round rather than the
+     skin's superellipse for the same reason it is there: at pill radius a
+     superellipse flattens the ends. */
+  border-radius: var(--alc-r-pill); corner-shape: round;
   background: var(--alc-ov-field);
   box-shadow: 0 5px 14px rgba(0, 0, 0, 0.04);
   color: var(--alc-ink-2);
@@ -345,7 +348,6 @@
   stroke-width: 1.8;
 }
 :root[data-theme="alcove"] .ctx-item:hover:not(:disabled),
-:root[data-theme="alcove"] .ctx-item:focus-visible,
 :root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item:hover:not(:disabled),
 :root[data-theme="alcove"] .search-scope-menu button:hover,
 :root[data-theme="alcove"] .font-option:hover,
@@ -1415,3 +1417,103 @@
   color: var(--alc-ink-4);
 }
 :root[data-theme="alcove"] .machine-kebab:hover { background: rgba(255, 255, 255, 0.9); color: var(--alc-ink-2); }
+
+/* ---- the completion card ----------------------------------------------------
+   Alcove's notification surface (components/CompletionToast.tsx), which this
+   skin mounts in place of the corner .toast-stack. One wide glass card at the
+   top centre: the mark of the agent that raised it, what happened, a few words
+   about it, and how long ago. It arrives and leaves by blurring and scaling,
+   not by sliding — the same entrance the skin's menus use, so a notification
+   reads as the room focusing rather than as something flying in from an edge. */
+:root[data-theme="alcove"] .completion-toast-stack {
+  position: absolute;
+  z-index: 80;
+  top: 22px;
+  left: 50%;
+  display: flex;
+  width: min(520px, calc(100% - 48px));
+  flex-direction: column;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+/* Centred on the chat, not on the split: with the workspace panel open beside
+   it the chat is only what the panel leaves, and the panel's width is the same
+   expression main-split.css gives it. Mirrors that file's own breakpoint, since
+   below it the panel is a full-screen overlay and the chat is the whole box. */
+@media (min-width: 1024px) {
+  :root[data-theme="alcove"] .main-split.side.ws-open .completion-toast-stack {
+    left: calc((100% - max(240px, var(--ws-frac, 0.42) * 100%)) / 2);
+  }
+}
+:root[data-theme="alcove"] .completion-toast {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 17px 22px;
+  border: 0;
+  border-radius: 30px; corner-shape: var(--alc-corner);
+  box-shadow: var(--alc-rim), 0 10px 30px rgba(0, 0, 0, 0.06);
+  text-align: left;
+  pointer-events: auto;
+  animation: alcove-toast-in 280ms var(--alc-ease) both;
+}
+:root[data-theme="alcove"] .completion-toast.is-leaving {
+  pointer-events: none;
+  /* Keep in step with LEAVE_MS in CompletionToast.tsx. */
+  animation: alcove-toast-out 260ms cubic-bezier(0.55, 0, 0.8, 0.2) both;
+}
+:root[data-theme="alcove"] .completion-toast__mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+}
+:root[data-theme="alcove"] .completion-toast__mark .mark { width: 40px; height: 40px; }
+:root[data-theme="alcove"] .completion-toast__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+:root[data-theme="alcove"] .completion-toast__copy strong {
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  line-height: 1.1;
+}
+/* One line: the card is a glance, and the thread it opens has the whole of it. */
+:root[data-theme="alcove"] .completion-toast__copy > span {
+  overflow: hidden;
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .completion-toast__when {
+  align-self: start;
+  padding-top: 3px;
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+}
+@keyframes alcove-toast-in {
+  from { opacity: 0; filter: blur(14px); transform: scale(0.9); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+@keyframes alcove-toast-out {
+  from { opacity: 1; filter: blur(0); transform: scale(1); }
+  to { opacity: 0; filter: blur(14px); transform: scale(0.9); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .completion-toast,
+  :root[data-theme="alcove"] .completion-toast.is-leaving { animation-duration: 1ms; }
+}

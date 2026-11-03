@@ -276,7 +276,6 @@ export function BosunReview() {
           type="button"
           className="icon-btn"
           aria-label="Close review"
-          title="Close"
           onClick={() => {
             setCameFromReview(false);
             actions.openTask(null);
@@ -410,7 +409,6 @@ export function BosunReview() {
                   type="button"
                   className="review-open"
                   aria-label={`Open ${displayTitle(t)}`}
-                  title="Open this to-do"
                   onClick={() => openRow(t.id)}
                 >
                   Open <ChevronIcon size={11} className="review-open-chev" />

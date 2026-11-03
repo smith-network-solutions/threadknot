@@ -75,7 +75,7 @@ export const LinkOpenModal = memo(function LinkOpenModal() {
             <XIcon size={14} />
           </button>
         </div>
-        <div className="link-open-url" title={href}>
+        <div className="link-open-url">
           {href}
         </div>
         <div className="link-open-actions">
@@ -83,11 +83,6 @@ export const LinkOpenModal = memo(function LinkOpenModal() {
             type="button"
             className="settings-toggle"
             disabled={!paneProjectId}
-            title={
-              paneProjectId
-                ? "Open in the workspace's browser pane"
-                : "Open a workspace thread to use the Threadknot browser"
-            }
             onClick={openInPane}
           >
             <GlobeIcon size={15} />
