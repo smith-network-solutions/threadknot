@@ -55,7 +55,10 @@ export interface SidebarLayout {
 
 export const SIDEBAR_WIDTH_DEFAULT = 292;
 export const SIDEBAR_WIDTH_MIN = 240;
-export const SIDEBAR_WIDTH_MAX = 460;
+/** The ceiling is a comfort limit, not a layout one — the thread column
+ *  has its own max width and simply centres in whatever is left. 460 was
+ *  tight for a skin whose own default is 340. */
+export const SIDEBAR_WIDTH_MAX = 600;
 
 const LS_SIDEBAR_LAYOUT = "threadknot.sidebarLayout";
 
@@ -194,6 +197,24 @@ export interface UseSidebarLayout {
   update: (patch: Partial<SidebarLayout>) => void;
   /** Set the width in state + CSS var WITHOUT persisting, for live drag. */
   setWidthLive: (width: number) => void;
+  /** Forget the chosen width, handing the sidebar back to whatever the active
+   *  skin asks for. What double-clicking the grip does. */
+  resetWidth: () => void;
+}
+
+/** Has this device ever chosen a width, as opposed to running on the default?
+ *
+ *  The difference matters because a skin may want its own default — Alcove
+ *  asks for 340 where the base stylesheet asks for 292 — and the only way to
+ *  let CSS answer is for us not to write the variable at all. */
+function hasStoredWidth(): boolean {
+  try {
+    const raw = localStorage.getItem(LS_SIDEBAR_LAYOUT);
+    if (!raw) return false;
+    return typeof (JSON.parse(raw) as { width?: unknown }).width === "number";
+  } catch {
+    return false;
+  }
 }
 
 /** Instantiated once in Sidebar and threaded down. Keeps the --sidebar-w CSS
@@ -201,6 +222,7 @@ export interface UseSidebarLayout {
  *  pop-out zone) follows resizes without reading our state. */
 export function useSidebarLayout(): UseSidebarLayout {
   const [layout, setLayout] = useState<SidebarLayout>(loadLayout);
+  const [widthChosen, setWidthChosen] = useState<boolean>(hasStoredWidth);
   // Latest layout for the live-width path, which sets the var directly and
   // must not stomp other fields when it later persists.
   const ref = useRef(layout);
@@ -208,9 +230,16 @@ export function useSidebarLayout(): UseSidebarLayout {
 
   // Mirror the width onto the document so all var(--sidebar-w) users follow.
   // Runs on mount and on every width change.
+  //
+  // Until someone drags, the variable is left unset rather than written at the
+  // default: an inline value here beats any stylesheet, so writing it would
+  // override the skin's own default and there would be no way for a skin to
+  // have one. Dragging writes it, and from then on the choice wins.
   useEffect(() => {
-    document.documentElement.style.setProperty("--sidebar-w", `${layout.width}px`);
-  }, [layout.width]);
+    const root = document.documentElement.style;
+    if (widthChosen) root.setProperty("--sidebar-w", `${layout.width}px`);
+    else root.removeProperty("--sidebar-w");
+  }, [layout.width, widthChosen]);
 
   const persist = useCallback((next: SidebarLayout) => {
     try {
@@ -222,6 +251,7 @@ export function useSidebarLayout(): UseSidebarLayout {
 
   const update = useCallback(
     (patch: Partial<SidebarLayout>) => {
+      if (patch.width !== undefined) setWidthChosen(true);
       setLayout((prev) => {
         const next = { ...prev, ...patch };
         if (patch.width !== undefined) next.width = clampWidth(next.width);
@@ -236,8 +266,24 @@ export function useSidebarLayout(): UseSidebarLayout {
   // the caller persists once on pointer-up via update({ width }).
   const setWidthLive = useCallback((width: number) => {
     const w = clampWidth(width);
+    setWidthChosen(true);
     setLayout((prev) => (prev.width === w ? prev : { ...prev, width: w }));
   }, []);
 
-  return { layout, update, setWidthLive };
+  const resetWidth = useCallback(() => {
+    setWidthChosen(false);
+    setLayout((prev) => {
+      const next = { ...prev, width: SIDEBAR_WIDTH_DEFAULT };
+      // Persisted without a width, so a reload still reads "never chosen".
+      const { width: _dropped, ...rest } = next;
+      try {
+        localStorage.setItem(LS_SIDEBAR_LAYOUT, JSON.stringify(rest));
+      } catch {
+        // Persistence is a convenience only.
+      }
+      return next;
+    });
+  }, []);
+
+  return { layout, update, setWidthLive, resetWidth };
 }

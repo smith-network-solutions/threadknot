@@ -13,6 +13,7 @@
 const PRESSABLE = [
   ".thread-head .thread-title",
   ".thread-head .title-edit",
+  ".thread-head .head-pill",
   ".sidebar-action",
   ".thread-row",
   ".empty-project-trigger",

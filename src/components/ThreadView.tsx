@@ -18,6 +18,7 @@ import {
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
 import { copyText, elidePathMiddle } from "../lib/format";
+import { openSettings } from "../lib/settingsScreen";
 import { TASK_TODAY_ID, confirmHeldOrbitClose, displayTitle, todayReturnThread } from "../lib/bosun";
 import { setSidebarView } from "../lib/sidebarView";
 import { BosunMark, useBosunImage } from "./BosunMark";
@@ -35,6 +36,8 @@ import {
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { FeedItemView, thoughtTimesForFeed, type FeedRenderContext } from "./FeedItems";
 import { ParleyRoundSplash, ReviewDialog, ReviewMenu, useReviewBlock } from "./ReviewMenu";
+import { Tooltip } from "./alcove/Tooltip";
+import { Dropdown } from "./alcove/Dropdown";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
 import { Composer } from "./Composer";
@@ -50,10 +53,10 @@ import {
   SearchIcon,
   ShieldIcon,
   XIcon,
+  GearIcon,
 } from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
 import "../styles/workspace.css";
-import { BackToInbox } from "./InboxView";
 import { onJustSent } from "../lib/justSent";
 import { PersonAvatar } from "./PeopleRow";
 import { useAlcove } from "../lib/useAlcove";
@@ -243,6 +246,7 @@ function WorkspaceMenu({
   dispatch: ReturnType<typeof useStore>["dispatch"];
   thread: Thread | null;
 }) {
+  const alcove = useAlcove();
   const [open, setOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const reviewBlocked = useReviewBlock(thread);
@@ -253,12 +257,14 @@ function WorkspaceMenu({
   // Anchor under the button, right-aligned, clamped into the viewport. The
   // header renders unzoomed, so the rect maps 1:1 onto the fixed panel.
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open || alcove) return;
     function place() {
       const b = btnRef.current;
       if (!b) return;
       const r = b.getBoundingClientRect();
-      const width = 210;
+      // Must match .thread-menu.ws-menu's width in styles/alcove/thread.css —
+      // this right-aligns the panel under its button.
+      const width = 298;
       setPos({ top: r.bottom + 6, left: Math.max(8, r.right - width) });
     }
     place();
@@ -268,10 +274,10 @@ function WorkspaceMenu({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open]);
+  }, [open, alcove]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || alcove) return;
     function onDown(e: MouseEvent) {
       const t = e.target as Node;
       if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
@@ -286,26 +292,94 @@ function WorkspaceMenu({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, alcove]);
 
-  return (
-    <>
+  const trigger = (
+    <Tooltip
+      content={project ? "Workspace panels" : "Thread actions"}
+      disabled={(!project && !thread) || open}
+    >
       <button
         ref={btnRef}
         type="button"
-        className={`head-pill${open || openTab ? " on" : ""}`}
+        className={`head-pill${(!alcove && open) || openTab ? " on" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={project ? "Workspace panels" : "Thread actions"}
         disabled={!project && !thread}
-        onClick={() => setOpen((v) => !v)}
+        onClick={alcove ? undefined : () => setOpen((v) => !v)}
       >
         <MoreIcon size={16} />
       </button>
+    </Tooltip>
+  );
+  const items = (
+    <>
+      {project && VISIBLE_TABS.map(({ id, label, Icon }) => {
+        const active = openTab === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="menuitemradio"
+            aria-checked={active}
+            className={`thread-menu-item${active ? " on" : ""}`}
+            onClick={() => {
+              dispatch({
+                type: "workspace",
+                projectId: project.id,
+                tab: active ? null : id,
+              });
+              setOpen(false);
+            }}
+          >
+            <Icon size={16} />
+            <span>{label}</span>
+            {active && (
+              <span className="ws-menu-check">
+                <CheckIcon size={15} />
+              </span>
+            )}
+          </button>
+        );
+      })}
+      {/* Review lives here rather than as its own header pill —
+          the header only has room for the one cluster. `divided` sets it
+          off from the panel toggles above: it opens a dialog, it doesn't
+          toggle a panel. */}
+      <button
+        type="button"
+        role="menuitem"
+        className={`thread-menu-item${project ? " divided" : ""}`}
+        disabled={!!reviewBlocked}
+        onClick={() => {
+          setOpen(false);
+          setReviewOpen(true);
+        }}
+      >
+        <ShieldIcon size={16} />
+        <span>Review</span>
+      </button>
+    </>
+  );
+
+  return (
+    <>
+      {alcove ? (
+        <Dropdown
+          trigger={trigger}
+          placement="bottom-right"
+          menuClassName="thread-menu ws-menu"
+          menuLabel={project ? "Workspace panels" : "Thread actions"}
+          onOpenChange={setOpen}
+        >
+          {items}
+        </Dropdown>
+      ) : trigger}
       {reviewOpen && thread && (
         <ReviewDialog thread={thread} onClose={() => setReviewOpen(false)} />
       )}
-      {open && pos && (project || thread) &&
+      {!alcove && open && pos && (project || thread) &&
         createPortal(
           <div
             ref={popRef}
@@ -314,51 +388,7 @@ function WorkspaceMenu({
             aria-label={project ? "Workspace panels" : "Thread actions"}
             style={{ top: pos.top, left: pos.left }}
           >
-            {project && VISIBLE_TABS.map(({ id, label, Icon }) => {
-              const active = openTab === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={active}
-                  className={`thread-menu-item${active ? " on" : ""}`}
-                  onClick={() => {
-                    dispatch({
-                      type: "workspace",
-                      projectId: project.id,
-                      tab: active ? null : id,
-                    });
-                    setOpen(false);
-                  }}
-                >
-                  <Icon size={16} />
-                  <span>{label}</span>
-                  {active && (
-                    <span className="ws-menu-check">
-                      <CheckIcon size={15} />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-            {/* Review lives here rather than as its own header pill —
-                the header only has room for the one cluster. `divided` sets it
-                off from the panel toggles above: it opens a dialog, it doesn't
-                toggle a panel. */}
-            <button
-              type="button"
-              role="menuitem"
-              className={`thread-menu-item${project ? " divided" : ""}`}
-              disabled={!!reviewBlocked}
-              onClick={() => {
-                setOpen(false);
-                setReviewOpen(true);
-              }}
-            >
-              <ShieldIcon size={16} />
-              <span>Review</span>
-            </button>
+            {items}
           </div>,
           document.body,
         )}
@@ -806,7 +836,12 @@ export function ThreadView() {
     return () => window.cancelAnimationFrame(frame);
   }, [activeFindId, findOpen, findQuery]);
   const observerRef = useRef<ResizeObserver | null>(null);
-  const pinRafRef = useRef<number | null>(null);
+  const followRafRef = useRef<number | null>(null);
+  // The next follow lands instantly instead of gliding: opening a thread, or
+  // any other moment where the end is somewhere entirely else and animating
+  // there would mean watching the whole history fly past.
+  const snapNextRef = useRef(true);
+  const reduceMotionRef = useRef(false);
   const scrollMetricsRafRef = useRef<number | null>(null);
   const scrollIdleTimerRef = useRef<number | null>(null);
   const prependAnchorRef = useRef<{ feedId: string; rows: { id: string; top: number }[] } | null>(null);
@@ -971,20 +1006,53 @@ export function ThreadView() {
     ],
   );
 
+  /** Follow the end of the feed, easing toward it rather than cutting to it.
+   *
+   *  This used to be a hard `scrollTop = end` once per frame. That reads as
+   *  smooth only while output trickles in a few pixels at a time; a code
+   *  block, an image resolving or a tool card mounting arrives as hundreds of
+   *  pixels at once, and every one of those was a jump cut. Each frame now
+   *  closes a fixed FRACTION of the remaining gap, so the feed accelerates
+   *  into a big arrival and settles out of it, and a steady stream resolves to
+   *  a constant trailing distance instead of a stutter.
+   *
+   *  `behavior: "smooth"` is not an option here. It reports no completion and
+   *  restarts its animation on every call, and this is called many times a
+   *  second — the feed would never settle. The loop below is re-entrant by
+   *  design: callers fire it freely, and it self-schedules until it arrives.
+   */
   const pinToEnd = useCallback(() => {
-    if (pinRafRef.current !== null) return;
-    pinRafRef.current = window.requestAnimationFrame(() => {
-      pinRafRef.current = null;
+    if (followRafRef.current !== null) return;
+    const step = () => {
+      followRafRef.current = null;
       const el = scrollRef.current;
       if (!el || !stickRef.current || glidingRef.current) return;
       const end = Math.max(0, el.scrollHeight - el.clientHeight);
-      // Layout/scroll anchoring can move scrollTop without user input. Only
-      // gesture handlers release stickRef; geometry here must never do so.
-      if (Math.abs(el.scrollTop - end) > 1) el.scrollTop = end;
+      const gap = end - el.scrollTop;
+      // Snap, not glide: a fresh thread, a gap bigger than two screens (there
+      // is nothing to read on the way), a feed that shrank under us, or a
+      // reader who has asked for less motion.
+      const snap =
+        snapNextRef.current ||
+        reduceMotionRef.current ||
+        gap < 0 ||
+        gap > el.clientHeight * 2;
+      snapNextRef.current = false;
+      if (snap) {
+        // Layout/scroll anchoring can move scrollTop without user input. Only
+        // gesture handlers release stickRef; geometry here must never do so.
+        if (Math.abs(gap) > 1) el.scrollTop = end;
+      } else if (gap > 0.5) {
+        // 0.22/frame closes a gap in ~10 frames whatever its size, with a
+        // floor so the last pixels do not creep.
+        el.scrollTop = Math.min(end, el.scrollTop + Math.max(1.5, gap * 0.22));
+        followRafRef.current = window.requestAnimationFrame(step);
+      }
       scrollTopRef.current = el.scrollTop;
       scrollHeightRef.current = el.scrollHeight;
       clientHeightRef.current = el.clientHeight;
-    });
+    };
+    followRafRef.current = window.requestAnimationFrame(step);
   }, []);
 
   /** Travel to the end the way a reader would: a glide, not a cut.
@@ -1047,6 +1115,7 @@ export function ThreadView() {
     if (feedLen === 0) {
       stickRef.current = true;
       manualAwayRef.current = false;
+      snapNextRef.current = true;
       scrollTopRef.current = 0;
       setAtPresent(true);
       return;
@@ -1055,6 +1124,8 @@ export function ThreadView() {
       scrollFeedRef.current = loadedFeedId;
       stickRef.current = true;
       manualAwayRef.current = false;
+      // A different thread's end is nowhere near this one's. Land on it.
+      snapNextRef.current = true;
       scrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
       setAtPresent(true);
     }
@@ -1110,9 +1181,9 @@ export function ThreadView() {
     sendGlideUntilRef.current = 0;
     // Feed/resize work may already have queued a bottom pin for this frame.
     // Cancel it at gesture time so it cannot race the native wheel movement.
-    if (pinRafRef.current !== null) {
-      window.cancelAnimationFrame(pinRafRef.current);
-      pinRafRef.current = null;
+    if (followRafRef.current !== null) {
+      window.cancelAnimationFrame(followRafRef.current);
+      followRafRef.current = null;
     }
   }, []);
 
@@ -1127,6 +1198,17 @@ export function ThreadView() {
       scrollIdleTimerRef.current = null;
       el.classList.remove("is-user-scrolling");
     }, 120);
+  }, []);
+
+  // Read once and kept current by the listener: the follow loop below consults
+  // this every animation frame, and matchMedia there would be a query per frame.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reduceMotionRef.current = mq.matches;
+    const onChange = () => { reduceMotionRef.current = mq.matches; };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, []);
 
   useEffect(() => {
@@ -1256,7 +1338,7 @@ export function ThreadView() {
       observerRef.current?.disconnect();
       headObserverRef.current?.disconnect();
       dockObserverRef.current?.disconnect();
-      if (pinRafRef.current !== null) window.cancelAnimationFrame(pinRafRef.current);
+      if (followRafRef.current !== null) window.cancelAnimationFrame(followRafRef.current);
       if (scrollMetricsRafRef.current !== null) {
         window.cancelAnimationFrame(scrollMetricsRafRef.current);
       }
@@ -1311,6 +1393,14 @@ export function ThreadView() {
 
   const alcove = useAlcove();
   const busy = thread && thread.status !== "idle";
+  // The header's word for what the thread is doing, or null when a run needs
+  // no word of its own. Null keeps the whole .head-status block out of the
+  // header — see where it renders.
+  const headStatus = thread?.parley
+    ? `parley · round ${thread.parley.round}/${thread.parley.maxRounds}`
+    : thread?.status === "waiting_approval"
+      ? "awaiting approval"
+      : null;
   // Multi-lane threads get a two-row header on phones (the lane roster drops
   // to its own scrolling strip) — see the mobile `.thread-head.has-lanes` CSS.
   const hasLanes = !!thread && threadParticipants(thread).length > 1;
@@ -1361,6 +1451,25 @@ export function ThreadView() {
               />
             </div>
           )}
+          <button
+            type="button"
+            className="head-pill head-settings"
+            aria-label="Settings"
+            title={
+              state.update?.restartPending
+                ? "Rebuilt and ready — restart Threadknot to load it"
+                : state.update?.updateAvailable
+                  ? "An update is ready to install"
+                  : "Settings"
+            }
+            onClick={openSettings}
+          >
+            <GearIcon size={17} />
+            {(state.update?.updateAvailable === true ||
+              state.update?.restartPending === true) && (
+              <span className="usermenu-dot" />
+            )}
+          </button>
         </div>
         <div className="thread-head-main">
           <h1 className={`thread-title${thread && editing ? " is-editing" : ""}`}>
@@ -1442,7 +1551,6 @@ export function ThreadView() {
             </div>
           )}
           {thread?.origin?.kind === "bosun" && <BosunOriginChip thread={thread} />}
-          {thread && <BackToInbox threadId={thread.id} />}
           {chipPreview.portal}
         </div>
         {quickHome && (
@@ -1472,14 +1580,14 @@ export function ThreadView() {
             </button>
           </div>
         )}
-        {busy && (
+        {/* Only the states that have something to say. A plain run already
+            announces itself in the feed (the working row) and in the sidebar's
+            status dot; rendering this block for it left a bare teal ping alone
+            in the header's top-left corner, labelling nothing. */}
+        {busy && headStatus && (
           <div className="head-status">
             <span className="sonar" />
-            {thread!.parley
-              ? `parley · round ${thread!.parley.round}/${thread!.parley.maxRounds}`
-              : thread!.status === "waiting_approval"
-                ? "awaiting approval"
-                : null}
+            {headStatus}
           </div>
         )}
         <div className="ws-toggles">
@@ -1739,12 +1847,48 @@ export function ThreadView() {
 }
 
 /** The project directory under a thread's title. Clicking copies it. */
+/** The project directory, click to copy.
+ *
+ *  The label does not swap, it changes its mind: the path blurs out while
+ *  "copied" blurs in over the same line, and in Alcove — where this is a
+ *  capsule rather than a bare line — the capsule's width travels with it.
+ *  That width has to be measured and written: a width that comes from the
+ *  content it holds has no two values to transition between, so the box would
+ *  otherwise snap while the text was still dissolving. `.pp-sizer` is what
+ *  gets measured — the label the button is about to show, laid out free of
+ *  the button's own max-width, out of flow and invisible.
+ *
+ *  Other skins render the same markup and get the cross-fade without the
+ *  width: there the path is a line in a block, with no box to resize. */
 function ProjectPath({ path }: { path: string }) {
+  const alcove = useAlcove();
   const [copied, setCopied] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const sizer = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState<number>();
+
+  useLayoutEffect(() => {
+    if (!alcove) {
+      setWidth(undefined);
+      return;
+    }
+    const b = btn.current;
+    const s = sizer.current;
+    if (!b || !s) return;
+    const cs = getComputedStyle(b);
+    setWidth(
+      Math.ceil(
+        s.offsetWidth + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight),
+      ),
+    );
+  }, [alcove, copied, path]);
+
   return (
     <button
+      ref={btn}
       type="button"
       className={`thread-project-path copyable${copied ? " copied" : ""}`}
+      style={width === undefined ? undefined : { width }}
       aria-label={`Copy project directory: ${path}`}
       onClick={() =>
         void copyText(path).then((ok) => {
@@ -1754,7 +1898,11 @@ function ProjectPath({ path }: { path: string }) {
         })
       }
     >
-      {copied ? "copied" : path}
+      <span className="pp-label pp-path">{path}</span>
+      <span className="pp-label pp-copied">copied</span>
+      <span className="pp-sizer" ref={sizer} aria-hidden>
+        {copied ? "copied" : path}
+      </span>
     </button>
   );
 }

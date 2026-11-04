@@ -25,6 +25,7 @@
 
 :root[data-theme="alcove"] .thread-head .thread-title,
 :root[data-theme="alcove"] .thread-head .title-edit,
+:root[data-theme="alcove"] .thread-head .head-pill,
 :root[data-theme="alcove"] .sidebar-action,
 :root[data-theme="alcove"] .thread-row,
 :root[data-theme="alcove"] .empty-project-trigger,
@@ -70,6 +71,7 @@
 
 :root[data-theme="alcove"] .thread-head .thread-title:active,
 :root[data-theme="alcove"] .thread-head .title-edit:active,
+:root[data-theme="alcove"] .thread-head .head-pill:active,
 :root[data-theme="alcove"] .sidebar-action:active,
 :root[data-theme="alcove"] .thread-row:active,
 :root[data-theme="alcove"] .empty-project-trigger:active,
@@ -146,4 +148,39 @@
   -webkit-backdrop-filter: blur(10.53px) saturate(1.07) brightness(1) !important;
   backdrop-filter: blur(10.53px) saturate(1.07) brightness(1) !important;
   box-shadow: var(--alc-rim), 0 4px 9.6px rgba(0, 0, 0, 0.02), 0 10px 30px rgba(0, 0, 0, 0.045) !important;
+}
+
+/* ---- surfaces that animate something the press list does not ---------------
+   The blanket `transition-property` above is !important because later files
+   were dropping `scale` from it. The cost is that it also drops whatever a
+   .glass-surface was transitioning for itself, and two of them animate
+   properties the press has no use for. Restated here, where they win.
+
+   The flyouts are the reason this is visible: they open and close on opacity
+   and transform, both of which the press list replaced, so they snapped. */
+:root[data-theme="alcove"] .model-menu__row-panel,
+:root[data-theme="alcove"] .model-menu__effort-panel {
+  transition-property: opacity, transform !important;
+  transition-duration: 160ms, 190ms !important;
+  transition-timing-function: ease, var(--alc-ease) !important;
+}
+/* This one is pressable, so it keeps `scale` alongside its own hover lift. */
+:root[data-theme="alcove"] .composer-anchor .composer-image__remove {
+  transition-property: background, color, transform, scale !important;
+  transition-duration: 160ms !important;
+}
+
+/* ---- a card on its way out stops answering to the press -------------------
+   `scale` and `transform` are separate properties and multiply. The toast
+   closes on a keyframe that animates `transform: scale(0.9)`, while the press
+   release is still easing `scale` from 1.08 back to 1 over its own longer
+   clock — so a toast dismissed by clicking it shrank twice at once, at two
+   rates, and kept moving after the close had finished.
+
+   Pinning scale and dropping the transition leaves the close keyframe as the
+   only thing animating it. The press itself still works right up to the click. */
+:root[data-theme="alcove"] .completion-toast.is-leaving,
+:root[data-theme="alcove"] .toast.is-leaving {
+  scale: 1 !important;
+  transition: none !important;
 }

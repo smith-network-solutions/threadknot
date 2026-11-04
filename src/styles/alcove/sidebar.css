@@ -7,6 +7,17 @@
    ride the "usage" module. Desktop geometry is scoped to >=768px; the phone
    drawer keeps its full-bleed slide-over and only takes the palette. */
 
+/* The sidebar's default width. A wider one than the base 292: the rows here
+   are larger and crowd at that width.
+
+   On the root, not on .sidebar, and that distinction is the whole point. A
+   custom property declared on an element shadows the inherited one, so while
+   this lived on .sidebar the drag handle wrote --sidebar-w to :root and the
+   sidebar never saw it — the handle moved, the number changed, and nothing
+   resized. Declared here, a drag's inline value on this same element beats it
+   and a chosen width wins; untouched, the skin's default stands. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) { --sidebar-w: 340px; }
+
 /* ---- palette inside the sidebar ------------------------------------------ */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
   --text: var(--alc-ink);
@@ -20,12 +31,14 @@
      actually appears. Threadknot does not scale, so it gets the rendered
      size, not the authored one. The same is true of every measurement in
      this file; see the note on the card below. */
-  --sidebar-copy-size: 18px;
-  /* A wider default so the larger rows are not crowded. Only a default: the
-     sidebar is drag-resizable and an inline width beats this. */
-  --sidebar-w: 340px;
+  --sidebar-copy-size: 16px;
   --alc-sb-card-left: 0px;
   --alc-sb-pad: 15px;
+  /* Tighter than the shared --alc-r-card (52px). That radius was drawn for
+     cards the size of a dialog; on the tallest surface on screen the same
+     corner reads as a lozenge. Scoped here rather than changed at the token,
+     which the modals, the workspace panes and the rail all share. */
+  --alc-r-sidebar: 44px;
   background: transparent;
   border-right: 0;
   color: var(--alc-ink-4);
@@ -38,7 +51,7 @@
   position: absolute;
   inset: 0 0 0 var(--alc-sb-card-left);
   z-index: -1;
-  border-radius: var(--alc-r-card); corner-shape: var(--alc-corner);
+  border-radius: var(--alc-r-sidebar); corner-shape: var(--alc-corner);
   background: var(--alc-glass);
   box-shadow: var(--alc-rim), var(--alc-shadow), 0 0 22px rgba(0, 0, 0, 0.035);
   -webkit-backdrop-filter: var(--alc-blur);
@@ -51,6 +64,19 @@
      flex item shorten it, so no height math is needed. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
     margin: 14.5px 2px 14.5px 11.6px;
+    /* Clear of the card's foot. Whatever ends up last down there — the usage
+       meters, or Settings under them — was sitting on the bottom edge, and
+       with a corner this size the last row reads as crowded well before it
+       actually touches. Padding on the aside rather than a margin on the
+       meters, so it holds for either footer and does not open a gap between
+       the two when both are shown. ::before paints the card from the padding
+       box, so the card itself is unchanged — only the content lifts.
+
+       28px reads against the corner rather than against the straight
+       edge: the last row has to clear where the side starts bending, not
+       where the card ends, which is why a gap that measures generous still
+       looked tight at half this. */
+    padding-bottom: 28px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar > *:not(.project-rail):not(.sidebar-resize):not(.sidebar-brand):not(.sidebar-settings):not(.stream-bar) {
     padding-left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
@@ -64,21 +90,98 @@
   }
 }
 
-/* ---- top row: Search pill + round icon buttons ----------------------------
-   The launch stack wraps: Search (a pill that takes the line) and New chat (a
-   round icon) share the first line, every other destination drops to its own
-   quiet row below. The brand row's two controls (view options, collapse) are
-   lifted out of flow onto the right end of that same first line; the
-   decorative wordmark is hidden. */
+/* ---- the resize grip -------------------------------------------------------
+   The base stylesheet fades a hairline down the sidebar's whole right edge on
+   hover. That is a window split, and this skin has no splits: it is cards with
+   room between them, so an edge-to-edge rule reads as chrome from another
+   application. Here it is a short pill standing in the gap instead, visible at
+   rest so the sidebar advertises that it moves, and growing under the pointer.
+
+   The hit area stays wider than the pill it draws — 16px of grab for 4px of
+   paint, which is the part that matters on a pointer device. */
+:root[data-theme="alcove"] .sidebar-resize {
+  right: -13px;
+  width: 16px;
+}
+:root[data-theme="alcove"] .sidebar-resize::after {
+  top: 50%;
+  bottom: auto;
+  right: 6px;
+  width: 4px;
+  height: 42px;
+  border-radius: 999px; corner-shape: round;
+  background: var(--alc-ink-4);
+  opacity: 0.32;
+  transform: translateY(-50%);
+  transition:
+    opacity 180ms var(--alc-ease),
+    height 180ms var(--alc-ease),
+    background 180ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .sidebar-resize:hover::after {
+  height: 72px;
+  opacity: 0.72;
+}
+/* Held: the bar commits to the drag rather than waiting on hover, which the
+   pointer has usually left by then (capture keeps the drag, not the hover). */
+:root[data-theme="alcove"] body.sidebar-resizing .sidebar-resize::after {
+  height: 86px;
+  background: var(--alc-blue);
+  opacity: 0.9;
+}
+/* Search mode widens the base handle and shows its line; the pill is already
+   the affordance, so only the grab area grows. */
+:root[data-theme="alcove"] .sidebar.search-mode .sidebar-resize {
+  right: -13px;
+  width: 20px;
+}
+:root[data-theme="alcove"] .sidebar.search-mode .sidebar-resize::after { opacity: 0.45; }
+:root[data-theme="alcove"] .sidebar.search-mode .sidebar-resize::before { display: none; }
+
+/* ---- sidebar toolbar ------------------------------------------------------
+   A title and compact tools, followed by a quiet list of navigation actions.
+   --alc-sb-top reserves the absolute toolbar's height for the launch area. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
+  --alc-sb-tool: 34px;
+  --alc-sb-top: calc(14px + var(--alc-sb-tool) + 12px);
+  --alc-search-h: 38px;
+}
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand {
   position: absolute;
   z-index: 3;
-  top: 24.6px;
+  top: 14px;
+  /* The band is the full width of the card, not a right-hand cluster: collapse
+     sits at one end and the tools at the other, with the middle empty. */
+  left: calc(var(--alc-sb-card-left) + var(--alc-sb-pad));
   right: var(--alc-sb-pad);
   display: flex;
+  justify-content: flex-end;
   align-items: center;
-  gap: 8.7px;
+  gap: 2px;
   padding: 0;
+  /* Out of flow across the whole card, so only the buttons may be hit. */
+  pointer-events: none;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand > * { pointer-events: auto; }
+/* Last in the markup, first on the line — and it owns the gap to the tools.
+   On the Tooltip wrapper, which is what the band actually lays out. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .sidebar-collapse-tip {
+  order: -2;
+  margin-right: auto;
+}
+
+:root[data-theme="alcove"] .sidebar-heading {
+  order: -1;
+  min-width: 0;
+  margin-right: auto;
+  margin-left: 4px;
+  color: var(--alc-ink);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand:has(.sidebar-heading) .sidebar-collapse-tip {
+  margin-right: 0;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .brand-wordmark {
   display: none;
@@ -90,20 +193,40 @@
   display: grid;
   place-items: center;
   flex: none;
-  /* The same 40.6px the destination rows below stand at, so the top line and
-     the rows it sits over share one height. */
-  width: 40.6px;
-  height: 40.6px;
-  min-height: 40.6px;
   margin: 0;
   padding: 0;
   border-radius: 50%;
-  background: var(--alc-hover);
-  box-shadow: var(--alc-halo);
   color: var(--alc-ink-4);
   transition: background 0.14s ease, color 0.14s ease, transform 0.2s var(--alc-spring);
 }
-:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn svg,
+/* The corner tools: bare until the pointer arrives. These two are tools, not
+   destinations — with a plate each they read as a second pair of buttons
+   competing with the Search bar below, and the corner stopped being quiet. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn {
+  width: var(--alc-sb-tool);
+  height: var(--alc-sb-tool);
+  min-height: var(--alc-sb-tool);
+  background: transparent;
+  box-shadow: none;
+}
+/* New chat keeps its disc, and takes the Search bar's height so the two
+   objects on that line are one row. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
+  width: var(--alc-title-h);
+  height: var(--alc-title-h);
+  min-height: var(--alc-title-h);
+  background: var(--alc-hover);
+  box-shadow: var(--alc-halo);
+}
+/* Bigger than the row glyphs below on purpose: with no plate to give them an
+   edge, the mark itself has to carry the target. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn svg {
+  width: 20px;
+  height: 20px;
+  color: currentColor;
+  opacity: 1;
+  stroke-width: 1.7;
+}
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat svg {
   width: 20.3px;
   height: 20.3px;
@@ -111,7 +234,10 @@
   opacity: 1;
   stroke-width: 1.8;
 }
-:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn:hover,
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .icon-btn:hover {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink-2);
+}
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat:hover {
   background: var(--alc-active);
   color: var(--alc-ink-2);
@@ -139,22 +265,17 @@
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
-  gap: 1px 11.6px;
-  padding-top: 24.6px;
+  gap: 0;
+  padding-top: var(--alc-sb-top);
   padding-bottom: 8.7px;
 }
-/* Room on the first line for the lifted brand buttons (button + gap), which
-   grew with the rest of the row. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
   order: 1;
-  margin-right: 49.3px;
 }
-:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-launch .sidebar-action.new-chat {
-  margin-right: 0;
-}
+/* With the tools lifted into their own band the people row no longer has to
+   dodge them sideways — it just starts below, and Search follows it. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-people {
-  padding-top: 24.6px;
-  padding-right: calc(var(--alc-sb-pad) + 95.7px);
+  padding-top: var(--alc-sb-top);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar:has(> .sidebar-people) .sidebar-launch {
   padding-top: 11.6px;
@@ -163,45 +284,42 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open {
   order: 0;
   position: relative;
-  flex: 1 1 0;
+  flex: 1 0 100%;
   min-width: 0;
   justify-content: flex-start;
-  gap: 7px;
-  min-height: 40.6px;
-  height: 40.6px;
+  gap: 10px;
+  padding-inline: 12px;
+  min-height: var(--alc-search-h);
+  height: var(--alc-search-h);
   margin: 0;
-  padding: 0 11px;
-  /* A true pill, not the skin's squircle: the generic .sidebar-action rule
-     below sets corner-shape, and a superellipse at a 999px radius reads as a
-     flattened box rather than a round end. Search is the one control here
-     whose ends should be circular. */
-  border-radius: var(--alc-r-pill); corner-shape: round;
-  background: rgba(255, 255, 255, 0.5);
-  box-shadow: var(--alc-halo);
-  color: var(--alc-ink-4);
-  font-size: 17.7px;
+  border-radius: 10px; corner-shape: round;
+  background: transparent;
+  box-shadow: none;
+  color: var(--alc-ink-2);
+  font-size: 14px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open:hover {
-  background: var(--alc-active);
+  background: var(--alc-row-hover);
   color: var(--alc-ink-2);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action:not(.search-open):not(.new-chat):hover {
   background: var(--alc-row-hover);
   color: var(--alc-ink-2);
 }
+/* Search opens the search panel, so it shares the navigation row treatment. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open svg {
   position: static;
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   color: var(--alc-ink-4);
   opacity: 1;
   stroke-width: 1.7;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open > span:first-of-type {
-  flex: 1;
-  font-size: 16px;
+  flex: 0 1 auto;
+  font-size: 14px;
   min-width: 0;
   overflow: hidden;
   text-align: left;
@@ -209,26 +327,25 @@
   white-space: nowrap;
 }
 
-/* The rest of the destinations: quiet rows, a notch under a thread row. */
+/* One aligned list of destinations; surfaces appear only on interaction. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action {
   order: 2;
   flex: 1 0 100%;
-  gap: 11.6px;
-  min-height: 40.6px;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: var(--alc-search-h);
   margin: 0;
-  padding: 0 14.5px 0 10.2px;
-  border-radius: 20.3px; corner-shape: var(--alc-corner);
-  color: var(--alc-ink-4);
-  font-size: 17.7px;
+  padding: 0 12px;
+  border-radius: 10px; corner-shape: round;
+  background: transparent;
+  color: var(--alc-ink-2);
+  font-size: 14px;
   font-weight: 500;
   transition: background 0.14s ease, color 0.14s ease;
 }
-:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch > .sidebar-action:nth-child(3) {
-  margin-top: 17.4px;
-}
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action svg {
-  width: 20.3px;
-  height: 20.3px;
+  width: 17px;
+  height: 17px;
   color: var(--alc-ink-4);
   opacity: 1;
   stroke-width: 1.8;
@@ -355,8 +472,77 @@
 }
 
 /* ---- the list ------------------------------------------------------------- */
+/* The collapsed rail keeps a reachable copy of Add workspace. */
+:root[data-theme="alcove"] .sidebar-workspaces-head {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding-left: 9px;
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .sidebar-workspaces-head .icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"] .sidebar-workspaces-head .icon-btn:hover {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink);
+}
+@media (min-width: 768px) {
+  :root[data-theme="alcove"] .sidebar.collapsed .sidebar-workspaces-head {
+    display: flex;
+    justify-content: center;
+    padding-left: 0;
+  }
+}
+@media (pointer: coarse) {
+  :root[data-theme="alcove"] .sidebar-workspaces-head .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
+    --alc-search-h: 44px;
+  }
+}
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-scroll {
-  padding-top: 11.6px;
+  padding-top: 4px;
+}
+/* The list dissolves at the ends it is cut off at, rather than meeting a hard
+   edge against the launch block above or the usage meters below.
+   A mask on the scroller, NOT a blurred strip over it: a backdrop-filter band
+   paints a smeared copy of the row on top of the sharp one, which reads as
+   double vision rather than depth. A mask fades the content itself, so a row
+   on its way out of view simply thins to nothing.
+   The two ends are gated on classes Sidebar.tsx sets from the scroll
+   position, so an unscrolled list does not dim its own first row. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-scroll {
+  --alc-fade-top: 0px;
+  --alc-fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--alc-fade-top),
+    #000 calc(100% - var(--alc-fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--alc-fade-top),
+    #000 calc(100% - var(--alc-fade-bottom)),
+    transparent 100%
+  );
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-scroll.has-above {
+  --alc-fade-top: 26px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-scroll.has-below {
+  --alc-fade-bottom: 30px;
 }
 @media (min-width: 768px) {
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.layout-rail .sidebar-scroll {
@@ -397,15 +583,15 @@
   font-weight: 500;
 }
 
-/* Thread rows: 15px mark, 13px/500 grey title, white pill when open. */
+/* Readable titles lead; provider marks and timestamps stay secondary. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row {
-  gap: 8.7px;
-  min-height: 43.5px;
+  gap: 10px;
+  min-height: 44px;
   margin: 2px 0 0;
   padding: 0 14.5px 0 8.7px;
-  border-radius: 24.6px; corner-shape: var(--alc-corner);
+  border-radius: 15px; corner-shape: var(--alc-corner);
   background: transparent;
-  color: var(--alc-ink-4);
+  color: var(--alc-ink-2);
   transition: background 0.16s ease, color 0.16s ease, opacity 0.16s ease;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row:hover {
@@ -423,9 +609,9 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-title {
   color: inherit;
-  font-size: 18.9px;
+  font-size: 16px;
   font-weight: 500;
-  line-height: 1.1;
+  line-height: 1.25;
   letter-spacing: -0.005em;
   text-overflow: clip;
   -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 16px), transparent);
@@ -440,19 +626,23 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-time {
   color: var(--alc-ink-4);
-  font-size: 12.2px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 400;
   letter-spacing: 0;
   white-space: nowrap;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-slot {
-  width: 23.2px;
-  height: 23.2px;
+  width: 20px;
+  height: 20px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-visual > svg,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .agent-mark-visual > .mark {
-  width: 21.8px;
-  height: 21.8px;
+  width: 18px;
+  height: 18px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row:not(.active):not(.has-attention) .agent-mark-slot:not(.generating):not(.transitioning) .agent-mark-visual {
+  opacity: 0.72;
+  filter: saturate(0.65);
 }
 /* Provider tints from the mockups: codex periwinkle, claude terracotta. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .mark-codex { color: var(--alc-codex); }
@@ -523,6 +713,34 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf svg {
   width: 15.9px;
   height: 15.9px;
+}
+/* The settled shelf is an accordion header, like .project-head above it, not
+   a link like "show more" - so it takes that row's geometry and type instead
+   of its own smaller set. Same height, radius, left edge and hover as the
+   rows it sits among; the folder glyph goes, since the chevron already says
+   the thing opens and nothing else in this sidebar carries one. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf {
+  gap: 7.2px;
+  min-height: 37.7px;
+  margin-top: 8.7px;
+  padding: 0 14.5px 0 8.7px;
+  border-radius: 18.8px; corner-shape: var(--alc-corner);
+  color: #777;
+  font-size: 15.2px;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf:hover {
+  background: var(--alc-row-hover);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf-icon {
+  display: none;
+}
+/* "settled" is the app's word for the state; as a header it reads as a title. */
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf-label {
+  text-transform: capitalize;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf .row-chevron {
+  color: var(--alc-ink-5);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .settled-shelf-count,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .load-more-count {
@@ -750,28 +968,35 @@
     display: none;
   }
 
-  /* The re-open handle docks at the top of the rail. */
+  /* The re-open handle docks at the top of the rail. It is the collapse
+     button in another place, not another button: same --alc-sb-tool box, the
+     same bare-until-hover plate and the same 26px mark (see
+     .sidebar-brand .icon-btn). It used to shrink to a 39.1px disc with a
+     20.3px glyph, which read as the corner swapping its tools out whenever
+     the sidebar closed. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal {
     top: 31.9px;
     left: 31.9px;
-    width: 39.1px;
-    height: 39.1px;
+    width: var(--alc-sb-tool);
+    height: var(--alc-sb-tool);
+    min-height: var(--alc-sb-tool);
     border: 0;
     border-radius: 50%;
-    background: var(--alc-hover);
-    box-shadow: var(--alc-halo);
+    background: transparent;
+    box-shadow: none;
     color: var(--alc-ink-4);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     transition: background 0.14s ease, color 0.14s ease;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal:hover {
-    background: var(--alc-active);
+    background: var(--alc-row-hover);
     color: var(--alc-ink-2);
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-reveal svg {
-    width: 20.3px;
-    height: 20.3px;
+    width: 26px;
+    height: 26px;
+    stroke-width: 1.7;
   }
   /* The header no longer has to clear a floating handle. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .app:has(.sidebar.collapsed) .thread-head {
@@ -898,8 +1123,8 @@
 
 /* ---- section / accordion headers ---------------------------------------- */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head {
-  min-height: 37.7px;
-  margin-top: 11.6px;
+  min-height: 34px;
+  margin-top: 8px;
   border-radius: 18.8px; corner-shape: var(--alc-corner);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-toggle {
@@ -912,9 +1137,9 @@
   color: var(--alc-ink-5);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-name {
-  color: #777;
-  font-size: 15.2px;
-  font-weight: 500;
+  color: var(--alc-ink-3);
+  font-size: 13px;
+  font-weight: 600;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .project-head:hover .project-name {
   color: var(--alc-ink-2);
@@ -1004,9 +1229,12 @@
    The ref's usage menu: a frosted dropdown that springs open, heading with the
    provider mark, thin rounded bars in the provider tint. */
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop {
-  padding: 17.4px 20.3px;
+  padding: 15px 18px;
   border: 0;
-  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  /* 38px, matching .dropdown-menu.glass-surface — the model settings menu it
+     sits beside. --alc-r-menu (22px) read as a tighter, different kind of
+     surface next to it. */
+  border-radius: 38px; corner-shape: var(--alc-corner);
   background: var(--alc-glass-strong);
   box-shadow: var(--alc-rim), var(--alc-float);
   -webkit-backdrop-filter: var(--alc-blur);
@@ -1015,28 +1243,47 @@
   transform-origin: bottom center;
   animation: alc-pop-in 250ms var(--alc-spring) both;
 }
+/* The tail, pointing back down at the chips. The panel is anchored to that
+   row and sized to it, so its own centre is the trigger's.
+
+   It carries the panel's shadow, unlike the other tails: this popover opens
+   over the white sidebar card rather than over the room, and white-on-white
+   is what separates the panel from the card there too — a bare #fff diamond
+   simply does not exist on that background. */
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .dropdown-tail {
+  bottom: -7px;
+  left: 50%;
+  margin-left: -7.5px;
+  background: var(--alc-glass-strong);
+  /* This one points down. */
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  /* drop-shadow, not box-shadow: clip-path cuts a box-shadow away with the
+     half it removes, and this tail needs an edge — it opens over the white
+     sidebar card, where the panel itself is only legible by its shadow. */
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.06));
+}
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider + .usage-provider,
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-pop-foot {
   border-top-color: rgba(84, 84, 84, 0.08);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider-name {
-  gap: 10.2px;
+  gap: 8.5px;
   color: var(--alc-ink);
-  font-size: 18.3px;
+  font-size: 15px;
   font-weight: 600;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-provider-name svg {
-  width: 21.8px;
-  height: 21.8px;
+  width: 18px;
+  height: 18px;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .mark-codex { color: var(--alc-codex); }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .mark-claude { color: var(--alc-claude); }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-plan {
-  padding: 1px 10.2px;
+  padding: 1px 8.5px;
   background: rgba(84, 84, 84, 0.07);
   color: var(--alc-ink-3);
   font-family: var(--font-ui);
-  font-size: 12.2px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -1048,12 +1295,12 @@
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-label {
   color: var(--alc-ink-3);
-  font-size: 15.9px;
+  font-size: 13px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-pct {
   color: var(--alc-ink);
-  font-size: 15.9px;
+  font-size: 13px;
   font-weight: 600;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-reset,
@@ -1061,7 +1308,22 @@
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-age,
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-error {
   color: var(--alc-ink-4);
-  font-size: 14px;
+  font-size: 11.5px;
+}
+
+/* The reset time used to ride a line of its own under every bar, so a popover
+   with three windows read as a wall of sentences. It joins its own row
+   instead, right of the percentage. ElevenLabs' absolute credit readout stays
+   positioned below, so that row keeps the extra bottom padding. */
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row {
+  grid-template-columns: 46px 1fr auto auto;
+  gap: 9px;
+  padding: 3px 0;
+}
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row:has(.usage-row-count) { padding-bottom: 14px; }
+:root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-row-reset {
+  position: static;
+  justify-self: end;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-bar {
   height: 7.2px;
@@ -1084,7 +1346,7 @@
   background: var(--alc-hover);
   box-shadow: var(--alc-halo);
   color: var(--alc-ink-3);
-  font-size: 14.6px;
+  font-size: 13px;
   font-weight: 500;
 }
 :root[data-theme="alcove"]:not([data-skin-off~="usage"]) .usage-pop .usage-refresh:hover {
@@ -1105,26 +1367,31 @@
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar::before {
     display: none;
   }
-  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-brand {
-    top: calc(20.3px + env(safe-area-inset-top, 0px));
+  /* Phone: a bigger touch target for the corner tools, and the band's cost
+     grows with it — --alc-sb-top is what pushes the first row clear, so the
+     safe-area inset belongs in it rather than on each row. */
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar {
+    --alc-sb-tool: 44px;
+    --alc-search-h: 44px;
+    --alc-sb-top: calc(
+      16px + env(safe-area-inset-top, 0px) + var(--alc-sb-tool) + 10px
+    );
   }
-  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-launch,
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-brand {
+    top: calc(16px + env(safe-area-inset-top, 0px));
+  }
+  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-launch {
+    padding-inline: 12px;
+  }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-bar {
-    padding-top: calc(20.3px + env(safe-area-inset-top, 0px));
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
     padding-right: 11.6px;
   }
-  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .sidebar-brand .icon-btn,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-tool,
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .stream-bar .stream-new {
     width: 49.3px;
     height: 49.3px;
-  }
-  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.search-open {
-    height: 49.3px;
-  }
-  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-launch .sidebar-action.new-chat {
-    margin-right: 116px;
   }
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .stream-bar {
     padding-right: 127.6px;
@@ -1134,15 +1401,10 @@
   }
 }
 
-/* ---- no collapse control ---------------------------------------------------
-   The Alcove sidebar does not collapse, so the control for it goes. Desktop
-   only, deliberately: on a phone the drawer is full width with no backdrop to
-   tap, and this button is the only way back out of it — see the note on it in
-   Sidebar.tsx. Hidden rather than removed from the markup, so every other skin
-   keeps its collapse control. */
-@media (min-width: 768px) {
-  :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar-brand .sidebar-collapse-btn { display: none; }
-}
+/* The collapse control is the left end of the corner band — see .sidebar-brand
+   above. It was hidden here for a while, on the reading that an Alcove sidebar
+   does not collapse; it does, and on a phone this button is the only way back
+   out of the full-width drawer (see the note on it in Sidebar.tsx). */
 
 /* The sidebar's copy of the same arrival — see the note in thread.css. */
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar .thread-row-title {

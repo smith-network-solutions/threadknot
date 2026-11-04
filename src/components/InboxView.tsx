@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Notification03Icon } from "@hugeicons/core-free-icons";
 import type { InboxEntry } from "../lib/protocol";
 import { ageLabel, TASK_REVIEW_ID } from "../lib/bosun";
 import { useStore } from "../state/store";
+import { Dropdown } from "./alcove/Dropdown";
+import { Tooltip } from "./alcove/Tooltip";
 import { CheckIcon, PanelLeftIcon, XIcon } from "./icons";
 import "../styles/inbox.css";
 
@@ -9,27 +13,6 @@ import "../styles/inbox.css";
  *  the task page and the review use, so every path that closes those closes
  *  this too). */
 export const INBOX_ID = "__inbox__";
-
-const FROM_INBOX_KEY = "threadknot.inbox.openedThread";
-
-/** The thread most recently opened from the inbox, so its header can offer
- *  the way back. */
-export function threadOpenedFromInbox(): string | null {
-  try {
-    return sessionStorage.getItem(FROM_INBOX_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function rememberOpenedFromInbox(threadId: string | null) {
-  try {
-    if (threadId) sessionStorage.setItem(FROM_INBOX_KEY, threadId);
-    else sessionStorage.removeItem(FROM_INBOX_KEY);
-  } catch {
-    // ignore
-  }
-}
 
 /** Notification copy is the agent's markdown; the list shows it as plain
  *  text, so drop the emphasis, code and heading marks. */
@@ -90,7 +73,6 @@ export function InboxView() {
 
   function open(g: InboxGroup) {
     if (g.threadId) {
-      rememberOpenedFromInbox(g.threadId);
       // selectThread marks the thread's notifications read.
       void actions.selectThread(g.threadId);
     } else {
@@ -205,17 +187,99 @@ export function InboxView() {
   );
 }
 
-/** "← Notifications" for a chat opened from the inbox. */
-export function BackToInbox({ threadId }: { threadId: string }) {
-  const { actions } = useStore();
-  if (threadOpenedFromInbox() !== threadId) return null;
+/** The Alcove skin's notifications control: the bell in the sidebar's top-right
+ *  corner, and the glass popover it opens — the same material and motion as the
+ *  model picker and the usage meter, so the three corners of the app that drop
+ *  a panel all drop the same one.
+ *
+ *  Deliberately a summary, not a second inbox: the newest groups, read or open
+ *  in one click. The page (`InboxView`) is still there, reachable the way it
+ *  always was, and stays the place that can filter and work a backlog. */
+export function InboxMenu() {
+  const { state, actions } = useStore();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const inbox = state.inbox;
+  const unread = inbox?.unread ?? 0;
+  // Enough to cover a burst without turning the popover into a scroll pit; the
+  // page is one row away for anything past this.
+  const groups = useMemo(() => groupEntries(inbox?.entries ?? []).slice(0, 8), [inbox]);
+
+  function open(g: InboxGroup) {
+    if (g.threadId) {
+      void actions.selectThread(g.threadId);
+    } else {
+      void actions.markInboxRead({ ids: g.entries.map((e) => e.id) });
+      actions.openTask(TASK_REVIEW_ID);
+    }
+  }
+
   return (
-    <button
-      type="button"
-      className="back-to-inbox"
-      onClick={() => actions.openTask(INBOX_ID)}
+    <Dropdown
+      className="inbox-menu-root"
+      menuClassName="inbox-menu"
+      placement="bottom-right"
+      offset={2}
+      onOpenChange={setMenuOpen}
+      trigger={
+        <Tooltip content="Notifications" placement="bottom" disabled={menuOpen}>
+          <button
+            type="button"
+            className={`icon-btn sidebar-inbox-btn${unread > 0 ? " has-unread" : ""}`}
+            aria-label={unread > 0 ? `Notifications — ${unread} unread` : "Notifications"}
+            aria-haspopup="menu"
+          >
+            <HugeiconsIcon icon={Notification03Icon} size={26} strokeWidth={1.7} />
+            {unread > 0 && (
+              <span className="inbox-btn-count">{unread > 99 ? "99+" : unread}</span>
+            )}
+          </button>
+        </Tooltip>
+      }
     >
-      ← Notifications
-    </button>
+      <div className="inbox-menu__head">
+        <span className="inbox-menu__title">Notifications</span>
+        {unread > 0 && (
+          <button
+            type="button"
+            className="inbox-menu__readall"
+            // The menu closes on any click inside it (see Dropdown). Reading
+            // everything is a thing you do and then keep looking, so this one
+            // keeps the panel open.
+            onClick={(e) => {
+              e.stopPropagation();
+              void actions.markInboxRead({ all: true });
+            }}
+          >
+            Mark all read
+          </button>
+        )}
+      </div>
+      <div className="inbox-menu__list">
+        {inbox === null ? (
+          <div className="inbox-menu__empty">Loading…</div>
+        ) : groups.length === 0 ? (
+          <div className="inbox-menu__empty">All caught up.</div>
+        ) : (
+          groups.map((g) => {
+            const e = g.latest;
+            return (
+              <button
+                key={g.key}
+                type="button"
+                className={`inbox-menu__row${g.unread > 0 ? " unread" : ""}`}
+                onClick={() => open(g)}
+              >
+                <span className="inbox-menu__top">
+                  <span className="inbox-menu__kind">{KIND_LABEL[e.kind] ?? e.kind}</span>
+                  <span className="inbox-menu__when">{ageLabel(e.at)}</span>
+                </span>
+                <span className="inbox-menu__name">{plain(e.threadTitle || e.title)}</span>
+                {e.body && <span className="inbox-menu__body">{plain(e.body)}</span>}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </Dropdown>
   );
 }

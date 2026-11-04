@@ -443,7 +443,7 @@
 :root[data-theme="alcove"] .pill-opt:hover:not(:disabled),
 :root[data-theme="alcove"] .agent-option:hover,
 :root[data-theme="alcove"] .build-workspace-menu button:hover {
-  background: var(--alc-hover);
+  background: var(--alc-menu-hover);
   color: var(--alc-ink);
 }
 :root[data-theme="alcove"] .pill-opt.on,
@@ -636,7 +636,7 @@
   color: var(--alc-ink-2);
   transition: background 150ms ease;
 }
-:root[data-theme="alcove"] .slash-option:hover { background: var(--alc-hover); }
+:root[data-theme="alcove"] .slash-option:hover { background: var(--alc-menu-hover); }
 :root[data-theme="alcove"] .slash-option.selected {
   background: #ffffff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);

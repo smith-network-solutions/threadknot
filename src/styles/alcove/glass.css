@@ -184,41 +184,65 @@
   pointer-events: none;
   white-space: nowrap;
 }
+/* A real triangle, not a rotated square. The square's 15px side carries a
+   21px diagonal, so its two side corners crossed the pill's rounded end and
+   stuck out past the curve - the notch you could see where the tail met the
+   bubble. A clip-path wedge has only the three points it needs, and overlaps
+   the bubble by 1px so the join has no seam. */
 :root[data-theme="alcove"] .tooltip-tail {
   position: absolute;
-  width: 15px;
-  height: 15px;
-  border-radius: 1px;
+  width: 8px;
+  height: 13px;
   background: #fff;
-  corner-shape: superellipse(2);
-  rotate: 45deg;
 }
 :root[data-theme="alcove"] .tooltip-layer[data-placement="bottom"] {
   translate: -50% 0;
   transform-origin: top center;
 }
-:root[data-theme="alcove"] .tooltip-layer[data-placement="bottom"] .tooltip-tail { top: -6px; left: calc(50% - 6px); }
+:root[data-theme="alcove"] .tooltip-layer[data-placement="bottom"] .tooltip-tail {
+  top: -7px;
+  left: calc(50% - 6.5px);
+  width: 13px;
+  height: 8px;
+  clip-path: polygon(0 100%, 100% 100%, 50% 0);
+}
 :root[data-theme="alcove"] .tooltip-layer[data-placement="top"] {
   translate: -50% -100%;
   transform-origin: bottom center;
 }
-:root[data-theme="alcove"] .tooltip-layer[data-placement="top"] .tooltip-tail { bottom: -6px; left: calc(50% - 6px); }
+:root[data-theme="alcove"] .tooltip-layer[data-placement="top"] .tooltip-tail {
+  bottom: -7px;
+  left: calc(50% - 6.5px);
+  width: 13px;
+  height: 8px;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
 :root[data-theme="alcove"] .tooltip-layer[data-placement="right"] {
   translate: 0 -50%;
   transform-origin: left center;
 }
-:root[data-theme="alcove"] .tooltip-layer[data-placement="right"] .tooltip-tail { top: calc(50% - 6px); left: -6px; }
+:root[data-theme="alcove"] .tooltip-layer[data-placement="right"] .tooltip-tail {
+  top: calc(50% - 6.5px);
+  left: -7px;
+  clip-path: polygon(100% 0, 100% 100%, 0 50%);
+}
 :root[data-theme="alcove"] .tooltip-layer[data-placement="left"] {
   translate: -100% -50%;
   transform-origin: right center;
 }
-:root[data-theme="alcove"] .tooltip-layer[data-placement="left"] .tooltip-tail { top: calc(50% - 6px); right: -6px; }
+:root[data-theme="alcove"] .tooltip-layer[data-placement="left"] .tooltip-tail {
+  top: calc(50% - 6.5px);
+  right: -7px;
+  clip-path: polygon(0 0, 0 100%, 100% 50%);
+}
 
 /* ---- popover -------------------------------------------------------------
    Positioned in fixed viewport coordinates by Dropdown.tsx; the rules here are
    only appearance, geometry and the open/close motion. */
 :root[data-theme="alcove"] .dropdown { position: relative; display: inline-flex; }
 :root[data-theme="alcove"] .dropdown-trigger { display: inline-flex; }
+:root[data-theme="alcove"] .dropdown.is-present > .dropdown-trigger { opacity: 0; }
+:root[data-theme="alcove"] .dropdown-content { display: flow-root; }
 :root[data-theme="alcove"] .dropdown-menu.glass-surface {
   z-index: 900;
   width: 298px;
@@ -238,17 +262,48 @@
   color: var(--alc-ink-4);
   -webkit-backdrop-filter: blur(14.4px) saturate(1) brightness(1.03);
   backdrop-filter: blur(14.4px) saturate(1) brightness(1.03);
-  animation: dropdown-in 250ms var(--alc-spring) both;
+  /* Geometry and the button/content crossfade are driven together by Dropdown. */
+  animation: none;
+  transition: none;
+  max-width: calc(100vw - 20px);
+  box-sizing: border-box;
 }
+:root[data-theme="alcove"] .dropdown-menu[data-morphing] {
+  overflow: clip;
+  min-width: 0;
+  min-height: 0;
+  will-change: width, height, left, top, border-radius;
+}
+:root[data-theme="alcove"] .dropdown-menu[data-morphing] .dropdown-tail { visibility: hidden; }
 :root[data-theme="alcove"] .dropdown-tail {
   position: absolute;
   z-index: -1;
   width: 15px;
   height: 15px;
   border-radius: 1px;
+  /* Opaque, not the panel's own translucent fill. Tried that: the tail hangs
+     over the room while the panel is usually over something paler, so the
+     same glass mixes to a different value either side of the join and the
+     seam the tail is meant to hide becomes visible. */
   background: #fff;
   corner-shape: superellipse(2);
   rotate: 45deg;
+  /* Only the half that sticks out is drawn. A whole diamond is a white shape
+     laid over a panel that is 78% white, so its buried half showed through as
+     a brighter wedge and the tail read as a separate object sitting on the
+     popover rather than part of its edge.
+
+     The polygon is in the square's own coordinates, before the rotation: the
+     local top-left corner becomes the diamond's point, so the triangle
+     top-left/top-right/bottom-left is its upper half, with the cut running
+     exactly along the square's centre line — which `top: -7px` puts half a
+     pixel inside the panel, deliberately: a hairline of overlap is invisible
+     where a hairline of gap is not. */
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+/* Tails that hang off the bottom of a panel keep their lower half instead. */
+:root[data-theme="alcove"] .dropdown-menu[data-tail-position^="bottom"] .dropdown-tail {
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
 }
 /* The menu is portalled and placed in fixed coordinates, so only the
    transform-origin and the tail depend on the placement. */
@@ -268,15 +323,6 @@
 :root[data-theme="alcove"] .dropdown-menu[data-tail-position="bottom-right"] .dropdown-tail { right: 25px; bottom: -7px; }
 :root[data-theme="alcove"] .dropdown-menu[data-state="closing"] {
   pointer-events: none;
-  animation: dropdown-out 250ms cubic-bezier(0.4, 0, 0.8, 0.2) both;
-}
-@keyframes dropdown-in {
-  from { opacity: 0; filter: blur(24px); scale: 0.86; }
-  to { opacity: 1; filter: blur(0); scale: 1; }
-}
-@keyframes dropdown-out {
-  from { opacity: 1; filter: blur(0); scale: 1; }
-  to { opacity: 0; filter: blur(24px); scale: 0.86; }
 }
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="alcove"] .dropdown-menu.glass-surface,

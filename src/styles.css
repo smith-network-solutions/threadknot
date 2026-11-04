@@ -1152,6 +1152,18 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 }
 .project-rail::-webkit-scrollbar { display: none; }
 
+/* The project tiles are wrapped in the Alcove tooltip trigger, which is a real
+   span (it measures itself to aim the bubble), so it has to carry the layout
+   role the tile had: a non-shrinking, full-width column item. Without `flex:
+   none` the tiles compress instead of scrolling once the rail overflows. The
+   wrapper is present on every skin — only Alcove mounts the layer that draws
+   the bubble — so this lives here rather than in the skin. */
+.project-rail > .tooltip {
+  display: block;
+  flex: none;
+  width: 100%;
+}
+
 .rail-item {
   position: relative;
   flex: none;
@@ -5230,10 +5242,12 @@ span.title-agent-mark { width: 16px; height: 16px; }
 .feed-scroll.is-user-scrolling .tool-spin {
   animation-play-state: paused !important;
 }
+/* Cards only. An attached image is NOT in this list on purpose: its lift is a
+   small 14px blur, cheap enough to paint through a gesture, and dropping it
+   read as the picture flattening every time the feed moved. */
 .feed-scroll.is-user-scrolling .artifact-card,
 .feed-scroll.is-user-scrolling .approval-card,
-.feed-scroll.is-user-scrolling .question-card,
-.feed-scroll.is-user-scrolling .msg-user-image {
+.feed-scroll.is-user-scrolling .question-card {
   box-shadow: none !important;
 }
 /* Light mode keeps the near-white pane; only whisper the gradient over it. */
@@ -5969,7 +5983,10 @@ span.title-agent-mark { width: 16px; height: 16px; }
 
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
-.md.md-streaming { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Live output is parsed markdown now, so it must not keep the raw text's
+   whitespace — that would add the source's line breaks on top of the blocks
+   the parser already made. Long unbroken tokens still need to wrap. */
+.md.md-streaming { overflow-wrap: anywhere; }
 .md p { margin: 0.55em 0; }
 .md h1, .md h2, .md h3, .md h4 {
   font-weight: 700;
@@ -10177,8 +10194,13 @@ span.title-agent-mark { width: 16px; height: 16px; }
   top: auto;
   left: auto;
   z-index: 120;
-  overflow-y: auto;
+  /* The panel itself must not clip: the foot stays put while the providers
+     scroll, and a skin may hang a tail off the panel's edge. */
+  overflow: visible;
 }
+/* The scrolling part. Its cap is written inline from the room above the
+   trigger (see UsageMeter.tsx). */
+.usage-pop-list { overflow-y: auto; }
 .usage-provider { padding: 6px 0; }
 .usage-provider + .usage-provider { border-top: 1px solid var(--line); }
 .usage-provider-head {
@@ -11686,6 +11708,25 @@ button.task-pill:hover:not(:disabled) { color: var(--text); border-color: var(--
 }
 
 /* ---- context menu (right-click a project row) ---------------------------- */
+
+/* Leaving. The context menu and the usage popover hold themselves in the DOM
+   for the length of this animation (useDismissAnimation) instead of vanishing
+   on the click, which is what the Alcove dropdowns already did and these two
+   did not.
+
+   Plain and short on purpose: this is the floor every skin gets, and skins
+   override it. It also guarantees the `animationend` that unmounts them —
+   without an animation here, nothing would fire and they would wait out the
+   hook's fallback timer instead. */
+.ctx-menu[data-state="closing"],
+.usage-pop[data-state="closing"] {
+  pointer-events: none;
+  animation: popover-out 120ms ease both;
+}
+@keyframes popover-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
 
 .ctx-menu {
   position: fixed;
@@ -15179,24 +15220,52 @@ html.ctx-menu-open .sidebar-scroll::-webkit-scrollbar-thumb {
   color: var(--accent, #d7a24b);
 }
 
-/* Copy on your own bubble, top-right, on hover (always shown on touch). */
-.msg-user { position: relative; padding-right: 34px; }
-.msg-user-copy {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: 999px;
-  color: var(--accent-ink);
-  background: color-mix(in srgb, var(--brass) 85%, #000);
-  opacity: 0;
+/* Kept relative: the bubble is still the positioning context for what sits
+   inside it. The 34px of right padding that used to reserve room for a hover
+   copy button went with the button — without it the text sat off-centre, and
+   a one-line bubble is a pill now, where the lopsidedness showed plainly. */
+.msg-user { position: relative; }
+
+/* The path and its "copied" twin share one line: one blurs out as the other
+   blurs in, so the swap reads as the same object changing its mind rather
+   than two strings trading places. See ProjectPath in ThreadView.tsx. */
+.thread-project-path { position: relative; }
+.pp-label {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 170ms ease, filter 260ms var(--alc-ease, ease);
 }
-.msg-user:hover .msg-user-copy { opacity: 1; }
-.msg-user-copy:hover { background: color-mix(in srgb, var(--brass) 70%, #000); color: var(--accent-ink); }
-@media (hover: none) {
-  .msg-user-copy { opacity: 0.85; }
+.pp-copied {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.thread-project-path .pp-copied,
+.thread-project-path.copied .pp-path {
+  opacity: 0;
+  filter: blur(5px);
+}
+.thread-project-path.copied .pp-copied {
+  opacity: 1;
+  filter: blur(0);
+}
+/* What the width is measured from: the label the button is about to show,
+   free of the button's own max-width, out of flow and never announced. */
+.pp-sizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pp-label { transition-duration: 1ms; }
 }
 
 /* The header path is a copy button; keep it looking like the path. */

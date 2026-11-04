@@ -1006,7 +1006,6 @@ function UserMessage({
           <div className="msg-user-text" ref={textRef}>
             <Markdown text={messageText} breaks onOpenFile={render.onOpenFile} />
           </div>
-          <CopyButton value={messageText} label="Copy message" className="copy-btn msg-user-copy" />
         </div>
       )}
       {render.http && threadId && images.length > 0 && (

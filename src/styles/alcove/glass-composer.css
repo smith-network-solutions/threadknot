@@ -507,7 +507,7 @@
   cursor: pointer;
   transition: background 140ms ease;
 }
-:root[data-theme="alcove"] .attachment-menu__option:hover { background: rgba(255, 255, 255, 0.74); }
+:root[data-theme="alcove"] .attachment-menu__option:hover { background: var(--alc-menu-hover); }
 :root[data-theme="alcove"] .attachment-menu__option:disabled { opacity: 0.4; cursor: default; }
 :root[data-theme="alcove"] .attachment-menu__option:disabled:hover { background: transparent; }
 :root[data-theme="alcove"] .attachment-menu__icon { display: grid; width: 29px; height: 29px; place-items: center; }
@@ -566,7 +566,7 @@
 :root[data-theme="alcove"] .model-menu__item > span:first-of-type { flex: 1; min-width: 0; }
 :root[data-theme="alcove"] .model-menu__item:hover,
 :root[data-theme="alcove"] .model-menu__item.is-selected {
-  background: rgba(84, 84, 84, 0.07);
+  background: var(--alc-menu-hover);
   color: var(--alc-ink);
 }
 :root[data-theme="alcove"] .model-menu__item.is-unavailable { opacity: 0.4; }
@@ -653,23 +653,27 @@
 }
 :root[data-theme="alcove"] .model-menu__swap.is-swapping { opacity: 0; transform: scale(0.96); }
 
-/* The flyout. It opens to the left of the menu, or to the right when the menu
-   is already near the viewport edge. */
+/* The flyout. Portalled to <body> by AlcoveComposer and placed in viewport
+   coordinates from its row's box, including the flip when it would open off
+   the edge. It has to be out of the menu to be glass at all: the menu is a
+   .glass-surface, which makes it a backdrop root, and a backdrop-filter
+   inside one has only that menu's own paint to sample - this panel was the
+   one surface in the skin that never frosted. */
 :root[data-theme="alcove"] .model-menu__row-panel,
 :root[data-theme="alcove"] .model-menu__effort-panel {
-  position: absolute;
-  z-index: 2;
-  bottom: calc(var(--model-menu-vpad) * -1);
-  left: calc(100% + 12px);
+  position: fixed;
+  /* Above the menu it belongs to (.dropdown-menu is 900). */
+  z-index: 950;
   display: grid;
   gap: 2px;
   padding: 8px;
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.94);
+  /* Lighter than the 0.94 it used to need: with the blur actually working,
+     an almost-opaque fill just hides it. Same recipe as the menu. */
+  background: rgba(255, 255, 255, 0.72);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.7);
-  /* Unsaturated like the menu it flies out of; its fill is already 0.94. */
-  -webkit-backdrop-filter: blur(21.6px) saturate(1) brightness(1.04);
-  backdrop-filter: blur(21.6px) saturate(1) brightness(1.04);
+  -webkit-backdrop-filter: blur(21.6px) saturate(1.1) brightness(1.04);
+  backdrop-filter: blur(21.6px) saturate(1.1) brightness(1.04);
   opacity: 0;
   pointer-events: none;
   transform: translateX(-5px) scale(0.96);
@@ -683,10 +687,8 @@
   padding: 19px 20px 20px;
   border-radius: 34px;
 }
-:root[data-theme="alcove"] .model-menu__permission:hover .model-menu__row-panel,
-:root[data-theme="alcove"] .model-menu__permission:focus-within .model-menu__row-panel,
-:root[data-theme="alcove"] .model-menu__effort:hover .model-menu__effort-panel,
-:root[data-theme="alcove"] .model-menu__effort:focus-within .model-menu__effort-panel {
+:root[data-theme="alcove"] .model-menu__row-panel.is-open,
+:root[data-theme="alcove"] .model-menu__effort-panel.is-open {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0) scale(1);
@@ -708,7 +710,7 @@
 }
 :root[data-theme="alcove"] .model-menu__permission-option:hover,
 :root[data-theme="alcove"] .model-menu__permission-option.is-selected {
-  background: rgba(84, 84, 84, 0.07);
+  background: var(--alc-menu-hover);
   color: var(--alc-ink);
 }
 
@@ -778,21 +780,10 @@
   transform: translate(-50%, -50%);
   transition: left 180ms var(--alc-ease);
 }
-/* On narrow windows the flyouts would open off-screen to the left. */
+/* The side the flyout opens on is measured against the real viewport in
+   AlcoveComposer now, so there is no breakpoint guess here any more. The
+   hover bridge still flips, since that is the row's own pseudo-element. */
 @media (max-width: 1000px) {
   :root[data-theme="alcove"] .model-menu__permission::after,
   :root[data-theme="alcove"] .model-menu__effort::after { left: auto; right: -12px; }
-  :root[data-theme="alcove"] .model-menu__row-panel,
-  :root[data-theme="alcove"] .model-menu__effort-panel {
-    left: calc(100% + 12px);
-    right: auto;
-    transform: translateX(-5px) scale(0.96);
-    transform-origin: left bottom;
-  }
-  :root[data-theme="alcove"] .model-menu__permission:hover .model-menu__row-panel,
-  :root[data-theme="alcove"] .model-menu__permission:focus-within .model-menu__row-panel,
-  :root[data-theme="alcove"] .model-menu__effort:hover .model-menu__effort-panel,
-  :root[data-theme="alcove"] .model-menu__effort:focus-within .model-menu__effort-panel {
-    transform: translateX(0) scale(1);
-  }
 }

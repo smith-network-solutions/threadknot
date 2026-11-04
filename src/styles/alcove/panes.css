@@ -1131,7 +1131,7 @@
 :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-opt:hover,
 :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .term-ctx button:hover:not(:disabled),
 :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .browser-more-action:hover {
-  background: rgba(84, 84, 84, 0.07);
+  background: var(--alc-menu-hover);
   color: var(--alc-ink);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="workspace"]) .git-branch-opt.on,

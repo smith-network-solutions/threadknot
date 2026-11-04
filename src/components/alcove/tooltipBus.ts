@@ -29,6 +29,28 @@ type Listener = (request: TooltipRequest | null) => void;
 let current: TooltipRequest | null = null;
 const listeners = new Set<Listener>();
 
+/** How long the bubble keeps the stage after its trigger lets go, waiting to
+ *  see whether the pointer is simply on its way to a neighbour.
+ *
+ *  Without it the hand-off is decided by event order, which is decided by
+ *  whether the two controls happen to touch. Controls sharing an edge fire
+ *  `pointerenter` on the next one before `pointerleave` on the last, so the
+ *  bubble is still up and the layer slides it across. Controls with a gap
+ *  between them — the rail tiles, anything across the header — put the leave
+ *  first, which cleared the bubble, so the next hover came up as a fresh
+ *  pop-in instead. Same gesture, two different motions, depending on spacing.
+ *
+ *  Short enough to read as "the tooltip is still up", long enough to cover
+ *  crossing a gap at any speed a pointer realistically moves. */
+const HANDOVER_MS = 90;
+let pendingHide: ReturnType<typeof setTimeout> | undefined;
+
+function cancelPendingHide() {
+  if (pendingHide === undefined) return;
+  clearTimeout(pendingHide);
+  pendingHide = undefined;
+}
+
 function publish() {
   for (const listener of listeners) listener(current);
 }
@@ -51,16 +73,26 @@ function same(a: TooltipRequest | null, b: TooltipRequest): boolean {
 }
 
 export function showTooltip(request: TooltipRequest): void {
+  // Claims the bubble back from a hand-off in flight, which is what turns the
+  // next hover into a slide rather than a pop-in. Before the `same` check:
+  // re-entering the control the pointer just left publishes nothing new, but
+  // it still has to call off that control's own pending hide.
+  cancelPendingHide();
   if (same(current, request)) return;
   current = request;
   publish();
 }
 
-/** Hide, unless another trigger has already taken the bubble over. */
+/** Release the bubble, unless another trigger has already taken it over.
+ *  It does not come down immediately — see HANDOVER_MS. */
 export function hideTooltip(owner: object): void {
   if (current?.owner !== owner) return;
-  current = null;
-  publish();
+  cancelPendingHide();
+  pendingHide = setTimeout(() => {
+    pendingHide = undefined;
+    current = null;
+    publish();
+  }, HANDOVER_MS);
 }
 
 export function subscribeTooltip(listener: Listener): () => void {

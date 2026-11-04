@@ -29,6 +29,8 @@ import { initZoomHotkeys } from "./lib/hotwheel";
 import { installExternalLinkHandler } from "./lib/links";
 import { VoiceSession } from "./components/VoiceSession";
 import { LinkOpenModal } from "./components/LinkOpenModal";
+import { NotebookPenIcon } from "./components/icons";
+import { Tooltip } from "./components/alcove/Tooltip";
 import { getSidebarPrefs } from "./lib/appearance";
 import type {
   InboxEntry,
@@ -3020,6 +3022,33 @@ export default function App() {
           />
         )}
         <div className="work-pane">
+          {/* New chat sits beside the sidebar rather than inside it: the rail
+              is a list of places, this is an action, and the rail is also the
+              one thing that collapses away. The sidebar still owns the
+              workspace list and the picker menu, so the click is relayed to
+              it — see the "threadknot:new-chat" listener in Sidebar.tsx. */}
+          {!state.solo && (
+          <Tooltip className="new-chat-dock-slot" content="New chat">
+          <button
+            type="button"
+            className="new-chat-dock"
+            aria-label="New chat"
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              window.dispatchEvent(
+                new CustomEvent("threadknot:new-chat", {
+                  // `pick` forces the project chooser; without it a click from
+                  // inside a project just starts the chat there.
+                  detail: { x: r.left, y: r.bottom + 4, pick: e.shiftKey || e.altKey, anchor: e.currentTarget },
+                }),
+              );
+            }}
+          >
+            <NotebookPenIcon size={19} />
+          </button>
+          </Tooltip>
+          )}
           <MainSplit />
         </div>
         {/* "Where should this link open?" chooser for clicked http(s) links. */}

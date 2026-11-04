@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -140,6 +140,39 @@ function markdownComponents(onOpenFile?: (path: string) => void): Components {
   };
 }
 
+/**
+ * The text to parse while a turn streams.
+ *
+ * The feed appends every delta onto the same item, so `text` changes many
+ * times a second. Parsing on each of those is the cost that kept live output
+ * as plain text; this bounds it to one parse per `ms` instead, which is far
+ * below a delta and still well inside a frame of being current. The final
+ * text is never throttled — when `streaming` goes false the caller renders it
+ * whole and immediately.
+ */
+function useStreamedText(text: string, streaming: boolean, ms = 90): string {
+  const [shown, setShown] = useState(text);
+  const latest = useRef(text);
+  latest.current = text;
+
+  useEffect(() => {
+    if (!streaming) return;
+    // Deliberately not keyed on `text`: restarting the timer on every delta
+    // would let a fast stream postpone the parse indefinitely.
+    const id = window.setInterval(() => {
+      setShown((current) => (current === latest.current ? current : latest.current));
+    }, ms);
+    return () => window.clearInterval(id);
+  }, [streaming, ms]);
+
+  // Settled output stays exact, including the last delta before the end.
+  useEffect(() => {
+    if (!streaming) setShown(text);
+  }, [streaming, text]);
+
+  return streaming ? shown : text;
+}
+
 export const Markdown = memo(function Markdown({
   text,
   streaming = false,
@@ -147,24 +180,36 @@ export const Markdown = memo(function Markdown({
   onOpenFile,
 }: {
   text: string;
-  /** Live output is intentionally plain text; parse/highlight once at turn end. */
+  /** Live output is parsed too, minus syntax highlighting — see below. */
   streaming?: boolean;
   /** Keep single line breaks as typed. People hit Enter meaning a new line;
    *  agents write CommonMark and rely on soft wraps joining. */
   breaks?: boolean;
   onOpenFile?: (path: string) => void;
 }) {
-  if (streaming) {
-    return <div className="md md-streaming">{text}</div>;
-  }
+  const shown = useStreamedText(text, streaming);
+  // Rebuilding this map on every delta would hand ReactMarkdown a new set of
+  // components each parse and throw away its work.
+  const components = useMemo(() => markdownComponents(onOpenFile), [onOpenFile]);
+  // Highlighting stays off until the turn settles. It is the expensive half of
+  // the pipeline, and a code block mid-stream is usually an unclosed fence —
+  // so it would be highlighting a guess at the language, then redoing it.
+  const rehypePlugins = useMemo(
+    () => (streaming ? [] : [[rehypeHighlight, { detect: true, ignoreMissing: true }] as const]),
+    [streaming],
+  );
+  const remarkPlugins = useMemo(
+    () => (breaks ? [remarkGfm, remarkBreaks] : [remarkGfm]),
+    [breaks],
+  );
   return (
-    <div className="md">
+    <div className={`md${streaming ? " md-streaming" : ""}`}>
       <ReactMarkdown
-        remarkPlugins={breaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-        components={markdownComponents(onOpenFile)}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins as never}
+        components={components}
       >
-        {text}
+        {shown}
       </ReactMarkdown>
     </div>
   );

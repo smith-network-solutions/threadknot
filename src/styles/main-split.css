@@ -176,3 +176,48 @@
     box-shadow: 0 0 7px rgba(217, 163, 92, 0.65);
   }
 }
+
+/* ---- "New chat", docked beside the sidebar ---------------------------------
+   Not in the rail: the rail is a list of places, this is an action, and the
+   rail is also the one thing that collapses away. It floats at the top-left of
+   the work area — flush against whatever width the sidebar currently has,
+   since .work-pane starts where the sidebar ends. The pane headers reserve
+   room for it so nothing lands underneath. The sidebar still owns the
+   workspace list and the picker menu; App relays the click there.
+
+   Desktop only: at phone width the sidebar is a full-screen drawer, the work
+   pane's top-left corner belongs to the hamburger, and there is nowhere for
+   this to sit. Phones currently have no New chat control at all. */
+
+/* Its diameter, as one number: the button is a circle of this size and the
+   pane headers reserve exactly this much room, so the two cannot drift apart.
+   Alcove re-points it at the title pill's height (alcove/thread.css). */
+:root { --new-chat-dock-w: 34px; }
+/* The Tooltip wrapper is what floats; the button is a plain disc inside it.
+   The wrapper has to own the position because .tooltip is position: relative —
+   an absolutely-positioned button would anchor to the span, not the pane. */
+.new-chat-dock-slot {
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  left: 12px;
+}
+.new-chat-dock {
+  display: grid;
+  width: var(--new-chat-dock-w);
+  height: var(--new-chat-dock-w);
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--dim);
+  cursor: pointer;
+}
+.new-chat-dock:hover { color: var(--text); }
+@media (min-width: 768px) {
+  .thread-head { padding-left: calc(12px + var(--new-chat-dock-w) + 12px); }
+}
+@media (max-width: 767px) {
+  .new-chat-dock-slot { display: none; }
+}

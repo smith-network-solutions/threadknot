@@ -17,6 +17,7 @@
 // skin gives the user.
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
@@ -276,6 +277,150 @@ function MenuOptions({ options }: { options: SettingOption[] }) {
 }
 
 /**
+ * A row's flyout panel, portalled to <body> and placed from the row's own box.
+ *
+ * It used to be a child of the menu, which is why it was the one surface in
+ * the skin that never frosted: the menu is itself a .glass-surface, and an
+ * element carrying a backdrop-filter (or `isolation`) is a backdrop root for
+ * everything inside it. A panel nested in there has only the menu's own paint
+ * to sample, so the blur did nothing and its 0.94 fill read as flat white.
+ * Portalled out, it samples the page like every other glass surface here.
+ *
+ * Leaving the menu costs the CSS :hover/:focus-within that used to open it,
+ * so the open state is tracked here instead. The close is deliberately
+ * delayed: the panel sits 12px off its row, and the pointer has to cross that
+ * gap without it vanishing underneath.
+ */
+const FLYOUT_GAP = 12;
+const FLYOUT_CLOSE_MS = 140;
+
+function useFlyout() {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [style, setStyle] = useState<CSSProperties>({});
+  const closeTimer = useRef<number | undefined>(undefined);
+
+  const show = () => {
+    window.clearTimeout(closeTimer.current);
+    setOpen(true);
+  };
+  const hide = () => {
+    window.clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => setOpen(false), FLYOUT_CLOSE_MS);
+  };
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
+
+  // Measured on every open rather than once: the menu is anchored to the
+  // composer, so its rows move with the window and with the menu's own
+  // open-scale animation.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const row = rowRef.current;
+    const panel = panelRef.current;
+    if (!row || !panel) return;
+    const box = row.getBoundingClientRect();
+    const width = panel.offsetWidth;
+    const next: CSSProperties = {
+      // Bottom-anchored, as the CSS was: the panel grows upward out of its
+      // row rather than pushing its own options off the bottom of the screen.
+      bottom: Math.max(8, window.innerHeight - box.bottom - FLYOUT_GAP),
+    };
+    // Opens beside the menu, flipping when that would run off the edge --
+    // what the old max-width media query guessed at, but measured.
+    if (box.right + FLYOUT_GAP + width <= window.innerWidth - 8) {
+      next.left = box.right + FLYOUT_GAP;
+    } else {
+      next.right = Math.max(8, window.innerWidth - box.left + FLYOUT_GAP);
+    }
+    setStyle(next);
+  }, [open]);
+
+  const rowProps = {
+    ref: rowRef,
+    onPointerEnter: show,
+    onPointerLeave: hide,
+    onFocus: show,
+    onBlur: (event: React.FocusEvent) => {
+      if (panelRef.current?.contains(event.relatedTarget as Node | null)) return;
+      hide();
+    },
+  };
+
+  function panel(className: string, children: ReactNode, extra?: Record<string, unknown>) {
+    // A row with nothing to offer (a mode section with no options) gets no
+    // panel at all, rather than an empty pill that flashes on hover.
+    if (children == null) return null;
+    return createPortal(
+      <div
+        {...extra}
+        ref={panelRef}
+        className={`${className} glass-surface corner-smoothing${open ? " is-open" : ""}`}
+        style={style}
+        onPointerEnter={show}
+        onPointerLeave={hide}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {children}
+      </div>,
+      document.body,
+    );
+  }
+
+  return { rowProps, panel };
+}
+
+/** The Effort row: the same flyout, with the slider panel as its content. */
+function EffortFlyout({ label, panel: panelChildren }: { label: string; panel: ReactNode }) {
+  const { rowProps, panel } = useFlyout();
+  return (
+    <div
+      {...rowProps}
+      className="model-menu__effort"
+      tabIndex={0}
+      role="button"
+      aria-haspopup="menu"
+      aria-label={`Effort: ${label}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span className="model-menu__row-name">Effort</span>
+      <span className="model-menu__row-value">{label}</span>
+      <HugeiconsIcon icon={ArrowDown01Icon} size={15} strokeWidth={1.8} />
+      {panel("model-menu__effort-panel", panelChildren)}
+    </div>
+  );
+}
+
+/**
+ * The row and its portalled panel as one element. A component rather than a
+ * bare useFlyout() call because the Effort row is rendered inside a
+ * conditional, where a hook cannot go.
+ */
+function Flyout({
+  rowClassName,
+  rowProps,
+  panelClassName,
+  panelProps,
+  panel: panelChildren,
+  children,
+}: {
+  rowClassName: string;
+  rowProps?: Record<string, unknown>;
+  panelClassName: string;
+  panelProps?: Record<string, unknown>;
+  panel: ReactNode;
+  children: ReactNode;
+}) {
+  const { rowProps: flyoutProps, panel } = useFlyout();
+  return (
+    <div {...rowProps} {...flyoutProps} className={rowClassName}>
+      {children}
+      {panel(panelClassName, panelChildren, panelProps)}
+    </div>
+  );
+}
+
+/**
  * A labelled row that opens a flyout panel on hover/focus — the prototype's
  * Permission and Effort rows. `value` is cross-faded on change.
  */
@@ -291,8 +436,10 @@ function FlyoutRow({
   children: ReactNode;
 }) {
   const [visibleValue, isSwapping] = useBlurSwap(value);
+  const { rowProps, panel } = useFlyout();
   return (
     <div
+      {...rowProps}
       className={className}
       tabIndex={0}
       role="button"
@@ -305,14 +452,7 @@ function FlyoutRow({
         {visibleValue}
       </span>
       <HugeiconsIcon icon={ArrowDown01Icon} size={15} strokeWidth={1.8} />
-      <div
-        className="model-menu__row-panel glass-surface corner-smoothing"
-        role="menu"
-        aria-label={name}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {children}
-      </div>
+      {panel("model-menu__row-panel", children, { role: "menu", "aria-label": name })}
     </div>
   );
 }
@@ -611,7 +751,6 @@ export function AlcoveComposer({
             className="attachment-dropdown"
             menuClassName="attachment-menu"
             placement="top-left"
-            tail={false}
             offset={6}
             onOpenChange={setAttachmentMenuOpen}
             trigger={
@@ -704,7 +843,6 @@ export function AlcoveComposer({
                 } as CSSProperties
               }
               placement="top-right"
-              tail={false}
               offset={6}
               onOpenChange={setModelMenuOpen}
               trigger={
@@ -778,18 +916,10 @@ export function AlcoveComposer({
                 </FlyoutRow>
               )}
               {effortOptions.length > 0 && (
-                <div
-                  className="model-menu__effort"
-                  tabIndex={0}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <span className="model-menu__row-name">Effort</span>
-                  <span className="model-menu__row-value">{selectedEffort?.label ?? "—"}</span>
-                  <HugeiconsIcon icon={ArrowDown01Icon} size={15} strokeWidth={1.8} />
-                  <div
-                    className="model-menu__effort-panel glass-surface corner-smoothing"
-                    onClick={(event) => event.stopPropagation()}
-                  >
+                <EffortFlyout
+                  label={selectedEffort?.label ?? "—"}
+                  panel={
+                    <>
                     <div className="model-menu__effort-heading">
                       {agentMark}
                       <span>Effort</span>
@@ -860,35 +990,28 @@ export function AlcoveComposer({
                       ))}
                       <span className="model-menu__slider-thumb" />
                     </div>
-                  </div>
-                </div>
+                    </>
+                  }
+                />
               )}
               {sections.map((section) => (
-                <div
-                  className="model-menu__permission"
+                <Flyout
                   key={section.key}
-                  tabIndex={section.disabled ? -1 : 0}
-                  role="button"
-                  aria-disabled={section.disabled}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!section.disabled) section.action?.();
+                  rowClassName="model-menu__permission"
+                  rowProps={{
+                    tabIndex: section.disabled ? -1 : 0,
+                    role: "button",
+                    "aria-disabled": section.disabled,
+                    onClick: (event: React.MouseEvent) => {
+                      event.stopPropagation();
+                      if (!section.disabled) section.action?.();
+                    },
                   }}
-                >
-                  <span className="model-menu__row-name">{section.label}</span>
-                  <span className="model-menu__row-value">
-                    {section.valueGlyph}
-                    {section.valueLabel}
-                  </span>
-                  {section.options.length > 0 && (
-                    <>
-                      <HugeiconsIcon icon={ArrowDown01Icon} size={15} strokeWidth={1.8} />
-                      <div
-                        className="model-menu__row-panel glass-surface corner-smoothing"
-                        role="menu"
-                        aria-label={section.label}
-                        onClick={(event) => event.stopPropagation()}
-                      >
+                  panelClassName="model-menu__row-panel"
+                  panelProps={{ role: "menu", "aria-label": section.label }}
+                  panel={
+                    section.options.length > 0 ? (
+                      <>
                         {section.options.map((option) => (
                           <button
                             className={`model-menu__permission-option${
@@ -903,10 +1026,19 @@ export function AlcoveComposer({
                             {option.label}
                           </button>
                         ))}
-                      </div>
-                    </>
+                      </>
+                    ) : null
+                  }
+                >
+                  <span className="model-menu__row-name">{section.label}</span>
+                  <span className="model-menu__row-value">
+                    {section.valueGlyph}
+                    {section.valueLabel}
+                  </span>
+                  {section.options.length > 0 && (
+                    <HugeiconsIcon icon={ArrowDown01Icon} size={15} strokeWidth={1.8} />
                   )}
-                </div>
+                </Flyout>
               ))}
             </Dropdown>
 
