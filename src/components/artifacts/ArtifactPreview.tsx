@@ -390,7 +390,6 @@ function ZoomableMedia({
           onClick={() => zoomBy(1 / WHEEL_ZOOM_STEP)}
           disabled={percent <= MIN_MEDIA_ZOOM * 100}
           aria-label="Zoom out"
-          title="Zoom out (−)"
         >
           −
         </button>
@@ -399,7 +398,6 @@ function ZoomableMedia({
           onClick={reset}
           disabled={percent === 100}
           aria-label="Fit to window"
-          title="Fit to window (0)"
         >
           {percent}%
         </button>
@@ -408,7 +406,6 @@ function ZoomableMedia({
           onClick={() => zoomBy(WHEEL_ZOOM_STEP)}
           disabled={percent >= MAX_MEDIA_ZOOM * 100}
           aria-label="Zoom in"
-          title="Zoom in (+)"
         >
           +
         </button>
@@ -418,7 +415,6 @@ function ZoomableMedia({
           onClick={toggleFullscreen}
           aria-pressed={isFullscreen}
           aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
-          title={isFullscreen ? "Exit full screen (F)" : "Full screen (F)"}
         >
           {isFullscreen ? "⤡" : "⤢"}
         </button>

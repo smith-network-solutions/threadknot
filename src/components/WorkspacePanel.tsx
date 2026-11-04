@@ -110,7 +110,6 @@ export function WorkspacePanel({
             type="button"
             className="icon-btn ws-orient"
             aria-label={orient === "stacked" ? "Place panel beside chat" : "Stack panel below chat"}
-            title={orient === "stacked" ? "Place beside chat" : "Stack below chat"}
             onClick={onToggleOrient}
           >
             {orient === "stacked" ? <LayoutSideIcon size={16} /> : <LayoutStackedIcon size={16} />}

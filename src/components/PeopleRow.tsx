@@ -77,7 +77,6 @@ export function PeopleRow() {
         className={`people-chip people-everyone${state.viewPerson === null ? " on" : ""}`}
         aria-pressed={state.viewPerson === null}
         aria-label="Everyone's chats"
-        title="Everyone's chats"
         onClick={() => actions.setViewPerson(null)}
       >
         <span className="people-chip-face">
@@ -97,7 +96,6 @@ export function PeopleRow() {
             className={`people-chip${active ? " on" : ""}${mine ? " is-you" : ""}`}
             aria-pressed={active}
             aria-label={`${label} — ${count} ${count === 1 ? "chat" : "chats"}`}
-            title={`${mine ? "Your" : `${person.name}'s`} chats (${count})`}
             onClick={() => select(person.id)}
           >
             <span className="people-chip-face">

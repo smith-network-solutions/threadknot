@@ -453,7 +453,6 @@ function CopyButton({ value, label }: { value: string; label: string }) {
     <button
       className="icon-btn"
       aria-label={`Copy ${label}`}
-      title={`Copy ${label}`}
       onClick={async () => {
         if (await copyText(value)) {
           setDone(true);
@@ -543,7 +542,6 @@ function NotifySettings({ isTauri }: { isTauri: boolean }) {
           type="button"
           className={`settings-toggle ${prefs.previews ? "on" : ""}`}
           onClick={() => update({ ...prefs, previews: !prefs.previews })}
-          title="Show response, question, approval, and error text in notifications"
         >
           {prefs.previews ? "detailed" : "status only"}
         </button>
@@ -708,7 +706,6 @@ function MachineCardMenu({
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={label}
         onClick={() => setOpen((v) => !v)}
       >
         <MoreIcon size={15} />
@@ -853,7 +850,6 @@ function MachinesSettings() {
         <button
           type="button"
           className="settings-toggle"
-          title="Pair a machine by pasting its LAN URL + token"
           onClick={() => {
             setAdding((v) => !v);
             setError(null);
@@ -898,7 +894,6 @@ function MachinesSettings() {
             <button
               type="button"
               className="machine-cta"
-              title="Avatar + accent color other machines see for this one"
               onClick={() => setCustomizing("local")}
             >
               Customize Profile
@@ -941,15 +936,6 @@ function MachinesSettings() {
                   className={`machine-pill${
                     p.needsUpgrade ? " stale" : p.online ? " online" : ""
                   }`}
-                  title={
-                    p.needsUpgrade
-                      ? "This pair predates encrypted mesh connections. Update Threadknot on that machine, then pair the two again."
-                      : p.online
-                        ? undefined
-                        : p.lastSeenAt
-                          ? `last seen ${timeAgo(p.lastSeenAt)}`
-                          : undefined
-                  }
                 >
                   <span className="pill-dot" />
                   {p.needsUpgrade
@@ -963,7 +949,6 @@ function MachinesSettings() {
                 <button
                   type="button"
                   className="machine-cta"
-                  title="Edit this machine's real profile (applies on every machine)"
                   onClick={() => {
                     setCustomizeMode("profile");
                     setCustomizing(p.machineId);
@@ -1021,7 +1006,6 @@ function MachinesSettings() {
                   type="button"
                   className={`machine-cta${st === "done" ? " paired" : ""}`}
                   disabled={st === "busy" || st === "done"}
-                  title="Pair with this machine"
                   onClick={() => void quickPair(d)}
                 >
                   {st === "busy" ? "pairing…" : st === "done" ? "paired" : "pair"}
@@ -1510,11 +1494,6 @@ function RemoteAccessSettings() {
           type="button"
           className={`settings-toggle${remote.enabled ? " primary" : ""}`}
           disabled={busy || (!remote.enabled && !remote.origin)}
-          title={
-            remote.origin
-              ? "Answer requests forwarded from the public address"
-              : "Set a public address first"
-          }
           onClick={() => apply({ enabled: !remote.enabled })}
         >
           {remote.enabled ? "on" : "off"}
@@ -1593,7 +1572,6 @@ function ServersSettings() {
           <button
             type="button"
             className="settings-toggle"
-            title="Become a guest on a machine somebody else runs"
             onClick={() => {
               setAdding((v) => !v);
               setError(null);
@@ -1634,13 +1612,13 @@ function ServersSettings() {
                     sentence. Their people live on their machine, so we know the
                     name and nothing else — render the face from that. */}
                 {server.personName ? (
-                  <span className="server-identity" title="Their owner assigned you this name">
+                  <span className="server-identity">
                     <span className="server-identity-label">as</span>
                     <MachineAvatar name={server.personName} size={18} preview={false} />
                     {server.personName}
                   </span>
                 ) : (
-                  <span className="server-identity unassigned" title="Only that machine's owner can assign this">
+                  <span className="server-identity unassigned">
                     <UsersIcon size={12} />
                     Nobody yet
                   </span>
@@ -1836,7 +1814,6 @@ function PersonRow({ person, editable }: { person: Person; editable: boolean }) 
             <button
               type="button"
               className="settings-toggle"
-              title="Remove this person. Their chats keep their name; their devices go back to the owner."
               onClick={() => {
                 setError(null);
                 void actions.deletePerson(person.id).catch(fail);
@@ -1934,7 +1911,6 @@ function MobileDevices() {
         <button
           type="button"
           className="settings-toggle primary"
-          title="Show a QR code for the Threadknot mobile app to scan"
           onClick={() => setPairing(true)}
         >
           pair a phone
@@ -2023,7 +1999,7 @@ function PairedPhoneRow({
           {people.length > 1 && (
             <select
               className="settings-select"
-              title="Which person this credential speaks for"
+              aria-label="Which person this credential speaks for"
               value={device.personId ?? OWNER_PERSON_ID}
               onChange={(e) => {
                 const next = e.target.value;
@@ -2049,7 +2025,6 @@ function PairedPhoneRow({
             type="button"
             className="settings-toggle"
             aria-expanded={open}
-            title="What this phone is allowed to do"
             onClick={() => setOpen((v) => !v)}
           >
             {granted.length} of {DEVICE_CAPABILITY_LABELS.length} permissions
@@ -2057,7 +2032,6 @@ function PairedPhoneRow({
           <button
             type="button"
             className="settings-toggle"
-            title="Revoke this phone's access"
             onClick={() => {
               void actions
                 .revokeMobileDevice(device.id)
@@ -2154,7 +2128,6 @@ function HermesAgentRow({
           type="button"
           className={`settings-agent-avatar sidebar-avatar${photo ? " has-image" : ""}`}
           {...avatarPreview.hoverProps}
-          title={photo ? "Change image" : "Set image"}
           aria-label={
             photo
               ? `Change ${agent.name}'s profile picture`
@@ -2184,7 +2157,7 @@ function HermesAgentRow({
         >
           <ChevronIcon size={10} open={open} />
           <span className="settings-value">
-            <span className={`hermes-presence-inline ${presence.kind}`} title={presence.title} />
+            <span className={`hermes-presence-inline ${presence.kind}`} />
             {agent.name}
             <span className="dim"> · {host} · {presence.label}</span>
           </span>
@@ -2193,7 +2166,6 @@ function HermesAgentRow({
           <button
             type="button"
             className="settings-toggle"
-            title="Remove profile picture"
             onClick={() => {
               void actions
                 .setHermesAgentAvatar(agent.id, null)
@@ -2209,7 +2181,6 @@ function HermesAgentRow({
         <button
           type="button"
           className="settings-toggle"
-          title="Remove this Hermes agent"
           onClick={onRemove}
         >
           remove
@@ -2233,7 +2204,7 @@ function HermesAgentRow({
               <div className="settings-label">tools & mcp toolsets</div>
               <div className="hermes-list">
                 {details.toolsets.filter((t) => t.enabled).map((t) => (
-                  <div key={t.name} className="hermes-item" title={t.tools.join(", ")}>
+                  <div key={t.name} className="hermes-item">
                     <span>{t.label}</span>
                     <span className="dim">{t.tools.length}</span>
                   </div>
@@ -2245,7 +2216,7 @@ function HermesAgentRow({
               <div className="settings-label">skills · {details.skills.length}</div>
               <div className="hermes-list">
                 {details.skills.map((s) => (
-                  <div key={s.name} className="hermes-item" title={s.description}>
+                  <div key={s.name} className="hermes-item">
                     <span>{s.name}</span>
                     {s.category && <span className="dim">{s.category}</span>}
                   </div>
@@ -2325,7 +2296,6 @@ function ArchiveRow({
           className={`archive-btn danger${confirm ? " armed" : ""}`}
           disabled={busy}
           aria-label={confirm ? "Confirm delete archive" : "Delete archive"}
-          title={confirm ? "Click again to confirm" : "Delete archive"}
           onClick={async () => {
             if (!confirm) {
               setConfirm(true);
@@ -2570,7 +2540,6 @@ function ArchivesSettings({ onClose }: { onClose: () => void }) {
         <span className="archive-chip-name">{name}</span>
         <span
           className={`archive-chip-dot${online ? " online" : ""}`}
-          title={online ? "online" : "offline"}
         />
         {count !== undefined && <span className="archive-chip-count">{count}</span>}
       </button>
@@ -2588,7 +2557,7 @@ function ArchivesSettings({ onClose }: { onClose: () => void }) {
 
       {isLocal ? (
         <div className="settings-row archive-loc">
-          <code className="archive-dir" title={dir || undefined}>
+          <code className="archive-dir">
             {dir || "—"}
           </code>
           <button type="button" className="settings-toggle" onClick={() => setPicking(true)}>
@@ -3400,7 +3369,6 @@ function UpdateCard({
                   className="settings-toggle primary"
                   disabled={busy !== null || running}
                   onClick={() => void run("install")}
-                  title={`Downloads ${release!.assetName} and restarts into it. The download keeps going if you close this window.`}
                 >
                   {activeAction === "install" && (
                     <span className="update-spinner" aria-hidden="true" />
@@ -3505,11 +3473,6 @@ function UpdateCard({
                   className="settings-toggle primary"
                   disabled={busy !== null || running}
                   onClick={() => void run("pull")}
-                  title={
-                    canChain
-                      ? "Pulls master, rebuilds, and restarts into the new build. The build takes minutes and keeps going if you close this window."
-                      : "Fast-forwards this checkout to master. Rebuilding is a separate step."
-                  }
                 >
                   {activeAction === "pull" && (
                     <span className="update-spinner" aria-hidden="true" />
@@ -3546,7 +3509,6 @@ function UpdateCard({
                 className="settings-toggle primary"
                 disabled={busy !== null || running}
                 onClick={() => void run("rebuild")}
-                title="Compiles in the background. Nothing restarts until you say so."
               >
                 {activeAction === "rebuild" && (
                   <span className="update-spinner" aria-hidden="true" />
@@ -3615,7 +3577,6 @@ function ChannelField({ status }: { status: UpdateStatus }) {
             className={`settings-toggle${channel === "release" ? " primary" : ""}`}
             disabled={saving !== null}
             onClick={() => void pick("release")}
-            title="Published builds from the releases page: downloaded, installed and restarted for you."
           >
             releases
           </button>
@@ -3624,7 +3585,6 @@ function ChannelField({ status }: { status: UpdateStatus }) {
             className={`settings-toggle${channel === "source" ? " primary" : ""}`}
             disabled={saving !== null}
             onClick={() => void pick("source")}
-            title="This machine's own checkout: pull master, rebuild, restart."
           >
             source
           </button>
@@ -4055,7 +4015,7 @@ function BrowserProfileSettings() {
           >
             <MachineAvatar {...machineLook(state, undefined)} size={18} preview={false} />
             <span className="archive-chip-name">{localName}</span>
-            <span className="archive-chip-dot online" title="online" />
+            <span className="archive-chip-dot online" />
           </button>
           {state.peers.map((p) => (
             <button
@@ -4069,7 +4029,6 @@ function BrowserProfileSettings() {
               <span className="archive-chip-name">{p.name}</span>
               <span
                 className={`archive-chip-dot${p.online ? " online" : ""}`}
-                title={p.online ? "online" : "offline"}
               />
             </button>
           ))}
@@ -4147,7 +4106,7 @@ function BrowserProfileSettings() {
                 </span>
                 <span className="bl-card-name">{profile.name}</span>
                 {live && (
-                  <span className="bl-live" title={`open in ${profile.liveOn?.length} chat(s) now`}>
+                  <span className="bl-live">
                     <span className="status-dot st-running" />
                     open now
                   </span>
@@ -4889,7 +4848,6 @@ function VoiceOutputSettings() {
                   type="button"
                   className="settings-toggle"
                   disabled={previewing}
-                  title="Preview through this machine's speakers (synthesizes a short sample — uses a few credits)"
                   onClick={() => void preview()}
                 >
                   {previewing ? "playing…" : "preview"}

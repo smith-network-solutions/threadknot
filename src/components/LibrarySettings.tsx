@@ -99,7 +99,7 @@ export function LibrarySettings() {
           >
             <MachineAvatar {...machineLook(state, undefined)} size={18} preview={false} />
             <span className="archive-chip-name">{localName}</span>
-            <span className="archive-chip-dot online" title="online" />
+            <span className="archive-chip-dot online" />
           </button>
           {state.peers.map((p) => (
             <button
@@ -113,7 +113,6 @@ export function LibrarySettings() {
               <span className="archive-chip-name">{p.name}</span>
               <span
                 className={`archive-chip-dot${p.online ? " online" : ""}`}
-                title={p.online ? "online" : "offline"}
               />
             </button>
           ))}
@@ -256,7 +255,6 @@ function SkillsShelf({
                 {skill.alsoFromPlugin && (
                   <span
                     className="lib-meta-warn"
-                    title={`The ${skill.alsoFromPlugin} plugin ships a skill with this name too. Removing this copy will not stop Claude Code from finding the plugin's.`}
                   >
                     also in the {skill.alsoFromPlugin} plugin
                   </span>
@@ -265,7 +263,7 @@ function SkillsShelf({
                   {skill.files} file{skill.files === 1 ? "" : "s"} ·{" "}
                   {formatBytes(skill.bytes)}
                 </span>
-                <span className="lib-meta-path" title={skill.path}>
+                <span className="lib-meta-path">
                   {skill.path}
                 </span>
               </div>
@@ -293,7 +291,6 @@ function SkillsShelf({
                 {!skill.removable ? (
                   <span
                     className="lib-locked"
-                    title="A Claude Code plugin owns this folder — remove it with `claude plugin`, or Threadknot would only see it return on the next update."
                   >
                     managed by a plugin
                   </span>
@@ -390,11 +387,6 @@ function SkillsShelf({
                       <span className="lib-tile-title">{entry.title}</span>
                       <span
                         className={`lib-tile-license${entry.source === "bundled" ? " bundled" : ""}`}
-                        title={
-                          entry.source === "bundled"
-                            ? "Written by Threadknot and shipped inside the app — installs with no network"
-                            : `Fetched from ${entry.repo} at install time`
-                        }
                       >
                         {entry.source === "bundled" ? "built in" : entry.license}
                       </span>
@@ -587,7 +579,7 @@ function McpShelf({
               <div className="lib-card-desc">{server.description}</div>
             )}
             <div className="lib-card-meta">
-              <span className="lib-meta-path" title={transportSummary(server.transport)}>
+              <span className="lib-meta-path">
                 {transportSummary(server.transport)}
               </span>
             </div>
@@ -718,11 +710,6 @@ function McpShelf({
                       {entry.prereq && (
                         <span
                           className={`lib-prereq${entry.prereqOk ? " ok" : ""}`}
-                          title={
-                            entry.prereqOk
-                              ? `${entry.prereq} is on this machine's PATH`
-                              : `${entry.prereq} was not found on this machine — the server would fail to start`
-                          }
                         >
                           {entry.prereq}
                           {entry.prereqOk ? " ✓" : " missing"}

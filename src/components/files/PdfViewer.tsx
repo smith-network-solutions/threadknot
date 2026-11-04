@@ -209,7 +209,6 @@ export function PdfViewer({ src, title }: { src: string; title: string }) {
             type="button"
             className="files-pdf-tool"
             aria-label="Zoom out"
-            title="Zoom out"
             disabled={!document || zoom <= MIN_ZOOM}
             onClick={() => changeZoom(-ZOOM_STEP)}
           >
@@ -218,7 +217,6 @@ export function PdfViewer({ src, title }: { src: string; title: string }) {
           <button
             type="button"
             className="files-pdf-zoom"
-            title="Reset to fit width"
             disabled={!document}
             onClick={() => setZoom(1)}
           >
@@ -228,7 +226,6 @@ export function PdfViewer({ src, title }: { src: string; title: string }) {
             type="button"
             className="files-pdf-tool"
             aria-label="Zoom in"
-            title="Zoom in"
             disabled={!document || zoom >= MAX_ZOOM}
             onClick={() => changeZoom(ZOOM_STEP)}
           >

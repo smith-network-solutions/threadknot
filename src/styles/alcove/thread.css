@@ -2,11 +2,11 @@
    The conversation pane: a flat pale room with no header bar. The title floats
    as a white pill at top centre, the workspace panels collapse behind a round
    More button (the phone header's own WorkspaceMenu, shown on desktop too),
-   messages sit in a narrow centred column, and every tool/activity record is a
+   messages sit in a centred column the composer's width, and every
+   tool/activity record is a
    compact white glass row. Ungated: the thread is not one of the skin modules. */
 
 :root[data-theme="alcove"] {
-  --alc-col: 600px; /* lines up with the Alcove composer card (cozy) */
   --alc-card: rgba(255, 255, 255, 0.68);
   --alc-card-shadow: 0 3px 10px rgba(0, 0, 0, 0.025);
   --alc-code-bg: rgba(255, 255, 255, 0.72);
@@ -32,25 +32,50 @@
 :root[data-theme="alcove"] .thread-head .head-pill {
   display: inline-grid;
   place-items: center;
-  width: 27px;
-  min-width: 27px;
-  height: 27px;
-  min-height: 27px;
+  width: var(--alc-title-h);
+  min-width: var(--alc-title-h);
+  height: var(--alc-title-h);
+  min-height: var(--alc-title-h);
   padding: 0;
   gap: 0;
+  position: relative;
   border-radius: 50%;
-  background: var(--alc-hover);
-  box-shadow: var(--alc-halo);
-  color: var(--alc-ink-4);
+  background: rgb(255 255 255 / 0.25);
+  box-shadow: var(--alc-rim), var(--alc-halo);
+  -webkit-backdrop-filter: var(--alc-blur);
+  backdrop-filter: var(--alc-blur);
+  /* These are the only controls in the header, sitting on a 27px white disc:
+     at ink-4 and 15px the glyph all but vanished into the glass. Ink-2 and a
+     thicker stroke give it back its weight without making the disc loud. */
+  color: var(--alc-ink-2);
   font-size: 0;
-  transition: background 160ms ease, color 160ms ease, transform 160ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .thread-head .head-pill:hover { color: var(--alc-ink); }
+/* Settings follows More on the right-hand end of the header. */
+:root[data-theme="alcove"] .thread-head .head-settings { order: 4; }
+:root[data-theme="alcove"] .thread-head .head-settings .usermenu-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brass, var(--alc-blue));
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 0.75);
 }
 :root[data-theme="alcove"] .thread-head .head-pill > span { display: none; }
-:root[data-theme="alcove"] .thread-head .head-pill svg { width: 15px; height: 15px; }
+:root[data-theme="alcove"] .thread-head .head-pill svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 2.1;
+}
+/* MoreIcon's dots are filled circles, so the stroke bump above does nothing
+   for them — they need the radius itself. `r` is a CSS geometry property in
+   SVG2; where it is not honoured the icon simply keeps its drawn size. */
+:root[data-theme="alcove"] .thread-head .head-pill svg circle[fill="currentColor"] { r: 2.1px; }
 /* The mockup's More is a horizontal "•••". */
 :root[data-theme="alcove"] .thread-head .head-tab-menu .head-pill svg { transform: rotate(90deg); }
-:root[data-theme="alcove"] .thread-head .head-pill:hover:not(:disabled),
-:root[data-theme="alcove"] .thread-head .head-pill:focus-visible:not(:disabled) {
+:root[data-theme="alcove"] .thread-head .head-pill:hover:not(:disabled) {
   background: #fff;
   color: #424242;
 }
@@ -125,13 +150,6 @@
 :root[data-theme="alcove"] .feed-project-caption { font-family: var(--font-ui); color: var(--alc-ink-5); }
 :root[data-theme="alcove"] .feed-project-caption::before { color: var(--alc-ink-4); }
 
-:root[data-theme="alcove"] .back-to-inbox {
-  border-radius: var(--alc-r-pill);
-  color: var(--alc-ink-4);
-  font-size: 10.5px;
-  font-weight: 500;
-}
-
 @media (min-width: 768px) {
   /* The header stops being a bar: it floats over the top of the feed, which
      scrolls under a soft frosted fade (the mockup's top glass). */
@@ -144,22 +162,17 @@
     min-height: 66px;
     align-items: flex-start;
     gap: 15px;
-    padding: 20px 28px 0 24px;
+    /* Left padding clears the New chat dock, which floats over this header at
+       20px/24px (see .new-chat-dock below) — without the reservation the
+       status word would print underneath it. */
+    padding: 20px 28px 0 calc(24px + var(--new-chat-dock-w) + 16px);
     pointer-events: none;
   }
-  :root[data-theme="alcove"] .thread-head:not(.task-head)::before {
-    content: "";
-    position: absolute;
-    z-index: -1;
-    inset: 0 0 auto;
-    height: 92px;
-    pointer-events: none;
-    background: linear-gradient(to bottom, rgba(242, 242, 242, 0.9), rgba(242, 242, 242, 0.5) 56%, transparent);
-    -webkit-backdrop-filter: blur(11px);
-    backdrop-filter: blur(11px);
-    -webkit-mask-image: linear-gradient(to bottom, #000 0 55%, transparent);
-    mask-image: linear-gradient(to bottom, #000 0 55%, transparent);
-  }
+  /* No fade behind the header. It used to carry a 92px masked gradient and a
+     blur so the feed dissolved under it; the floating controls now hold their
+     own against the conversation — the title pill wears the composer's full
+     glass (below) — and the band was reading as a smear across the top of an
+     otherwise flat room. Deliberately absent, not pending. */
   :root[data-theme="alcove"] .thread-head:not(.task-head) > *,
   :root[data-theme="alcove"] .thread-head:not(.task-head) .head-tab-menu { pointer-events: auto; }
 
@@ -168,14 +181,17 @@
      through the same dispatch as the inline pills, which hide. */
   :root[data-theme="alcove"] .thread-head .head-tab-pills { display: none; }
   :root[data-theme="alcove"] .thread-head .head-tab-menu { display: inline-flex; order: 3; }
-  :root[data-theme="alcove"] .thread-head .head-status { order: 1; height: 27px; }
+  :root[data-theme="alcove"] .thread-head .head-status { order: 1; height: var(--alc-title-h); }
   :root[data-theme="alcove"] .thread-head .ws-toggles { order: 2; margin-left: auto; gap: 15px; }
-  :root[data-theme="alcove"] .thread-head .alc-head-avatar { order: 4; }
-  /* Review is a row in the More menu whenever that menu exists. */
-  :root[data-theme="alcove"] .thread-head:has(.head-tab-menu) .review-pill { display: none; }
+  /* Review is a row in the More menu, which every thread now has — so the
+     standalone shield pill never appears here. */
+  :root[data-theme="alcove"] .thread-head .review-pill { display: none; }
+  :root[data-theme="alcove"] .thread-head .alc-head-avatar { display: none; }
 
-  /* The title pill, centred on the pane regardless of the side clusters. */
-  :root[data-theme="alcove"] .thread-head:not(.quick-thread-head):not(.task-head) .thread-head-main {
+  /* The title pill, centred on the pane regardless of the side clusters.
+     `width: max-content` is load-bearing: in the normal flow the pill is a
+     flex child and stretches the full width of the header. */
+  :root[data-theme="alcove"] .thread-head:not(.task-head) .thread-head-main {
     position: absolute;
     top: 20px;
     left: 50%;
@@ -189,64 +205,176 @@
   }
   :root[data-theme="alcove"] .thread-head .thread-title {
     position: relative;
-    height: 27px;
+    /* A one-line .msg-user: 9px padding top and bottom, a 1.42 line box, and
+       the paragraph's own 0.3em margins either side. Derived rather than
+       copied so the pill tracks the composer font preference with it. */
+    height: var(--alc-title-h);
     max-width: 100%;
-    padding: 0 15px 0 11px;
-    gap: 6px;
+    padding: 0 20px 0 16px;
+    gap: 9px;
     overflow: visible;
     border-radius: var(--alc-r-pill);
-    background: #fff;
-    box-shadow: var(--alc-halo);
-    font-size: 12.5px;
+    /* The composer's glass exactly, not a thinner version of it: the two
+       capsules float over the same room at opposite ends of it, and with the
+       header's fade gone this one has to hold the conversation scrolling
+       behind it on its own. The fill was 0.25 against the card's 0.50, which
+       is what made it read as a tint rather than frost. Recipe repeated from
+       .glass-surface in glass.css, as glass-press.css repeats it.
+
+       The two vars have to be declared here as well. glass.css sets them on
+       .glass-surface itself, and this pill does not carry that class, so they
+       would not inherit — and an unresolved var does not fall back, it voids
+       the whole declaration, which left the capsule with no fill and no
+       backdrop-filter at all. Declaring the resting pair locally also means
+       glass-press.css's :active values (0.62 / 1.05, which already list this
+       selector) override them, so the press stays in step with the card. */
+    --glass-alpha: 0.5;
+    --glass-brightness: 1;
+    background: rgb(255 255 255 / var(--glass-alpha));
+    box-shadow: var(--alc-rim), var(--alc-halo);
+    -webkit-backdrop-filter: blur(10.53px) saturate(1.07) brightness(var(--glass-brightness));
+    backdrop-filter: blur(10.53px) saturate(1.07) brightness(var(--glass-brightness));
+    font-size: var(--alc-title-font);
     line-height: 1;
   }
-  :root[data-theme="alcove"] .thread-head .thread-name { line-height: 1.25; }
-  :root[data-theme="alcove"] .thread-head .title-agent-mark { width: 16px; height: 16px; }
+  :root[data-theme="alcove"] .thread-head .thread-name {
+    display: inline-block;
+    /* The prototype's 22ch is measured against its own smaller type; at this
+       size it clips ordinary titles. Wide enough for a real name, still a
+       bound so one long title cannot stretch the capsule across the pane. */
+    max-width: 34ch;
+    overflow: hidden;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  :root[data-theme="alcove"] .thread-head .title-agent-mark { width: 21px; height: 21px; }
   /* Rename hangs just outside the pill so the pill stays a clean capsule. */
   :root[data-theme="alcove"] .thread-head .title-edit {
     position: absolute;
     top: 50%;
-    left: calc(100% + 6px);
+    left: calc(100% + 10px);
     display: grid;
     place-items: center;
-    width: 23px;
-    height: 23px;
+    width: var(--alc-title-h);
+    height: var(--alc-title-h);
     padding: 0;
     border-radius: 50%;
-    background: var(--alc-hover);
-    box-shadow: var(--alc-halo);
+    background: rgb(255 255 255 / 0.25);
+    box-shadow: var(--alc-rim), var(--alc-halo);
+    -webkit-backdrop-filter: var(--alc-blur);
+    backdrop-filter: var(--alc-blur);
     color: var(--alc-ink-4);
-    transform: translateY(-50%);
-    transition: opacity 140ms ease;
+    opacity: 0;
+    filter: blur(7px);
+    pointer-events: none;
+    transform: translateY(-50%) scale(0.78);
+    transition:
+      opacity 240ms var(--alc-ease),
+      filter 240ms var(--alc-ease),
+      transform 280ms var(--alc-spring),
+      color 140ms ease;
   }
-  :root[data-theme="alcove"] .thread-head .title-edit:hover { color: var(--alc-ink); background: #fff; }
+  /* Keyboard reach: it is still focusable while hidden, so showing it on its
+     own focus keeps it usable without a pointer. */
+  :root[data-theme="alcove"] .thread-head .thread-head-main:hover .title-edit,
+  :root[data-theme="alcove"] .thread-head .thread-head-main:focus-within .title-edit,
+  :root[data-theme="alcove"] .thread-head .title-edit:focus-visible {
+    opacity: 1;
+    filter: blur(0);
+    pointer-events: auto;
+    transform: translateY(-50%) scale(1);
+  }
+  :root[data-theme="alcove"] .thread-head .title-edit:hover { color: var(--alc-ink); }
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-theme="alcove"] .thread-head .title-edit { transition-duration: 1ms; }
+  }
+  /* The input is the pill's own text now, not a replacement for the pill: no
+     box, no ring. The focus outline is deliberately gone — the capsule has
+     already grown, widened and brightened to say it is being edited. */
+  :root[data-theme="alcove"] .thread-head .thread-name-slot {
+    position: relative;
+    display: inline-block;
+    min-width: 4ch;
+    overflow: visible;
+    transition: width 180ms var(--alc-ease);
+  }
+  :root[data-theme="alcove"] .thread-head .thread-title.is-editing .thread-name {
+    visibility: hidden;
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+    /* Stays in flow: it is the only thing giving the slot its height, and the
+       input is positioned against that box. Still measurable — the text does
+       not wrap, so scrollWidth reports its full extent even while the slot is
+       still at the previous width. */
+    white-space: pre;
+    pointer-events: none;
+  }
   :root[data-theme="alcove"] .thread-head .title-input {
-    height: 27px;
-    padding: 0 14px;
-    font-size: 12.5px;
+    position: absolute;
+    inset: 0 -6px;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    box-shadow: none;
+    color: inherit;
+    font: inherit;
     text-align: center;
   }
-  /* The directory: a quiet click-to-copy line under the pill. */
+  /* The directory: a quiet click-to-copy capsule under the pill.
+     A capsule, not a bare line. The header floats over a scrolling
+     conversation with no fade behind it (see the note on .thread-head above),
+     and 10px grey type with nothing under it turned to mud the moment a
+     message or a tool row passed beneath. It carries the title pill's glass
+     at the title pill's strength — one object, two sizes — so the pair reads
+     as a single stack rather than a capsule with a caption stuck to it. */
   :root[data-theme="alcove"] .thread-head-meta { display: flex; justify-content: center; max-width: 100%; }
   :root[data-theme="alcove"] .thread-head .thread-project-path {
+    display: inline-flex;
+    align-items: center;
     max-width: 100%;
+    height: 23px;
     margin-top: 0;
+    padding: 0 11px;
+    border-radius: var(--alc-r-pill); corner-shape: round;
+    background: rgb(255 255 255 / 0.5);
+    box-shadow: var(--alc-rim), var(--alc-halo);
+    -webkit-backdrop-filter: var(--alc-blur);
+    backdrop-filter: var(--alc-blur);
     font-size: 10px;
     font-weight: 500;
+    /* The width is written from a measurement (ProjectPath in ThreadView.tsx)
+       precisely so it has two values to travel between when the label
+       changes; without that this capsule would snap while its text was still
+       dissolving. */
+    transition:
+      background 140ms ease,
+      color 140ms ease,
+      width 300ms var(--alc-ease);
+  }
+  :root[data-theme="alcove"] .thread-head .thread-project-path:hover {
+    background: #fff;
+    color: var(--alc-ink-3);
+    /* The capsule is the affordance now; the rule under the text was for a
+       line that had none. */
+    text-decoration: none;
   }
   :root[data-theme="alcove"] .thread-head .thread-project-path::before { content: none; }
-
-  /* Quick threads centre the Chat/Build capsule instead, so their title stays
-     at the left as a pill. */
-  :root[data-theme="alcove"] .thread-head.quick-thread-head .thread-head-main {
-    flex: 0 1 auto;
-    max-width: calc(50% - 110px);
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-theme="alcove"] .thread-head .thread-project-path { transition-duration: 1ms; }
   }
-  :root[data-theme="alcove"] .thread-head.quick-thread-head .thread-title { width: fit-content; }
-  :root[data-theme="alcove"] .quick-mode-tabs { top: 18px; }
+
+  /* The Chat/Build capsule is gone from this skin, so a quick thread's title
+     takes the centre like every other thread's rather than being pushed left
+     to make room for it. */
+  :root[data-theme="alcove"] .quick-mode-tabs { display: none; }
 
   :root[data-theme="alcove"] .feed-inner { padding-top: 78px; }
-  :root[data-theme="alcove"] .thread-pane:has(> .quick-thread-head) .feed-inner { padding-top: 84px; }
 }
 
 @media (max-width: 767px) {
@@ -286,11 +414,11 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 210px;
+  width: 298px;
   min-width: 0;
-  padding: 8px;
+  padding: 13px 10px;
   border: 0;
-  border-radius: var(--alc-r-menu); corner-shape: var(--alc-corner);
+  border-radius: 38px; corner-shape: var(--alc-corner);
   background: var(--alc-glass-strong);
   -webkit-backdrop-filter: var(--alc-blur);
   backdrop-filter: var(--alc-blur);
@@ -301,32 +429,42 @@
 }
 /* Mockup order: Browser first, then Files, Git, Artifacts, Terminal. */
 :root[data-theme="alcove"] .thread-menu.ws-menu > .thread-menu-item:nth-child(4) { order: -1; }
+:root[data-theme="alcove"] .thread-menu.ws-menu.dropdown-menu {
+  display: block;
+  animation: none;
+}
+:root[data-theme="alcove"] .thread-menu.ws-menu > .dropdown-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+:root[data-theme="alcove"] .thread-menu.ws-menu > .dropdown-content > .thread-menu-item:nth-child(4) { order: -1; }
 :root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item {
-  min-height: 34px;
+  min-height: 48px;
   gap: 11px;
-  padding: 0 11px;
+  padding: 0 13px;
   border: 0;
-  border-radius: 12px; corner-shape: var(--alc-corner);
+  border-radius: 22px; corner-shape: var(--alc-corner);
   background: transparent;
   color: var(--alc-ink);
   font-family: var(--font-ui);
-  font-size: 12.5px;
+  font-size: 16px;
   font-weight: 500;
   transition: background 160ms ease, color 160ms ease;
 }
 :root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item svg {
-  width: 17px;
-  height: 17px;
+  width: 21px;
+  height: 21px;
   color: var(--alc-ink);
   stroke-width: 1.8;
 }
 :root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item:hover:not(:disabled) {
-  background: var(--alc-hover);
+  background: var(--alc-menu-hover);
 }
 /* The open panel is the highlighted row (the mockup's Artifacts). */
 :root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.on,
 :root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.on:hover {
-  background: rgba(84, 84, 84, 0.07);
+  background: var(--alc-menu-hover);
   color: var(--alc-ink);
 }
 :root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.on svg { color: var(--alc-ink); }
@@ -348,10 +486,59 @@
 }
 :root[data-theme="alcove"] .thread-menu.ws-menu .thread-menu-item.divided svg { color: var(--alc-ink-3); }
 
+/* ---- the chat swap ----------------------------------------------------------
+   Ported from the prototype's .chat-content transition — its 9px, its 0.985
+   and its 220ms. ThreadView puts .is-arriving on the pane for the length of it
+   (see the note there on why only the arrival half runs).
+
+   Scoped to the conversation, not the whole pane. The header is outside it in
+   the prototype too — it belongs to the window rather than to the chat — and
+   the composer is deliberately left out here, where the prototype includes it:
+   this card is real glass, and `filter` on an ancestor re-roots the backdrop
+   its frost samples, so taking the dock along would flicker the composer's
+   glass for the length of every thread switch. */
+:root[data-theme="alcove"] .thread-pane.is-arriving > .feed-scroll {
+  animation: alc-chat-in 220ms ease-out both;
+}
+@keyframes alc-chat-in {
+  from { opacity: 0; filter: blur(9px); transform: scale(0.985); }
+  to { opacity: 1; filter: blur(0); transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .thread-pane.is-arriving > .feed-scroll { animation: none; }
+}
+
 /* ---- feed column ------------------------------------------------------------- */
+/* The column is the composer card's width, not a figure of its own: the two
+   are stacked and a difference between them reads as a misalignment. So it
+   reads --alc-cmp-w, the one width this skin gives the composer (composer.css
+   — the skin deliberately ignores the cozy/wide/full preference), not the
+   --composer-max-w the other skins share. Both sides then subtract the same
+   22px of side padding, landing their text edges on the same verticals.
+
+   Divided by the zoom because only the feed carries it (.feed-inner's `zoom`
+   in styles.css); the composer always renders at 100%. Undivided, the column
+   comes out --ui-zoom times wider on screen than the card below it — at 115%
+   that is ~60px of overhang a side. The 44px of padding is lifted out of the
+   division and added back, so what matches the card is the text edge rather
+   than the padding box. */
 :root[data-theme="alcove"] .feed-inner {
-  max-width: calc(var(--alc-col) + 44px);
+  /* How far the agent's side reaches. One number for the prose and for the
+     activity pills: they stack directly on each other, so two numbers would
+     show up as a ragged right edge down the whole thread.
+     A percentage of the column, not ch: ch resolves against each element's own
+     font-size, and the reply is set a few points larger than a pill's label,
+     so the same ch gave the two of them visibly different widths. */
+  --alc-agent-w: 64%;
   gap: 14px;
+}
+/* Scoped to the breakpoint --alc-cmp-w itself is scoped to: below it the
+   composer reverts to the base docked bar and the base 860px column already
+   matches. */
+@media (min-width: 768px) {
+  :root[data-theme="alcove"] .feed-inner {
+    max-width: calc((var(--alc-cmp-w) - 44px) / var(--ui-zoom, 1) + 44px);
+  }
 }
 :root[data-theme="alcove"] .msg-assistant,
 :root[data-theme="alcove"] .row-card,
@@ -366,6 +553,25 @@
 :root[data-theme="alcove"] .feed-note,
 :root[data-theme="alcove"] .artifact-card { max-width: 100%; }
 
+/* The agent’s side sits in from the column’s left edge, and its prose stops
+   short of the right. A reply that runs the full width of the thread — the
+   same width as the composer below it — reads as a document rather than as a
+   turn in a conversation, and at this size the line is longer than is
+   comfortable to read anyway.
+   The indent is shared by everything the agent puts on that side, so their
+   left edges stay on one vertical. Dividers keep the full width: they are the
+   column’s own rules, not something said in it. */
+:root[data-theme="alcove"] .msg-assistant,
+:root[data-theme="alcove"] .row-card,
+:root[data-theme="alcove"] .thinking-block,
+:root[data-theme="alcove"] .approval-card,
+:root[data-theme="alcove"] .approval-resolved,
+:root[data-theme="alcove"] .question-card,
+:root[data-theme="alcove"] .question-resolved,
+:root[data-theme="alcove"] .feed-note,
+:root[data-theme="alcove"] .artifact-card { margin-left: 20px; }
+:root[data-theme="alcove"] .msg-assistant { max-width: var(--alc-agent-w); }
+
 /* ---- user message ------------------------------------------------------------ */
 :root[data-theme="alcove"] .msg-user-wrap .msg-time-user {
   order: -1;
@@ -376,12 +582,48 @@
   max-width: min(78%, 560px);
   padding: 9px 15px;
   border: 0;
-  border-radius: 21px; corner-shape: var(--alc-corner);
+  border-radius: 30px; corner-shape: var(--alc-corner);
   background: var(--alc-blue);
   color: rgba(255, 255, 255, 0.92);
-  font-size: 13.5px;
+  font-size: var(--alc-cmp-font);
   font-weight: 500;
   line-height: 1.42;
+}
+/* A one-line bubble is a true pill, so it drops the skin's superellipse
+   corners: at a full radius a superellipse reads as a squircle, which is
+   the rounded box this is meant to be distinct from. */
+:root[data-theme="alcove"] .msg-user.one-line {
+  border-radius: 999px;
+  corner-shape: round;
+}
+
+/* The send entrance, after the Alcove mockups: the bubble arrives from the
+   composer's direction rather than rising a few pixels off its own box —
+   further, slower and with a 0.9 scale, so the send reads as the draft
+   travelling into the thread, blurring off its own speed as it lands. No
+   layout properties: the bubble holds its final box the whole way, so the
+   feed's stick-to-bottom measurements see the geometry they always did. The offsets
+   are a fixed approximation of the composer's centre (down and to the left of
+   a right-aligned bubble), not a measurement — nothing in the skin is
+   JS-driven. */
+@keyframes alcove-message-send-in {
+  from {
+    opacity: 0;
+    filter: blur(9px);
+    transform: translate3d(var(--alc-send-x, -38px), var(--alc-send-y, 48px), 0) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+:root[data-theme="alcove"] .msg-user-wrap.just-sent {
+  transform-origin: center center;
+  animation: alcove-message-send-in 0.46s cubic-bezier(0.18, 0.88, 0.24, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .msg-user-wrap.just-sent { animation: none; }
 }
 :root[data-theme="alcove"] .msg-user .md p { margin: 0.3em 0; }
 :root[data-theme="alcove"] .msg-user .md :not(pre) > code,
@@ -407,9 +649,7 @@
   font-weight: 500;
 }
 :root[data-theme="alcove"] .msg-reply:hover,
-:root[data-theme="alcove"] .msg-reply:focus-visible,
-:root[data-theme="alcove"] .msg-copy:hover,
-:root[data-theme="alcove"] .msg-copy:focus-visible {
+:root[data-theme="alcove"] .msg-copy:hover {
   border-color: transparent;
   background: #fff;
   box-shadow: var(--alc-halo);
@@ -431,10 +671,12 @@
 :root[data-theme="alcove"] .msg-user-attachments.gallery .msg-user-image,
 :root[data-theme="alcove"] .msg-user-attachments.gallery img { border-radius: 18px; corner-shape: var(--alc-corner); }
 
-/* Timestamps: 10px UI grey, not mono. */
+/* Timestamps: UI grey, not mono. Sized with .assistant-thought-stat below —
+   the two sit side by side on the meta row and any difference between them
+   reads as a mistake rather than a hierarchy. */
 :root[data-theme="alcove"] .msg-time {
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: 0;
   color: var(--alc-ink-4);
@@ -443,7 +685,9 @@
 /* ---- assistant message ------------------------------------------------------- */
 :root[data-theme="alcove"] .msg-assistant {
   color: var(--alc-ink-3);
-  font-size: 14px;
+  /* The skin's composer sits a point above --composer-font; the feed
+     follows it, not the base size, or the two read differently. */
+  font-size: var(--alc-cmp-font);
   font-weight: 500;
   line-height: 1.55;
 }
@@ -451,7 +695,9 @@
    timestamp moves up into it. */
 :root[data-theme="alcove"] .assistant-head {
   gap: 9px;
-  min-height: 17px;
+  /* The mark's own height: the row is laid out around it, not around the
+     13px text beside it. */
+  min-height: 22px;
   margin-bottom: 6px;
 }
 :root[data-theme="alcove"] .assistant-head > .msg-time-mobile {
@@ -465,7 +711,8 @@
   order: 2;
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 9px;
+  /* Matches .msg-time — see the note there. */
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: 0;
   color: var(--alc-ink-4);
@@ -482,10 +729,14 @@
   font-weight: 500;
   letter-spacing: 0;
 }
+/* The mark floats: no disc behind it. With the name hidden on a single-agent
+   thread (below) the mark is the whole chip, and a tinted circle around it
+   read as a button in a row that has none. Bigger to carry that on its own —
+   at 17px inside a disc it was an ornament, at 22px bare it is the speaker. */
 :root[data-theme="alcove"] .speaker-chip-mark {
-  width: 17px;
-  height: 17px;
-  background: color-mix(in srgb, var(--lane-color, var(--alc-codex)) 16%, #fff);
+  width: 22px;
+  height: 22px;
+  background: none;
   color: var(--lane-color, var(--alc-codex));
 }
 /* One agent on the thread: the mark alone says who, as in the mockup. Multi-
@@ -631,7 +882,6 @@
 :root[data-theme="alcove"] .subagent-row,
 :root[data-theme="alcove"] .subagent-row.status-error {
   border: 0;
-  border-radius: var(--alc-r-tool); corner-shape: var(--alc-corner);
   background: var(--alc-card);
   box-shadow: var(--alc-rim), var(--alc-card-shadow);
 }
@@ -640,9 +890,12 @@
 :root[data-theme="alcove"] .row-head,
 :root[data-theme="alcove"] .tool-row .row-head,
 :root[data-theme="alcove"] .row-head-btn {
-  min-height: 34px;
-  gap: 8px;
-  padding: 0 12px 0 11px;
+  /* Exactly a one-line message. A card is an aside, and it says so with its
+     width and its grey — it does not also need to be the short thing in the
+     column. Matching the bubble puts every row in the feed on one rhythm. */
+  min-height: var(--alc-msg-h);
+  gap: 10px;
+  padding: 0 18px 0 17px;
 }
 :root[data-theme="alcove"] .diff-head { padding: 0; }
 :root[data-theme="alcove"] .row-head:not(:disabled):hover,
@@ -668,6 +921,80 @@
   color: var(--alc-ink-5);
 }
 :root[data-theme="alcove"] .row-chevron { color: #999; }
+
+/* Narrower than the thread: these are asides, and a full-width row of them
+   reads as the main column. In ch so it follows the feed's text.
+ *
+ *  The shape lives here rather than in the painting group above, which carries
+ *  :hover variants to beat the base skin: a radius declared alongside them
+ *  outranks the open state below, and an open card turned back into a pill the
+ *  moment the pointer touched it. */
+:root[data-theme="alcove"] .row-card {
+  max-width: var(--alc-agent-w);
+  /* corner-shape: round, not the skin's superellipse — a superellipse at a
+     full radius is a squircle, the shape this is meant to be distinct from. */
+  border-radius: 999px; corner-shape: round;
+}
+
+/* Open, the card holds a transcript, and a full radius would clip its first
+   and last lines — `overflow: hidden` in the base stylesheet is what makes
+   that necessary and also what makes the pill safe. These sit after the group
+   above and match its specificity, so opening wins the tie. */
+:root[data-theme="alcove"] .row-card:has(> .tool-body),
+:root[data-theme="alcove"] .row-card:has(> .subagent-body),
+:root[data-theme="alcove"] .row-card:has(> .diff-body) {
+  border-radius: 30px;
+  corner-shape: var(--alc-corner);
+}
+
+/* Opening grows the card downward out of its own head, rather than the body
+   appearing at full size and shoving the feed. Anchored at the top so the
+   head does not move — it is the thing that was just clicked. */
+@keyframes alc-row-open {
+  from { opacity: 0; scale: 1 0.8; filter: blur(7px); }
+  to { opacity: 1; scale: 1 1; filter: blur(0); }
+}
+/* Closing is the same move backwards, quicker: opening can take its time,
+   dismissal should not. ToolRow holds the body mounted for exactly this long
+   (ROW_CLOSE_MS) so there is something here to animate. */
+@keyframes alc-row-close {
+  from { opacity: 1; scale: 1 1; filter: blur(0); }
+  to { opacity: 0; scale: 1 0.8; filter: blur(7px); }
+}
+:root[data-theme="alcove"] .tool-body,
+:root[data-theme="alcove"] .subagent-body,
+:root[data-theme="alcove"] .diff-card .diff-body {
+  transform-origin: top center;
+  animation: alc-row-open 260ms var(--alc-ease) both;
+}
+:root[data-theme="alcove"] .tool-body.is-closing {
+  animation: alc-row-close 200ms var(--alc-ease) both;
+}
+
+/* Arrival. A card the agent produces while you are watching resolves out of
+   the page instead of appearing finished: deep blur, slightly small, a few
+   pixels low. Only live arrivals carry .is-arriving — scrollback and paged
+   history mount hundreds of these at once (see useArriving in FeedItems). */
+@keyframes alc-row-arrive {
+  from { opacity: 0; scale: 0.94; translate: 0 7px; filter: blur(16px); }
+  55% { opacity: 1; }
+  to { opacity: 1; scale: 1; translate: 0 0; filter: blur(0); }
+}
+:root[data-theme="alcove"] .row-card.is-arriving {
+  animation: alc-row-arrive 540ms var(--alc-ease) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .row-card.is-arriving,
+  :root[data-theme="alcove"] .tool-body,
+  :root[data-theme="alcove"] .tool-body.is-closing,
+  :root[data-theme="alcove"] .subagent-body,
+  :root[data-theme="alcove"] .diff-card .diff-body { animation: none; }
+}
+
+/* A taller pill wants a label that fills it. */
+:root[data-theme="alcove"] .row-name,
+:root[data-theme="alcove"] .diff-card .row-name { font-size: var(--alc-cmp-font); }
+:root[data-theme="alcove"] .row-glyph svg { width: 17px; height: 17px; }
 :root[data-theme="alcove"] .tool-row.is-live .row-glyph,
 :root[data-theme="alcove"] .subagent-row.status-running .row-glyph { color: var(--alc-blue); }
 :root[data-theme="alcove"] .tool-spin {
@@ -968,6 +1295,14 @@
   font-weight: 500;
   color: var(--alc-ink-4);
 }
+/* The running commentary the other skins print between turns — "session
+   started · Claude Code · <model>", "requesting" — is hidden here: this skin
+   already says who is answering in the message's own meta row, and the
+   working state has the spinner. Errors are not commentary and stay. So does
+   a status note that carries an action, since hiding it would take the
+   button with it. */
+:root[data-theme="alcove"] .note-session,
+:root[data-theme="alcove"] .note-status:not(:has(button)) { display: none; }
 :root[data-theme="alcove"] .note-status { font-style: normal; }
 :root[data-theme="alcove"] .feed-note button {
   color: var(--alc-ink-3);
@@ -1027,12 +1362,6 @@
 :root[data-theme="alcove"] .empty-model-trigger:hover,
 :root[data-theme="alcove"] .empty-project-trigger[aria-expanded="true"],
 :root[data-theme="alcove"] .empty-model-trigger[aria-expanded="true"] { background: #fff; color: var(--alc-ink); }
-:root[data-theme="alcove"] .empty-project-trigger:focus-visible,
-:root[data-theme="alcove"] .empty-model-trigger:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--alc-blue) 45%, transparent);
-  outline-offset: 2px;
-  border-radius: var(--alc-r-pill);
-}
 :root[data-theme="alcove"] .empty-model-using,
 :root[data-theme="alcove"] .empty-model-name,
 :root[data-theme="alcove"] .empty-model-chevron,
@@ -1058,9 +1387,7 @@
   font: 500 12.5px/1.2 var(--font-ui);
 }
 :root[data-theme="alcove"] .empty-project-option:hover,
-:root[data-theme="alcove"] .empty-project-option:focus-visible,
-:root[data-theme="alcove"] .empty-model-option:hover,
-:root[data-theme="alcove"] .empty-model-option:focus-visible { background: var(--alc-hover); color: var(--alc-ink); }
+:root[data-theme="alcove"] .empty-model-option:hover { background: var(--alc-menu-hover); color: var(--alc-ink); }
 :root[data-theme="alcove"] .empty-project-option.selected,
 :root[data-theme="alcove"] .empty-model-option.selected { background: rgba(84, 84, 84, 0.07); color: var(--alc-ink); }
 :root[data-theme="alcove"] .empty-model-option-name { color: var(--alc-ink-4); }
@@ -1094,6 +1421,30 @@
   animation: alc-present-in 230ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
 :root[data-theme="alcove"] .jump-present:hover { background: #fff; color: var(--alc-ink); }
+/* Sized off the title pill. Both capsules float over the conversation, one at
+   each end of it, so they read as one piece of furniture — but this one is a
+   transient control rather than the thread's name, so it sits a step under the
+   title at 0.8 of it rather than level with it. Built from the title's own
+   height expression (.thread-title above) times that factor, so the two still
+   track the composer font preference together instead of drifting apart at the
+   ends of the range. Scoped to the title pill's own breakpoint: below it there
+   is no floating title to relate to, and the phone keeps its 30px capsule. */
+@media (min-width: 768px) {
+  :root[data-theme="alcove"] .jump-present,
+  :root[data-theme="alcove"] .jump-present:hover {
+    height: calc((var(--alc-cmp-font) * 2.02 + 18px) * 0.8);
+    gap: 7px;
+    padding: 0 17px;
+    font-size: calc(var(--alc-cmp-font) - 2px);
+    line-height: 1;
+  }
+  /* The arrow is sized in JSX (ThreadView's `size={13}`), which is right for
+     every other skin; overriding it here rather than there keeps them at 13. */
+  :root[data-theme="alcove"] .jump-present > svg {
+    width: 15px;
+    height: 15px;
+  }
+}
 @keyframes alc-present-in {
   from { opacity: 0; filter: blur(7px); transform: translateX(-50%) scale(0.86); }
   to { opacity: 1; filter: blur(0); transform: translateX(-50%) scale(1); }
@@ -1132,21 +1483,97 @@
 :root[data-theme="alcove"] .feed-find-item:has(> .row-card) + .feed-find-item:has(> .row-card) { margin-top: -7px; }
 
 /* Quick threads' Chat/Build capsule: a glass track with a white thumb. */
-:root[data-theme="alcove"] .quick-mode-tabs {
-  padding: 3px;
-  background: var(--alc-glass);
+/* The Chat/Build capsule is hidden in this skin (see the head block above),
+   so it has no appearance left to give. */
+
+/* ---- renaming --------------------------------------------------------------
+   Clicking the pencil presses the capsule, so it grows and brightens. On the
+   way back down the agent mark blurs out and gives up its space, and the
+   capsule widens into the input. The timings match the press release in
+   glass-press.css (340ms), so the two read as one movement rather than a
+   grow followed by a separate change. */
+:root[data-theme="alcove"] .thread-head .thread-title {
+  width: max-content;
+  transition: background 340ms var(--alc-ease), box-shadow 340ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .thread-head .title-agent-mark {
+  flex: none;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity 260ms var(--alc-ease),
+    filter 260ms var(--alc-ease),
+    width 320ms var(--alc-ease),
+    margin-right 320ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .thread-head .thread-title.is-editing .title-agent-mark {
+  /* The negative margin cancels the flex gap the mark leaves behind, so the
+     name travels the mark's full width rather than stopping 9px short. */
+  width: 0;
+  margin-right: -9px;
+  opacity: 0;
+  filter: blur(7px);
+}
+/* Held at the pressed exposure for as long as the rename is open. */
+:root[data-theme="alcove"] .thread-head .thread-title.is-editing {
+  background: rgb(255 255 255 / 0.62);
+  box-shadow: var(--alc-rim), 0 7px 18px rgba(0, 0, 0, 0.035);
+  -webkit-backdrop-filter: blur(11.7px) saturate(1.13) brightness(1.05);
+  backdrop-filter: blur(11.7px) saturate(1.13) brightness(1.05);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .thread-head .thread-title,
+  :root[data-theme="alcove"] .thread-head .title-agent-mark { transition-duration: 1ms; }
+}
+
+/* A renamed thread's new name arrives rather than snapping in. Both spans are
+   keyed on the title in their components, so React remounts them when it
+   changes and this animation replays — CSS has no way to notice that a text
+   node's contents differ from what they were. */
+:root[data-theme="alcove"] .thread-head .thread-name {
+  animation: alc-thread-title-in 270ms var(--alc-ease) both;
+}
+:root[data-theme="alcove"] .thread-head .thread-title.is-editing .thread-name {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .thread-head .thread-name { animation-duration: 1ms; }
+}
+
+/* ---- "New chat", docked beside the sidebar ----------------------------------
+   The same round glass disc the header's controls wear (see .head-pill above),
+   at the same diameter as the title pill's height — the three objects floating
+   over this room are all one size. Lined up with the header's own row: 20px
+   down, 24px in, matching the desktop .thread-head padding, which reserves
+   --new-chat-dock-w of left room so nothing prints underneath it. */
+:root[data-theme="alcove"] { --new-chat-dock-w: var(--alc-title-h); }
+/* Above the floating header (z-index 20), which is pointer-events: none
+   everywhere but its own controls. */
+:root[data-theme="alcove"] .new-chat-dock-slot {
+  /* Restated, not inherited: .tooltip is position: relative under this theme
+     at a higher specificity than the base .new-chat-dock-slot rule, so without
+     this the wrapper stays in flow and pushes the whole thread pane down. */
+  position: absolute;
+  z-index: 21;
+  top: 20px;
+  left: 24px;
+}
+:root[data-theme="alcove"] .new-chat-dock {
+  border: 0;
+  background: rgb(255 255 255 / 0.25);
+  box-shadow: var(--alc-rim), var(--alc-halo);
   -webkit-backdrop-filter: var(--alc-blur);
   backdrop-filter: var(--alc-blur);
-  box-shadow: var(--alc-rim), var(--alc-halo);
+  color: var(--alc-ink-2);
+  transition: background 160ms ease, color 160ms ease, transform 160ms var(--alc-ease);
 }
-:root[data-theme="alcove"] .quick-mode-tabs button {
-  min-height: 25px;
-  padding: 4px 16px;
-  color: var(--alc-ink-4);
-  font: 500 12px/1 var(--font-ui);
-}
-:root[data-theme="alcove"] .quick-mode-tabs button.active { color: var(--alc-ink); }
-:root[data-theme="alcove"] .quick-mode-indicator {
+:root[data-theme="alcove"] .new-chat-dock:hover {
   background: #fff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .new-chat-dock:active { transform: scale(1.08); }
+:root[data-theme="alcove"] .new-chat-dock svg {
+  width: 21px;
+  height: 21px;
+  stroke-width: 2.1;
 }

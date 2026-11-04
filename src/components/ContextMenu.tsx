@@ -8,6 +8,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { useDismissAnimation } from "../lib/useDismissAnimation";
+import { useAlcove } from "../lib/useAlcove";
+import { Dropdown } from "./alcove/Dropdown";
+
 export interface CtxItem {
   label: string;
   icon?: ReactNode;
@@ -39,6 +43,8 @@ export function ContextMenu({
   items,
   title,
   onClose,
+  className,
+  anchor,
 }: {
   x: number;
   y: number;
@@ -48,12 +54,27 @@ export function ContextMenu({
    *  never says WHICH one. */
   title?: string;
   onClose: () => void;
+  /** Extra class on the menu root, for a caller that wants its own size or
+   *  shape. Used by "New chat in", which matches the composer's dropdowns. */
+  className?: string;
+  anchor?: HTMLElement;
 }) {
+  const alcove = useAlcove();
+  const morph = alcove && !!anchor;
+  const [morphOpen, setMorphOpen] = useState(true);
+  const afterClose = useRef<(() => void) | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
+  // Every way out of this menu goes through `dismiss`, not `onClose`: the
+  // parents all render it as `{point && <ContextMenu/>}`, so calling onClose
+  // directly unmounts it on the spot and the exit animation never runs. The
+  // menu now plays its own exit and tells the parent when it is over.
+  const { closing, dismiss: dismissLegacy, onAnimationEnd } = useDismissAnimation(onClose);
+  const dismiss = morph ? () => setMorphOpen(false) : dismissLegacy;
 
   // Clamp into the viewport once the menu has a size.
   useLayoutEffect(() => {
+    if (morph) return;
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
@@ -61,7 +82,7 @@ export function ContextMenu({
       left: Math.max(4, Math.min(x, window.innerWidth - r.width - 8)),
       top: Math.max(4, Math.min(y, window.innerHeight - r.height - 8)),
     });
-  }, [x, y]);
+  }, [x, y, morph]);
 
   useEffect(() => {
     // WebKitGTK paints a composited overflow scrollbar above fixed portal
@@ -70,23 +91,24 @@ export function ContextMenu({
     document.documentElement.classList.add("ctx-menu-open");
 
     const down = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      if (morph && anchor?.contains(e.target as Node)) return;
+      if (ref.current && !ref.current.contains(e.target as Node)) dismiss();
     };
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") dismiss();
     };
     window.addEventListener("mousedown", down, true);
     window.addEventListener("contextmenu", down, true);
     window.addEventListener("keydown", key);
-    window.addEventListener("blur", onClose);
+    window.addEventListener("blur", dismiss);
     return () => {
       window.removeEventListener("mousedown", down, true);
       window.removeEventListener("contextmenu", down, true);
       window.removeEventListener("keydown", key);
-      window.removeEventListener("blur", onClose);
+      window.removeEventListener("blur", dismiss);
       document.documentElement.classList.remove("ctx-menu-open");
     };
-  }, [onClose]);
+  }, [dismiss]);
 
   // Keyboard access: move focus into the menu on open (so arrow keys and
   // Enter/Space work for keyboard users who activated the trigger), and hand
@@ -135,15 +157,8 @@ export function ContextMenu({
     enabled[next]?.focus();
   };
 
-  return createPortal(
-    <div
-      className="ctx-menu"
-      style={pos}
-      ref={ref}
-      role="menu"
-      aria-label={title}
-      onKeyDown={onKeyDown}
-    >
+  const contents = (
+    <>
       {title && <div className="ctx-title">{title}</div>}
       {items.map((it, index) =>
         it.kind === "heading" ? (
@@ -163,8 +178,9 @@ export function ContextMenu({
             className={`ctx-item${it.danger ? " danger" : ""}${it.inset ? " inset" : ""}${it.dividerBefore ? " divided" : ""}`}
             disabled={it.disabled}
             onClick={() => {
-              onClose();
-              it.onSelect();
+              if (morph) afterClose.current = it.onSelect;
+              dismiss();
+              if (!morph) it.onSelect();
             }}
           >
             {it.icon}
@@ -177,6 +193,35 @@ export function ContextMenu({
           </button>
         ),
       )}
+    </>
+  );
+  if (morph) return (
+    <Dropdown
+      anchor={anchor}
+      open={morphOpen}
+      onOpenChange={setMorphOpen}
+      onCloseComplete={() => { onClose(); afterClose.current?.(); }}
+      menuRef={ref}
+      menuClassName={`ctx-menu ${className ?? ""}`}
+      menuLabel={title}
+      placement="bottom-left"
+      onKeyDown={onKeyDown}
+    >
+      {contents}
+    </Dropdown>
+  );
+  return createPortal(
+    <div
+      className={`ctx-menu${className ? ` ${className}` : ""}`}
+      style={pos}
+      ref={ref}
+      role="menu"
+      aria-label={title}
+      data-state={closing ? "closing" : "open"}
+      onAnimationEnd={onAnimationEnd}
+      onKeyDown={onKeyDown}
+    >
+      {contents}
     </div>,
     document.body,
   );

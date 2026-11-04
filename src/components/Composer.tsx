@@ -19,6 +19,8 @@ import type {
   ThreadSettings,
 } from "../lib/protocol";
 import { isAgentVisible, showHermesAgents } from "../lib/agentVisibility";
+import type { BrowserDictation } from "../lib/browserDictation";
+import { startBrowserDictation, supportsBrowserDictation } from "../lib/browserDictation";
 import { useIsMobile } from "../lib/viewport";
 import { HERMES_HOME_PROJECT_ID, isQuickHomeProjectId } from "../lib/protocol";
 import { effortForModel, remoteMachineId, resolveProjectView, useFeedStore, useStore } from "../state/store";
@@ -47,6 +49,19 @@ import {
 } from "./icons";
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
 import { useAlcove } from "../lib/useAlcove";
+import { attachmentDataUrl } from "../lib/composerDraft";
+import type {
+  DraftAttachment,
+  PickerOption,
+  SettingOption,
+  SettingRow,
+} from "../lib/composerDraft";
+import { AlcoveComposer } from "./AlcoveComposer";
+
+// Re-exported for the modules that imported these from here before the
+// Alcove skin needed them too.
+export type { DraftAttachment, SettingOption, SettingRow } from "../lib/composerDraft";
+export { attachmentDataUrl } from "../lib/composerDraft";
 import { highlightMarkdown } from "../lib/markdownHighlight";
 import { markJustSent } from "../lib/justSent";
 import { formatReply, replyPreview, type ReplyTarget } from "../lib/reply";
@@ -96,9 +111,6 @@ function attachmentWireBytes(attachments: DraftAttachment[]): number {
   return attachments.reduce((total, a) => total + a.data.length, 0);
 }
 
-function attachmentDataUrl(attachment: { mimeType: string; data: string }): string {
-  return `data:${attachment.mimeType};base64,${attachment.data}`;
-}
 
 function AttachmentThumb({
   attachment,
@@ -115,17 +127,11 @@ function AttachmentThumb({
       ) : (
         <PaperclipIcon size={compact ? 11 : 13} />
       )}
-      {!compact && <span className="attachment-thumb-name" title={attachment.name}>{attachment.name}</span>}
+      {!compact && <span className="attachment-thumb-name">{attachment.name}</span>}
     </span>
   );
 }
 
-interface DraftAttachment {
-  localId: string;
-  name: string;
-  mimeType: string;
-  data: string; // base64, no data: prefix
-}
 
 interface NativeClipboardImage {
   name: string;
@@ -231,7 +237,6 @@ export function AgentSelect({
         type="button"
         className="agent-trigger"
         disabled={disabled}
-        title={disabled ? "Wait for the current turn to finish" : "Choose agent — context carries over"}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -265,41 +270,8 @@ export function AgentSelect({
   );
 }
 
-/** One selectable value inside a settings row's flyout. */
-interface SettingOption {
-  value: string;
-  label: string;
-  glyph?: ReactNode; // brand mark for agent options
-  dot?: string; // hermes presence kind — a coloured status pip
-  tag?: string; // trailing note ("offline")
-  selected: boolean;
-  onSelect: () => void;
-}
 
-/**
- * One extra section of the AI menu — a per-session setting that belongs to the
- * AI rather than to the message being written (context window, Chrome).
- */
-interface SettingRow {
-  key: string;
-  icon: ReactNode;
-  label: string;
-  valueLabel?: string;
-  valueGlyph?: ReactNode;
-  hint?: string;
-  disabled?: boolean; // shown, but not changeable (locked value, or mid-turn)
-  options: SettingOption[];
-  action?: () => void; // a plain command row (e.g. "Claude only") — no choices
-}
 
-interface PickerOption<T extends string> {
-  id: T;
-  icon: ReactNode;
-  title: string;
-  /** Trigger label on phone widths, where the bar has no room for the full one. */
-  shortTitle?: string;
-  desc: string;
-}
 
 /**
  * A quiet inline pill dropdown for the two settings kept out on the bar (Mode,
@@ -351,7 +323,6 @@ function PillPicker<T extends string>({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={ariaLabel}
-        title={showLabel ? ariaLabel : `${ariaLabel}: ${current.title}`}
         onClick={() => setOpen((v) => !v)}
       >
         <span className="pill-trigger-icon">{current.icon}</span>
@@ -386,12 +357,12 @@ function PillPicker<T extends string>({
 }
 
 // Icons sized to match the plus button (19), default stroke weight.
-const MODE_OPTIONS: PickerOption<Mode>[] = [
+export const MODE_OPTIONS: PickerOption<Mode>[] = [
   { id: "plan", icon: <HammerIcon size={19} />, title: "Plan", desc: "Chart the approach first — no file changes" },
   { id: "build", icon: <WrenchIcon size={19} />, title: "Build", desc: "Do the work and make the changes" },
 ];
 
-const ACCESS_OPTIONS: PickerOption<Access>[] = [
+export const ACCESS_OPTIONS: PickerOption<Access>[] = [
   { id: "read", icon: <EyeIcon size={19} />, title: "Read", desc: "Read-only — look, never touch" },
   { id: "edits", icon: <PencilIcon size={19} />, title: "Edit", desc: "Edit files; asks before running" },
   {
@@ -464,7 +435,6 @@ function AgentModelPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="AI and model"
-        title="AI & model"
         onClick={() => setOpen((v) => !v)}
       >
         <AgentMark agent={agent} size={20} />
@@ -489,7 +459,6 @@ function AgentModelPicker({
                   aria-checked={o.selected}
                   disabled={agentsDisabled && !o.selected}
                   className={`pill-opt compact${o.selected ? " on" : ""}`}
-                  title={agentsDisabled ? "Wait for the current turn to finish" : undefined}
                   onClick={() => o.onSelect()} // keep open so a model can follow
                 >
                   <span className="pill-opt-icon">{o.glyph}</span>
@@ -570,7 +539,6 @@ function AgentModelPicker({
                     aria-checked={o.selected}
                     disabled={row.disabled}
                     className={`pill-opt compact${o.selected ? " on" : ""}`}
-                    title={row.hint}
                     onClick={() => {
                       o.onSelect();
                       setOpen(false);
@@ -591,7 +559,6 @@ function AgentModelPicker({
                   role="menuitem"
                   disabled={!row.action || row.disabled}
                   className="pill-opt compact"
-                  title={row.hint}
                   onClick={() => {
                     if (!row.action) return;
                     row.action();
@@ -661,6 +628,23 @@ function slashContextAt(
 
 /** Matches the server's own cap; stop before it so the UI never hangs waiting. */
 const MAX_DICTATION_SECONDS = 120;
+
+/** What to say when the webview's own microphone never opened. The browser
+ *  reports a refusal and a missing device as DOMExceptions whose names are the
+ *  only durable part; their messages are engine prose. */
+function micFailure(error: unknown): string {
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Microphone access was refused. Allow it for this app in system settings, then try Dictate again.";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "No microphone was found.";
+  }
+  if (name === "NotReadableError") {
+    return "The microphone is in use by another app.";
+  }
+  return error instanceof Error ? error.message : String(error);
+}
 
 function clock(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -779,6 +763,8 @@ function BuildWorkspaceTray() {
 
 export const Composer = memo(function Composer({ thread, quickMode, replyTo, onClearReply }: ComposerProps) {
   const { state, actions, dispatch } = useFeedStore();
+  // The Alcove skin replaces this whole bar with its own card (AlcoveComposer).
+  const alcove = useAlcove();
   const draft = state.draft;
   const agents = state.hello?.agents ?? [];
 
@@ -833,6 +819,13 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
 
   // Absent on servers built before dictation existed, which hides the button.
   const dictation = state.hello?.dictation;
+  // No sidecar on the server, but this webview can hear and transcribe for
+  // itself: fall back to it rather than leaving the mic button dead. Server
+  // dictation stays first in line where it exists — it is offline, it uses no
+  // outside service, and it hears the machine the agent is actually on.
+  // See lib/browserDictation.ts.
+  const inWebviewDictation = !dictation?.available && supportsBrowserDictation();
+  const canDictate = !!dictation?.available || inWebviewDictation;
   // Voice Parlay: absent on older servers; hidden on drafts (a session needs
   // a real thread to talk to).
   const voice = state.hello?.voice;
@@ -858,6 +851,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   const taWidthRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<string | null>(null);
+  /** The in-webview session, when that is the engine. Mutually exclusive with
+   *  recordingRef, which holds the server's recording id. */
+  const localDictationRef = useRef<BrowserDictation | null>(null);
 
   useEffect(() => {
     setText(textDrafts.get(key) ?? "");
@@ -876,8 +872,30 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   const resizeTextarea = useCallback(() => {
     const ta = taRef.current;
     if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
+    // Collapse-and-measure, written so a skin may animate this box (alcove
+    // transitions its height). Two things would otherwise break:
+    //
+    //   - "auto" as the reset. scrollHeight reads the same either way, but a
+    //     height transition cannot interpolate between a keyword and a length,
+    //     so passing through it turns the growth into a jump. 0px keeps every
+    //     value on the path interpolable.
+    //   - The measurement reading its own animation. With a transition armed,
+    //     setting 0px does not collapse the box — it starts easing towards 0 —
+    //     so scrollHeight comes back as the height it already had and the box
+    //     can never shrink. Hence `transition: none` across the measurement.
+    //
+    // Restoring the height it was actually at before re-arming matters too:
+    // that, not the collapsed 0, is where the animation has to start from, and
+    // mid-animation it is the value on screen rather than the last target, so
+    // fast typing retargets smoothly instead of snapping.
+    const start = ta.offsetHeight;
+    ta.style.transition = "none";
+    ta.style.height = "0px";
+    const target = Math.min(ta.scrollHeight, 220);
+    ta.style.height = `${start}px`;
+    void ta.offsetHeight;
+    ta.style.transition = "";
+    ta.style.height = `${target}px`;
     // The textarea scrolls before React repaints the backdrop with the new
     // text, so the backdrop's own scroll event clamps to the old height.
     // Re-align once both have the same content.
@@ -954,6 +972,8 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   // Leaving the composer (thread switch, pane close) must release the mic.
   useEffect(
     () => () => {
+      localDictationRef.current?.cancel();
+      localDictationRef.current = null;
       const id = recordingRef.current;
       recordingRef.current = null;
       if (id) void actions.cancelDictation(id).catch(() => undefined);
@@ -1169,6 +1189,20 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   async function startDictating() {
     setAttachError(null);
     setMic("starting");
+    if (inWebviewDictation) {
+      try {
+        // This is the call that raises the microphone prompt. It stays inside
+        // the click that asked for it — a webview only grants a permission to
+        // a gesture, so deferring it past an await of our own would be refused.
+        localDictationRef.current = await startBrowserDictation(setAttachError);
+        setMic("recording");
+      } catch (e) {
+        localDictationRef.current = null;
+        setMic("idle");
+        setAttachError(micFailure(e));
+      }
+      return;
+    }
     try {
       recordingRef.current = await actions.startDictation();
       setMic("recording");
@@ -1180,6 +1214,21 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   }
 
   async function stopDictating() {
+    const local = localDictationRef.current;
+    if (local) {
+      localDictationRef.current = null;
+      setMic("transcribing");
+      try {
+        const spoken = await local.stop();
+        if (spoken) insertDictated(spoken);
+        // No toast on an empty clip when onTrouble already explained why:
+        // "nothing was said" twice reads like two separate faults.
+        else if (!attachError) setAttachError("Didn't catch that — nothing was said.");
+      } finally {
+        setMic("idle");
+      }
+      return;
+    }
     const id = recordingRef.current;
     if (!id) return;
     recordingRef.current = null;
@@ -1196,6 +1245,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   }
 
   function cancelDictating() {
+    const local = localDictationRef.current;
+    localDictationRef.current = null;
+    local?.cancel();
     const id = recordingRef.current;
     recordingRef.current = null;
     setMic("idle");
@@ -1524,21 +1576,324 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
             : "Ask anything…"
           : workPlaceholder;
 
+  // Hoisted so the Alcove skin's composer below renders the same rows from
+  // the same state rather than growing a second copy of them.
+  const banners = (
+    <>
+    {agentInfo && !agentInfo.available && agentInfo.authHint && (
+      <div className="composer-warn">{agentInfo.authHint}</div>
+    )}
+    {/* Say what sending is about to do. The switch is a real change of who
+        works this chat, and it happens on send rather than on a control the
+        user pressed — so it is announced before, not discovered after. */}
+    {handBackName && (
+      <div className="composer-handback">
+        Sending hands this chat back to <strong>{handBackName}</strong>
+        {running ? " once the current turn finishes." : " for the next turn."}
+      </div>
+    )}
+    {attachError && <div className="attach-err">{attachError}</div>}
+    </>
+  );
+  const queuedRow = (
+    <>
+    {queuedMessages.length > 0 && thread && (
+      <div className="queued-messages" aria-label="Queued messages">
+        {queuedMessages.map((message, index) => (
+          <div
+            className="queued-message"
+            key={`${index}:${message.text}:${message.attachments?.map((a) => a.name).join(",") ?? ""}`}
+          >
+            <ClockIcon className="queued-message-mark" size={14} />
+            <span className="queued-message-copy">
+              <span className="queued-message-label">Queued</span>
+              <span className="queued-message-text">
+                {message.text || "Attachment-only message"}
+              </span>
+              {message.attachments && message.attachments.length > 0 && (
+                <span
+                  className="queued-message-attachments"
+                >
+                  {message.attachments.slice(0, 3).map((attachment) => (
+                    <AttachmentThumb key={attachment.name} attachment={attachment} compact />
+                  ))}
+                  <span className="queued-message-attachment-count">
+                    {message.attachments.length} file{message.attachments.length === 1 ? "" : "s"}
+                  </span>
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              className="queued-message-remove"
+              aria-label="Remove queued message"
+              onClick={() => dispatch({ type: "clearQueuedMessage", threadId: thread.id, index })}
+            >
+              <XIcon size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+    </>
+  );
+  const slashRow = (
+    <>
+    {slashOpen && (
+      <div className="slash-pop" role="listbox" aria-label="Commands">
+        <div className="slash-pop-head">
+          <span className="slash-pop-mark">/</span>
+          <span>Commands</span>
+          <span className="slash-pop-hint">↑↓ choose · Enter insert</span>
+        </div>
+        <div className="slash-pop-list">
+          {slashCommands.map((command, index) => (
+            <button
+              key={command.name}
+              type="button"
+              role="option"
+              aria-selected={index === selectedSlashIndex}
+              className={`slash-option${index === selectedSlashIndex ? " selected" : ""}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setSlashIndex(index)}
+              onClick={() => chooseSlashCommand(command)}
+            >
+              <span className="slash-option-name">{command.name}</span>
+              <span className="slash-option-copy">
+                <span className="slash-option-label">{command.label}</span>
+                <span className="slash-option-detail">{command.detail}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    )}
+    </>
+  );
+  const replyRow = (
+    <>
+    {replyTo && (
+      <div className="reply-context" role="status">
+        {replyTo.attachments && replyTo.attachments.length > 0 && state.http && thread && (
+          <span className="reply-context-image" aria-hidden="true">
+            <img
+              src={attachmentUrl(state.http, thread.id, replyTo.attachments[0].id, {
+                machineId: remoteMachineId(state, thread.machineId),
+              })}
+              alt=""
+            />
+          </span>
+        )}
+        <div className="reply-context-copy">
+          <span className="reply-context-label">Replying to {replyTo.author}</span>
+          <span className="reply-context-text">
+            {replyPreview(replyTo.text) || (replyTo.attachments?.length ? "Image attachment" : "Empty message")}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="reply-context-close"
+          aria-label="Cancel reply"
+          onClick={onClearReply}
+        >
+          <XIcon size={14} />
+        </button>
+      </div>
+    )}
+    </>
+  );
+
+  const handleDraftPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const files = clipboardFiles(e.clipboardData);
+  if (files.length > 0) {
+    e.preventDefault();
+    void addFiles(files);
+    return;
+  }
+
+  // Preserve ordinary browser text paste. In the desktop shell we
+  // first check the native clipboard because WebKit can flatten a
+  // copied file into indistinguishable plain path text.
+  const pastedText = e.clipboardData.getData("text/plain");
+  const hasText = pastedText.length > 0;
+  const hasImageType = Array.from(e.clipboardData.types).some((type) =>
+    IMAGE_TYPES.includes(type),
+  );
+  const nativeShell = "__TAURI_INTERNALS__" in window;
+  if (hasText && !hasImageType && !nativeShell) return;
+
+  // Native Linux file copies can look exactly like a plain path to
+  // WebKit. Hold the default text insertion until the backend has
+  // checked the native file-list clipboard, then restore normal text
+  // paste when it wasn't an image file.
+  e.preventDefault();
+  const start = e.currentTarget.selectionStart;
+  const end = e.currentTarget.selectionEnd;
+  void pasteFromClipboard(e.clipboardData).then((attached) => {
+    if (!attached && hasText) insertPastedText(pastedText, start, end);
+  });
+  };
+  const handleDraftKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  if (slashOpen) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSlashIndex((index) => (index + 1) % slashCommands.length);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSlashIndex(
+        (index) => (index - 1 + slashCommands.length) % slashCommands.length,
+      );
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setDismissedSlashKey(slashKey);
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      chooseSlashCommand(slashCommands[selectedSlashIndex]);
+      return;
+    }
+  }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    void submit();
+  }
+  };
+
+  // Voice Parlay, shared by both renders: an unconfigured key is a notice
+  // rather than a dead button, and a live session reopens instead of starting
+  // a second one.
+  function openVoice() {
+    if (!thread || !voice?.available) return;
+    if (!voice.configured) {
+      dispatch({
+        type: "noticeAdd",
+        notice: {
+          id: Date.now(),
+          threadId: thread.id,
+          title: "Voice Parlay",
+          body: "Connect your ElevenLabs API key and pick a voice in Settings → Voice first.",
+        },
+      });
+      return;
+    }
+    if (state.voice.frame?.sessionId) {
+      dispatch({ type: "voiceOpen", open: true });
+      return;
+    }
+    void actions.startVoiceSession(thread.id).catch((e) => {
+      dispatch({
+        type: "noticeAdd",
+        notice: {
+          id: Date.now(),
+          threadId: thread.id,
+          title: "Voice Parlay",
+          body: e instanceof Error ? e.message : String(e),
+        },
+      });
+    });
+  }
+
+  // ---- the Alcove skin's composer -------------------------------------------
+  // Same state, same handlers, the prototype's card. Returned before the
+  // default bar so the two never both mount.
+  if (alcove) {
+    return (
+      <AlcoveComposer
+        text={text}
+        placeholder={placeholder}
+        textareaRef={attachTextarea}
+        highlighted={highlighted}
+        backdropRef={(node) => {
+          backdropRef.current = node;
+        }}
+        onTextChange={updateText}
+        onCursorChange={trackCursor}
+        onPaste={handleDraftPaste}
+        onKeyDown={handleDraftKeyDown}
+        onSubmit={() => void submit()}
+        onInterrupt={() => void actions.interrupt().catch(() => undefined)}
+        canSend={canSend}
+        running={running}
+        queues={canQueue}
+        steersNow={steersNow}
+        attachments={attachments}
+        attachFull={attachFull}
+        onAddFiles={(files) => void addFiles(files)}
+        onRemoveAttachment={removeAttachment}
+        agent={agent}
+        agentMark={<AgentMark agent={agent} size={22} />}
+        agentOptions={agentOptions}
+        showAgents={!hermesLocked}
+        modelGroupLabel={modelGroupLabel}
+        modelOptions={modelOptions}
+        effortOptions={effortOptionList}
+        sections={aiSections}
+        access={isHermes ? null : settings.access}
+        accessOptions={ACCESS_OPTIONS}
+        onAccessChange={(access) => patch({ access })}
+        mode={isHermes ? null : settings.mode}
+        modeOptions={MODE_OPTIONS}
+        onModeChange={(mode) => patch({ mode })}
+        dictationAvailable={canDictate}
+        mic={mic}
+        micSeconds={micSeconds}
+        onStartDictation={() => {
+          // The skin always shows the mic, so pressing it has to answer for
+          // itself when neither engine can take it.
+          if (!canDictate) {
+            setAttachError("Dictation isn't available on this server.");
+            return;
+          }
+          void startDictating();
+        }}
+        onStopDictation={() => void stopDictating()}
+        voice={voice}
+        onVoice={thread ? openVoice : undefined}
+        voiceLive={!!state.voice.frame?.sessionId}
+        fileDragActive={fileDragActive}
+        dragHandlers={{
+          onDragEnter: (e) => {
+            if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+            e.preventDefault();
+            setFileDragActive(true);
+          },
+          onDragOver: (e) => {
+            if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            setFileDragActive(true);
+          },
+          onDragLeave: (e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              setFileDragActive(false);
+            }
+          },
+          onDrop: (e) => {
+            const files = Array.from(e.dataTransfer.files);
+            if (files.length === 0) return;
+            e.preventDefault();
+            setFileDragActive(false);
+            void addFiles(files);
+          },
+        }}
+        banners={banners}
+      >
+        {quickMode === "build" && <BuildWorkspaceTray />}
+        {queuedRow}
+        {slashRow}
+        {replyRow}
+      </AlcoveComposer>
+    );
+  }
+
   return (
     <div className="composer">
-      {agentInfo && !agentInfo.available && agentInfo.authHint && (
-        <div className="composer-warn">{agentInfo.authHint}</div>
-      )}
-      {/* Say what sending is about to do. The switch is a real change of who
-          works this chat, and it happens on send rather than on a control the
-          user pressed — so it is announced before, not discovered after. */}
-      {handBackName && (
-        <div className="composer-handback">
-          Sending hands this chat back to <strong>{handBackName}</strong>
-          {running ? " once the current turn finishes." : " for the next turn."}
-        </div>
-      )}
-      {attachError && <div className="attach-err">{attachError}</div>}
+      {banners}
       <div
         className={`composer-card${fileDragActive ? " file-drag" : ""}`}
         onDragEnter={(e) => {
@@ -1566,46 +1921,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
         }}
       >
         {quickMode === "build" && <BuildWorkspaceTray />}
-        {queuedMessages.length > 0 && thread && (
-          <div className="queued-messages" aria-label="Queued messages">
-            {queuedMessages.map((message, index) => (
-              <div
-                className="queued-message"
-                key={`${index}:${message.text}:${message.attachments?.map((a) => a.name).join(",") ?? ""}`}
-              >
-                <ClockIcon className="queued-message-mark" size={14} />
-                <span className="queued-message-copy">
-                  <span className="queued-message-label">Queued</span>
-                  <span className="queued-message-text">
-                    {message.text || "Attachment-only message"}
-                  </span>
-                  {message.attachments && message.attachments.length > 0 && (
-                    <span
-                      className="queued-message-attachments"
-                      title={message.attachments.map((a) => a.name).join(", ")}
-                    >
-                      {message.attachments.slice(0, 3).map((attachment) => (
-                        <AttachmentThumb key={attachment.name} attachment={attachment} compact />
-                      ))}
-                      <span className="queued-message-attachment-count">
-                        {message.attachments.length} file{message.attachments.length === 1 ? "" : "s"}
-                      </span>
-                    </span>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  className="queued-message-remove"
-                  aria-label="Remove queued message"
-                  title="Remove queued message"
-                  onClick={() => dispatch({ type: "clearQueuedMessage", threadId: thread.id, index })}
-                >
-                  <XIcon size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        {queuedRow}
         {fileDragActive && <div className="composer-drop-hint">Drop files to attach</div>}
         {attachments.length > 0 && (
           <div className="composer-attachments">
@@ -1619,12 +1935,12 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                     <span className="attach-image-frame">
                       <img src={attachmentDataUrl(a)} alt={a.name} />
                     </span>
-                    <span className="attach-chip-name" title={a.name}>{a.name}</span>
+                    <span className="attach-chip-name">{a.name}</span>
                   </>
                 ) : (
                   <span className="attach-file-info">
                     <PaperclipIcon size={13} />
-                    <span className="attach-file-name" title={a.name}>
+                    <span className="attach-file-name">
                       {a.name}
                     </span>
                   </span>
@@ -1632,7 +1948,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                 <button
                   type="button"
                   className="attach-remove"
-                  title={`Remove ${a.name}`}
+                  aria-label={`Remove ${a.name}`}
                   onClick={() => removeAttachment(a.localId)}
                 >
                   <XIcon size={11} />
@@ -1645,64 +1961,8 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
           ref={composerInputRef}
           className={`composer-input${mic === "transcribing" ? " busy" : ""}`}
         >
-          {slashOpen && (
-            <div className="slash-pop" role="listbox" aria-label="Commands">
-              <div className="slash-pop-head">
-                <span className="slash-pop-mark">/</span>
-                <span>Commands</span>
-                <span className="slash-pop-hint">↑↓ choose · Enter insert</span>
-              </div>
-              <div className="slash-pop-list">
-                {slashCommands.map((command, index) => (
-                  <button
-                    key={command.name}
-                    type="button"
-                    role="option"
-                    aria-selected={index === selectedSlashIndex}
-                    className={`slash-option${index === selectedSlashIndex ? " selected" : ""}`}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onMouseEnter={() => setSlashIndex(index)}
-                    onClick={() => chooseSlashCommand(command)}
-                  >
-                    <span className="slash-option-name">{command.name}</span>
-                    <span className="slash-option-copy">
-                      <span className="slash-option-label">{command.label}</span>
-                      <span className="slash-option-detail">{command.detail}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {replyTo && (
-            <div className="reply-context" role="status">
-              {replyTo.attachments && replyTo.attachments.length > 0 && state.http && thread && (
-                <span className="reply-context-image" aria-hidden="true">
-                  <img
-                    src={attachmentUrl(state.http, thread.id, replyTo.attachments[0].id, {
-                      machineId: remoteMachineId(state, thread.machineId),
-                    })}
-                    alt=""
-                  />
-                </span>
-              )}
-              <div className="reply-context-copy">
-                <span className="reply-context-label">Replying to {replyTo.author}</span>
-                <span className="reply-context-text">
-                  {replyPreview(replyTo.text) || (replyTo.attachments?.length ? "Image attachment" : "Empty message")}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="reply-context-close"
-                title="Cancel reply"
-                aria-label="Cancel reply"
-                onClick={onClearReply}
-              >
-                <XIcon size={14} />
-              </button>
-            </div>
-          )}
+          {slashRow}
+          {replyRow}
           {mic === "transcribing" && (
             <div className="dictation-busy" role="status">
               <span className="dictation-spinner" aria-hidden="true" />
@@ -1730,66 +1990,8 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               }}
               onClick={(e) => trackCursor(e.currentTarget)}
               onSelect={(e) => trackCursor(e.currentTarget)}
-              onPaste={(e) => {
-                const files = clipboardFiles(e.clipboardData);
-                if (files.length > 0) {
-                  e.preventDefault();
-                  void addFiles(files);
-                  return;
-                }
-
-                // Preserve ordinary browser text paste. In the desktop shell we
-                // first check the native clipboard because WebKit can flatten a
-                // copied file into indistinguishable plain path text.
-                const pastedText = e.clipboardData.getData("text/plain");
-                const hasText = pastedText.length > 0;
-                const hasImageType = Array.from(e.clipboardData.types).some((type) =>
-                  IMAGE_TYPES.includes(type),
-                );
-                const nativeShell = "__TAURI_INTERNALS__" in window;
-                if (hasText && !hasImageType && !nativeShell) return;
-
-                // Native Linux file copies can look exactly like a plain path to
-                // WebKit. Hold the default text insertion until the backend has
-                // checked the native file-list clipboard, then restore normal text
-                // paste when it wasn't an image file.
-                e.preventDefault();
-                const start = e.currentTarget.selectionStart;
-                const end = e.currentTarget.selectionEnd;
-                void pasteFromClipboard(e.clipboardData).then((attached) => {
-                  if (!attached && hasText) insertPastedText(pastedText, start, end);
-                });
-              }}
-              onKeyDown={(e) => {
-                if (slashOpen) {
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setSlashIndex((index) => (index + 1) % slashCommands.length);
-                    return;
-                  }
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setSlashIndex(
-                      (index) => (index - 1 + slashCommands.length) % slashCommands.length,
-                    );
-                    return;
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setDismissedSlashKey(slashKey);
-                    return;
-                  }
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    chooseSlashCommand(slashCommands[selectedSlashIndex]);
-                    return;
-                  }
-                }
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void submit();
-                }
-              }}
+              onPaste={handleDraftPaste}
+              onKeyDown={handleDraftKeyDown}
               onScroll={(e) => {
                 if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
               }}
@@ -1815,11 +2017,6 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               className="cset-trigger"
               disabled={attachFull}
               aria-label="Attach files"
-              title={
-                attachFull
-                  ? `You can attach at most ${MAX_ATTACHMENTS} files`
-                  : "Attach images or files (or paste into the box)"
-              }
               onClick={() => fileRef.current?.click()}
             >
               <PlusIcon size={19} strokeWidth={2.2} />
@@ -1852,22 +2049,13 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                 onCompact={() => void runCompact()}
               />
             )}
-            {dictation?.available && (
+            {canDictate && (
               <button
                 type="button"
                 className={`mic-btn${mic === "recording" ? " recording" : micBusy ? " working" : ""}`}
                 disabled={micBusy}
                 aria-pressed={mic === "recording"}
                 aria-label="Dictate"
-                title={
-                  mic === "recording"
-                      ? "Stop and transcribe (Esc discards)"
-                      : mic === "transcribing"
-                        ? "Turning your words into text…"
-                        : mic === "starting"
-                          ? "Opening the microphone…"
-                          : "Dictate: click to record, click again to transcribe"
-                }
                 onClick={() => (mic === "recording" ? void stopDictating() : void startDictating())}
               >
                 <MicIcon size={18} />
@@ -1879,13 +2067,6 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                 type="button"
                 className={`mic-btn voice-btn${state.voice.frame?.sessionId ? " live" : ""}${voice.configured ? "" : " unconfigured"}`}
                 aria-label="Voice conversation"
-                title={
-                  voice.configured
-                    ? state.voice.frame?.sessionId
-                      ? "Voice conversation is live — reopen it"
-                      : "Start a voice conversation with this thread's agent"
-                    : "Set up ElevenLabs in Settings → Voice to talk to your agent"
-                }
                 onClick={() => {
                   if (!voice.configured) {
                     dispatch({
@@ -1935,11 +2116,6 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               <button
                 type="button"
                 className="send-btn stop"
-                title={
-                  queuedMessages.length > 0
-                    ? "Interrupt turn and send queued message"
-                    : "Interrupt turn"
-                }
                 aria-label={
                   queuedMessages.length > 0
                     ? "Interrupt turn and send queued message"
@@ -1954,13 +2130,6 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                 type="button"
                 className={`send-btn${running && !steersNow ? " queue" : ""}`}
                 disabled={!canSend}
-                title={
-                  running
-                    ? steersNow
-                      ? "Send now (Enter)"
-                      : "Queue message (Enter)"
-                    : "Send (Enter)"
-                }
                 aria-label={
                   running
                     ? steersNow

@@ -1,0 +1,789 @@
+/* ---- the Alcove skin's composer card ---------------------------------------
+   Styles components/AlcoveComposer.tsx, which replaces the default composer
+   bar whenever this skin is on. Geometry and motion come from the design
+   prototype; type comes from the user's own composer preference rather than
+   the prototype's fixed pixel sizes, because the prototype's whole UI sits
+   under a scale() transform that Threadknot does not apply.
+
+   Loaded after composer.css so it wins on the classes the two share
+   (.composer-card, .composer-md). composer.css still owns the rows above the
+   field — queued messages, the slash menu, the reply chip — which both
+   renders share. */
+
+:root[data-theme="alcove"] .composer-anchor {
+  position: relative;
+  z-index: 3;
+  isolation: isolate;
+  border: 0;
+  background: none;
+  /* The dock. Set here rather than inherited from composer.css's `.composer`
+     rule, which this selector would otherwise override at equal specificity —
+     that is what had the card sitting on the window edge. */
+  padding: 4px 22px calc(31px + var(--safe-b, 0px));
+}
+
+/* The card. The prototype calls this `.composer`; here the outer wrapper keeps
+   that name (as on every other skin) and the form is the card.
+
+   The frost is the .glass-surface class's own fill and backdrop-filter, left
+   to apply from glass.css — deliberately NOT moved onto a ::before.
+
+   That was the earlier arrangement, and it rendered as a flat white slab with
+   no blur at all: .glass-surface sets `isolation: isolate`, which makes the
+   card a backdrop root, so a backdrop-filter on a pseudo-element *inside* the
+   card has nothing behind it to sample and the frost degrades to a plain 50%
+   white fill. (Checked against the built stylesheet in a browser: the same
+   declarations on the card itself frost the feed immediately.) The card being
+   a backdrop root is also why keeping the frost off it bought nothing — the
+   staged-file remove buttons inside had already lost their own backdrop to
+   that `isolation`. The two menus are portalled to <body>, so they are
+   unaffected either way. */
+:root[data-theme="alcove"] .composer-anchor .composer-card {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 24px 18px 26px;
+  /* Rounder than the shared --alc-r-composer: this card is taller and wider
+     than the one that token was set for, so it needs more corner to read as
+     the same shape. */
+  border-radius: 48px;
+  /* .glass-surface's own fill, restated: composer.css clears the card's
+     background at this same specificity for the default bar, which would
+     otherwise leave this card frosting a backdrop with no glass over it. The
+     var is what the press animation raises, so it stays a var. */
+  background: rgb(255 255 255 / var(--glass-alpha));
+  /* A tooltip opens upward out of the action row and reaches past the card's
+     own box; nothing in this stack may clip it. */
+  overflow: visible;
+  transition:
+    box-shadow 300ms var(--alc-ease),
+    transform 300ms var(--alc-ease);
+}
+/* composer.css frosts the card on a ::before. On this card that layer is inert
+   (see above) and its 50% white would only stack on top of the real frost, so
+   the fill goes; the 1px white rim the same pseudo carries from glass.css, and
+   the shine on ::after, both stay. */
+:root[data-theme="alcove"] .composer-anchor .composer-card::before {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* ---- the draft field ---- */
+:root[data-theme="alcove"] .composer-anchor .composer-md {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  /* A short draft sits in the middle of that box rather than against its top
+     edge. `align-content`, not `align-items`: the single row track is centred
+     while the two layers inside it still stretch to fill it, so the highlight
+     stays registered with the text and a draft taller than the minimum simply
+     grows the track as before. */
+  align-content: center;
+  /* The draft starts on the same vertical as the + below it, not on the card's
+     padding edge. The icon is not flush with its button: Add01's bar runs
+     x=4..20 of a 24 viewBox, so at size 25 with a 1.65 round cap the glyph
+     begins 3.3px into the icon box, which is itself centred in the 34px
+     button — 4.5px in. 8px is that sum. Keep it in step with .composer-icon's
+     size and the icon's `size` prop in AlcoveComposer.tsx. */
+  --alc-cmp-indent: 8px;
+}
+/* Both layers take the indent, or the highlight behind the draft drifts off
+   the text it is tracing. */
+:root[data-theme="alcove"] .composer-anchor .composer-md-backdrop,
+:root[data-theme="alcove"] .composer-anchor .composer-md textarea {
+  grid-area: 1 / 1;
+  padding: 0 0 0 var(--alc-cmp-indent);
+  border: 0;
+  font: inherit;
+  /* Equal room above and below, so a single line reads as centred in the
+     card. It has to sit on both layers identically: they are two children of
+     one grid cell, and any difference between them shows up as the
+     highlighted copy drifting off the text. */
+  padding: 11px 0;
+  font-size: var(--alc-cmp-font);
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: -0.004em;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-md textarea {
+  max-height: 220px;
+  overflow-y: auto;
+  outline: 0;
+  background: transparent;
+  color: var(--alc-ink);
+  resize: none;
+  scrollbar-width: none;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-md textarea::-webkit-scrollbar { display: none; }
+:root[data-theme="alcove"] .composer-anchor .composer-md textarea::placeholder {
+  color: var(--alc-ink-4);
+  opacity: 1;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-md-backdrop {
+  overflow: hidden;
+  color: var(--alc-ink);
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  /* Lifted out of the grid row, which is the whole trick behind the growth
+     animation below. The two layers share one cell, so the row is as tall as
+     the taller of them — and the backdrop is auto-height, so it reaches the
+     new line's full height on the keystroke that wraps it and takes the row,
+     the card and the dock with it before the textarea has moved at all.
+     Absolutely placed over the same box it filled as a grid child, so it still
+     sits exactly behind the draft and still clips and scrolls as before. */
+  position: absolute;
+  inset: 0;
+}
+/* Gaining a line is a movement, not a jump. The textarea is the only box in
+   the card with a height to animate — Composer.tsx's resizeTextarea writes it
+   as an explicit pixel value — and now that it alone sets the grid row, the
+   card, the dock and the feed's reserved room (--dock-h, measured off the
+   dock) all follow it down. The `height: auto` that routine assigns while it
+   measures is not a transition endpoint: transitions are computed at the style
+   change event, and the forced layout it does to read scrollHeight is not one,
+   so what transitions is the old pixel height to the new one. */
+:root[data-theme="alcove"] .composer-anchor .composer-md textarea {
+  transition: height 170ms var(--alc-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .composer-anchor .composer-md textarea {
+    transition: none;
+  }
+}
+
+/* ---- staged files ---- */
+:root[data-theme="alcove"] .composer-anchor .composer-image-list {
+  display: flex;
+  max-width: 100%;
+  gap: 9px;
+  overflow-x: auto;
+  /* The remove button overhangs its tile by 8px, so the row must not clip. */
+  overflow-y: visible;
+  padding: 1px 2px 4px;
+  scrollbar-width: none;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-image-list::-webkit-scrollbar { display: none; }
+:root[data-theme="alcove"] .composer-anchor .composer-image {
+  position: relative;
+  flex: 0 0 62px;
+  width: 62px;
+  height: 62px;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 17px;
+  --corner-smoothing: 60;
+  object-fit: cover;
+  background: #e8e8e8;
+}
+/* A document has no thumbnail to show, so it gets a named tile the same size. */
+:root[data-theme="alcove"] .composer-anchor .composer-image--file { flex-basis: 128px; width: 128px; }
+:root[data-theme="alcove"] .composer-anchor .composer-image__file {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: 17px;
+  --corner-smoothing: 60;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--alc-halo);
+  color: var(--alc-ink-3);
+}
+:root[data-theme="alcove"] .composer-anchor .composer-image__file span {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-image__remove {
+  position: absolute;
+  z-index: 3;
+  top: -8px;
+  right: -8px;
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.12);
+  color: var(--alc-ink-3);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 160ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .composer-anchor .composer-image__remove:hover {
+  background: rgba(255, 255, 255, 0.96);
+  color: #333;
+  transform: scale(1.06);
+}
+:root[data-theme="alcove"] .composer-anchor .attachment-menu__input { display: none; }
+:root[data-theme="alcove"] .composer-anchor .composer-drop-hint {
+  padding: 6px 2px;
+  color: var(--alc-ink-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ---- the action row ---- */
+:root[data-theme="alcove"] .composer-anchor .composer-actions {
+  position: relative;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--alc-ink-4);
+  cursor: pointer;
+  transition: transform 160ms var(--alc-ease), background 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-icon:hover {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  color: var(--alc-ink-2);
+}
+:root[data-theme="alcove"] .composer-anchor .composer-icon.voice-btn.live { color: var(--alc-blue); }
+/* The open menu used to have to hide the trigger's own bubble here. The
+   trigger now suppresses itself from the click until the pointer leaves it
+   (Tooltip.tsx), which also covers the menu's fade-out — nothing to do in
+   CSS, and there is no per-trigger bubble left to hide. */
+
+/* The send group holds the model pill and the primary button. The pill slides
+   left as the button grows into its "ready" width, so the two never collide. */
+:root[data-theme="alcove"] .composer-anchor .composer-trailing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* A fixed slot. The send button grows inside it from the right while the model
+   pill slides left out of its way — both animated, which a flex reflow could
+   never be. */
+:root[data-theme="alcove"] .composer-anchor .composer-send-group {
+  position: relative;
+  width: 112px;
+  min-width: 112px;
+  height: 36px;
+}
+:root[data-theme="alcove"] .composer-anchor .model-dropdown {
+  position: absolute;
+  top: 50%;
+  right: 42px;
+  transform: translateY(-50%);
+  transition: right 300ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .composer-anchor .composer-send-group.is-ready .model-dropdown { right: 76px; }
+:root[data-theme="alcove"] .composer-anchor .composer-send-group > .tooltip,
+:root[data-theme="alcove"] .composer-anchor .composer-send-group > .send-control {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  translate: 0 -50%;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-send-group > .tooltip > .send-control {
+  position: static;
+  translate: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .composer-anchor .model-dropdown { transition: none; }
+}
+:root[data-theme="alcove"] .composer-anchor .model-select {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+:root[data-theme="alcove"] .composer-anchor .model-select:hover {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+:root[data-theme="alcove"] .composer-anchor .model-select__mark {
+  display: grid;
+  place-items: center;
+  transition: opacity 150ms ease-in, filter 150ms ease-in, transform 150ms ease-in;
+}
+
+/* ---- the primary button ---- */
+:root[data-theme="alcove"] .composer-anchor .send-control {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--alc-ink-4);
+  cursor: pointer;
+  transition:
+    width 230ms var(--alc-ease),
+    background 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease,
+    transform 160ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .composer-anchor .send-control:not(.has-content):hover {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  color: var(--alc-ink-2);
+}
+/* The whole button arrives blurred, not just its glyph. */
+:root[data-theme="alcove"] .composer-anchor .send-control.has-content:not(.is-leaving) {
+  animation: composer-send-in 230ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.has-content {
+  width: 68px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--alc-blue);
+  box-shadow: 0 3px 8px rgba(51, 150, 254, 0.22);
+  color: #fff;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.has-content:hover {
+  background: #4ca2ff;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control:disabled {
+  cursor: default;
+  opacity: 0.45;
+  box-shadow: none;
+}
+/* Queueing is not sending: the button says so by dropping the send blue. */
+:root[data-theme="alcove"] .composer-anchor .send-control.has-content.is-queueing {
+  background: var(--alc-ink-2);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.14);
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.is-stopping {
+  width: 68px;
+  height: 36px;
+  background: #e66b6b;
+  box-shadow: 0 3px 8px rgba(220, 93, 93, 0.22);
+  color: #fff;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.is-stopping:hover {
+  background: #dc5d5d;
+  box-shadow: 0 3px 8px rgba(220, 93, 93, 0.3);
+  /* Hold the mark white. Letting it inherit turns the square near-black
+     against the coral, which reads as a different control entirely. */
+  color: #fff;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.is-stopping:hover .send-control__stop-mark {
+  background: #fff;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control__stop-mark {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: currentColor;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.dictation-stop:disabled { opacity: 0.62; }
+:root[data-theme="alcove"] .composer-anchor .send-control.is-working { opacity: 0.6; cursor: default; }
+/* The tooltip wrapper must not change the slot's geometry. */
+:root[data-theme="alcove"] .composer-anchor .composer-send-group > .tooltip { display: inline-flex; }
+
+/* The send/stop/mic hand-off. Each glyph animates in from the direction the
+   one it replaced left towards. */
+:root[data-theme="alcove"] .composer-anchor .send-control__glyph {
+  animation: composer-control-glyph-in 210ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control__glyph--send {
+  animation-name: composer-send-glyph-in;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.has-content.is-leaving {
+  pointer-events: none;
+  animation: composer-send-out 110ms cubic-bezier(0.35, 0, 0.8, 0.2) both;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.is-stopping:not(.is-leaving) {
+  animation: composer-stop-in 170ms var(--alc-spring) both;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.is-stopping.is-leaving {
+  pointer-events: none;
+  animation: composer-stop-out 150ms ease-in both;
+}
+:root[data-theme="alcove"] .composer-anchor .send-control.is-arriving .send-control__glyph--mic {
+  animation: composer-mic-in 210ms var(--alc-spring) both;
+}
+@keyframes composer-send-in {
+  from { opacity: 0; filter: blur(6px); scale: 0.86; }
+  to { opacity: 1; filter: blur(0); scale: 1; }
+}
+@keyframes composer-control-glyph-in {
+  from { opacity: 0; transform: translateY(-5px) scale(0.7); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes composer-send-glyph-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.7); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes composer-send-out {
+  from { opacity: 1; filter: blur(0); transform: scale(1); }
+  to { opacity: 0; filter: blur(5px); transform: scale(0.88); }
+}
+@keyframes composer-stop-in {
+  from { opacity: 0; filter: blur(5px); transform: scale(0.86); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+@keyframes composer-stop-out {
+  from { opacity: 1; filter: blur(0); transform: scale(1); }
+  to { opacity: 0; filter: blur(5px); transform: scale(0.88); }
+}
+@keyframes composer-mic-in {
+  from { opacity: 0; filter: blur(5px); transform: scale(0.84); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .composer-anchor .send-control,
+  :root[data-theme="alcove"] .composer-anchor .send-control__glyph { animation-duration: 1ms; }
+}
+
+/* ---- dictation ---- */
+:root[data-theme="alcove"] .composer-anchor .dictation-waveform {
+  display: flex;
+  width: 100%;
+  height: 26px;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+:root[data-theme="alcove"] .composer-anchor .dictation-waveform canvas {
+  display: block;
+  flex: 1;
+  height: 26px;
+}
+:root[data-theme="alcove"] .composer-anchor .dictation-waveform span {
+  flex: none;
+  color: var(--alc-ink-4);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme="alcove"] .composer-anchor .composer-card.is-transcribing .dictation-waveform { opacity: 0.48; }
+
+/* ---- the attachment menu ---- */
+:root[data-theme="alcove"] .attachment-menu { padding: 13px !important; }
+:root[data-theme="alcove"] .attachment-menu__items { display: grid; gap: 2px; }
+:root[data-theme="alcove"] .attachment-menu__option {
+  display: flex;
+  width: 100%;
+  height: 58px;
+  align-items: center;
+  gap: 14px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 26px;
+  --corner-smoothing: 60;
+  corner-shape: superellipse(1.6);
+  background: transparent;
+  color: var(--alc-ink);
+  font-size: 17px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+:root[data-theme="alcove"] .attachment-menu__option:hover { background: var(--alc-menu-hover); }
+:root[data-theme="alcove"] .attachment-menu__option:disabled { opacity: 0.4; cursor: default; }
+:root[data-theme="alcove"] .attachment-menu__option:disabled:hover { background: transparent; }
+:root[data-theme="alcove"] .attachment-menu__icon { display: grid; width: 29px; height: 29px; place-items: center; }
+:root[data-theme="alcove"] .attachment-menu__icon--image { color: var(--alc-codex); }
+:root[data-theme="alcove"] .attachment-menu__icon--file { color: var(--alc-claude); }
+:root[data-theme="alcove"] .attachment-menu__icon--web { color: var(--teal); }
+
+/* ---- the AI menu ---- */
+:root[data-theme="alcove"] .model-menu {
+  --model-menu-vpad: 15px;
+  padding: var(--model-menu-vpad) 10px !important;
+}
+:root[data-theme="alcove"] .model-menu__providers,
+:root[data-theme="alcove"] .model-menu__models {
+  display: grid;
+  gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+/* The two lists share whatever the window has left after the menu's fixed
+   parts — the two headings, the Mode/Permission/Effort rows and the padding,
+   about 230px. Budgeting in bare vh is what let the menu outgrow the screen:
+   42vh + 46vh leaves nothing for the rows that follow them. */
+:root[data-theme="alcove"] .model-menu {
+  /* What the two scrolling lists may use: the window, less this menu's fixed
+     parts. Those are the MODEL label and padding (~110px) plus one 53px row
+     for each setting the thread actually has — AlcoveComposer counts them into
+     --model-menu-rows, because a Codex thread carries Context and Chrome on
+     top of Mode, Permission and Effort and a fixed guess at that number is
+     what let the menu run off the screen. 140px covers both headings. */
+  --model-menu-lists: max(120px, calc(100vh - 140px - (var(--model-menu-rows, 3) * 53px)));
+}
+:root[data-theme="alcove"] .model-menu__providers { max-height: calc(var(--model-menu-lists) * 0.4); }
+:root[data-theme="alcove"] .model-menu__models { max-height: calc(var(--model-menu-lists) * 0.6); }
+:root[data-theme="alcove"] .model-menu__item {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 11px;
+  padding: 0 13px;
+  border: 0;
+  /* Rounder than --alc-r-row: these rows are 48px tall now, and 14px on a row
+     that deep reads as a rectangle with the corners filed off. */
+  border-radius: 22px;
+  corner-shape: var(--alc-corner);
+  background: transparent;
+  color: var(--alc-ink);
+  font-size: 16px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+:root[data-theme="alcove"] .model-menu__item > span:first-of-type { flex: 1; min-width: 0; }
+:root[data-theme="alcove"] .model-menu__item:hover,
+:root[data-theme="alcove"] .model-menu__item.is-selected {
+  background: var(--alc-menu-hover);
+  color: var(--alc-ink);
+}
+:root[data-theme="alcove"] .model-menu__item.is-unavailable { opacity: 0.4; }
+:root[data-theme="alcove"] .model-menu__tag {
+  color: var(--alc-ink-4);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .model-menu__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--alc-ink-5);
+}
+:root[data-theme="alcove"] .model-menu__dot.is-online { background: var(--teal); }
+:root[data-theme="alcove"] .model-menu__dot.is-offline { background: var(--red); }
+:root[data-theme="alcove"] .model-menu__dot.is-checking { background: var(--amber); }
+/* The group headings: AGENT over the harnesses, MODEL (or GATEWAY, PROFILE)
+   over what that harness can run. */
+:root[data-theme="alcove"] .model-menu__label {
+  display: block;
+  padding: 10px 11px 5px;
+  color: var(--alc-ink-4);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+/* The first one already sits under the menu's own top padding. */
+:root[data-theme="alcove"] .model-menu__label:first-child { padding-top: 1px; }
+
+/* A settings row: name on the left, current value on the right, a flyout panel
+   on hover or focus. */
+:root[data-theme="alcove"] .model-menu__permission,
+:root[data-theme="alcove"] .model-menu__effort {
+  position: relative;
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 9px;
+  margin-top: 5px;
+  padding: 0 13px;
+  border-radius: 22px;
+  corner-shape: var(--alc-corner);
+  color: var(--alc-ink);
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+:root[data-theme="alcove"] .model-menu__permission:hover,
+:root[data-theme="alcove"] .model-menu__effort:hover,
+:root[data-theme="alcove"] .model-menu__permission:focus-within,
+:root[data-theme="alcove"] .model-menu__effort:focus-within {
+  background: rgba(84, 84, 84, 0.07);
+  outline: 0;
+}
+/* A 12px bridge the pointer can cross on its way to the flyout, which would
+   otherwise close the moment the cursor left the row. */
+:root[data-theme="alcove"] .model-menu__permission::after,
+:root[data-theme="alcove"] .model-menu__effort::after {
+  position: absolute;
+  top: 0;
+  right: -12px;
+  bottom: 0;
+  width: 12px;
+  content: "";
+}
+/* Pointing at the side the panel actually opens on. */
+:root[data-theme="alcove"] .model-menu__permission > svg,
+:root[data-theme="alcove"] .model-menu__effort > svg { rotate: -90deg; }
+:root[data-theme="alcove"] .model-menu__permission[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+:root[data-theme="alcove"] .model-menu__row-name { flex: 1; }
+:root[data-theme="alcove"] .model-menu__row-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .model-menu__swap {
+  display: inline-block;
+  transition: opacity 170ms cubic-bezier(0.4, 0, 0.2, 1), transform 170ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+:root[data-theme="alcove"] .model-menu__swap.is-swapping { opacity: 0; transform: scale(0.96); }
+
+/* The flyout. Portalled to <body> by AlcoveComposer and placed in viewport
+   coordinates from its row's box, including the flip when it would open off
+   the edge. It has to be out of the menu to be glass at all: the menu is a
+   .glass-surface, which makes it a backdrop root, and a backdrop-filter
+   inside one has only that menu's own paint to sample - this panel was the
+   one surface in the skin that never frosted. */
+:root[data-theme="alcove"] .model-menu__row-panel,
+:root[data-theme="alcove"] .model-menu__effort-panel {
+  position: fixed;
+  /* Above the menu it belongs to (.dropdown-menu is 900). */
+  z-index: 950;
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 24px;
+  /* Lighter than the 0.94 it used to need: with the blur actually working,
+     an almost-opaque fill just hides it. Same recipe as the menu. */
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+  -webkit-backdrop-filter: blur(21.6px) saturate(1.1) brightness(1.04);
+  backdrop-filter: blur(21.6px) saturate(1.1) brightness(1.04);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-5px) scale(0.96);
+  transform-origin: left bottom;
+  transition: opacity 160ms ease, transform 190ms var(--alc-ease);
+}
+:root[data-theme="alcove"] .model-menu__row-panel { width: 206px; }
+/* The effort panel is the menu's own width: it holds a heading and the track. */
+:root[data-theme="alcove"] .model-menu__effort-panel {
+  width: 248px;
+  padding: 19px 20px 20px;
+  border-radius: 34px;
+}
+:root[data-theme="alcove"] .model-menu__row-panel.is-open,
+:root[data-theme="alcove"] .model-menu__effort-panel.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+}
+:root[data-theme="alcove"] .model-menu__permission-option {
+  width: 100%;
+  min-height: 45px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 21px;
+  corner-shape: var(--alc-corner);
+  background: transparent;
+  color: var(--alc-ink);
+  font-size: 16px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+:root[data-theme="alcove"] .model-menu__permission-option:hover,
+:root[data-theme="alcove"] .model-menu__permission-option.is-selected {
+  background: var(--alc-menu-hover);
+  color: var(--alc-ink);
+}
+
+/* ---- the effort slider ---- */
+:root[data-theme="alcove"] .model-menu__effort-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px 0;
+  color: var(--alc-ink);
+  font-size: 17px;
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .model-menu__effort-heading strong {
+  margin-left: auto;
+  color: var(--alc-ink-4);
+  font-weight: 500;
+}
+:root[data-theme="alcove"] .model-menu__slider {
+  position: relative;
+  height: 26px;
+  margin-top: 14px;
+  cursor: pointer;
+  touch-action: none;
+}
+:root[data-theme="alcove"] .model-menu__slider::before,
+:root[data-theme="alcove"] .model-menu__slider-fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 18px;
+  content: "";
+  border-radius: 999px;
+  transform: translateY(-50%);
+}
+:root[data-theme="alcove"] .model-menu__slider::before { right: 0; background: #ececec; }
+:root[data-theme="alcove"] .model-menu__slider-fill {
+  width: var(--effort-fill, 0%);
+  background: var(--effort-color, var(--alc-codex));
+}
+:root[data-theme="alcove"] .model-menu__slider-notch {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: var(--notch-position, 0%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #a8a7d2;
+  opacity: 0.68;
+  transform: translate(-50%, -50%);
+  transition: opacity 140ms ease;
+}
+:root[data-theme="alcove"] .model-menu__slider-notch.is-filled { opacity: 0; }
+:root[data-theme="alcove"] .model-menu__slider-thumb {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: var(--effort-position, 0%);
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: left 180ms var(--alc-ease);
+}
+/* The side the flyout opens on is measured against the real viewport in
+   AlcoveComposer now, so there is no breakpoint guess here any more. The
+   hover bridge still flips, since that is the row's own pseudo-element. */
+@media (max-width: 1000px) {
+  :root[data-theme="alcove"] .model-menu__permission::after,
+  :root[data-theme="alcove"] .model-menu__effort::after { left: auto; right: -12px; }
+}

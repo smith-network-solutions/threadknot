@@ -102,17 +102,15 @@ export function TerminalPane({
                 aria-selected={t.id === current}
                 onClick={() => setCurrent(t.id)}
                 onDoubleClick={() => setEditing(t.id)}
-                title="Double-click to rename"
               >
                 {t.name}
-                {!t.alive && <span className="term-tab-dead" title="shell exited"> ·</span>}
+                {!t.alive && <span className="term-tab-dead"> ·</span>}
               </button>
             )}
             <button
               type="button"
               className="term-tab-x"
               aria-label={`Delete ${t.name}`}
-              title="Delete terminal (permanent)"
               onClick={() => void actions.deleteTerminal(t.id)}
             >
               ×

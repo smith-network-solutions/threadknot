@@ -1001,7 +1001,6 @@ export function TerminalInstance({ project, termId, http, active, machineId }: P
           type="button"
           className="term-key-danger"
           aria-label="Kill shell"
-          title="Kill the shell process (the tab stays — press Enter to restart)"
           onClick={() => {
             // Kill the shell but keep the tab: the server broadcasts `exit`, the
             // pane shows a restart prompt, and Enter re-spawns a fresh shell.

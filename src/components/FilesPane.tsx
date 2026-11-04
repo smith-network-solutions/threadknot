@@ -230,8 +230,8 @@ export function FilesPane({
                   ? `${filtered.total} match${filtered.total === 1 ? "" : "es"}`
                   : `${fileCount} file${fileCount === 1 ? "" : "s"}`}
           </span>
-          {truncated && <span className="files-partial" title="Tree was capped at 25,000 entries">partial</span>}
-          <button type="button" className="files-refresh" onClick={refresh} disabled={loading} title="Refresh">
+          {truncated && <span className="files-partial">partial</span>}
+          <button type="button" className="files-refresh" onClick={refresh} disabled={loading}>
             Refresh
           </button>
         </div>

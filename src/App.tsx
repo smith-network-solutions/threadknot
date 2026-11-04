@@ -29,6 +29,8 @@ import { initZoomHotkeys } from "./lib/hotwheel";
 import { installExternalLinkHandler } from "./lib/links";
 import { VoiceSession } from "./components/VoiceSession";
 import { LinkOpenModal } from "./components/LinkOpenModal";
+import { NotebookPenIcon } from "./components/icons";
+import { Tooltip } from "./components/alcove/Tooltip";
 import { getSidebarPrefs } from "./lib/appearance";
 import type {
   InboxEntry,
@@ -94,6 +96,8 @@ import { TASK_REVIEW_ID, TASK_TODAY_ID, displayTitle, stripTitleMarks, touchBosu
 import { AvatarCropHost } from "./components/AvatarCropModal";
 import { PullToRefresh } from "./components/PullToRefresh";
 import { PairBrowser } from "./components/PairBrowser";
+import { TooltipLayer } from "./components/alcove/TooltipLayer";
+import { useAlcove } from "./lib/useAlcove";
 
 function makeActions(
   client: ThreadknotClient,
@@ -2353,7 +2357,18 @@ function maybeNotify(
     });
   }
   const id = noticeSeq++;
-  dispatch({ type: "noticeAdd", notice: { id, threadId: frame.threadId, title, body } });
+  dispatch({
+    type: "noticeAdd",
+    notice: {
+      id,
+      threadId: frame.threadId,
+      title,
+      body,
+      agent: thread?.agent,
+      kind: frame.event.kind,
+      at: Date.now(),
+    },
+  });
   setTimeout(() => dispatch({ type: "noticeDismiss", id }), 8000);
 }
 
@@ -2363,6 +2378,9 @@ export default function App() {
   // tracer names the cause by watching dispatch. Identity-stable, and the exact
   // same function when tracing is off.
   const dispatch = useMemo(() => traceDispatch(baseDispatch), [baseDispatch]);
+  // Which notification surface to mount: the Alcove skin's top-centre card or
+  // the corner stack every other skin uses.
+  const alcove = useAlcove();
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
   /** Non-null → the folder browser is open for a new workspace, on this
    *  machine (machineId undefined) or on a peer. */
@@ -3004,10 +3022,39 @@ export default function App() {
           />
         )}
         <div className="work-pane">
+          {/* New chat sits beside the sidebar rather than inside it: the rail
+              is a list of places, this is an action, and the rail is also the
+              one thing that collapses away. The sidebar still owns the
+              workspace list and the picker menu, so the click is relayed to
+              it — see the "threadknot:new-chat" listener in Sidebar.tsx. */}
+          {!state.solo && (
+          <Tooltip className="new-chat-dock-slot" content="New chat">
+          <button
+            type="button"
+            className="new-chat-dock"
+            aria-label="New chat"
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              window.dispatchEvent(
+                new CustomEvent("threadknot:new-chat", {
+                  // `pick` forces the project chooser; without it a click from
+                  // inside a project just starts the chat there.
+                  detail: { x: r.left, y: r.bottom + 4, pick: e.shiftKey || e.altKey, anchor: e.currentTarget },
+                }),
+              );
+            }}
+          >
+            <NotebookPenIcon size={19} />
+          </button>
+          </Tooltip>
+          )}
           <MainSplit />
         </div>
         {/* "Where should this link open?" chooser for clicked http(s) links. */}
         <LinkOpenModal />
+        {/* The skin's single shared tooltip bubble; triggers publish to it. */}
+        {alcove && <TooltipLayer />}
         {/* Voice Parlay overlay: mounted at the root so it survives thread
             navigation; visibility is store state fed by voice.state frames. */}
         {state.voice.open && <VoiceSession />}
@@ -3016,7 +3063,10 @@ export default function App() {
             {state.conn === "connecting" ? "connecting to server…" : "offline — retrying…"}
           </div>
         )}
-        {state.notices.length > 0 && (
+        {/* Alcove states the same thing as one card centred over the chat
+            column, mounted by MainSplit so it lines up with the conversation
+            rather than the window. Every other skin keeps the corner stack. */}
+        {!alcove && state.notices.length > 0 && (
           <div className="toast-stack">
             {state.notices.map((n) => (
               <button

@@ -18,6 +18,7 @@ import {
 } from "../lib/protocol";
 import { APPEARANCE_EVENT, getAppliedZoom } from "../lib/appearance";
 import { copyText, elidePathMiddle } from "../lib/format";
+import { openSettings } from "../lib/settingsScreen";
 import { TASK_TODAY_ID, confirmHeldOrbitClose, displayTitle, todayReturnThread } from "../lib/bosun";
 import { setSidebarView } from "../lib/sidebarView";
 import { BosunMark, useBosunImage } from "./BosunMark";
@@ -35,6 +36,8 @@ import {
 import { useAvatarHoverPreview } from "./AvatarHoverPreview";
 import { FeedItemView, thoughtTimesForFeed, type FeedRenderContext } from "./FeedItems";
 import { ParleyRoundSplash, ReviewDialog, ReviewMenu, useReviewBlock } from "./ReviewMenu";
+import { Tooltip } from "./alcove/Tooltip";
+import { Dropdown } from "./alcove/Dropdown";
 import { AgentHud } from "./AgentHud";
 import { activeSubagents } from "../state/feed";
 import { Composer } from "./Composer";
@@ -50,10 +53,11 @@ import {
   SearchIcon,
   ShieldIcon,
   XIcon,
+  GearIcon,
 } from "./icons";
 import { VISIBLE_TABS } from "./WorkspacePanel";
 import "../styles/workspace.css";
-import { BackToInbox } from "./InboxView";
+import { onJustSent } from "../lib/justSent";
 import { PersonAvatar } from "./PeopleRow";
 import { useAlcove } from "../lib/useAlcove";
 
@@ -186,7 +190,6 @@ function ChatFindBar({
         type="button"
         className="chat-find-nav"
         aria-label="Previous match"
-        title="Previous match"
         disabled={matchCount === 0}
         onClick={onPrevious}
       >
@@ -196,7 +199,6 @@ function ChatFindBar({
         type="button"
         className="chat-find-nav"
         aria-label="Next match"
-        title="Next match"
         disabled={matchCount === 0}
         onClick={onNext}
       >
@@ -206,7 +208,6 @@ function ChatFindBar({
         type="button"
         className="chat-find-close"
         aria-label="Close find"
-        title="Close find (Escape)"
         onClick={onClose}
       >
         <XIcon size={14} />
@@ -223,7 +224,7 @@ function AlcoveHeadAvatar() {
   const me = state.people.find((p) => p.id === state.actingPerson);
   if (!me) return null;
   return (
-    <span className="alc-head-avatar" title={me.name}>
+    <span className="alc-head-avatar">
       <PersonAvatar person={me} size={27} preview={false} />
     </span>
   );
@@ -245,6 +246,7 @@ function WorkspaceMenu({
   dispatch: ReturnType<typeof useStore>["dispatch"];
   thread: Thread | null;
 }) {
+  const alcove = useAlcove();
   const [open, setOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const reviewBlocked = useReviewBlock(thread);
@@ -255,12 +257,14 @@ function WorkspaceMenu({
   // Anchor under the button, right-aligned, clamped into the viewport. The
   // header renders unzoomed, so the rect maps 1:1 onto the fixed panel.
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open || alcove) return;
     function place() {
       const b = btnRef.current;
       if (!b) return;
       const r = b.getBoundingClientRect();
-      const width = 210;
+      // Must match .thread-menu.ws-menu's width in styles/alcove/thread.css —
+      // this right-aligns the panel under its button.
+      const width = 298;
       setPos({ top: r.bottom + 6, left: Math.max(8, r.right - width) });
     }
     place();
@@ -270,10 +274,10 @@ function WorkspaceMenu({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open]);
+  }, [open, alcove]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || alcove) return;
     function onDown(e: MouseEvent) {
       const t = e.target as Node;
       if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
@@ -288,81 +292,103 @@ function WorkspaceMenu({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, alcove]);
 
-  return (
-    <>
+  const trigger = (
+    <Tooltip
+      content={project ? "Workspace panels" : "Thread actions"}
+      disabled={(!project && !thread) || open}
+    >
       <button
         ref={btnRef}
         type="button"
-        className={`head-pill${open || openTab ? " on" : ""}`}
+        className={`head-pill${(!alcove && open) || openTab ? " on" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Workspace panels"
-        title="Workspace panels"
-        disabled={!project}
-        onClick={() => setOpen((v) => !v)}
+        aria-label={project ? "Workspace panels" : "Thread actions"}
+        disabled={!project && !thread}
+        onClick={alcove ? undefined : () => setOpen((v) => !v)}
       >
         <MoreIcon size={16} />
       </button>
+    </Tooltip>
+  );
+  const items = (
+    <>
+      {project && VISIBLE_TABS.map(({ id, label, Icon }) => {
+        const active = openTab === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="menuitemradio"
+            aria-checked={active}
+            className={`thread-menu-item${active ? " on" : ""}`}
+            onClick={() => {
+              dispatch({
+                type: "workspace",
+                projectId: project.id,
+                tab: active ? null : id,
+              });
+              setOpen(false);
+            }}
+          >
+            <Icon size={16} />
+            <span>{label}</span>
+            {active && (
+              <span className="ws-menu-check">
+                <CheckIcon size={15} />
+              </span>
+            )}
+          </button>
+        );
+      })}
+      {/* Review lives here rather than as its own header pill —
+          the header only has room for the one cluster. `divided` sets it
+          off from the panel toggles above: it opens a dialog, it doesn't
+          toggle a panel. */}
+      <button
+        type="button"
+        role="menuitem"
+        className={`thread-menu-item${project ? " divided" : ""}`}
+        disabled={!!reviewBlocked}
+        onClick={() => {
+          setOpen(false);
+          setReviewOpen(true);
+        }}
+      >
+        <ShieldIcon size={16} />
+        <span>Review</span>
+      </button>
+    </>
+  );
+
+  return (
+    <>
+      {alcove ? (
+        <Dropdown
+          trigger={trigger}
+          placement="bottom-right"
+          menuClassName="thread-menu ws-menu"
+          menuLabel={project ? "Workspace panels" : "Thread actions"}
+          onOpenChange={setOpen}
+        >
+          {items}
+        </Dropdown>
+      ) : trigger}
       {reviewOpen && thread && (
         <ReviewDialog thread={thread} onClose={() => setReviewOpen(false)} />
       )}
-      {open && pos && project &&
+      {!alcove && open && pos && (project || thread) &&
         createPortal(
           <div
             ref={popRef}
             className="thread-menu ws-menu"
             role="menu"
-            aria-label="Workspace panels"
+            aria-label={project ? "Workspace panels" : "Thread actions"}
             style={{ top: pos.top, left: pos.left }}
           >
-            {VISIBLE_TABS.map(({ id, label, Icon }) => {
-              const active = openTab === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={active}
-                  className={`thread-menu-item${active ? " on" : ""}`}
-                  onClick={() => {
-                    dispatch({
-                      type: "workspace",
-                      projectId: project.id,
-                      tab: active ? null : id,
-                    });
-                    setOpen(false);
-                  }}
-                >
-                  <Icon size={16} />
-                  <span>{label}</span>
-                  {active && (
-                    <span className="ws-menu-check">
-                      <CheckIcon size={15} />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-            {/* Review lives here on phones rather than as its own header pill —
-                the header only has room for the one cluster. `divided` sets it
-                off from the panel toggles above: it opens a dialog, it doesn't
-                toggle a panel. */}
-            <button
-              type="button"
-              role="menuitem"
-              className="thread-menu-item divided"
-              disabled={!!reviewBlocked}
-              title={reviewBlocked ?? "Review with another agent"}
-              onClick={() => {
-                setOpen(false);
-                setReviewOpen(true);
-              }}
-            >
-              <ShieldIcon size={16} />
-              <span>Review</span>
-            </button>
+            {items}
           </div>,
           document.body,
         )}
@@ -573,6 +599,27 @@ export function ThreadView() {
   const { state, dispatch, actions } = useFeedStore();
   const thread = state.activeThreadId ? findThread(state, state.activeThreadId) : null;
   const draft = state.draft;
+
+  // The prototype's chat swap (alcove App.tsx's `isChatTransitioning`): the
+  // conversation goes out through a blur and the next one arrives through it.
+  //
+  // Only the arrival runs here. The prototype plays the first half by holding
+  // the swap back 220ms — it can, with chats that are local mock objects. A
+  // thread switch in Threadknot is a real navigation, and 220ms of dead time
+  // on every one of them is a bad trade for the half of an effect it buys.
+  // The arrival is free: the content has already changed, so it only has to
+  // come in blurred, which it does on the prototype's own curve.
+  const [arriving, setArriving] = useState(false);
+  const shownThreadId = useRef(state.activeThreadId);
+  useEffect(() => {
+    if (shownThreadId.current === state.activeThreadId) return;
+    shownThreadId.current = state.activeThreadId;
+    setArriving(true);
+    // Outlives the 220ms animation, so the class is only ever removed from a
+    // finished one — taking it off mid-flight would snap the feed into place.
+    const settled = window.setTimeout(() => setArriving(false), 260);
+    return () => window.clearTimeout(settled);
+  }, [state.activeThreadId]);
   const project = resolveProjectView(
     state,
     thread ? thread.projectId : draft?.projectId,
@@ -629,6 +676,14 @@ export function ThreadView() {
 
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const titleStrutRef = useRef<HTMLSpanElement>(null);
+  const [titleSlotWidth, setTitleSlotWidth] = useState<number | null>(null);
+
+  const restingTitle = thread ? displayTitle(thread) : "";
+  useLayoutEffect(() => {
+    const strut = titleStrutRef.current;
+    if (strut) setTitleSlotWidth(strut.scrollWidth);
+  }, [editing, titleDraft, restingTitle]);
   const [quickMode, setQuickMode] = useState<"chat" | "build">("chat");
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -658,6 +713,14 @@ export function ThreadView() {
   // handler below).
   const zoomRef = useRef(getAppliedZoom());
   const scrollFeedRef = useRef<string | null>(null);
+  // A send is waiting for its bubble: the next growth of the feed glides to the
+  // end instead of teleporting. Expires on its own so a send that never lands
+  // cannot animate some later arrival.
+  const sendGlideUntilRef = useRef(0);
+  // A glide is in flight. pinToEnd must not fire while it is — a hard pin mid
+  // animation is exactly the teleport the glide exists to avoid.
+  const glidingRef = useRef(false);
+  const glideEndTimerRef = useRef<number | null>(null);
   const loadedFeedId =
     state.activeThreadId && state.feedThreadId === state.activeThreadId
       ? state.activeThreadId
@@ -773,7 +836,12 @@ export function ThreadView() {
     return () => window.cancelAnimationFrame(frame);
   }, [activeFindId, findOpen, findQuery]);
   const observerRef = useRef<ResizeObserver | null>(null);
-  const pinRafRef = useRef<number | null>(null);
+  const followRafRef = useRef<number | null>(null);
+  // The next follow lands instantly instead of gliding: opening a thread, or
+  // any other moment where the end is somewhere entirely else and animating
+  // there would mean watching the whole history fly past.
+  const snapNextRef = useRef(true);
+  const reduceMotionRef = useRef(false);
   const scrollMetricsRafRef = useRef<number | null>(null);
   const scrollIdleTimerRef = useRef<number | null>(null);
   const prependAnchorRef = useRef<{ feedId: string; rows: { id: string; top: number }[] } | null>(null);
@@ -894,7 +962,6 @@ export function ThreadView() {
     return next;
   }, [state.feed]);
   const subagents = feedDerived.subagents;
-  const runningSubagents = subagents.filter((subagent) => subagent.status === "running").length;
   const feedParticipants = useMemo(
     () => (thread ? threadParticipants(thread) : []),
     [thread?.participants, thread?.agent, thread?.settings],
@@ -939,21 +1006,104 @@ export function ThreadView() {
     ],
   );
 
+  /** Follow the end of the feed, easing toward it rather than cutting to it.
+   *
+   *  This used to be a hard `scrollTop = end` once per frame. That reads as
+   *  smooth only while output trickles in a few pixels at a time; a code
+   *  block, an image resolving or a tool card mounting arrives as hundreds of
+   *  pixels at once, and every one of those was a jump cut. Each frame now
+   *  closes a fixed FRACTION of the remaining gap, so the feed accelerates
+   *  into a big arrival and settles out of it, and a steady stream resolves to
+   *  a constant trailing distance instead of a stutter.
+   *
+   *  `behavior: "smooth"` is not an option here. It reports no completion and
+   *  restarts its animation on every call, and this is called many times a
+   *  second — the feed would never settle. The loop below is re-entrant by
+   *  design: callers fire it freely, and it self-schedules until it arrives.
+   */
   const pinToEnd = useCallback(() => {
-    if (pinRafRef.current !== null) return;
-    pinRafRef.current = window.requestAnimationFrame(() => {
-      pinRafRef.current = null;
+    if (followRafRef.current !== null) return;
+    const step = () => {
+      followRafRef.current = null;
       const el = scrollRef.current;
-      if (!el || !stickRef.current) return;
+      if (!el || !stickRef.current || glidingRef.current) return;
       const end = Math.max(0, el.scrollHeight - el.clientHeight);
-      // Layout/scroll anchoring can move scrollTop without user input. Only
-      // gesture handlers release stickRef; geometry here must never do so.
-      if (Math.abs(el.scrollTop - end) > 1) el.scrollTop = end;
+      const gap = end - el.scrollTop;
+      // Snap, not glide: a fresh thread, a gap bigger than two screens (there
+      // is nothing to read on the way), a feed that shrank under us, or a
+      // reader who has asked for less motion.
+      const snap =
+        snapNextRef.current ||
+        reduceMotionRef.current ||
+        gap < 0 ||
+        gap > el.clientHeight * 2;
+      snapNextRef.current = false;
+      if (snap) {
+        // Layout/scroll anchoring can move scrollTop without user input. Only
+        // gesture handlers release stickRef; geometry here must never do so.
+        if (Math.abs(gap) > 1) el.scrollTop = end;
+      } else if (gap > 0.5) {
+        // 0.22/frame closes a gap in ~10 frames whatever its size, with a
+        // floor so the last pixels do not creep.
+        el.scrollTop = Math.min(end, el.scrollTop + Math.max(1.5, gap * 0.22));
+        followRafRef.current = window.requestAnimationFrame(step);
+      }
       scrollTopRef.current = el.scrollTop;
       scrollHeightRef.current = el.scrollHeight;
       clientHeightRef.current = el.clientHeight;
-    });
+    };
+    followRafRef.current = window.requestAnimationFrame(step);
   }, []);
+
+  /** Travel to the end the way a reader would: a glide, not a cut.
+   *
+   *  Used for sends. The hard pin is right for streaming output — it runs many
+   *  times a second and any animation there would be a permanent blur — but a
+   *  send is one deliberate act, and teleporting the feed under it loses the
+   *  connection between what you typed and the bubble that answers for it. */
+  const glideToEnd = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      pinToEnd();
+      return;
+    }
+    glidingRef.current = true;
+    if (glideEndTimerRef.current !== null) window.clearTimeout(glideEndTimerRef.current);
+    // Smooth scrolling reports no completion. The window outlasts the
+    // animation so streaming output cannot snap the feed mid-glide, and the
+    // pin that closes it lands us exactly on the end.
+    glideEndTimerRef.current = window.setTimeout(() => {
+      glideEndTimerRef.current = null;
+      glidingRef.current = false;
+      pinToEnd();
+    }, 600);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [pinToEnd]);
+
+  // A send always means "I am at the present now", wherever the reader was in
+  // history. The glide is armed rather than performed outright: nothing is
+  // appended optimistically, so the bubble does not exist yet and the end we
+  // want is the one the echo creates.
+  useEffect(() => {
+    const stop = onJustSent(() => {
+      stickRef.current = true;
+      manualAwayRef.current = false;
+      setAtPresent(true);
+      sendGlideUntilRef.current = Date.now() + 4000;
+      glideToEnd();
+    });
+    return () => {
+      stop();
+      if (glideEndTimerRef.current !== null) {
+        window.clearTimeout(glideEndTimerRef.current);
+        glideEndTimerRef.current = null;
+      }
+    };
+  }, [glideToEnd]);
 
   // Feed updates can arrive many times per second. Keep this effect free of
   // synchronous scrollHeight/clientHeight reads: the pin callback below runs
@@ -965,6 +1115,7 @@ export function ThreadView() {
     if (feedLen === 0) {
       stickRef.current = true;
       manualAwayRef.current = false;
+      snapNextRef.current = true;
       scrollTopRef.current = 0;
       setAtPresent(true);
       return;
@@ -973,6 +1124,8 @@ export function ThreadView() {
       scrollFeedRef.current = loadedFeedId;
       stickRef.current = true;
       manualAwayRef.current = false;
+      // A different thread's end is nowhere near this one's. Land on it.
+      snapNextRef.current = true;
       scrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
       setAtPresent(true);
     }
@@ -980,8 +1133,17 @@ export function ThreadView() {
     // so its end is the match's context rather than the present, and live
     // traffic would otherwise drag them there mid-search. Find with no match
     // still follows the tail as usual.
-    if (stickRef.current && activeFindPos < 0) pinToEnd();
-  }, [loadedFeedId, feedLen, state.feed, pinToEnd, activeFindPos]);
+    if (stickRef.current && activeFindPos < 0) {
+      if (Date.now() < sendGlideUntilRef.current) {
+        // The echo of our own send: ride down to it once, then hand the feed
+        // back to the pin for whatever the agent streams next.
+        sendGlideUntilRef.current = 0;
+        glideToEnd();
+      } else {
+        pinToEnd();
+      }
+    }
+  }, [loadedFeedId, feedLen, state.feed, pinToEnd, glideToEnd, activeFindPos]);
 
   const jumpToPresent = useCallback(() => {
     const el = scrollRef.current;
@@ -1014,11 +1176,14 @@ export function ThreadView() {
   const leavePresent = useCallback(() => {
     manualAwayRef.current = true;
     stickRef.current = false;
+    // Moving by hand outranks a send glide, in flight or merely armed.
+    glidingRef.current = false;
+    sendGlideUntilRef.current = 0;
     // Feed/resize work may already have queued a bottom pin for this frame.
     // Cancel it at gesture time so it cannot race the native wheel movement.
-    if (pinRafRef.current !== null) {
-      window.cancelAnimationFrame(pinRafRef.current);
-      pinRafRef.current = null;
+    if (followRafRef.current !== null) {
+      window.cancelAnimationFrame(followRafRef.current);
+      followRafRef.current = null;
     }
   }, []);
 
@@ -1033,6 +1198,17 @@ export function ThreadView() {
       scrollIdleTimerRef.current = null;
       el.classList.remove("is-user-scrolling");
     }, 120);
+  }, []);
+
+  // Read once and kept current by the listener: the follow loop below consults
+  // this every animation frame, and matchMedia there would be a query per frame.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reduceMotionRef.current = mq.matches;
+    const onChange = () => { reduceMotionRef.current = mq.matches; };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, []);
 
   useEffect(() => {
@@ -1162,7 +1338,7 @@ export function ThreadView() {
       observerRef.current?.disconnect();
       headObserverRef.current?.disconnect();
       dockObserverRef.current?.disconnect();
-      if (pinRafRef.current !== null) window.cancelAnimationFrame(pinRafRef.current);
+      if (followRafRef.current !== null) window.cancelAnimationFrame(followRafRef.current);
       if (scrollMetricsRafRef.current !== null) {
         window.cancelAnimationFrame(scrollMetricsRafRef.current);
       }
@@ -1217,6 +1393,14 @@ export function ThreadView() {
 
   const alcove = useAlcove();
   const busy = thread && thread.status !== "idle";
+  // The header's word for what the thread is doing, or null when a run needs
+  // no word of its own. Null keeps the whole .head-status block out of the
+  // header — see where it renders.
+  const headStatus = thread?.parley
+    ? `parley · round ${thread.parley.round}/${thread.parley.maxRounds}`
+    : thread?.status === "waiting_approval"
+      ? "awaiting approval"
+      : null;
   // Multi-lane threads get a two-row header on phones (the lane roster drops
   // to its own scrolling strip) — see the mobile `.thread-head.has-lanes` CSS.
   const hasLanes = !!thread && threadParticipants(thread).length > 1;
@@ -1239,7 +1423,7 @@ export function ThreadView() {
   }
 
   return (
-    <section className="thread-pane">
+    <section className={`thread-pane${arriving ? " is-arriving" : ""}`}>
       <header
         ref={threadHeadRef}
         className={`thread-head${hasLanes ? " has-lanes" : ""}${quickHome ? " quick-thread-head" : ""}`}
@@ -1257,7 +1441,7 @@ export function ThreadView() {
                 opens that panel, so it should not read as a generic menu. */}
             <PanelLeftIcon size={18} />
           </button>
-          {!hermesHome && !quickHome && (
+          {thread && (
             <div className="head-tab-menu">
               <WorkspaceMenu
                 project={project}
@@ -1267,57 +1451,84 @@ export function ThreadView() {
               />
             </div>
           )}
+          <button
+            type="button"
+            className="head-pill head-settings"
+            aria-label="Settings"
+            title={
+              state.update?.restartPending
+                ? "Rebuilt and ready — restart Threadknot to load it"
+                : state.update?.updateAvailable
+                  ? "An update is ready to install"
+                  : "Settings"
+            }
+            onClick={openSettings}
+          >
+            <GearIcon size={17} />
+            {(state.update?.updateAvailable === true ||
+              state.update?.restartPending === true) && (
+              <span className="usermenu-dot" />
+            )}
+          </button>
         </div>
         <div className="thread-head-main">
-          {thread && editing ? (
-            <input
-              className="title-input"
-              autoFocus
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={() => {
-                setEditing(false);
-                const t = titleDraft.trim();
-                if (t && t !== thread.title && t !== displayTitle(thread)) void actions.renameThread(thread.id, t);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                if (e.key === "Escape") setEditing(false);
-              }}
-            />
-          ) : (
-            <h1 className="thread-title">
-              {agentInfo &&
-                (hermesAvatar ? (
-                  <span className="chip-avatar title-agent-mark" {...chipPreview.hoverProps}>
-                    <img src={hermesAvatar} alt="" />
-                  </span>
-                ) : (
-                  <AgentMark agent={agentInfo.id} size={15} className="title-agent-mark" />
-                ))}
+          <h1 className={`thread-title${thread && editing ? " is-editing" : ""}`}>
+            {agentInfo &&
+              (hermesAvatar ? (
+                <span className="chip-avatar title-agent-mark" {...chipPreview.hoverProps}>
+                  <img src={hermesAvatar} alt="" />
+                </span>
+              ) : (
+                <AgentMark agent={agentInfo.id} size={15} className="title-agent-mark" />
+              ))}
+            <span
+              className="thread-name-slot"
+              style={titleSlotWidth === null ? undefined : { width: titleSlotWidth }}
+            >
               <span
                 className="thread-name"
-                title={thread ? displayTitle(thread) || "Untitled thread" : undefined}
+                ref={titleStrutRef}
+                key={thread && editing ? "editing" : thread ? displayTitle(thread) : ""}
+                aria-hidden={thread && editing ? true : undefined}
               >
-                {thread
-                  ? displayTitle(thread) || "Untitled thread"
-                  : quickHome
-                    ? "New quick thread"
-                    : "New thread"}
+                {thread && editing
+                  ? titleDraft || " "
+                  : thread
+                    ? displayTitle(thread) || "Untitled thread"
+                    : quickHome
+                      ? "New quick thread"
+                      : "New thread"}
               </span>
-              {thread && (
-                <button
-                  className="icon-btn title-edit"
-                  aria-label="Rename thread"
-                  onClick={() => {
-                    setTitleDraft(displayTitle(thread));
-                    setEditing(true);
+              {thread && editing && (
+                <input
+                  className="title-input"
+                  autoFocus
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onBlur={() => {
+                    setEditing(false);
+                    const t = titleDraft.trim();
+                    if (t && t !== thread.title && t !== displayTitle(thread)) void actions.renameThread(thread.id, t);
                   }}
-                >
-                  <PencilIcon size={13} />
-                </button>
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") setEditing(false);
+                  }}
+                />
               )}
-            </h1>
+            </span>
+          </h1>
+          {thread && !editing && (
+            <button
+              className="icon-btn title-edit"
+              aria-label="Rename thread"
+              onClick={() => {
+                setTitleDraft(displayTitle(thread));
+                setEditing(true);
+              }}
+            >
+              <PencilIcon size={20} />
+            </button>
           )}
           {project?.path && !hermesHome && !quickHome && (
             /* A plain block on desktop, where the chip is hidden and this
@@ -1326,11 +1537,6 @@ export function ThreadView() {
             <div className="thread-head-meta">
               <span
                 className={`device-chip${deviceOffline ? " off" : ""}`}
-                title={
-                  deviceIsRemote
-                    ? `Runs on ${deviceName}${deviceOffline ? " (offline)" : ""}`
-                    : `Runs on this machine (${deviceName})`
-                }
               >
                 {deviceColor && (
                   <span
@@ -1345,7 +1551,6 @@ export function ThreadView() {
             </div>
           )}
           {thread?.origin?.kind === "bosun" && <BosunOriginChip thread={thread} />}
-          {thread && <BackToInbox threadId={thread.id} />}
           {chipPreview.portal}
         </div>
         {quickHome && (
@@ -1375,14 +1580,14 @@ export function ThreadView() {
             </button>
           </div>
         )}
-        {busy && (
+        {/* Only the states that have something to say. A plain run already
+            announces itself in the feed (the working row) and in the sidebar's
+            status dot; rendering this block for it left a bare teal ping alone
+            in the header's top-left corner, labelling nothing. */}
+        {busy && headStatus && (
           <div className="head-status">
             <span className="sonar" />
-            {thread!.parley
-              ? `parley · round ${thread!.parley.round}/${thread!.parley.maxRounds}`
-              : thread!.status === "waiting_approval"
-                ? "awaiting approval"
-                : null}
+            {headStatus}
           </div>
         )}
         <div className="ws-toggles">
@@ -1392,7 +1597,7 @@ export function ThreadView() {
             <>
               {/* Desktop: one pill (icon + label) per panel. Hidden on phones. */}
               <div className="head-tab-pills">
-                {VISIBLE_TABS.map(({ id, label, Icon }) => {
+                {project && VISIBLE_TABS.map(({ id, label, Icon }) => {
                   const openTab = project ? state.workspace[project.id] ?? null : null;
                   const active = openTab === id;
                   return (
@@ -1401,7 +1606,6 @@ export function ThreadView() {
                       type="button"
                       className={`head-pill${active ? " on" : ""}`}
                       aria-pressed={active}
-                      title={label}
                       disabled={!project}
                       onClick={() =>
                         project &&
@@ -1559,7 +1763,6 @@ export function ThreadView() {
           {project?.path && !hermesHome && !quickHome && !(feedLen === 0 && projectDraft) && (
             <div
               className="feed-project-caption"
-              title={project.path}
               aria-label={`Project directory: ${project.path}`}
             >
               {elidePathMiddle(project.path)}
@@ -1611,24 +1814,6 @@ export function ThreadView() {
               />
             );
           })}
-          {busy && (
-            <div className="working-row">
-              <span className="working-signal" aria-hidden="true">
-                <i /><i /><i />
-              </span>
-              <span className="working-copy">
-                <strong>
-                  {thread!.status === "waiting_approval"
-                    ? "Holding for approval"
-                    : runningSubagents > 0
-                      ? "Waiting on a child agent"
-                      : "Working"}
-                </strong>
-                <em>{runningSubagents > 0 ? "still in motion…" : "following the thread…"}</em>
-              </span>
-              <span className="working-sweep" aria-hidden="true" />
-            </div>
-          )}
         </div>
       </div>
 
@@ -1639,7 +1824,6 @@ export function ThreadView() {
           <button
             type="button"
             className="jump-present"
-            title="Jump to the newest activity"
             aria-label="Scroll to the newest activity"
             onClick={jumpToPresent}
           >
@@ -1663,13 +1847,48 @@ export function ThreadView() {
 }
 
 /** The project directory under a thread's title. Clicking copies it. */
+/** The project directory, click to copy.
+ *
+ *  The label does not swap, it changes its mind: the path blurs out while
+ *  "copied" blurs in over the same line, and in Alcove — where this is a
+ *  capsule rather than a bare line — the capsule's width travels with it.
+ *  That width has to be measured and written: a width that comes from the
+ *  content it holds has no two values to transition between, so the box would
+ *  otherwise snap while the text was still dissolving. `.pp-sizer` is what
+ *  gets measured — the label the button is about to show, laid out free of
+ *  the button's own max-width, out of flow and invisible.
+ *
+ *  Other skins render the same markup and get the cross-fade without the
+ *  width: there the path is a line in a block, with no box to resize. */
 function ProjectPath({ path }: { path: string }) {
+  const alcove = useAlcove();
   const [copied, setCopied] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const sizer = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState<number>();
+
+  useLayoutEffect(() => {
+    if (!alcove) {
+      setWidth(undefined);
+      return;
+    }
+    const b = btn.current;
+    const s = sizer.current;
+    if (!b || !s) return;
+    const cs = getComputedStyle(b);
+    setWidth(
+      Math.ceil(
+        s.offsetWidth + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight),
+      ),
+    );
+  }, [alcove, copied, path]);
+
   return (
     <button
+      ref={btn}
       type="button"
       className={`thread-project-path copyable${copied ? " copied" : ""}`}
-      title={copied ? "Copied" : `Copy ${path}`}
+      style={width === undefined ? undefined : { width }}
       aria-label={`Copy project directory: ${path}`}
       onClick={() =>
         void copyText(path).then((ok) => {
@@ -1679,7 +1898,11 @@ function ProjectPath({ path }: { path: string }) {
         })
       }
     >
-      {copied ? "copied" : path}
+      <span className="pp-label pp-path">{path}</span>
+      <span className="pp-label pp-copied">copied</span>
+      <span className="pp-sizer" ref={sizer} aria-hidden>
+        {copied ? "copied" : path}
+      </span>
     </button>
   );
 }
@@ -1718,7 +1941,6 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
         <button
           type="button"
           className="bosun-origin-task"
-          title="Back to Today"
           onClick={() => {
             setSidebarView("bosun");
             actions.openTask(TASK_TODAY_ID);
@@ -1731,7 +1953,6 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
         <button
           type="button"
           className="bosun-origin-task"
-          title="The to-do's page: summary, status, history"
           onClick={() => {
             setSidebarView("bosun");
             actions.openTask(taskId!);
@@ -1745,7 +1966,6 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
           type="button"
           className={`bosun-origin-done${taskClosed ? " closed" : ""}`}
           disabled={closing}
-          title={taskClosed ? "Reopen the to-do" : "Mark the to-do done"}
           onClick={toggleDone}
         >
           {taskClosed ? "Done · reopen" : "✓ Mark done"}
@@ -1753,20 +1973,18 @@ function BosunOriginChip({ thread }: { thread: Thread }) {
       )}
       <span
         className="bosun-origin-chip"
-        title={origin.dayLog ? `${origin.bosunName}'s day log` : `opened by ${origin.bosunName}`}
       >
         <BosunMark image={image} size={12} />
         {origin.bosunName} · {origin.dayLog ? "log" : origin.signalKind}
       </span>
       {url ? (
-        <a className="bosun-origin-ref" href={url} target="_blank" rel="noreferrer" title={url}>
+        <a className="bosun-origin-ref" href={url} target="_blank" rel="noreferrer">
           {url}
         </a>
       ) : path ? (
         <button
           type="button"
           className="bosun-origin-ref"
-          title={copied ? "Copied" : `Copy ${path}`}
           onClick={() =>
             void copyText(path).then((ok) => {
               if (!ok) return;

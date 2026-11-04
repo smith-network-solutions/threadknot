@@ -46,7 +46,7 @@ import {
   SEARCH_WIDTH_DEFAULT,
 } from "../lib/sidebarLayout";
 import { PORTRAITS_EVENT, resolvePortrait } from "../lib/portraits";
-import { INBOX_ID } from "./InboxView";
+import { INBOX_ID, InboxMenu } from "./InboxView";
 import { timeAgo } from "../lib/format";
 import {
   TASK_REVIEW_ID,
@@ -117,10 +117,16 @@ import {
   usePeekThreadPreview,
 } from "./ThreadHoverCard";
 import { ContextMenu } from "./ContextMenu";
+import { Tooltip } from "./alcove/Tooltip";
+import { Dropdown } from "./alcove/Dropdown";
+import { useAlcove } from "../lib/useAlcove";
 import { DirPicker } from "./DirPicker";
 import { useLongPressMenu, type MenuPoint } from "../lib/longPress";
+
+type NewChatPoint = MenuPoint & { anchor?: HTMLElement };
 import { applyProjectOrder, applyThreadOrder, mergeProjectOrder } from "../lib/projectOrder";
 import { useReorderDrag, type ReorderHandleProps } from "../lib/reorder";
+import { OPEN_SETTINGS_EVENT } from "../lib/settingsScreen";
 import {
   floatRecentFirst,
   getRecentUse,
@@ -149,7 +155,6 @@ import {
   FolderClosedIcon,
   FolderIcon,
   FolderPlusIcon,
-  GearIcon,
   LoaderIcon,
   MicIcon,
   ArrowDownIcon,
@@ -157,7 +162,6 @@ import {
   PanelLeftIcon,
   GripIcon,
   MoreIcon,
-  NotebookPenIcon,
   PencilIcon,
   PlayIcon,
   PlusIcon,
@@ -168,6 +172,8 @@ import {
   UndoIcon,
   XIcon,
 } from "./icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { FilterMailIcon, SidebarLeftIcon } from "@hugeicons/core-free-icons";
 import wordmarkUrl from "../assets/threadknot-wordmark.png";
 
 const THREAD_PAGE_SIZE = 5;
@@ -618,7 +624,6 @@ function ProjectPulse({
       className={`project-pulse pulse-${activity}`}
       role="status"
       aria-label={label}
-      title={label}
     />
   );
 }
@@ -900,7 +905,6 @@ function ProjectRail({
                 ? " — working"
                 : ""
           }${quickRunning && quickActivity === "attention" ? ` — ${quickRunning} running` : ""}`}
-          title={`Quick threads${quickRunning ? ` — ${quickRunning} running` : ""}`}
           onClick={onPickQuick}
         >
           <span className="rail-pip" aria-hidden />
@@ -920,7 +924,6 @@ function ProjectRail({
           }`}
           aria-current={bosunOn ? "true" : undefined}
           aria-label={`Bosun${bosunAttention > 0 ? " — needs you" : ""}`}
-          title="Bosun"
           onClick={onPickBosun}
         >
           <span className="rail-pip" aria-hidden />
@@ -937,54 +940,59 @@ function ProjectRail({
         const running = threads.filter(t => t.status === "running").length;
         const on = w.id === shownId;
         return (
-          <button
-            key={w.id}
-            type="button"
-            data-reorder-id={w.id}
-            data-drop={drag.dropId === w.id ? drag.dropSide : undefined}
-            className={`rail-item${on ? " on" : ""}${
-              activity ? ` rail-${activity}` : ""
-            }${running ? " rail-running" : ""}${drag.draggingId === w.id ? " dragging" : ""}${
-              w.hidden ? " hidden-ws" : ""
-            }`}
-            {...drag.handleProps(w.id)}
-            aria-current={on ? "true" : undefined}
-            aria-label={`${w.name}${w.hidden ? " — hidden" : ""}${
-              activity === "attention"
-                ? " — needs you"
-                : activity === "working"
-                  ? " — working"
-                  : ""
-            }${running && activity === "attention" ? ` — ${running} running` : ""}`}
-            title={`${w.name}${w.hidden ? " (hidden)" : ""}${running ? ` — ${running} thread${running === 1 ? "" : "s"} running` : ""}`}
-            aria-haspopup="menu"
-            onClick={() => onPick(w.id)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              // Deliberately does NOT switch project: a right-click asks about
-              // the tile, it doesn't navigate to it.
-              onMenu({ x: e.clientX, y: e.clientY }, w);
-            }}
-          >
-            {/* The edge pill: grows on hover, full height when open. */}
-            <span className="rail-pip" aria-hidden />
-            {/* The project marker is intentionally quiet in the rail. The
-                native title and accessible label carry the full name; the
-                rail should not turn a navigation marker into a profile card. */}
-            <MachineAvatar
-              image={w.image}
-              color={projectAccent(w.id)}
-              name={w.name}
-              size={34}
-              preview={false}
-            />
-            {/* Keep the effect mounted to avoid WebKit layer churn on status changes. */}
-            <RailActivity count={running} />
-            <span
-              className={`rail-dot${activity === "attention" ? " lit" : ""}`}
-              aria-hidden
-            />
-          </button>
+          // The rail shows a marker and no name, so the name has to arrive
+          // on hover. Placed to the right: the rail is pinned to the window
+          // edge, and a bubble above or below a 60px tile covers its
+          // neighbours in a column this tight. Inert outside Alcove, which is
+          // the only skin that mounts the TooltipLayer this talks to.
+          <Tooltip key={w.id} content={w.name} placement="right">
+            <button
+              type="button"
+              data-reorder-id={w.id}
+              data-drop={drag.dropId === w.id ? drag.dropSide : undefined}
+              className={`rail-item${on ? " on" : ""}${
+                activity ? ` rail-${activity}` : ""
+              }${running ? " rail-running" : ""}${drag.draggingId === w.id ? " dragging" : ""}${
+                w.hidden ? " hidden-ws" : ""
+              }`}
+              {...drag.handleProps(w.id)}
+              aria-current={on ? "true" : undefined}
+              aria-label={`${w.name}${w.hidden ? " — hidden" : ""}${
+                activity === "attention"
+                  ? " — needs you"
+                  : activity === "working"
+                    ? " — working"
+                    : ""
+              }${running && activity === "attention" ? ` — ${running} running` : ""}`}
+              aria-haspopup="menu"
+              onClick={() => onPick(w.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                // Deliberately does NOT switch project: a right-click asks about
+                // the tile, it doesn't navigate to it.
+                onMenu({ x: e.clientX, y: e.clientY }, w);
+              }}
+            >
+              {/* The edge pill: grows on hover, full height when open. */}
+              <span className="rail-pip" aria-hidden />
+              {/* The project marker is intentionally quiet in the rail. The
+                  native title and accessible label carry the full name; the
+                  rail should not turn a navigation marker into a profile card. */}
+              <MachineAvatar
+                image={w.image}
+                color={projectAccent(w.id)}
+                name={w.name}
+                size={34}
+                preview={false}
+              />
+              {/* Keep the effect mounted to avoid WebKit layer churn on status changes. */}
+              <RailActivity count={running} />
+              <span
+                className={`rail-dot${activity === "attention" ? " lit" : ""}`}
+                aria-hidden
+              />
+            </button>
+          </Tooltip>
         );
       })}
       {/* The way back. Only mounted once something is actually stashed, so an
@@ -1005,9 +1013,6 @@ function ProjectRail({
           aria-label={`${hidden.length} hidden project${
             hidden.length === 1 ? "" : "s"
           }${stashActivity === "attention" ? " — one needs you" : ""}${stashRunning ? ` — ${stashRunning} running` : ""}`}
-          title={`${hidden.length} hidden project${
-            hidden.length === 1 ? "" : "s"
-          }${stashRunning ? ` — ${stashRunning} running` : ""}`}
           // Anchored to the tile, not the pointer, like the picker bar's menu:
           // the list flies out beside the button it came from, and a keyboard
           // activation (clientX/clientY of 0) doesn't drop it in the corner.
@@ -1191,7 +1196,6 @@ export function DangerButton({
     <button
       className={`icon-btn danger-btn${armed ? " armed" : ""}`}
       aria-label={label}
-      title={armed ? "Click again to confirm" : label}
       onClick={(e) => {
         e.stopPropagation();
         if (armed) onConfirm();
@@ -1205,19 +1209,6 @@ export function DangerButton({
       )}
     </button>
   );
-}
-
-/** Hover text for the star, on the row and in the kebab menu alike.
- *
- *  Says what the star DOES rather than only naming it. The star's one real
- *  consequence is that it takes the chat off the idle clock (`threadSettled`
- *  rule 3) — a bare "Favorite" never told anyone that, which left the feature
- *  undiscoverable to exactly the person who wanted it. Exported so both call
- *  sites read from one string instead of drifting apart. */
-export function starTitle(favorite: boolean): string {
-  return favorite
-    ? "Unfavorite — lets this chat settle itself once it goes quiet"
-    : "Favorite — keeps this chat off the settled shelf until you file it";
 }
 
 function ThreadRow({
@@ -1571,7 +1562,6 @@ function ThreadRow({
   const statusEl = (
     <span
       className={`status-slot${hasStatusIndicator ? " has-indicator" : ""}`}
-      title={isGenerating ? "Generating" : needsAttention ? "Unread activity" : undefined}
     >
       <span
         className={`status-dot st-${thread.status}${needsAttention ? " unread" : ""}`}
@@ -1672,12 +1662,12 @@ function ThreadRow({
   const chipsEl = (
     <>
       {bosunWorkspaceName && (
-        <span className="thread-chip bosun-ws-chip" title={`in ${bosunWorkspaceName}`}>
+        <span className="thread-chip bosun-ws-chip">
           {bosunWorkspaceName}
         </span>
       )}
       {bosunOrigin?.dayLog && (
-        <span className="thread-chip bosun-log-tag" title={`${bosunOrigin.bosunName}'s day log`}>
+        <span className="thread-chip bosun-log-tag">
           log
         </span>
       )}
@@ -1688,13 +1678,12 @@ function ThreadRow({
       {!inHermesView && onHermes && gatewayName && (
         <span
           className="thread-chip hermes-chip"
-          title={`worked by ${gatewayName}${hermesStatus ? ` — ${hermesPresence(hermesStatus).label}` : ""}`}
         >
           {gatewayName}
         </span>
       )}
       {dormant && (
-        <span className="thread-chip hermes-chip off" title={`handed back to ${thread.agent}`}>
+        <span className="thread-chip hermes-chip off">
           on {thread.agent}
         </span>
       )}
@@ -1704,11 +1693,10 @@ function ThreadRow({
         <span
           className="thread-chip-dot"
           style={{ background: peerColor }}
-          title={chipTitle}
         />
       )}
       {isRemote && (
-        <span className={`thread-chip${peer?.online ? "" : " off"}`} title={chipTitle}>
+        <span className={`thread-chip${peer?.online ? "" : " off"}`}>
           {peer?.name ?? "remote"}
         </span>
       )}
@@ -1724,13 +1712,6 @@ function ThreadRow({
         aria-label={settled ? "Bring back to the list" : "Settle thread"}
         aria-haspopup={settled ? undefined : "dialog"}
         aria-expanded={settled ? undefined : settleConfirmPos !== null}
-        title={
-          settled
-            ? "Bring back to the list"
-            : canSettle
-              ? "Settle — park this chat in the shelf"
-              : `Can't settle: ${busyReason}`
-        }
         onClick={(e) => {
           e.stopPropagation();
           if (!canSettle) return;
@@ -1799,7 +1780,6 @@ function ThreadRow({
       className={`icon-btn thread-star${thread.favorite ? " on" : ""}`}
       aria-label={thread.favorite ? "Unfavorite thread" : "Favorite thread"}
       aria-pressed={!!thread.favorite}
-      title={starTitle(!!thread.favorite)}
       onClick={(e) => {
         e.stopPropagation();
         void actions.setThreadFavorite(thread.id, !thread.favorite);
@@ -1816,7 +1796,6 @@ function ThreadRow({
       aria-label="Thread actions"
       aria-haspopup="menu"
       aria-expanded={menuOpen}
-      title="Thread actions"
       onClick={(e) => {
         e.stopPropagation();
         setMenuAnchor((a) => (a === null ? "kebab" : null));
@@ -1921,7 +1900,6 @@ function ThreadRow({
               type="button"
               role="menuitem"
               className="thread-menu-item"
-              title={starTitle(!!thread.favorite)}
               onClick={() => {
                 closeMenu();
                 void actions.setThreadFavorite(thread.id, !thread.favorite);
@@ -2034,7 +2012,7 @@ function ThreadRow({
           {...rowGestures}
           {...hover.hoverProps}
         >
-          <span className="stream-card-home" title={home.name}>
+          <span className="stream-card-home">
             {home.quick ? (
               <span className="stream-card-quick" aria-hidden>
                 <CompassIcon size={settled ? 14 : 18} />
@@ -2051,7 +2029,7 @@ function ThreadRow({
             {statusEl}
           </span>
           <div className="stream-card-body">
-            <span className="stream-card-title" title={shownTitle}>
+            <span className="stream-card-title">
               {shownTitle}
             </span>
             <div className="stream-card-meta">
@@ -2099,7 +2077,6 @@ function ThreadRow({
             {hermesPreview.portal}
             <span
               className="thread-card-title"
-              title={shownTitle}
             >
               {shownTitle}
             </span>
@@ -2146,7 +2123,7 @@ function ThreadRow({
             {hermesPreview.portal}
             <span
               className="thread-row-title"
-              title={shownTitle}
+              key={shownTitle}
             >
               {shownTitle}
             </span>
@@ -2185,7 +2162,7 @@ function ThreadRow({
         {hermesPreview.portal}
         <span
           className="thread-row-title"
-          title={shownTitle}
+          key={shownTitle}
         >
           {shownTitle}
         </span>
@@ -2307,7 +2284,6 @@ function ChatFolderGroup({
             role="button"
             tabIndex={-1}
             aria-label={`Drag to move ${folder.name}`}
-            title="Drag to reorder"
             draggable={false}
             {...reorder.handle}
           >
@@ -2358,7 +2334,6 @@ function ChatFolderGroup({
               type="button"
               className="icon-btn"
               aria-label={`Rename ${folder.name}`}
-              title="Rename folder"
               onClick={(e) => {
                 e.stopPropagation();
                 setRenaming(true);
@@ -2701,7 +2676,6 @@ function WorkspaceSection({
             role="button"
             tabIndex={-1}
             aria-label={`Drag to move ${workspace.name}`}
-            title="Drag to reorder"
             draggable={false}
             {...reorder.handle}
           >
@@ -2740,7 +2714,7 @@ function WorkspaceSection({
                 actually do — but which box a chat will run on is not something
                 to leave the reader to infer from the roots. */}
             {guestServer && (
-              <span className="project-server-chip" title={`on ${guestServer.name}`}>
+              <span className="project-server-chip">
                 {guestServer.name}
               </span>
             )}
@@ -2768,7 +2742,7 @@ function WorkspaceSection({
         {showLocalBadge && !renaming && (
           // "You are here": a root of this workspace lives on this machine.
           // Reuses the thread-chip language, tinted with the brass accent.
-          <span className="thread-chip project-local-chip" title="A folder of this workspace is on this machine">
+          <span className="thread-chip project-local-chip">
             this machine
           </span>
         )}
@@ -2776,7 +2750,6 @@ function WorkspaceSection({
           <button
             className="icon-btn"
             aria-label="Open in its own window"
-            title="Open in its own window (or drag the row out)"
             onClick={(e) => {
               e.stopPropagation();
               void openProjectWindow(primary);
@@ -3022,7 +2995,6 @@ function HermesGroup({
             className={`project-name hermes-agent-name${
               presence?.kind === "offline" ? " hermes-offline" : ""
             }`}
-            title={presence ? `${name}: ${presence.title}` : name}
           >
             {name}
           </span>
@@ -3038,7 +3010,6 @@ function HermesGroup({
           <button
             className="icon-btn"
             aria-label={`New chat with ${name}`}
-            title={`New chat with ${name}`}
             onClick={() => actions.openHermesDraft(id)}
           >
             <PlusIcon size={13} />
@@ -3286,7 +3257,6 @@ function BosunTaskList({
             <button
               type="button"
               className={`btn bosun-small-btn bosun-today-btn${state.activeTaskId === TASK_TODAY_ID ? " on" : ""}`}
-              title="Today's plan: your to-dos in time blocks, ticked off as you go"
               onClick={() => actions.openTask(TASK_TODAY_ID)}
             >
               Today
@@ -3295,7 +3265,6 @@ function BosunTaskList({
           <button
             type="button"
             className="btn bosun-small-btn bosun-review-btn"
-            title="Every open to-do with its full title, to close many at once"
             onClick={() => actions.openTask(TASK_REVIEW_ID)}
           >
             Review
@@ -3323,7 +3292,6 @@ function BosunTaskList({
             type="button"
             className="icon-btn"
             aria-label="Show every workspace"
-            title="Show every workspace"
             onClick={onClearWorkspaceFilter}
           >
             <XIcon size={11} />
@@ -3360,7 +3328,6 @@ function BosunTaskList({
                 className={`recent-finished-toggle${showFinished ? " on" : ""}`}
                 aria-pressed={showFinished}
                 onClick={() => setShowFinished(!showFinished)}
-                title={showFinished ? "Hide finished to-dos from Recent" : "Show finished to-dos in Recent"}
               >
                 {showFinished ? "Hide finished" : `Show finished (${finishedHidden})`}
               </button>
@@ -3417,7 +3384,7 @@ function RecentHint({ recent }: { recent: RecentTask }) {
   if (running) return <span className="task-row-hint working">working…</span>;
   if (recent.replied)
     return (
-      <span className="task-row-hint replied" title={`Updated ${timeAgo(recent.task.updatedAt)}`}>
+      <span className="task-row-hint replied">
         replied
       </span>
     );
@@ -3452,13 +3419,13 @@ function TaskRow({
     >
       <TaskStatusDot status={task.status} />
       <span className="task-row-main">
-        <span className="task-row-title" title={title}>
+        <span className="task-row-title">
           {title}
         </span>
         <span className="task-row-meta">
           {taskMetaLine(task, workspaceName)}
           {ticket && (
-            <span className="task-orbit-ref" title={task.orbit?.url}>
+            <span className="task-orbit-ref">
               {" · "}
               {ticket}
             </span>
@@ -3580,7 +3547,6 @@ function BosunWorkspaceRow({
     <button
       type="button"
       className={`bosun-ws-row${label.muted && !attention ? " muted" : ""}`}
-      title={`Open ${name}'s to-dos for this workspace`}
       onClick={onOpen}
     >
       <BosunMark image={image} size={16} />
@@ -3963,7 +3929,6 @@ function WorkspaceRootsModal({
               {m.projectId === workspace.id ? (
                 <span
                   className="settings-value dim"
-                  title="The workspace's original folder — it anchors the workspace"
                 >
                   original
                 </span>
@@ -3972,7 +3937,6 @@ function WorkspaceRootsModal({
                   type="button"
                   className="settings-toggle"
                   disabled={busy}
-                  title="Remove this folder from the workspace (nothing is deleted — it becomes its own workspace on its machine)"
                   onClick={() => void detach(m)}
                 >
                   remove
@@ -3990,11 +3954,6 @@ function WorkspaceRootsModal({
               type="button"
               className="settings-toggle"
               disabled={busy || !mc.online}
-              title={
-                mc.online
-                  ? `Browse ${mc.label}'s folders`
-                  : `${mc.label} is offline`
-              }
               onClick={() =>
                 setPickingOn({ machineId: mc.machineId, label: mc.label })
               }
@@ -4050,19 +4009,47 @@ function SidebarViewPopover({
   onClose: () => void;
 }) {
   const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  // `tail` is the trigger's centre in the panel's own coordinates — the panel
+  // is right-aligned but clamps against the window, so the tail cannot be a
+  // fixed inset the way a Dropdown's is.
+  const [pos, setPos] = useState<{ top: number; left: number; tail: number } | null>(null);
 
   // Anchor under the button, right-aligned and clamped into the viewport.
   // (Sidebar anchor and portaled panel both render unzoomed, so the rect maps
   //  1:1 onto the panel's fixed coordinates - see the thread menu.)
+  //
+  // The width is measured, not assumed: skins size this panel differently
+  // (Alcove gives it the notifications popover's width), and a hard-coded
+  // number here would right-align it against the wrong edge.
   useLayoutEffect(() => {
     function place() {
       const b = anchorRef.current;
       if (!b) return;
       const r = b.getBoundingClientRect();
-      const width = 236;
-      const left = Math.max(8, r.right - width);
-      setPos({ top: r.bottom + 6, left });
+      const width = popRef.current?.offsetWidth || 236;
+      const centre = r.left + r.width / 2;
+      // How far from either end the tail has to stand: the panel's corner
+      // radius (38px in Alcove) plus half the tail's 21px base. Planted any
+      // closer and its outer shoulder lands on the corner, where the panel's
+      // edge has already curved several pixels away — which reads as a tail
+      // floating free of the popover rather than growing out of it.
+      const edge = 49;
+      // Right-aligned under the button by preference, then slid along until
+      // the tail clears both corners, then clamped into the window. The slide
+      // is why this panel may overhang its button: a tail that points true is
+      // worth more than an edge that lines up.
+      let left = r.right - width;
+      left = Math.max(left, centre - width + edge);
+      left = Math.min(left, centre - edge);
+      left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+      // 14px of air, which is what Dropdown.tsx gives its menus (a 12px gap
+      // plus the 2px offset the notifications bell asks for). At 6 this panel
+      // sat noticeably tighter to its button than every other popover.
+      setPos({
+        top: r.bottom + 14,
+        left,
+        tail: Math.max(edge, Math.min(centre - left, width - edge)),
+      });
     }
     place();
     window.addEventListener("resize", place);
@@ -4091,16 +4078,39 @@ function SidebarViewPopover({
     };
   }, [anchorRef, onClose]);
 
-  if (!pos) return null;
-
+  // Rendered before it is placed, off-screen and hidden: the layout effect
+  // above measures this node, so it has to exist by the time it runs.
   return createPortal(
     <div
       ref={popRef}
       className="thread-menu sidebar-view-pop"
       role="dialog"
       aria-label="Sidebar view options"
-      style={{ top: pos.top, left: pos.left }}
+      style={
+        pos
+          ? ({
+              top: pos.top,
+              left: pos.left,
+              "--view-pop-tail": `${pos.tail}px`,
+            } as React.CSSProperties)
+          : { top: 0, left: 0, visibility: "hidden" }
+      }
     >
+      {/* The same tail every Alcove popover wears — see Dropdown.tsx. */}
+      <span className="dropdown-tail" aria-hidden="true" />
+      <SidebarViewOptions layout={layout} hiddenCount={hiddenCount} update={update} />
+    </div>,
+    document.body,
+  );
+}
+
+function SidebarViewOptions({ layout, hiddenCount, update }: {
+  layout: SidebarLayout;
+  hiddenCount: number;
+  update: (patch: Partial<SidebarLayout>) => void;
+}) {
+  return (
+    <>
       <div className="sidebar-view-seg-row">
         <span className="sidebar-view-label">View</span>
         <div className="settings-seg">
@@ -4193,8 +4203,7 @@ function SidebarViewPopover({
           <span className="sidebar-view-switch" />
         </button>
       )}
-    </div>,
-    document.body,
+    </>
   );
 }
 
@@ -4206,12 +4215,16 @@ function SidebarResizeHandle({
   defaultWidth = SIDEBAR_WIDTH_DEFAULT,
   setWidthLive,
   onCommit,
+  onReset,
 }: {
   width: number;
   /** What a double-click resets to. */
   defaultWidth?: number;
   setWidthLive: (w: number) => void;
   onCommit: (w: number) => void;
+  /** Double-click. Without one, the handle commits `defaultWidth`, which pins
+   *  the sidebar at the base stylesheet's number and hides the skin's. */
+  onReset?: () => void;
 }) {
   const drag = useRef<{ startX: number; startW: number } | null>(null);
   // Mirror the prop so pointer-up reads the final width without a stale closure.
@@ -4252,12 +4265,11 @@ function SidebarResizeHandle({
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize sidebar"
-      title="Drag to resize · double-click to reset"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
-      onDoubleClick={() => onCommit(defaultWidth)}
+      onDoubleClick={() => (onReset ? onReset() : onCommit(defaultWidth))}
     />
   );
 }
@@ -4475,14 +4487,12 @@ function useSearchSession(session: SearchSession, setSession: SetSession) {
 function SearchChip({
   className,
   label,
-  title,
   open,
   onToggle,
   children,
 }: {
   className?: string;
   label: string;
-  title?: string;
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
@@ -4494,7 +4504,6 @@ function SearchChip({
         className="search-scope-toggle"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={title}
         onClick={onToggle}
       >
         <span>{label}</span>
@@ -4545,7 +4554,6 @@ function SearchChips({
       <SearchChip
         className="search-model"
         label={modelLabel}
-        title="Model that reads the conversations"
         open={menu === "model"}
         onToggle={() => setMenu(menu === "model" ? null : "model")}
       >
@@ -4785,7 +4793,6 @@ function ThreadSearchPanel({
           type="button"
           className="icon-btn search-panel-close"
           aria-label="Close search"
-          title="Close search (keeps the open chat)"
           onClick={onClose}
         >
           <XIcon size={16} />
@@ -4837,15 +4844,6 @@ function ThreadSearchPanel({
               disabled={micBusy}
               aria-pressed={mic === "recording"}
               aria-label="Dictate"
-              title={
-                mic === "recording"
-                  ? "Stop and transcribe (Esc discards)"
-                  : mic === "transcribing"
-                    ? "Turning your words into text…"
-                    : mic === "starting"
-                      ? "Opening the microphone…"
-                      : "Dictate: click to record, click again to transcribe"
-              }
               onClick={() => (mic === "recording" ? void stopDictating() : void startDictating())}
             >
               <MicIcon size={16} />
@@ -4861,7 +4859,6 @@ function ThreadSearchPanel({
             className={`search-panel-run global${search.globalLoading ? " searching" : ""}`}
             disabled={!canRun || search.globalLoading}
             aria-busy={search.globalLoading}
-            title="Search titles and conversation text by words (Enter)"
             onClick={search.runGlobal}
           >
             {search.globalLoading && <span className="search-panel-spinner" aria-hidden="true" />}
@@ -4872,7 +4869,6 @@ function ThreadSearchPanel({
             className={`search-panel-run${search.loading ? " searching" : ""}`}
             disabled={!canRun || search.loading}
             aria-busy={search.loading}
-            title="Use your prompt to find matching conversations with the selected model (Ctrl/Cmd+Enter)"
             onClick={() => void search.runAi()}
           >
             {search.loading && <span className="search-panel-spinner" aria-hidden="true" />}
@@ -4898,11 +4894,11 @@ function ThreadSearchPanel({
               Searching conversation text…
             </>
           ) : micError ? (
-            <span className="error" title={micError}>
+            <span className="error">
               {micError}
             </span>
           ) : typeof search.statusText === "object" && search.statusText ? (
-            <span className="error" title={search.statusText.error}>
+            <span className="error">
               Search failed: {search.statusText.error}
             </span>
           ) : (
@@ -4916,7 +4912,6 @@ function ThreadSearchPanel({
           type="button"
           className="icon-btn search-panel-step"
           aria-label="Previous result"
-          title="Previous result"
           disabled={rows.length < 2}
           onClick={() => step(-1)}
         >
@@ -4926,7 +4921,6 @@ function ThreadSearchPanel({
           type="button"
           className="icon-btn search-panel-step"
           aria-label="Next result"
-          title="Next result"
           disabled={rows.length < 2}
           onClick={() => step(1)}
         >
@@ -4980,7 +4974,7 @@ export const Sidebar = memo(function Sidebar({
   const notifyPrefs = useSyncExternalStore(subscribeNotifyPrefs, getNotifyPrefs);
   // Presentation prefs (view mode, big names, pin-local, width). Instantiated
   // here and threaded down; the width also drives the --sidebar-w CSS var.
-  const { layout, update: updateLayout, setWidthLive } = useSidebarLayout();
+  const { layout, update: updateLayout, setWidthLive, resetWidth } = useSidebarLayout();
   const [filterOpen, setFilterOpen] = useState(false);
   // The conversation search laid over this sidebar: null when closed, else
   // its session (see SearchSession).
@@ -5008,6 +5002,10 @@ export const Sidebar = memo(function Sidebar({
     };
   }, [searchPanelUp, searchWidth, layout.width]);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
+  // Alcove puts view options and notifications together in the card's top-right
+  // corner, with the bell on a glass popover instead of the full inbox page.
+  // Every other skin keeps notifications as a launch row — see both below.
+  const alcove = useAlcove();
   const storedView = useSyncExternalStore(subscribeSidebarView, getSidebarView);
   // A stored "agents" only takes effect once the Hermes surfaces are eligible;
   // an install that has since removed its gateways falls back to the fleet
@@ -5070,6 +5068,13 @@ export const Sidebar = memo(function Sidebar({
     }
   };
   const [showSettings, setShowSettings] = useState(false);
+  // The thread header's Settings pill asks for the screen through a window
+  // event; this component owns the state that shows it. See lib/settingsScreen.
+  useEffect(() => {
+    const open = () => setShowSettings(true);
+    window.addEventListener(OPEN_SETTINGS_EVENT, open);
+    return () => window.removeEventListener(OPEN_SETTINGS_EVENT, open);
+  }, []);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
@@ -5084,6 +5089,7 @@ export const Sidebar = memo(function Sidebar({
   const [newThreadMenu, setNewThreadMenu] = useState<{
     x: number;
     y: number;
+    anchor?: HTMLElement;
     workspaceId: string;
   } | null>(null);
   const [rootsModal, setRootsModal] = useState<Workspace | null>(null);
@@ -5613,6 +5619,14 @@ export const Sidebar = memo(function Sidebar({
   const onSidebarScroll = useCallback(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
+    // Which ends are cut off. The Alcove skin fades the list where there is
+    // more of it off-screen, and a fade at the top of an unscrolled list
+    // would just dim the first row for no reason.
+    scroller.classList.toggle("has-above", scroller.scrollTop > 1);
+    scroller.classList.toggle(
+      "has-below",
+      scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1,
+    );
     scroller.classList.add("is-scrolling");
     if (scrollbarIdleTimer.current !== null) {
       window.clearTimeout(scrollbarIdleTimer.current);
@@ -5632,6 +5646,25 @@ export const Sidebar = memo(function Sidebar({
     },
     [],
   );
+  // The same measurement outside a scroll: the list grows and shrinks (a new
+  // chat, the settled shelf opening) and the pane resizes, and either can put
+  // content off-screen without the pointer ever touching the list.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const measure = () => {
+      scroller.classList.toggle("has-above", scroller.scrollTop > 1);
+      scroller.classList.toggle(
+        "has-below",
+        scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    for (const child of Array.from(scroller.children)) observer.observe(child);
+    return () => observer.disconnect();
+  });
 
   // Settings is portaled above the sidebar, but WebKitGTK can still composite
   // the native scrollbar over it. Hide the thumb synchronously on open even if
@@ -5681,7 +5714,38 @@ export const Sidebar = memo(function Sidebar({
   const [pickerMenu, setPickerMenu] = useState<MenuPoint | null>(null);
   /** The stream toolbar's two menus: where a new chat goes, and the overflow
    *  for the destinations that used to be a stack of buttons. */
-  const [streamNewMenu, setStreamNewMenu] = useState<MenuPoint | null>(null);
+  const [streamNewMenu, setStreamNewMenu] = useState<NewChatPoint | null>(null);
+  // New chat lives beside the sidebar, not in it (.new-chat-dock in App.tsx) —
+  // but the workspace list and the picker menu live here, and the sidebar can
+  // be collapsed, where a button of its own would be unreachable. The dock
+  // dispatches; this opens the menu under the button it was clicked from.
+  // Where a new chat goes by default, kept in a ref because the listener below
+  // subscribes once but the answer changes with every navigation.
+  const newChatHere = useRef<{
+    wsId?: string;
+    start: (wsId: string, point: NewChatPoint) => void;
+  }>({ start: () => {} });
+  useEffect(() => {
+    function onNewChat(e: Event) {
+      const point = (e as CustomEvent<NewChatPoint & { pick?: boolean }>).detail;
+      if (!point) return;
+      if (agentsView) {
+        actions.openQuickDraft();
+        return;
+      }
+      // Already somewhere: the chat goes there. Asking "new chat in?" when the
+      // answer is the project on screen is a menu with a foregone conclusion.
+      // Hold Shift or Alt (or click from nowhere in particular) to choose.
+      const { wsId, start } = newChatHere.current;
+      if (wsId && !point.pick) {
+        start(wsId, point);
+        return;
+      }
+      setStreamNewMenu(point);
+    }
+    window.addEventListener("threadknot:new-chat", onNewChat);
+    return () => window.removeEventListener("threadknot:new-chat", onNewChat);
+  }, [actions, agentsView]);
   const [streamMoreMenu, setStreamMoreMenu] = useState<MenuPoint | null>(null);
   const [folderDialog, setFolderDialog] = useState<{
     workspaceId: string;
@@ -5911,43 +5975,13 @@ export const Sidebar = memo(function Sidebar({
   // Always the menu, even for a workspace with a single root: it is what
   // makes "add a new project folder" discoverable, and the menu resolves the
   // roots live rather than from a snapshot taken when it opened.
-  function startNewThread(workspaceId: string, point: MenuPoint) {
-    setNewThreadMenu({ x: point.x, y: point.y, workspaceId });
-  }
-
-  // The "New chat" button, resolved against wherever you are: a quick thread in
-  // the Quick/Agents homes, otherwise a thread in the current project. A single
-  // online root drafts straight in; multiple roots open the machine/folder menu.
-  function startNewChatHere(e: React.MouseEvent) {
-    const active = state.activeThreadId
-      ? findThread(state, state.activeThreadId)
-      : null;
-    const activePid = active?.projectId ?? state.draft?.projectId;
-    if (quickView || agentsView || (activePid && isQuickHomeProjectId(activePid))) {
-      actions.openQuickDraft();
-      return;
-    }
-    let wsId = pickedWorkspace?.id ?? shownWorkspaceId ?? null;
-    if (!wsId && activePid) {
-      for (const [id, d] of sectionData) {
-        if (d.members.some((m) => m.projectId === activePid)) {
-          wsId = id;
-          break;
-        }
-      }
-    }
-    wsId = wsId ?? visibleWorkspaces[0]?.id ?? null;
-    if (!wsId) {
-      actions.openQuickDraft();
-      return;
-    }
-    const r = e.currentTarget.getBoundingClientRect();
-    newChatIn(wsId, { x: r.left, y: r.bottom + 4 });
+  function startNewThread(workspaceId: string, point: NewChatPoint) {
+    setNewThreadMenu({ ...point, workspaceId });
   }
 
   /** A single online root drafts straight in; several open the machine/folder
    *  menu at `point`. */
-  function newChatIn(wsId: string, point: MenuPoint) {
+  function newChatIn(wsId: string, point: NewChatPoint) {
     const members = sectionData.get(wsId)?.members ?? [];
     const online = members.filter((m) => m.online);
     if (online.length === 1) {
@@ -5962,6 +5996,26 @@ export const Sidebar = memo(function Sidebar({
   const currentWsId = openProjectId
     ? workspaceIdForProject(state, openProjectId)
     : undefined;
+  // Feed the listener above, which was mounted before either of these existed.
+  useEffect(() => {
+    newChatHere.current = { wsId: currentWsId, start: newChatIn };
+  });
+
+  const filterTrigger = (
+    <Tooltip content="Filters" placement="bottom" disabled={filterOpen}>
+      <button
+        ref={filterBtnRef}
+        type="button"
+        className={`icon-btn sidebar-filter-btn${filterOpen && !alcove ? " on" : ""}${isNonDefaultLayout(layout) ? " active" : ""}`}
+        aria-label="View options"
+        aria-haspopup="dialog"
+        aria-expanded={filterOpen}
+        onClick={alcove ? undefined : () => setFilterOpen((value) => !value)}
+      >
+        {alcove ? <HugeiconsIcon icon={FilterMailIcon} size={26} strokeWidth={1.7} /> : <FilterIcon size={18} />}
+      </button>
+    </Tooltip>
+  );
 
   return (
     <>
@@ -5992,6 +6046,7 @@ export const Sidebar = memo(function Sidebar({
           width={layout.width}
           setWidthLive={setWidthLive}
           onCommit={(w) => updateLayout({ width: w })}
+          onReset={resetWidth}
         />
       )}
       {/* Absolutely positioned rather than a flex sibling: the sidebar keeps
@@ -6025,31 +6080,48 @@ export const Sidebar = memo(function Sidebar({
         />
       )}
       <div className="sidebar-brand">
-        <button
-          ref={filterBtnRef}
-          type="button"
-          className={`icon-btn sidebar-filter-btn${filterOpen ? " on" : ""}${
-            isNonDefaultLayout(layout) ? " active" : ""
-          }`}
-          aria-label="View options"
-          aria-haspopup="dialog"
-          aria-expanded={filterOpen}
-          title="View options"
-          onClick={() => setFilterOpen((v) => !v)}
-        >
-          <FilterIcon size={18} />
-        </button>
+        {alcove && !streamLayout && (
+          <span className="sidebar-heading">
+            {bosunView ? "Bosun" : agentsView ? "Agents" : "Chats"}
+          </span>
+        )}
+        {alcove && !streamLayout && !soloId && !agentsView && !quickView && !bosunView && (
+          <Tooltip content="Add workspace" placement="bottom">
+            <button type="button" className="icon-btn" aria-label="Add workspace" onClick={onAddProject}>
+              <FolderPlusIcon size={19} />
+            </button>
+          </Tooltip>
+        )}
+        {alcove ? (
+          <Dropdown
+            className="sidebar-filter-dropdown"
+            menuClassName="sidebar-view-pop"
+            placement="bottom-right"
+            menuRole="dialog"
+            menuLabel="Sidebar view options"
+            closeOnSelect={false}
+            onOpenChange={setFilterOpen}
+            trigger={filterTrigger}
+          >
+            <SidebarViewOptions layout={layout} hiddenCount={hiddenWorkspaces.length} update={updateLayout} />
+          </Dropdown>
+        ) : filterTrigger}
+        {alcove && !soloId && state.inbox && <InboxMenu />}
         <img className="brand-wordmark" src={wordmarkUrl} alt="ThreadKnot" />
         {/* Same intent either way — put the sidebar away — so it is one
             button. On a phone the drawer is full width, which leaves no
             backdrop to tap, so this is the ONLY way back out of it; do not
             hide it there again. The glyph matches the header hamburger that
             opened the drawer. */}
+        <Tooltip
+          className="sidebar-collapse-tip"
+          content="Collapse sidebar"
+          placement="right"
+        >
         <button
           type="button"
           className="icon-btn sidebar-collapse-btn"
           aria-label={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
-          title={state.sidebarOpen ? "Close sidebar" : "Collapse sidebar"}
           onClick={() => {
             if (window.matchMedia("(max-width: 767px)").matches) {
               dispatch({ type: "sidebar", open: false });
@@ -6058,8 +6130,13 @@ export const Sidebar = memo(function Sidebar({
             }
           }}
         >
-          <PanelLeftIcon size={18} />
+          {alcove ? (
+            <HugeiconsIcon icon={SidebarLeftIcon} size={26} strokeWidth={1.7} />
+          ) : (
+            <PanelLeftIcon size={18} />
+          )}
         </button>
+        </Tooltip>
       </div>
 
       <PeopleRow />
@@ -6074,7 +6151,6 @@ export const Sidebar = memo(function Sidebar({
               type="button"
               className="icon-btn stream-tool"
               aria-label="Back to all chats"
-              title="Back to all chats"
               onClick={() => switchView("fleet")}
             >
               <span aria-hidden>←</span>
@@ -6082,25 +6158,8 @@ export const Sidebar = memo(function Sidebar({
           )}
           <button
             type="button"
-            className="stream-new"
-            aria-haspopup="menu"
-            onClick={(e) => {
-              if (agentsView) {
-                actions.openQuickDraft();
-                return;
-              }
-              const r = e.currentTarget.getBoundingClientRect();
-              setStreamNewMenu({ x: r.left, y: r.bottom + 4 });
-            }}
-          >
-            <NotebookPenIcon size={16} />
-            <span>New chat</span>
-          </button>
-          <button
-            type="button"
             className="icon-btn stream-tool"
             aria-label="Search"
-            title="Search"
             onClick={() => setSearch(newSearchSession())}
           >
             <SearchIcon size={17} />
@@ -6110,7 +6169,6 @@ export const Sidebar = memo(function Sidebar({
               type="button"
               className={`icon-btn stream-tool${state.activeTaskId === INBOX_ID ? " on" : ""}`}
               aria-label="Notifications"
-              title="Notifications"
               onClick={() => actions.openTask(INBOX_ID)}
             >
               <BellIcon size={17} />
@@ -6127,11 +6185,6 @@ export const Sidebar = memo(function Sidebar({
               className={`icon-btn stream-tool${bosunView ? " on" : ""}`}
               aria-label="Bosun"
               aria-pressed={bosunView}
-              title={
-                lastBosunTask
-                  ? `Bosun · last: ${displayTitle(lastBosunTask) || "Untitled to-do"}`
-                  : "Bosun"
-              }
               onClick={() => (bosunView ? switchView("fleet") : pickBosun())}
             >
               <AnchorIcon size={17} />
@@ -6143,7 +6196,6 @@ export const Sidebar = memo(function Sidebar({
             className={`icon-btn stream-tool${streamMoreMenu ? " on" : ""}`}
             aria-label="More"
             aria-haspopup="menu"
-            title="More"
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               setStreamMoreMenu({ x: r.left, y: r.bottom + 4 });
@@ -6157,25 +6209,17 @@ export const Sidebar = memo(function Sidebar({
       <div className="sidebar-launch">
         <button
           type="button"
-          className="sidebar-action new-chat"
-          onClick={startNewChatHere}
-        >
-          <NotebookPenIcon size={18} />
-          <span>New chat</span>
-        </button>
-        <button
-          type="button"
           className="sidebar-action search-open"
           onClick={() => setSearch(newSearchSession())}
         >
           <SearchIcon size={18} />
           <span>Search</span>
         </button>
-        {!soloId && state.inbox && (
+        {/* Alcove moves this to the bell in .sidebar-brand (above). */}
+        {!alcove && !soloId && state.inbox && (
           <button
             type="button"
             className={`sidebar-action inbox-open${state.activeTaskId === INBOX_ID ? " on" : ""}`}
-            title="Every notification, so none slips past"
             onClick={() => actions.openTask(INBOX_ID)}
           >
             <BellIcon size={18} />
@@ -6185,7 +6229,7 @@ export const Sidebar = memo(function Sidebar({
             )}
           </button>
         )}
-        {!soloId && !agentsView && !quickView && !bosunView && (
+        {!alcove && !soloId && !agentsView && !quickView && !bosunView && (
           <button type="button" className="sidebar-action" onClick={onAddProject}>
             <FolderPlusIcon size={18} />
             <span>Add workspace</span>
@@ -6204,18 +6248,6 @@ export const Sidebar = memo(function Sidebar({
             )}
           </button>
         )}
-        {!soloId && !quickView && (
-          <>
-            <button
-              type="button"
-              className="sidebar-action"
-              onClick={() => switchView("quick")}
-            >
-              <CompassIcon size={18} />
-              <span>Quick threads</span>
-            </button>
-          </>
-        )}
         {showHermesAgents() && !soloId && !agentsView && (
           <button
             type="button"
@@ -6231,7 +6263,6 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className="sidebar-action"
-            title={lastBosunTask ? `Bosun · last: ${displayTitle(lastBosunTask) || "Untitled to-do"}` : undefined}
             onClick={pickBosun}
           >
             <AnchorIcon size={18} />
@@ -6255,6 +6286,8 @@ export const Sidebar = memo(function Sidebar({
         <ContextMenu
           x={streamNewMenu.x}
           y={streamNewMenu.y}
+          anchor={streamNewMenu.anchor}
+          className="new-chat-menu"
           title="New chat in"
           onClose={() => setStreamNewMenu(null)}
           items={[
@@ -6280,6 +6313,19 @@ export const Sidebar = memo(function Sidebar({
               dividerBefore: visibleWorkspaces.length > 0,
               onSelect: () => actions.openQuickDraft(),
             },
+            // The destination, not the act: this was the sidebar's own
+            // "Quick threads" button, which lived only in the non-stream
+            // layout. It sits under the row that starts one because you
+            // reach both from the same place now.
+            ...(!soloId && !quickView
+              ? [
+                  {
+                    label: "All quick threads",
+                    icon: <FolderIcon size={15} />,
+                    onSelect: () => switchView("quick"),
+                  },
+                ]
+              : []),
           ]}
         />
       )}
@@ -6328,7 +6374,7 @@ export const Sidebar = memo(function Sidebar({
           ]}
         />
       )}
-      {filterOpen && (
+      {filterOpen && !alcove && (
         <SidebarViewPopover
           anchorRef={filterBtnRef}
           layout={layout}
@@ -6342,6 +6388,20 @@ export const Sidebar = memo(function Sidebar({
       )}
 
       <div className="sidebar-scroll" ref={scrollRef} onScroll={onSidebarScroll}>
+        {alcove && layout.collapsed && !streamLayout && !soloId && !agentsView && !quickView && !bosunView && (
+          <div className="sidebar-workspaces-head">
+            <Tooltip content="Add workspace" placement="bottom">
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Add workspace"
+                onClick={onAddProject}
+              >
+                <FolderPlusIcon size={17} />
+              </button>
+            </Tooltip>
+          </div>
+        )}
         {quickView && (
           <QuickChatsSection
             threads={matchingQuickThreads}
@@ -6457,7 +6517,7 @@ export const Sidebar = memo(function Sidebar({
                 {(() => {
                   const guest = workspaceServer(state, pickedWorkspace);
                   return guest ? (
-                    <span className="project-server-chip" title={`on ${guest.name}`}>
+                    <span className="project-server-chip">
                       {guest.name}
                     </span>
                   ) : null;
@@ -6613,18 +6673,10 @@ export const Sidebar = memo(function Sidebar({
           })}
       </div>
 
-      {/* Footer: usage above a lone Settings button, both styled like the launch
-          buttons. They sit at the bottom because the scroll above is flex:1. */}
+      {/* Footer: the usage meter alone. Settings moved to the thread header,
+          beside More — this still mounts the screen, because the state that
+          shows it lives here. */}
       <UsageMeter />
-      <button
-        type="button"
-        className="sidebar-action sidebar-settings"
-        onClick={() => setShowSettings(true)}
-      >
-        <GearIcon size={18} />
-        <span>Settings</span>
-        {updateReady && <span className="usermenu-dot" title={updateHint} />}
-      </button>
       {showSettings && (
         <SettingsScreen onClose={() => setShowSettings(false)} />
       )}
@@ -6888,6 +6940,8 @@ export const Sidebar = memo(function Sidebar({
             <ContextMenu
               x={newThreadMenu.x}
               y={newThreadMenu.y}
+              anchor={newThreadMenu.anchor}
+              className="new-chat-menu"
               onClose={() => setNewThreadMenu(null)}
               items={[
                 // Existing roots: click to draft straight into one. A root on
@@ -6994,10 +7048,17 @@ export const Sidebar = memo(function Sidebar({
           type="button"
           className="sidebar-reveal"
           aria-label="Show sidebar"
-          title="Show sidebar"
           onClick={() => updateLayout({ collapsed: false })}
         >
-          <PanelLeftIcon size={17} />
+          {/* The same glyph, at the same size, as the collapse button this
+              replaces (.sidebar-collapse-btn above). Collapsing the sidebar
+              should not change what the control looks like — only where it
+              sits. */}
+          {alcove ? (
+            <HugeiconsIcon icon={SidebarLeftIcon} size={26} strokeWidth={1.7} />
+          ) : (
+            <PanelLeftIcon size={18} />
+          )}
         </button>
       )}
     </>

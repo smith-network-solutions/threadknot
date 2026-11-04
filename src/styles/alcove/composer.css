@@ -6,30 +6,26 @@
    is something to send. Its menus share the Alcove glass dropdown. */
 
 :root[data-theme="alcove"] {
-  --alc-cmp-w: 600px; /* cozy: the mockup's 528px card, scaled to Threadknot's type */
-  --alc-cmp-w-wide: 780px;
-  --alc-cmp-font: clamp(11px, calc(var(--composer-font, 16px) - 3px), 17px);
+  /* One width, deliberately. The skin ignores the composer-width preference:
+     this card is a fixed size, so cozy/wide/full would all have to be retuned
+     against it and the preference has nothing left to mean here. */
+  --alc-cmp-w: 860px;
+  /* The draft font follows the user's composer preference as-is. It used to
+     subtract 3px with an 11px floor, which is what made the skin's draft
+     read two sizes smaller than every other skin at the same setting. */
+  --alc-cmp-font: clamp(15px, calc(var(--composer-font, 16px) + 1px), 22px);
   --alc-cmp-halo: 0 0 0 4px #ffffff, 0 2px 8px rgba(0, 0, 0, 0.04);
   --alc-menu-shadow: var(--alc-rim), 0 4px 9.6px rgba(0, 0, 0, 0.02), 0 12px 32px rgba(0, 0, 0, 0.07);
   --alc-track-fill: color-mix(in srgb, var(--brass) 48%, #ffffff);
 }
 
 /* ---- the dock + width ----------------------------------------------------
-   Width presets keep working: cozy (the default) is the mockup's narrow card,
-   wide is a step up, full spans the pane. They are read off the pref's own
-   variable with a style query so no script has to know about Alcove. Phones
-   keep the base docked layout (the phone block owns .composer there). */
+   One width. The composer-width preference is deliberately not read here —
+   see --alc-cmp-w above. Phones keep the base docked layout (the phone block
+   owns .composer there); the dock's own padding is set on .composer-anchor in
+   glass-composer.css, which this skin's composer always carries. */
 @media (min-width: 768px) {
-  :root[data-theme="alcove"] .composer {
-    max-width: var(--alc-cmp-w);
-    padding: 4px 22px calc(13px + var(--safe-b, 0px));
-  }
-  @container style(--composer-max-w: 1040px) {
-    :root[data-theme="alcove"] .composer { max-width: var(--alc-cmp-w-wide); }
-  }
-  @container style(--composer-max-w: 100%) {
-    :root[data-theme="alcove"] .composer { max-width: none; }
-  }
+  :root[data-theme="alcove"] .composer { max-width: var(--alc-cmp-w); }
 }
 
 /* The feed scrolls under the card: a short fade into the room colour above
@@ -73,7 +69,7 @@
   z-index: 0;
   pointer-events: none;
   border-radius: inherit; corner-shape: inherit;
-  background: rgba(255, 255, 255, 0.66);
+  background: rgba(255, 255, 255, 0.5);
   -webkit-backdrop-filter: var(--alc-blur);
   backdrop-filter: var(--alc-blur);
 }
@@ -132,7 +128,7 @@
 :root[data-theme="alcove"] .attach-err {
   padding: 0 14px 7px;
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -186,7 +182,7 @@
   box-shadow: none;
 }
 :root[data-theme="alcove"] .composer-card .mic-btn.working { color: var(--brass); }
-:root[data-theme="alcove"] .composer-card .mic-time { font-size: 10.5px; font-weight: 500; }
+:root[data-theme="alcove"] .composer-card .mic-time { font-size: 12.5px; font-weight: 500; }
 :root[data-theme="alcove"] .composer-card .voice-btn.live {
   background: var(--teal-dim);
   color: var(--teal);
@@ -206,7 +202,7 @@
 :root[data-theme="alcove"] .composer-card .pill-trigger-icon { color: inherit; }
 :root[data-theme="alcove"] .composer-card .pill-trigger-icon > svg { width: 15px; height: 15px; stroke-width: 1.7; }
 :root[data-theme="alcove"] .composer-card .pill-trigger-label {
-  font-size: 11.5px;
+  font-size: 14px;
   font-weight: 500;
   letter-spacing: 0;
 }
@@ -228,12 +224,12 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11.5px;
+  font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
 }
 :root[data-theme="alcove"] .ai-trigger-model { color: var(--alc-ink-2); }
-:root[data-theme="alcove"] .ai-trigger-effort { color: var(--alc-ink-4); font-size: 10.5px; }
+:root[data-theme="alcove"] .ai-trigger-effort { color: var(--alc-ink-4); font-size: 12.5px; }
 :root[data-theme="alcove"] .composer-card .ai-trigger-caret {
   margin-left: 1px;
   color: var(--alc-ink-4);
@@ -338,15 +334,15 @@
 :root[data-theme="alcove"] .attach-file-info {
   color: var(--alc-ink-2);
   font-family: var(--font-ui);
-  font-size: 11.5px;
+  font-size: 14px;
   font-weight: 500;
 }
 
 /* Queued follow-ups and reply context: quiet grey lines above the input. */
 :root[data-theme="alcove"] .queued-messages { margin: 0 0 9px; border-bottom-color: rgba(84, 84, 84, 0.08); }
 :root[data-theme="alcove"] .queued-message-mark { color: var(--alc-ink-4); }
-:root[data-theme="alcove"] .queued-message-label { color: var(--alc-ink-2); font-weight: 500; font-size: 11px; }
-:root[data-theme="alcove"] .queued-message-text { color: var(--alc-ink-4); font-size: 11px; }
+:root[data-theme="alcove"] .queued-message-label { color: var(--alc-ink-2); font-weight: 500; font-size: 13px; }
+:root[data-theme="alcove"] .queued-message-text { color: var(--alc-ink-4); font-size: 13px; }
 :root[data-theme="alcove"] .queued-message-attachments { color: var(--alc-ink-4); font-family: var(--font-ui); }
 :root[data-theme="alcove"] .queued-message-remove:hover,
 :root[data-theme="alcove"] .reply-context-close:hover {
@@ -420,7 +416,7 @@
 :root[data-theme="alcove"] .pill-menu-label {
   padding: 7px 10px 4px;
   font-family: var(--font-ui);
-  font-size: 9.5px;
+  font-size: 11.5px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
@@ -437,7 +433,7 @@
   border-radius: var(--alc-r-row); corner-shape: var(--alc-corner);
   color: var(--alc-ink-2);
   font-family: var(--font-ui);
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
@@ -447,7 +443,7 @@
 :root[data-theme="alcove"] .pill-opt:hover:not(:disabled),
 :root[data-theme="alcove"] .agent-option:hover,
 :root[data-theme="alcove"] .build-workspace-menu button:hover {
-  background: var(--alc-hover);
+  background: var(--alc-menu-hover);
   color: var(--alc-ink);
 }
 :root[data-theme="alcove"] .pill-opt.on,
@@ -463,8 +459,8 @@
 :root[data-theme="alcove"] .pill-opt-icon > svg:not(.mark) { width: 15px; height: 15px; }
 :root[data-theme="alcove"] .pill-opt.on .pill-opt-icon,
 :root[data-theme="alcove"] .pill-opt.compact .pill-opt-icon:has(> .mark) { color: var(--alc-ink-2); }
-:root[data-theme="alcove"] .pill-opt-title { font-size: 12.5px; font-weight: 500; letter-spacing: 0; }
-:root[data-theme="alcove"] .pill-opt-desc { font-size: 10.5px; color: var(--alc-ink-4); }
+:root[data-theme="alcove"] .pill-opt-title { font-size: 15px; font-weight: 500; letter-spacing: 0; }
+:root[data-theme="alcove"] .pill-opt-desc { font-size: 12.5px; color: var(--alc-ink-4); }
 :root[data-theme="alcove"] .pill-opt-check { width: 13px; height: 13px; color: var(--alc-ink-4); }
 :root[data-theme="alcove"] .pill-opt .cset-opt-tag,
 :root[data-theme="alcove"] .agent-option .agent-off { color: var(--alc-ink-4); font-family: var(--font-ui); }
@@ -591,7 +587,7 @@
 }
 :root[data-theme="alcove"] .ai-menu .pill-opt.on:has(path[d="M12 15.5l3.4-3"]) .pill-opt-title {
   color: var(--alc-ink-4);
-  font-size: 10.5px;
+  font-size: 12.5px;
 }
 /* Keep a level name from running off the track ends. */
 :root[data-theme="alcove"] .ai-menu .pill-menu-label + .pill-opt.on:has(path[d="M12 15.5l3.4-3"]) .pill-opt-text {
@@ -619,7 +615,7 @@
   border-bottom: 0;
   color: var(--alc-ink-4);
   font-family: var(--font-ui);
-  font-size: 10.5px;
+  font-size: 12.5px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
@@ -628,7 +624,7 @@
   border-radius: 999px;
   background: #ffffff;
   color: var(--alc-ink-2);
-  font-size: 12px;
+  font-size: 14.5px;
   font-weight: 500;
   box-shadow: var(--alc-halo);
 }
@@ -640,7 +636,7 @@
   color: var(--alc-ink-2);
   transition: background 150ms ease;
 }
-:root[data-theme="alcove"] .slash-option:hover { background: var(--alc-hover); }
+:root[data-theme="alcove"] .slash-option:hover { background: var(--alc-menu-hover); }
 :root[data-theme="alcove"] .slash-option.selected {
   background: #ffffff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
@@ -648,10 +644,10 @@
 :root[data-theme="alcove"] .slash-option-name {
   color: var(--alc-ink);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: 14.5px;
   font-weight: 600;
 }
-:root[data-theme="alcove"] .slash-option-label { font-size: 12px; font-weight: 500; color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .slash-option-label { font-size: 14.5px; font-weight: 500; color: var(--alc-ink-2); }
 :root[data-theme="alcove"] .slash-option-detail { color: var(--alc-ink-4); }
 
 /* Context-window pill. */
@@ -686,5 +682,5 @@
     border-radius: 25px 25px 12px 12px; corner-shape: var(--alc-corner);
   }
   :root[data-theme="alcove"] .ai-trigger-effort { display: none; }
-  :root[data-theme="alcove"] .composer-card .pill-trigger-label { font-size: 11px; }
+  :root[data-theme="alcove"] .composer-card .pill-trigger-label { font-size: 13px; }
 }

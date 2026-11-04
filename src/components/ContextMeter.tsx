@@ -174,7 +174,6 @@ export function ContextMeter({
             type="button"
             className="ctx-compact-btn"
             onClick={onCompact}
-            title="Run /compact"
           >
             Compact
           </button>

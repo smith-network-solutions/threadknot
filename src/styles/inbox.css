@@ -88,15 +88,6 @@
 .inbox-markread { flex: none; align-self: center; width: 36px; height: 36px; color: var(--faint); }
 .inbox-markread:hover { color: var(--teal); }
 
-.back-to-inbox {
-  display: inline-flex;
-  margin-top: 3px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--brass-hi);
-}
-.back-to-inbox:hover { text-decoration: underline; }
-
 @media (max-width: 767px) {
   .inbox-tab { min-height: 40px; font-size: 14px; }
   .inbox-readall { min-height: 40px; font-size: 14px; }
@@ -105,5 +96,4 @@
   .inbox-body { font-size: 13.5px; }
   .inbox-main { padding: 12px 8px 12px 14px; }
   .inbox-markread { width: 44px; height: 44px; }
-  .back-to-inbox { font-size: 13px; padding: 4px 0; }
 }

@@ -134,9 +134,12 @@
   width: 100%;
   min-height: 38px;
   max-height: 120px;
-  padding: 9px 18px;
+  padding: 9px 20px;
   border: 0;
-  border-radius: 19px; corner-shape: var(--alc-corner);
+  /* Fully round, matching the sidebar's search pill. Round rather than the
+     skin's superellipse for the same reason it is there: at pill radius a
+     superellipse flattens the ends. */
+  border-radius: var(--alc-r-pill); corner-shape: round;
   background: var(--alc-ov-field);
   box-shadow: 0 5px 14px rgba(0, 0, 0, 0.04);
   color: var(--alc-ink-2);
@@ -319,6 +322,58 @@
   background: rgba(255, 255, 255, 0.84);
 }
 :root[data-theme="alcove"] .ctx-menu { transform-origin: top left; gap: 1px; min-width: 188px; }
+:root[data-theme="alcove"] .ctx-menu.dropdown-menu {
+  display: block;
+  animation: none;
+}
+:root[data-theme="alcove"] .ctx-menu.dropdown-menu > .dropdown-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+:root[data-theme="alcove"] .ctx-menu.dropdown-menu[data-morphing] { min-width: 0; }
+/* Starting a chat is a chooser you read, so these two menus sit between the
+   context menu's compact rows and the composer's attachment menu, which is
+   the biggest surface in the skin: the model menu's scale. Wider than that
+   one because the labels here are paths with a machine tail, and at 298px
+   "threadknot - remote machine (offline)" lost its ending. Scoped to this
+   class; the right-click menus stay compact on purpose. */
+:root[data-theme="alcove"] .ctx-menu.new-chat-menu {
+  width: 320px;
+  min-width: 320px;
+  padding: 11px;
+  gap: 2px;
+  border-radius: 34px; corner-shape: var(--alc-corner);
+}
+:root[data-theme="alcove"] .ctx-menu.new-chat-menu .ctx-item {
+  min-height: 46px;
+  gap: 11px;
+  padding: 0 13px;
+  border-radius: 21px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink);
+  font-size: 15px;
+}
+:root[data-theme="alcove"] .ctx-menu.new-chat-menu .ctx-item svg,
+:root[data-theme="alcove"] .ctx-menu.new-chat-menu .ctx-item img {
+  width: 22px;
+  height: 22px;
+}
+:root[data-theme="alcove"] .ctx-menu.new-chat-menu .ctx-title,
+:root[data-theme="alcove"] .ctx-menu.new-chat-menu .ctx-section {
+  padding: 7px 13px 8px;
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+:root[data-theme="alcove"] .ctx-menu.new-chat-menu .ctx-badge {
+  font-size: 11.5px;
+}
+/* Out the way they came in. The usage popover keeps its own transform-origin
+   (bottom centre — it opens upward out of the sidebar foot), so the scale
+   collapses back toward the chip that opened it. */
+:root[data-theme="alcove"] .ctx-menu:not(.dropdown-menu)[data-state="closing"],
+:root[data-theme="alcove"] .usage-pop[data-state="closing"] {
+  animation: alc-pop-out 250ms cubic-bezier(0.4, 0, 0.8, 0.2) both;
+}
 :root[data-theme="alcove"] .thread-menu:not(.ws-menu) { transform-origin: top left; min-width: 188px; }
 
 /* Rows */
@@ -345,12 +400,11 @@
   stroke-width: 1.8;
 }
 :root[data-theme="alcove"] .ctx-item:hover:not(:disabled),
-:root[data-theme="alcove"] .ctx-item:focus-visible,
 :root[data-theme="alcove"] .thread-menu:not(.ws-menu) .thread-menu-item:hover:not(:disabled),
 :root[data-theme="alcove"] .search-scope-menu button:hover,
 :root[data-theme="alcove"] .font-option:hover,
 :root[data-theme="alcove"] .font-option.active {
-  background: var(--alc-hover);
+  background: var(--alc-menu-hover);
   color: var(--alc-ink);
   outline: none;
 }
@@ -436,11 +490,112 @@
   color: var(--alc-blue);
 }
 
-/* The sidebar view-options popover and the folder picker reuse .thread-menu
-   but carry form rows; keep their contents in the Alcove type. */
-:root[data-theme="alcove"] .sidebar-view-pop {
+/* ---- the view-options popover ----------------------------------------------
+   Built on .thread-menu, but it is a panel of settings rather than a list of
+   commands, so it takes the notifications popover's shape instead of the
+   context menu's: same width, same 38px corner, same glass, and rows that are
+   rounded objects with a hover of their own rather than lines in a list.
+
+   The panel's width is measured in Sidebar.tsx to right-align it — changing
+   it here is enough, there is no second number to keep in step.
+
+   Written as .thread-menu.sidebar-view-pop: the shared menu rule above is
+   `.thread-menu:not(.ws-menu)`, which outweighs a bare class on its own. */
+/* The tail. .dropdown-tail paints at z-index -1 inside its panel's stacking
+   context, which a fixed-position popover already is, so it reads as a notch
+   in the glass rather than a white pip on top of it. The panel clamps against
+   the window edge, so the tail tracks the button instead of sitting at a fixed
+   inset — Sidebar.tsx writes --view-pop-tail. */
+:root[data-theme="alcove"] .sidebar-view-pop .dropdown-tail {
+  top: -7px;
+  left: calc(var(--view-pop-tail, 50%) - 7.5px);
+}
+:root[data-theme="alcove"] .thread-menu.sidebar-view-pop,
+:root[data-theme="alcove"] .dropdown-menu.sidebar-view-pop {
+  width: 298px;
+  min-width: 0;
+  padding: 8px;
+  gap: 1px;
+  border-radius: 38px; corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-rim), var(--alc-float);
   color: var(--alc-ink-2);
-  font-size: 12px;
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .dropdown-menu.sidebar-view-pop { display: block; }
+:root[data-theme="alcove"] .sidebar-view-pop > .dropdown-content {
+  display: grid;
+  gap: 1px;
+}
+:root[data-theme="alcove"] .sidebar-filter-dropdown .sidebar-filter-btn {
+  position: static;
+  transform: none;
+}
+:root[data-theme="alcove"][data-skin-off~="cards"] .sidebar-filter-dropdown {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+/* View: the one row that is a choice rather than a switch. No rule under it
+   and no heading treatment — the three pills already say it is a set. */
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-seg-row {
+  gap: 10px;
+  padding: 7px 10px 9px 14px;
+  border-bottom: 0;
+  margin-bottom: 2px;
+}
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-label {
+  color: var(--alc-ink-3);
+  font-size: 14px;
+  font-weight: 500;
+}
+/* The control itself is the skin's shared segmented group — one grey track,
+   white active pill (see .settings-seg below). Only the type is local. */
+:root[data-theme="alcove"] .sidebar-view-pop .settings-toggle {
+  padding: 5px 11px;
+  border: 0;
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+/* Switch rows: the notifications menu's row, with a switch on the end. */
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-row {
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px 0 14px;
+  border-radius: 22px; corner-shape: var(--alc-corner);
+  color: var(--alc-ink);
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.14s ease;
+}
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-row:hover {
+  background: var(--alc-menu-hover);
+}
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-switch {
+  width: 38px;
+  height: 22px;
+  border: 0;
+  background: var(--alc-track);
+  box-shadow: none;
+}
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-switch::after {
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-row.on .sidebar-view-switch {
+  border: 0;
+  background: var(--alc-blue);
+}
+:root[data-theme="alcove"] .sidebar-view-pop .sidebar-view-row.on .sidebar-view-switch::after {
+  transform: translateX(16px);
+  background: #fff;
 }
 
 /* Settle confirm: a tiny glass card with two pills. */
@@ -1321,7 +1476,151 @@
   color: var(--alc-ink-5);
 }
 :root[data-theme="alcove"] .inbox-markread:hover { background: #fff; color: var(--alc-plus); box-shadow: var(--alc-halo); }
-:root[data-theme="alcove"] .back-to-inbox { color: var(--alc-blue); }
+
+/* ---- the notifications popover ---------------------------------------------
+   The bell in the sidebar's top-right corner and the glass panel it drops.
+   Same material, radius and motion as the model picker and the usage meter —
+   .dropdown-menu in glass.css does all of that; what is here is only the
+   panel's own rows.
+
+   Deliberately a summary of the newest groups: the full page (.inbox-pane
+   above) is still one row away, and remains the place to work a backlog. */
+:root[data-theme="alcove"] .sidebar-brand .sidebar-inbox-btn { position: relative; }
+/* Lit while its panel is up, the way the filter button beside it is. */
+:root[data-theme="alcove"] .sidebar-brand .inbox-menu-root.is-open .sidebar-inbox-btn,
+:root[data-theme="alcove"] .sidebar-brand .inbox-menu-root.is-open .sidebar-inbox-btn:hover {
+  background: var(--alc-active);
+  color: var(--alc-blue);
+}
+:root[data-theme="alcove"] .inbox-btn-count {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4.5px;
+  border-radius: var(--alc-r-pill); corner-shape: round;
+  /* The card is glass and the bell sits on it with no plate of its own, so
+     the badge carries its own edge or it bleeds into whatever is behind. */
+  box-shadow: 0 0 0 2px var(--alc-glass-strong);
+  background: var(--alc-blue);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+}
+:root[data-theme="alcove"] .inbox-menu.dropdown-menu.glass-surface {
+  width: 332px;
+  padding: 8px;
+  /* The usage popover's recipe, not the bare .dropdown-menu one: the strong
+     fill, the 1px white edge light and a shadow with some depth to it. 38px
+     is the radius both the usage menu and the model settings menu stand at,
+     and this panel opens a few pixels from one of them. */
+  border-radius: 38px; corner-shape: var(--alc-corner);
+  background: var(--alc-glass-strong);
+  box-shadow: var(--alc-rim), var(--alc-float);
+}
+:root[data-theme="alcove"] .inbox-menu__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 10px 14px;
+  font-family: var(--font-ui);
+}
+:root[data-theme="alcove"] .inbox-menu__title {
+  flex: 1;
+  color: var(--alc-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+:root[data-theme="alcove"] .inbox-menu__readall {
+  flex: none;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--alc-r-pill); corner-shape: round;
+  background: transparent;
+  color: var(--alc-ink-4);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+:root[data-theme="alcove"] .inbox-menu__readall:hover {
+  background: var(--alc-menu-hover);
+  color: var(--alc-plus);
+}
+:root[data-theme="alcove"] .inbox-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* Eight groups is the cap in InboxView.tsx; this is the ceiling for the
+     tall ones among them, past which the panel scrolls rather than grows. */
+  max-height: min(430px, calc(100vh - 190px));
+  overflow-y: auto;
+}
+:root[data-theme="alcove"] .inbox-menu__empty {
+  padding: 16px 14px 20px;
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+:root[data-theme="alcove"] .inbox-menu__row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 12px 10px 14px;
+  border: 0;
+  border-radius: 22px; corner-shape: var(--alc-corner);
+  background: transparent;
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+:root[data-theme="alcove"] .inbox-menu__row:hover { background: var(--alc-menu-hover); }
+:root[data-theme="alcove"] .inbox-menu__row.unread { padding-left: 24px; }
+:root[data-theme="alcove"] .inbox-menu__row.unread::before {
+  content: "";
+  position: absolute;
+  top: 15px;
+  left: 11px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--alc-blue);
+}
+:root[data-theme="alcove"] .inbox-menu__top {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--alc-ink-4);
+}
+:root[data-theme="alcove"] .inbox-menu__kind { color: var(--alc-ink-3); font-weight: 600; }
+:root[data-theme="alcove"] .inbox-menu__when { font-size: 10px; }
+:root[data-theme="alcove"] .inbox-menu__name {
+  color: var(--alc-ink);
+  font-size: 13.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root[data-theme="alcove"] .inbox-menu__row:not(.unread) .inbox-menu__name { color: var(--alc-ink-3); }
+:root[data-theme="alcove"] .inbox-menu__body {
+  color: var(--alc-ink-4);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ============================================================================
    8. Voice session (full-screen stage + docked mini)
@@ -1415,3 +1714,122 @@
   color: var(--alc-ink-4);
 }
 :root[data-theme="alcove"] .machine-kebab:hover { background: rgba(255, 255, 255, 0.9); color: var(--alc-ink-2); }
+
+/* ---- the completion card ----------------------------------------------------
+   Alcove's notification surface (components/CompletionToast.tsx), which this
+   skin mounts in place of the corner .toast-stack. One wide glass card at the
+   top centre: the mark of the agent that raised it, what happened, a few words
+   about it, and how long ago. It arrives and leaves by blurring and scaling,
+   not by sliding — the same entrance the skin's menus use, so a notification
+   reads as the room focusing rather than as something flying in from an edge. */
+:root[data-theme="alcove"] .completion-toast-stack {
+  /* The anchor for a card that is on its way out (see .is-leaving). */
+  position: absolute;
+  z-index: 80;
+  top: 22px;
+  left: 50%;
+  display: flex;
+  width: min(520px, calc(100% - 48px));
+  flex-direction: column;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+/* Centred on the chat, not on the split: with the workspace panel open beside
+   it the chat is only what the panel leaves, and the panel's width is the same
+   expression main-split.css gives it. Mirrors that file's own breakpoint, since
+   below it the panel is a full-screen overlay and the chat is the whole box. */
+@media (min-width: 1024px) {
+  :root[data-theme="alcove"] .main-split.side.ws-open .completion-toast-stack {
+    left: calc((100% - max(240px, var(--ws-frac, 0.42) * 100%)) / 2);
+  }
+}
+:root[data-theme="alcove"] .completion-toast {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 17px 22px;
+  border: 0;
+  border-radius: 30px; corner-shape: var(--alc-corner);
+  box-shadow: var(--alc-rim), 0 10px 30px rgba(0, 0, 0, 0.06);
+  text-align: left;
+  pointer-events: auto;
+  animation: alcove-toast-in 280ms var(--alc-ease) both;
+}
+:root[data-theme="alcove"] .completion-toast.is-leaving {
+  /* Out of flow while it animates away, so the card replacing it opens in the
+     same place rather than below the one it is replacing. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  /* Keep in step with LEAVE_MS in CompletionToast.tsx. */
+  animation: alcove-toast-out 260ms cubic-bezier(0.55, 0, 0.8, 0.2) both;
+}
+:root[data-theme="alcove"] .completion-toast__mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+}
+:root[data-theme="alcove"] .completion-toast__mark .mark { width: 40px; height: 40px; }
+:root[data-theme="alcove"] .completion-toast__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+:root[data-theme="alcove"] .completion-toast__copy strong {
+  color: var(--alc-ink);
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  line-height: 1.1;
+}
+/* One line: the card is a glance, and the thread it opens has the whole of it. */
+:root[data-theme="alcove"] .completion-toast__copy > span {
+  overflow: hidden;
+  color: var(--alc-ink-3);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The body renders markdown inline (see CompletionToast.tsx). Whatever
+   react-markdown puts at its root is forced inline here: a block child would
+   break both the one-line ellipsis above and the <button> it all sits in. */
+:root[data-theme="alcove"] .completion-toast__body > * { display: inline; }
+:root[data-theme="alcove"] .completion-toast__body strong { font-weight: 650; color: var(--alc-ink-2); }
+:root[data-theme="alcove"] .completion-toast__code {
+  padding: 1px 5px;
+  border-radius: 7px; corner-shape: var(--alc-corner);
+  background: rgba(84, 84, 84, 0.09);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+:root[data-theme="alcove"] .completion-toast__when {
+  align-self: start;
+  padding-top: 3px;
+  color: var(--alc-ink-4);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+}
+@keyframes alcove-toast-in {
+  from { opacity: 0; filter: blur(14px); transform: scale(0.9); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+@keyframes alcove-toast-out {
+  from { opacity: 1; filter: blur(0); transform: scale(1); }
+  to { opacity: 0; filter: blur(14px); transform: scale(0.9); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="alcove"] .completion-toast,
+  :root[data-theme="alcove"] .completion-toast.is-leaving { animation-duration: 1ms; }
+}

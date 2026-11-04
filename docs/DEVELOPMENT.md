@@ -406,6 +406,21 @@ threadknot` matches your own shell's cmdline.
     the `.term-keys` toolbar, so focus (and the soft keyboard) never leaves the
     terminal. Desktop never hit it — real arrow keys don't move focus.
 
+14. **Windows: half the window came back stale after switching apps.** Leave the
+    app on screen, work in another window, come back, and the top of the
+    webview is a frozen picture of the old frame while the bottom paints
+    normally — scroll or type and only the lower band answers. This is
+    Chromium's native window-occlusion tracking, which WebView2 inherits: it
+    decides the window is covered, stops painting, and on return invalidates
+    only part of the surface. Fixed with the webview's startup flags in
+    `tauri.conf.json` → `app.windows[0].additionalBrowserArgs`:
+    `--disable-backgrounding-occluded-windows` and
+    `CalculateNativeWinOcclusion` added to the disabled features. Two notes
+    before editing that string: setting `additionalBrowserArgs` **replaces**
+    Tauri's own default, so `msWebOOUI,msPdfOOUI,msSmartScreenProtection` have
+    to stay listed, and these are process-start flags — a running app will not
+    pick them up, it has to be rebuilt/relaunched.
+
 ## Wire-protocol facts (verified against installed CLIs)
 
 - Browser architecture, research decisions, tool contract, security boundaries,

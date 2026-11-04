@@ -82,7 +82,6 @@ function ThemeDeleteButton({ label, onConfirm }: { label: string; onConfirm: () 
       type="button"
       className={`icon-btn danger-btn${armed ? " armed" : ""}`}
       aria-label={label}
-      title={armed ? "Click again to confirm" : label}
       onClick={(e) => {
         e.stopPropagation();
         if (armed) onConfirm();
@@ -114,7 +113,6 @@ function AccentSwatches({
             type="button"
             className={`theme-accent-dot${value === p.id ? " on" : ""}`}
             style={{ background: p.cssVar ? "var(" + p.cssVar + ")" : p.base }}
-            title={p.label}
             aria-label={`Accent ${p.label}`}
             onClick={() => {
               setPicking(false);
@@ -126,7 +124,6 @@ function AccentSwatches({
           type="button"
           className={`theme-accent-dot custom${custom ? " on" : ""}`}
           style={custom ? { background: value } : undefined}
-          title="Custom color"
           aria-label="Custom accent color"
           onClick={() => setPicking((v) => !v)}
         >
@@ -733,7 +730,6 @@ export function ThemeStudioModal({
                     <button
                       type="button"
                       className="link-btn studio-frame-reset"
-                      title="Reset zoom and position"
                       onClick={resetFrame}
                     >
                       reset
@@ -761,7 +757,6 @@ export function ThemeStudioModal({
                 type="button"
                 className="studio-gen-btn"
                 disabled={!hasImage || genBusy}
-                title={!hasImage ? "add a wallpaper first" : "Match the palette to your image"}
                 onClick={() => void matchColors()}
               >
                 {matching && <span className="studio-spinner" aria-hidden="true" />}
@@ -771,7 +766,6 @@ export function ThemeStudioModal({
                 type="button"
                 className="studio-gen-btn ai"
                 disabled={!hasImage || genBusy}
-                title={!hasImage ? "add a wallpaper first" : "Design a palette with Claude"}
                 onClick={() => void aiScheme()}
               >
                 {generating && <span className="studio-spinner" aria-hidden="true" />}
@@ -783,7 +777,7 @@ export function ThemeStudioModal({
             {swatches && (
               <div className="studio-swatch-strip" aria-label="Palette colors">
                 {swatches.map((c, i) => (
-                  <span key={`${c}-${i}`} style={{ background: c }} title={c} />
+                  <span key={`${c}-${i}`} style={{ background: c }} />
                 ))}
               </div>
             )}
@@ -799,7 +793,6 @@ export function ThemeStudioModal({
                       type="button"
                       className={`studio-slot-swatch${set ? "" : " auto"}`}
                       style={set ? { background: set } : undefined}
-                      title={set ?? "auto (from base palette)"}
                       aria-label={`Edit ${key} color`}
                       onClick={() => setSlot(on ? null : key)}
                     />
@@ -811,7 +804,6 @@ export function ThemeStudioModal({
                       <button
                         type="button"
                         className="link-btn studio-slot-reset"
-                        title="Reset to the base palette"
                         onClick={() => setSlotColor(key, null)}
                       >
                         auto
@@ -841,7 +833,6 @@ export function ThemeStudioModal({
           <button
             className="btn tone-allow"
             disabled={busy || !draft.name.trim()}
-            title={draft.name.trim() ? undefined : "Name the theme to save it"}
             onClick={() => void save()}
           >
             {busy ? "Saving…" : "Save theme"}
@@ -950,7 +941,7 @@ export function AppearanceStudio() {
                 <span style={{ background: panel }} />
                 <span style={{ background: accent }} />
               </span>
-              <span className="theme-card-name" title={t.name}>
+              <span className="theme-card-name">
                 {t.name}
               </span>
               <span className="theme-card-actions">
@@ -958,7 +949,6 @@ export function AppearanceStudio() {
                   type="button"
                   className="icon-btn"
                   aria-label={`Edit ${t.name}`}
-                  title="Edit theme"
                   onClick={(e) => {
                     e.stopPropagation();
                     setStudio(t);

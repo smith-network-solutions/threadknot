@@ -42,15 +42,33 @@
   --alc-glass-thin: rgba(255, 255, 255, 0.38);
   --alc-glass-strong: rgba(255, 255, 255, 0.78);
   --alc-hover: rgba(255, 255, 255, 0.72);
+  /* Row hover inside a menu. A menu is already a white glass panel, so the
+     white wash --alc-hover uses on the room's own surfaces barely registers
+     on one; a light grey does. Taken from the model settings menu, which had
+     it alone, and now shared by every dropdown so they match. --alc-hover
+     stays what it is for everything that is not a menu row — the sidebar, the
+     header controls, chips. */
+  --alc-menu-hover: rgba(84, 84, 84, 0.07);
   --alc-active: #ffffff;
-  --alc-blur: blur(13px) saturate(1.13);
+  --alc-blur: blur(11.7px) saturate(1.13);
   --alc-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.58);
   --alc-shadow: 0 4px 9.6px rgba(0, 0, 0, 0.02);
   --alc-float: 0 10px 30px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.03);
   --alc-halo: 0 0 12.8px rgba(0, 0, 0, 0.05);
   --alc-track: #e2e2e2;
   /* Radii: the big floating cards, menus, rows, pills. */
-  --alc-r-card: 36px;
+  /* 36px authored under the prototype's 1.485 scale = 52px as drawn. */
+  /* A one-line .msg-user: 9px padding top and bottom, a 1.42 line box, and the
+     paragraph's own 0.3em margins either side. The feed's unit of height —
+     anything that has to sit level with a message is sized from this rather
+     than from a number of its own, so the whole column tracks the composer
+     font preference together. */
+  --alc-msg-h: calc(var(--alc-cmp-font, 17px) * 2.02 + 18px);
+  /* The title capsule's height: that, less 5%. Both the pill and its edit
+     button read this, so they cannot drift apart. */
+  --alc-title-h: calc(var(--alc-msg-h) * 0.95);
+  --alc-title-font: calc(var(--alc-cmp-font, 17px) * 0.95);
+  --alc-r-card: 52px;
   --alc-r-composer: 32px;
   --alc-r-menu: 22px;
   --alc-r-row: 14px;
@@ -88,6 +106,12 @@
 @keyframes alc-pop-in {
   from { opacity: 0; filter: blur(18px); transform: scale(0.88); }
   to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+/* The same move backwards, on the dropdown's exit curve: opening can take its
+   time, dismissal should be quick. */
+@keyframes alc-pop-out {
+  from { opacity: 1; filter: blur(0); transform: scale(1); }
+  to { opacity: 0; filter: blur(18px); transform: scale(0.88); }
 }
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="alcove"] * { animation-duration: 1ms !important; }

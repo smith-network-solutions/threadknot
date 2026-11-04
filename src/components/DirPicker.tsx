@@ -106,7 +106,6 @@ export function DirPicker({
             <button
               className="icon-btn"
               aria-label="New folder here"
-              title="Create a new folder here"
               disabled={busy}
               onClick={() => setNaming((v) => !v)}
             >

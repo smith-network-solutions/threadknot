@@ -24,6 +24,7 @@ fn job(seq: u64) -> PushJob {
             body: format!("Private result {seq}"),
         }),
         only_device: None,
+        badge: None,
     }
 }
 

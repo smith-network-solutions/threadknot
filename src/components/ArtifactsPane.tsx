@@ -84,7 +84,7 @@ function ArtifactViewer({
           <ChevronIcon size={14} />
           <span>Artifacts</span>
         </button>
-        <span className="files-crumb" title={artifact.relPath}>
+        <span className="files-crumb">
           {artifact.name}
         </span>
         <div className="files-viewer-actions">
@@ -98,7 +98,6 @@ function ArtifactViewer({
             className="files-action files-dl"
             onClick={download}
             disabled={!http}
-            title="Download artifact"
           >
             <DownloadIcon size={13} />
             <span className="files-action-label">Download</span>
@@ -108,7 +107,6 @@ function ArtifactViewer({
             className={`files-action files-delete${deleteArmed ? " armed" : ""}`}
             onClick={() => void deleteArtifact()}
             disabled={deleting}
-            title={deleteArmed ? "Click again to permanently delete" : "Delete artifact"}
             aria-label={deleteArmed ? "Confirm delete artifact" : "Delete artifact"}
           >
             <TrashIcon size={13} />
@@ -248,7 +246,6 @@ export function ArtifactsPane({
               type="button"
               className={`files-refresh${thisChatOnly ? " on" : ""}`}
               onClick={() => setThisChatOnly((v) => !v)}
-              title="Show only artifacts produced in the current chat"
             >
               {thisChatOnly ? "This chat" : "All chats"}
             </button>
@@ -258,7 +255,6 @@ export function ArtifactsPane({
             className="files-refresh"
             onClick={() => void load()}
             disabled={loading}
-            title="Refresh"
           >
             Refresh
           </button>
@@ -282,11 +278,10 @@ export function ArtifactsPane({
                   type="button"
                   className="files-row files-file artifact-list-open"
                   onClick={() => setSelectedId(a.id)}
-                  title={a.relPath}
                 >
                   <span className="files-chevron-spacer" />
                   <FileIcon size={14} />
-                  <span className="files-name" title={a.description ?? undefined}>
+                  <span className="files-name">
                     {a.name}
                   </span>
                   <span className="files-size">
@@ -299,7 +294,6 @@ export function ArtifactsPane({
                   className={`artifact-list-delete${armed ? " armed" : ""}`}
                   onClick={() => void deleteFromList(a)}
                   disabled={deleting}
-                  title={armed ? `Click again to delete ${a.name}` : `Delete ${a.name}`}
                   aria-label={armed ? `Confirm delete ${a.name}` : `Delete ${a.name}`}
                 >
                   <TrashIcon size={13} />

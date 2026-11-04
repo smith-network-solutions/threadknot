@@ -37,7 +37,6 @@ export function WakeLine({
         aria-expanded={hasDetail ? open : undefined}
         disabled={!hasDetail}
         onClick={() => setOpen((v) => !v)}
-        title={wake.skipped ?? undefined}
       >
         {hasDetail ? (
           <ChevronIcon size={10} open={open} className="row-chevron" />
@@ -58,7 +57,7 @@ export function WakeLine({
               <li key={d.signalId} className="bosun-decision">
                 <div className="bosun-decision-head">
                   <DecisionBadge kind={d.decision} />
-                  <span className="bosun-decision-title" title={d.title}>
+                  <span className="bosun-decision-title">
                     {d.title || d.signalId}
                   </span>
                   {d.threadId && (
@@ -66,7 +65,6 @@ export function WakeLine({
                       type="button"
                       className="sched-view"
                       disabled={!canOpen}
-                      title={canOpen ? "Open the thread" : "Thread not loaded here"}
                       onClick={() => {
                         void actions.selectThread(d.threadId!);
                         onOpen?.();

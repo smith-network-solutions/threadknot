@@ -171,7 +171,6 @@ function ScheduleRow({
         <button
           type="button"
           className={`settings-toggle ${schedule.enabled ? "on" : ""}`}
-          title={schedule.enabled ? "Pause this schedule" : "Resume this schedule"}
           onClick={() =>
             void actions.updateSchedule({
               scheduleId: schedule.id,
@@ -184,13 +183,13 @@ function ScheduleRow({
         <button
           type="button"
           className="icon-btn"
-          title="Run now"
+          aria-label="Run now"
           disabled={running}
           onClick={() => void runNow()}
         >
           <PlayIcon size={13} />
         </button>
-        <button type="button" className="icon-btn" title="Edit" onClick={onEdit}>
+        <button type="button" className="icon-btn" aria-label="Edit" onClick={onEdit}>
           <PencilIcon size={13} />
         </button>
         <DangerButton
@@ -365,7 +364,6 @@ function ScheduleForm({
                 key={t.id}
                 type="button"
                 disabled={t.blocked}
-                title={t.why || undefined}
                 className={`sched-machine${form.machines.includes(t.id) ? " on" : ""}${
                   t.online ? "" : " stale"
                 }`}

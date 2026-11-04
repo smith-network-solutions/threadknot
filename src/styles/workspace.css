@@ -137,8 +137,7 @@
   transition: background 0.12s, color 0.12s;
 }
 .head-pill svg { flex: none; }
-.head-pill:hover:not(:disabled),
-.head-pill:focus-visible:not(:disabled) {
+.head-pill:hover:not(:disabled) {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }

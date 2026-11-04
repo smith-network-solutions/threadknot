@@ -91,7 +91,6 @@ export function ReviewMenu({ thread }: { thread: Thread }) {
         disabled={!!blocked}
         aria-haspopup="dialog"
         aria-label="Review with another agent"
-        title={blocked ?? "Review with another agent"}
         onClick={() => setOpen(true)}
       >
         <ShieldIcon size={15} />
@@ -262,7 +261,6 @@ export function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () 
                           aria-selected={on}
                           className={`agent-option persona-main${on ? " on" : ""}`}
                           disabled={offline}
-                          title={p.personality || undefined}
                           onClick={() => toggle(p.id)}
                         >
                           <span className="persona-mark">
@@ -280,7 +278,6 @@ export function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () 
                           type="button"
                           className="icon-btn persona-edit"
                           aria-label={`Edit ${p.name}`}
-                          title={`Edit ${p.name}`}
                           onClick={() => setEditing(p)}
                         >
                           <PencilIcon size={12} />
@@ -466,13 +463,6 @@ export function ReviewDialog({ thread, onClose }: { thread: Thread; onClose: () 
               <button
                 className="btn tone-allow"
                 disabled={picked.length === 0 || missingModel || launching}
-                title={
-                  picked.length === 0
-                    ? "Pick at least one reviewer"
-                    : missingModel
-                      ? "Pick a model / profile for every reviewer"
-                      : undefined
-                }
                 onClick={() => void submit()}
               >
                 {launching
@@ -714,9 +704,6 @@ export function LaneChips({ thread }: { thread: Thread }) {
           key={p.id}
           className={`lane-chip${thread.activeSpeaker === p.id ? " on" : ""}`}
           style={{ ["--lane-color" as string]: p.color }}
-          title={`${p.name} · ${p.settings.model} · ${
-            p.settings.access === "read" ? "read-only" : p.settings.access
-          }`}
         >
           <AgentMark agent={p.agent} size={11} />
           {p.name}

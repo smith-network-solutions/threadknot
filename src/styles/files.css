@@ -234,7 +234,6 @@
 }
 
 .artifact-list-row:hover .artifact-list-delete,
-.artifact-list-delete:focus-visible,
 .artifact-list-delete.armed {
   opacity: 1;
 }
@@ -383,8 +382,7 @@
   color: var(--dim, #8b93a9);
   cursor: pointer;
 }
-.files-find button:hover:not(:disabled),
-.files-find button:focus-visible {
+.files-find button:hover:not(:disabled) {
   color: var(--text, #d8dde9);
   background: var(--panel-3, #1a2030);
 }

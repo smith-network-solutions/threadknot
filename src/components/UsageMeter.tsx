@@ -4,6 +4,7 @@ import type { ProviderUsage, RateWindow } from "../lib/protocol";
 import { isAgentVisible } from "../lib/agentVisibility";
 import { useStore } from "../state/store";
 import { AgentMark } from "./icons";
+import { useDismissAnimation } from "../lib/useDismissAnimation";
 
 const AGENT_NAMES: Record<string, string> = {
   claude: "Claude Code",
@@ -104,10 +105,15 @@ export function UsageMeter() {
     right: number;
     bottom: number;
     width: number;
-    maxHeight: number;
+    /** Cap on the scrolling provider list, NOT on the panel — see `place`. */
+    listMax: number;
   } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  // The popover is portalled and conditionally rendered, so closing it would
+  // take it out of the DOM before its exit could play. Close through this and
+  // it animates out first, like every Dropdown in the app.
+  const { closing, dismiss, onAnimationEnd } = useDismissAnimation(() => setOpen(false));
 
   // Anchor the portaled popover above the trigger button and keep it there as
   // the window resizes or scrolls. Both the sidebar trigger and the portaled
@@ -123,7 +129,11 @@ export function UsageMeter() {
         right: Math.max(8, window.innerWidth - r.right),
         bottom: Math.max(8, window.innerHeight - r.top + 8),
         width: r.width,
-        maxHeight: Math.max(120, r.top - 24),
+        // The cap belongs to the list, not the panel: a panel that scrolls is
+        // a panel that clips, and the tail hanging off its bottom edge is the
+        // first thing to go. 72px is the padding plus the foot row, which sit
+        // outside the scroll and still have to fit above the trigger.
+        listMax: Math.max(120, r.top - 24 - 72),
       });
     }
     place();
@@ -141,10 +151,10 @@ export function UsageMeter() {
       const t = e.target as Node;
       if (btnRef.current?.contains(t)) return;
       if (popRef.current?.contains(t)) return;
-      setOpen(false);
+      dismiss();
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") dismiss();
     }
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -152,7 +162,7 @@ export function UsageMeter() {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, dismiss]);
 
   // The startup probe is the source of truth for locally connected providers.
   // Thread focus/status is transient and must never make a subscription meter
@@ -178,8 +188,7 @@ export function UsageMeter() {
         className="usage-chips"
         aria-label="Provider usage"
         aria-expanded={open}
-        title="Subscription usage"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? dismiss() : setOpen(true))}
       >
         {shown.map((u) => {
           const worst = (u.windows ?? []).reduce((a, b) =>
@@ -208,11 +217,19 @@ export function UsageMeter() {
             role="dialog"
             aria-label="Subscription usage details"
             ref={popRef}
-            style={pos}
+            data-state={closing ? "closing" : "open"}
+            onAnimationEnd={onAnimationEnd}
+            style={{ right: pos.right, bottom: pos.bottom, width: pos.width }}
           >
-            {usage.map((u) => (
-              <ProviderBlock key={u.agent} u={u} />
-            ))}
+            {/* The same tail every Alcove popover wears (see Dropdown.tsx).
+                This one is centred: the panel is anchored to the chips row
+                and sized to it, so the trigger's middle IS the panel's. */}
+            <span className="dropdown-tail" aria-hidden="true" />
+            <div className="usage-pop-list" style={{ maxHeight: pos.listMax }}>
+              {usage.map((u) => (
+                <ProviderBlock key={u.agent} u={u} />
+              ))}
+            </div>
             <div className="usage-pop-foot">
               <span className="usage-age">updated {fmtAge(newest.fetchedAt)}</span>
               <button

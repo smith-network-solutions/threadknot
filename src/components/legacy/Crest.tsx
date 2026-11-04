@@ -148,7 +148,6 @@ export function Crest({
       aria-hidden={title ? undefined : true}
       shapeRendering="crispEdges"
     >
-      {title && <title>{title}</title>}
       {map.map((row, y) =>
         row.split("").map((ch, x) =>
           ch === "." ? null : (
@@ -178,12 +177,11 @@ export function CrestBadge({ size = 14 }: { size?: number }) {
   if (!award.earned) return null;
   return (
     <span className="legacy-crest-badge">
-      <span title={`${CREST_NAME} · awarded on this machine`}>
+      <span>
         <Crest size={size} title={CREST_NAME} />
       </span>
       {award.perfect && (
         <span
-          title={perfectTooltip(award)}
           className={award.perfectHuman ? "perfect-verified" : "perfect-unverified"}
         >
           <Crest size={size} variant="perfect" title={PERFECT_NAME} />
@@ -193,11 +191,3 @@ export function CrestBadge({ size = 14 }: { size?: number }) {
   );
 }
 
-/** One line that says what the badge means without overclaiming what the
- *  verification actually establishes. */
-export function perfectTooltip(award: LegacyAward): string {
-  const who = award.perfectHandle ? ` by ${award.perfectHandle}` : "";
-  return award.perfectHuman
-    ? `${PERFECT_NAME}${who} · nine levels, no life lost · input looked human (a heuristic, not proof)`
-    : `${PERFECT_NAME}${who} · nine levels, no life lost · input was not verified as human`;
-}

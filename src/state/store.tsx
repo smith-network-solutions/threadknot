@@ -321,6 +321,16 @@ export interface Notice {
   threadId: string;
   title: string;
   body: string;
+  /** The agent whose turn raised this, when it came from a thread event. The
+   *  Alcove toast draws that agent's mark; a locally raised notice (a failed
+   *  settle, a missing voice key) has none and shows none. */
+  agent?: string;
+  /** The event kind behind it ("turn_completed", …), which is what the Alcove
+   *  toast turns into its heading. Absent on locally raised notices, which
+   *  keep their own title as the heading. */
+  kind?: string;
+  /** When it was raised, for the toast's relative time. */
+  at?: number;
 }
 
 /** A follow-up held until the current turn becomes idle. */

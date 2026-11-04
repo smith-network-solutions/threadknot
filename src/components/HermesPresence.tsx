@@ -8,8 +8,6 @@ export type HermesPresenceKind = "online" | "offline" | "checking";
 
 export interface HermesPresence {
   kind: HermesPresenceKind;
-  /** Tooltip text: "online (123ms)" / "offline since 2m ago" / "checking…". */
-  title: string;
   /** Inline label for text rows (settings list, gateway picker):
    *  "online · 123ms" / "offline · 2m ago" / "checking…". */
   label: string;
@@ -20,13 +18,12 @@ export interface HermesPresence {
  *  reads as neutral rather than offline. */
 export function hermesPresence(status: HermesAgentStatus | undefined): HermesPresence {
   if (!status) {
-    return { kind: "checking", title: "checking…", label: "checking…" };
+    return { kind: "checking", label: "checking…" };
   }
   if (status.online) {
     const ms = status.latencyMs != null ? `${status.latencyMs}ms` : "";
     return {
       kind: "online",
-      title: ms ? `online (${ms})` : "online",
       label: ms ? `online · ${ms}` : "online",
     };
   }
@@ -35,7 +32,6 @@ export function hermesPresence(status: HermesAgentStatus | undefined): HermesPre
   const since = timeAgo(status.sinceAt || status.lastCheckedAt);
   return {
     kind: "offline",
-    title: since ? `offline since ${since}` : "offline",
     label: since ? `offline · ${since}` : "offline",
   };
 }
@@ -54,7 +50,6 @@ export function HermesPresenceDot({
   return (
     <span
       className={`hermes-presence ${p.kind}${className ? ` ${className}` : ""}`}
-      title={p.title}
       aria-hidden
     />
   );
