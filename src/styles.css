@@ -10288,21 +10288,21 @@ span.title-agent-mark { width: 16px; height: 16px; }
 /* ---- notification toasts + settings toggles ------------------------------- */
 .toast-stack {
   position: fixed;
-  top: 12px;
+  /* --toast-top is measured from the header row (useToastStackTop) so a toast
+     never covers the tabs or thread controls, whatever height the skin gives them. */
+  top: var(--toast-top, 12px);
   right: 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: min(320px, calc(100vw - 28px));
   z-index: 80;
 }
 .toast {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 180px;
-  max-width: 300px;
-  text-align: left;
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   background: var(--panel-2);
   border: 1px solid var(--line-2);
   border-left: 3px solid var(--brass);
@@ -10313,6 +10313,23 @@ span.title-agent-mark { width: 16px; height: 16px; }
   transition: border-color 0.12s;
 }
 .toast:hover { border-color: var(--brass); }
+.toast-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding-right: 18px;
+  box-sizing: border-box;
+  text-align: left;
+}
+/* The whole card opens the thread, not just the text inside its padding. */
+.toast-main::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
 .toast-title {
   font-size: 12px;
   font-weight: 600;
@@ -10322,7 +10339,37 @@ span.title-agent-mark { width: 16px; height: 16px; }
   white-space: nowrap;
   max-width: 100%;
 }
-.toast-body { font-size: 11px; color: var(--dim); }
+/* Bodies quote commands and paths with no break points, so wrap anywhere and
+   clamp rather than let a long token run past the card. */
+.toast-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--dim);
+}
+.toast-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--dim);
+  transition: color 0.12s, background 0.12s;
+}
+.toast-close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
 
 .settings-toggle {
   font-family: var(--font-mono);

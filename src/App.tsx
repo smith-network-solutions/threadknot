@@ -1,5 +1,5 @@
 import { revealThreadWorkspace } from "./lib/sidebarView";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { discoverServer, pickDirectoryNative } from "./lib/discovery";
 import {
   advertiseSoloWindow,
@@ -82,6 +82,7 @@ import {
   type AppState,
   type ThreadknotActions,
 } from "./state/store";
+import { XIcon } from "./components/icons";
 import { Sidebar } from "./components/Sidebar";
 import { ThemeSync } from "./components/ThemeStudio";
 import { MainSplit } from "./components/MainSplit";
@@ -2357,12 +2358,36 @@ function maybeNotify(
   setTimeout(() => dispatch({ type: "noticeDismiss", id }), 8000);
 }
 
+/**
+ * Keeps the toast stack below the header row. Header height varies by skin and
+ * layout, so it is measured; a stacked workspace panel's head sits lower down
+ * the window and doesn't count.
+ */
+function useToastStackTop(visible: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!visible) return;
+    const place = () => {
+      const heads = document.querySelectorAll(".thread-head, .workspace-head");
+      const bottom = Array.from(heads, (head) => head.getBoundingClientRect())
+        .filter((r) => r.width > 0 && r.top < window.innerHeight / 3)
+        .reduce((max, r) => Math.max(max, r.bottom), 0);
+      ref.current?.style.setProperty("--toast-top", `${Math.round(bottom) + 8}px`);
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [visible]);
+  return ref;
+}
+
 export default function App() {
   const [state, baseDispatch] = useReducer(reducer, initialState);
   // Every commit in this app is caused by an action landing here, so the render
   // tracer names the cause by watching dispatch. Identity-stable, and the exact
   // same function when tracing is off.
   const dispatch = useMemo(() => traceDispatch(baseDispatch), [baseDispatch]);
+  const toastStackRef = useToastStackTop(state.notices.length > 0);
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
   /** Non-null → the folder browser is open for a new workspace, on this
    *  machine (machineId undefined) or on a peer. */
@@ -3017,21 +3042,31 @@ export default function App() {
           </div>
         )}
         {state.notices.length > 0 && (
-          <div className="toast-stack">
+          <div className="toast-stack" ref={toastStackRef}>
             {state.notices.map((n) => (
-              <button
-                key={n.id}
-                type="button"
-                className="toast"
-                onClick={() => {
-                  dispatch({ type: "noticeDismiss", id: n.id });
-                  revealThreadWorkspace();
-                  void actions.selectThread(n.threadId);
-                }}
-              >
-                <span className="toast-title">{stripTitleMarks(n.title)}</span>
-                <span className="toast-body">{n.body}</span>
-              </button>
+              <div key={n.id} className="toast">
+                <button
+                  type="button"
+                  className="toast-main"
+                  onClick={() => {
+                    dispatch({ type: "noticeDismiss", id: n.id });
+                    revealThreadWorkspace();
+                    void actions.selectThread(n.threadId);
+                  }}
+                >
+                  <span className="toast-title">{stripTitleMarks(n.title)}</span>
+                  <span className="toast-body">{n.body}</span>
+                </button>
+                <button
+                  type="button"
+                  className="toast-close"
+                  aria-label="Dismiss notification"
+                  title="Dismiss"
+                  onClick={() => dispatch({ type: "noticeDismiss", id: n.id })}
+                >
+                  <XIcon size={13} />
+                </button>
+              </div>
             ))}
           </div>
         )}
