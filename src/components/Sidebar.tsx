@@ -1159,6 +1159,14 @@ function ChatFolderDialog({
   );
 }
 
+/** One of ours, or a remote one we hold the owner's link for. A guest link
+ *  stays out: the far side doesn't check who is setting the image, so this is
+ *  the only thing keeping a guest off the owner's record. */
+function canEditWorkspaceImage(state: AppState, workspace: Workspace): boolean {
+  const server = workspaceServer(state, workspace);
+  return !server || (server.personId ?? OWNER_PERSON_ID) === OWNER_PERSON_ID;
+}
+
 function chooseSidebarImage(save: (image: string) => Promise<unknown>) {
   void pickSidebarImage()
     .then((image) => (image ? save(image) : undefined))
@@ -6770,10 +6778,11 @@ export const Sidebar = memo(function Sidebar({
                   : hideWorkspace(menu.workspace.id),
             },
             // Everything below edits the workspace RECORD, which for a guest
-            // link lives on somebody else's machine. None of these kinds
-            // route, so offering them would produce "unknown workspace" and
-            // nothing else. Hiding is different and stays above: it is a
-            // sidebar opinion, not an edit to their record.
+            // link lives on somebody else's machine. These kinds don't route,
+            // so offering them would produce "unknown workspace" and nothing
+            // else. Hiding is different and stays above: it is a sidebar
+            // opinion, not an edit to their record. The image is the exception
+            // below: it routes, for a link that speaks for that server's owner.
             ...(workspaceServer(state, menu.workspace)
               ? []
               : [
@@ -6790,6 +6799,9 @@ export const Sidebar = memo(function Sidebar({
                 setRenamingId(menu.workspace.id);
               },
             },
+              ]),
+            ...(canEditWorkspaceImage(state, menu.workspace)
+              ? [
             {
               label: menu.workspace.image
                 ? "Change workspace image…"
@@ -6811,6 +6823,11 @@ export const Sidebar = memo(function Sidebar({
                   },
                 ]
               : []),
+                ]
+              : []),
+            ...(workspaceServer(state, menu.workspace)
+              ? []
+              : [
             ...(!state.solo
               ? [
                   {

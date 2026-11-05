@@ -2289,8 +2289,8 @@ const ROUTABLE: &[&str] = &[
     // remote server you are a guest on.
     "workspace.setHidden",
     "workspace.setFavorite",
-    // Unlike those two this edits the record itself, so on a remote server it
-    // only works for a credential allowed to: the far side still decides.
+    // Unlike those two this edits the record itself, and the far side has no
+    // owner check on it: the client only offers it on an owner's link.
     "workspace.setImage",
     "thread.list",
     "thread.get",
