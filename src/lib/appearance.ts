@@ -364,6 +364,8 @@ export interface SidebarPrefs {
    *  workspace knob: wanting your chats ordered by recency says nothing about
    *  wanting your projects to move. */
   recentThreadsFirst: boolean;
+  /** Project rail size, as a percent of its stock column. */
+  railScale: number;
 }
 
 /** The parts a skin is cut into. Each id gates one block of skin CSS through
@@ -423,6 +425,10 @@ export const AUTOSETTLE_MIN = 1;
 export const AUTOSETTLE_MAX = 90;
 /** What the toggle turns auto-settle back ON to. */
 export const AUTOSETTLE_DEFAULT = 3;
+export const RAIL_SCALE_MIN = 100;
+export const RAIL_SCALE_MAX = 200;
+export const RAIL_SCALE_STEP = 10;
+export const RAIL_SCALE_DEFAULT = 100;
 
 export const APPEARANCE_EVENT = "threadknot:appearance";
 export const TERMPREFS_EVENT = "threadknot:termprefs";
@@ -466,6 +472,7 @@ const S_DEFAULT: SidebarPrefs = {
   // installs land here — anyone who has already touched a sidebar preference
   // has `projectLayout` written to localStorage and keeps whatever they chose.
   projectLayout: "rail",
+  railScale: RAIL_SCALE_DEFAULT,
 };
 const T_DEFAULT: TermPrefs = {
   fontSize: 13,
@@ -761,6 +768,13 @@ function readProjectLayout(value: unknown): ProjectLayout {
     : S_DEFAULT.projectLayout;
 }
 
+function readRailScale(value: unknown): number {
+  const scale = Number(value);
+  return Number.isFinite(scale)
+    ? clamp(Math.round(scale), RAIL_SCALE_MIN, RAIL_SCALE_MAX)
+    : RAIL_SCALE_DEFAULT;
+}
+
 /** null (never auto-settle) is a real stored value, so it has to survive the
  *  round trip; anything else non-numeric falls back to the default rather
  *  than silently disabling auto-settle. */
@@ -771,7 +785,8 @@ export function getSidebarPrefs(): SidebarPrefs {
   // install written before these existed reads as "off" rather than "missing".
   const recentWorkspacesFirst = s.recentWorkspacesFirst === true;
   const recentThreadsFirst = s.recentThreadsFirst === true;
-  const rest = { projectLayout, recentWorkspacesFirst, recentThreadsFirst };
+  const railScale = readRailScale(s.railScale);
+  const rest = { projectLayout, recentWorkspacesFirst, recentThreadsFirst, railScale };
   if (s.autoSettleDays === null) return { autoSettleDays: null, ...rest };
   const days = Number(s.autoSettleDays);
   if (!Number.isFinite(days)) {
@@ -789,6 +804,7 @@ export function setSidebarPrefs(next: SidebarPrefs): void {
     projectLayout,
     recentWorkspacesFirst: next.recentWorkspacesFirst === true,
     recentThreadsFirst: next.recentThreadsFirst === true,
+    railScale: readRailScale(next.railScale),
   };
   const clamped: SidebarPrefs =
     next.autoSettleDays === null

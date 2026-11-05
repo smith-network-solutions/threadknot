@@ -48,7 +48,9 @@
   );
   --radius: 10px;
   --sidebar-w: 292px;
-  --rail-w: 64px;
+  --rail-scale: 1;
+  --rail-grow: 0px;
+  --rail-w: calc(64px * var(--rail-scale));
   --safe-b: env(safe-area-inset-bottom, 0px);
   /* How much of the layout viewport the on-screen keyboard covers. Written by
      installKeyboardInset() in lib/viewport.ts; 0 everywhere except a phone with
@@ -191,8 +193,8 @@ code, pre { font-family: var(--font-mono); }
 /* ================= sidebar ================= */
 
 .sidebar {
-  width: var(--sidebar-w);
-  min-width: var(--sidebar-w);
+  width: calc(var(--sidebar-w) + var(--rail-grow));
+  min-width: calc(var(--sidebar-w) + var(--rail-grow));
   display: flex;
   flex-direction: column;
   /* Sidebar copy is intentionally high-contrast: black on light palettes and
@@ -1109,7 +1111,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 
 /* ---- rail layout (the chat-app-style project icon column) ---- */
 
-:root { --rail-w: 64px; }
+:root { --rail-w: calc(64px * var(--rail-scale)); }
 
 /* The rail is absolutely positioned and the sidebar's own content is inset
    past it, so the existing single-column structure — and every popover and
@@ -1125,6 +1127,14 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   padding-left: var(--rail-w);
 }
 .sidebar.layout-rail .sidebar-scroll { padding-left: calc(var(--rail-w) + 6px); }
+
+/* Drag the rail's own edge to scale its icons; the sidebar's outer edge still
+   sets the chat list width. */
+.rail-resize {
+  left: calc(var(--rail-w) - 3px);
+  right: auto;
+}
+@media (max-width: 767px) { .rail-resize { display: none; } }
 
 .project-rail {
   position: absolute;
@@ -1149,7 +1159,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   position: relative;
   flex: none;
   width: 100%;
-  height: 46px;
+  height: calc(46px * var(--rail-scale));
   display: grid;
   place-items: center;
   padding: 0;
@@ -1205,16 +1215,16 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 /* The rail is an index, not a social surface: project markers stay square-ish
    and their accent is a border cue rather than a glow. */
 .rail-item .machine-avatar,
-.rail-avatar { border-radius: 9px; }
+.rail-avatar { border-radius: calc(9px * var(--rail-scale)); }
 .rail-item .machine-avatar.has-color {
   border-color: color-mix(in srgb, var(--machine-color) 72%, var(--line-2));
   box-shadow: none;
 }
 
 .rail-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
+  width: calc(34px * var(--rail-scale));
+  height: calc(34px * var(--rail-scale));
+  border-radius: calc(9px * var(--rail-scale));
   overflow: hidden;
   display: block;
 }
@@ -1240,11 +1250,11 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: calc(34px * var(--rail-scale));
+  height: calc(34px * var(--rail-scale));
   overflow: hidden;
   border: 1px solid var(--line-2);
-  border-radius: 9px;
+  border-radius: calc(9px * var(--rail-scale));
   background: var(--panel-2);
 }
 .rail-quick-face svg { color: var(--brass-hi); stroke-width: 1.7; }
@@ -1254,7 +1264,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 }
 .rail-divider {
   flex: none;
-  width: 34px;
+  width: calc(34px * var(--rail-scale));
   height: 1px;
   margin: 1px auto 2px;
   background: linear-gradient(90deg, transparent, var(--line-2), transparent);
@@ -1263,10 +1273,10 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 /* Unread/approval badge, notched out of the avatar's corner. */
 .rail-dot {
   position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 8px;
-  height: 8px;
+  right: calc(5px * var(--rail-scale));
+  bottom: calc(5px * var(--rail-scale));
+  width: calc(8px * var(--rail-scale));
+  height: calc(8px * var(--rail-scale));
   border-radius: 50%;
   background: var(--amber);
   box-shadow: 0 0 0 2px var(--panel);
@@ -1300,9 +1310,9 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
   position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
+  width: calc(34px * var(--rail-scale));
+  height: calc(34px * var(--rail-scale));
+  border-radius: calc(9px * var(--rail-scale));
   border: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
   background: rgba(255, 255, 255, 0.03);
 }
@@ -1310,7 +1320,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 /* Count under the glyph rather than beside it: 38px is not wide enough for
    both, and the number is the part that changes. */
 .rail-stash-count {
-  font-size: 9px;
+  font-size: calc(9px * var(--rail-scale));
   line-height: 1;
   font-variant-numeric: tabular-nums;
   margin-top: 1px;
@@ -1326,7 +1336,7 @@ html .sidebar-scroll:not(.is-scrolling)::-webkit-scrollbar-thumb {
 }
 
 @media (max-width: 767px) {
-  :root { --rail-w: 56px; }
+  :root { --rail-w: calc(56px * var(--rail-scale)); }
 }
 
 /* Picker layout: this bar replaces the per-project headers entirely, so the
@@ -2491,8 +2501,8 @@ body.reordering { cursor: grabbing; user-select: none; }
 .rail-item { isolation: isolate; }
 .rail-ring {
   position: absolute;
-  width: 38px;
-  height: 38px;
+  width: calc(38px * var(--rail-scale));
+  height: calc(38px * var(--rail-scale));
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
@@ -11695,7 +11705,7 @@ button.task-pill:hover:not(:disabled) { color: var(--text); border-color: var(--
   top: 0;
   right: 0;
   bottom: 0;
-  left: var(--sidebar-w);
+  left: calc(var(--sidebar-w) + var(--rail-grow));
   z-index: 60;
   display: flex;
   align-items: center;
@@ -11731,7 +11741,7 @@ button.task-pill:hover:not(:disabled) { color: var(--text); border-color: var(--
    whole work area to the right. Between 768-900px the sidebar is inline, so
    var(--sidebar-w) is exact. */
 @media (max-width: 900px) {
-  .popout-zone { left: var(--sidebar-w); }
+  .popout-zone { left: calc(var(--sidebar-w) + var(--rail-grow)); }
 }
 
 /* Below 768px the sidebar is a slide-over drawer of width min(--sidebar-w,
@@ -11739,7 +11749,7 @@ button.task-pill:hover:not(:disabled) { color: var(--text); border-color: var(--
    still reorder while the work area beside it pops out. (Placed after the 900px
    rule so it wins at equal specificity in the overlapping 0-767px range.) */
 @media (max-width: 767px) {
-  .popout-zone { left: min(var(--sidebar-w), 86vw); }
+  .popout-zone { left: min(calc(var(--sidebar-w) + var(--rail-grow)), 86vw); }
 }
 
 /* ---- context menu (right-click a project row) ---------------------------- */

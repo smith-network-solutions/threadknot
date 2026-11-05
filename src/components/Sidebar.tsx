@@ -16,7 +16,11 @@ import {
   toggleWorkspaceNotify,
 } from "../lib/notify";
 import {
+  clamp,
   getSidebarPrefs,
+  RAIL_SCALE_MAX,
+  RAIL_SCALE_MIN,
+  setSidebarPrefs as saveSidebarPrefs,
   SIDEBARPREFS_EVENT,
   type ProjectLayout,
   type SidebarPrefs,
@@ -813,6 +817,7 @@ function StreamSection({
 }
 
 function ProjectRail({
+  scale,
   quickThreads,
   quickOn,
   bosunOn,
@@ -830,6 +835,8 @@ function ProjectRail({
   onReorder,
   reorderEnabled,
 }: {
+  /** Multiplier on the stock tile size; SVG and avatar sizes are props, not CSS. */
+  scale: number;
   quickThreads: Thread[];
   quickOn: boolean;
   /** The Bosun view is showing. */
@@ -905,7 +912,7 @@ function ProjectRail({
         >
           <span className="rail-pip" aria-hidden />
           <span className="rail-quick-face" aria-hidden>
-            <PlusIcon size={21} />
+            <PlusIcon size={Math.round(21 * scale)} />
           </span>
           <RailActivity count={quickRunning} />
           <span
@@ -925,7 +932,7 @@ function ProjectRail({
         >
           <span className="rail-pip" aria-hidden />
           <span className="rail-quick-face rail-bosun-face" aria-hidden>
-            {bosunImage ? <img src={bosunImage} alt="" /> : <AnchorIcon size={19} />}
+            {bosunImage ? <img src={bosunImage} alt="" /> : <AnchorIcon size={Math.round(19 * scale)} />}
           </span>
           <span className={`rail-dot${bosunAttention > 0 ? " lit" : ""}`} aria-hidden />
         </button>
@@ -975,7 +982,7 @@ function ProjectRail({
               image={w.image}
               color={projectAccent(w.id)}
               name={w.name}
-              size={34}
+              size={Math.round(34 * scale)}
               preview={false}
             />
             {/* Keep the effect mounted to avoid WebKit layer churn on status changes. */}
@@ -1018,7 +1025,7 @@ function ProjectRail({
         >
           <span className="rail-pip" aria-hidden />
           <span className="rail-stash-face" aria-hidden>
-            <EyeIcon size={15} off />
+            <EyeIcon size={Math.round(15 * scale)} off />
             <span className="rail-stash-count">{hidden.length}</span>
           </span>
           <RailActivity count={stashRunning} />
@@ -4206,12 +4213,16 @@ function SidebarResizeHandle({
   defaultWidth = SIDEBAR_WIDTH_DEFAULT,
   setWidthLive,
   onCommit,
+  className = "",
+  label = "Resize sidebar",
 }: {
   width: number;
   /** What a double-click resets to. */
   defaultWidth?: number;
   setWidthLive: (w: number) => void;
   onCommit: (w: number) => void;
+  className?: string;
+  label?: string;
 }) {
   const drag = useRef<{ startX: number; startW: number } | null>(null);
   // Mirror the prop so pointer-up reads the final width without a stale closure.
@@ -4248,10 +4259,10 @@ function SidebarResizeHandle({
 
   return (
     <div
-      className="sidebar-resize"
+      className={`sidebar-resize ${className}`.trim()}
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize sidebar"
+      aria-label={label}
       title="Drag to resize · double-click to reset"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -4261,6 +4272,11 @@ function SidebarResizeHandle({
     />
   );
 }
+
+/** The rail column's width at 100%; dragging its edge maps px to a percent. */
+const RAIL_BASE_WIDTH = 64;
+const railPercent = (width: number) =>
+  clamp(Math.round((width / RAIL_BASE_WIDTH) * 100), RAIL_SCALE_MIN, RAIL_SCALE_MAX);
 
 const LS_SEARCH_MODEL = "threadknot.search.model";
 
@@ -5111,6 +5127,9 @@ export const Sidebar = memo(function Sidebar({
     window.addEventListener(SIDEBARPREFS_EVENT, onPrefs);
     return () => window.removeEventListener(SIDEBARPREFS_EVENT, onPrefs);
   }, []);
+  // Percent while the rail's edge is being dragged; null at rest.
+  const [railDrag, setRailDrag] = useState<number | null>(null);
+  const railScale = (railDrag ?? sidebarPrefs.railScale) / 100;
 
   // What the two "recently used first" floats sort by, kept live so opening a
   // chat reorders the list behind it rather than at the next reload. Reading
@@ -5662,6 +5681,13 @@ export const Sidebar = memo(function Sidebar({
   // vanishing and reflowing the sidebar on the first keystroke.
   const railMode =
     sidebarPrefs.projectLayout === "rail" && !agentsView && !soloId;
+  // The sidebar grows with the rail so a bigger rail never narrows the chat list.
+  useLayoutEffect(() => {
+    const root = document.documentElement.style;
+    const scale = railMode ? railScale : 1;
+    root.setProperty("--rail-scale", String(scale));
+    root.setProperty("--rail-grow", `${Math.round(RAIL_BASE_WIDTH * (scale - 1))}px`);
+  }, [railMode, railScale]);
 
   // Which project the single-project layouts are showing. Null means "not
   // chosen yet", which resolves to the project holding the open chat — so
@@ -5994,11 +6020,25 @@ export const Sidebar = memo(function Sidebar({
           onCommit={(w) => updateLayout({ width: w })}
         />
       )}
+      {railMode && (
+        <SidebarResizeHandle
+          className="rail-resize"
+          label="Resize project icons"
+          width={Math.round(RAIL_BASE_WIDTH * railScale)}
+          defaultWidth={RAIL_BASE_WIDTH}
+          setWidthLive={(w) => setRailDrag(railPercent(w))}
+          onCommit={(w) => {
+            setRailDrag(null);
+            saveSidebarPrefs({ ...getSidebarPrefs(), railScale: railPercent(w) });
+          }}
+        />
+      )}
       {/* Absolutely positioned rather than a flex sibling: the sidebar keeps
           its existing single-column structure (and every modal/portal already
           hanging off it) and just gains a gutter. */}
       {railMode && (
         <ProjectRail
+          scale={railScale}
           quickThreads={quickThreads}
           quickOn={quickView}
           bosunOn={bosunView}

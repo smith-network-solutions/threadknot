@@ -54,6 +54,9 @@ import {
 import { useStore } from "../state/store";
 import {
   AUTOSETTLE_DEFAULT,
+  RAIL_SCALE_MAX,
+  RAIL_SCALE_MIN,
+  RAIL_SCALE_STEP,
   AUTOSETTLE_MAX,
   AUTOSETTLE_MIN,
   CFONT_MAX,
@@ -273,6 +276,26 @@ function SidebarSettings() {
           ))}
         </span>
       </div>
+      {s.projectLayout === "rail" && (
+        <Stepper
+          label="icon size"
+          value={`${s.railScale}%`}
+          onDec={() =>
+            update({
+              ...s,
+              railScale: clamp(s.railScale - RAIL_SCALE_STEP, RAIL_SCALE_MIN, RAIL_SCALE_MAX),
+            })
+          }
+          onInc={() =>
+            update({
+              ...s,
+              railScale: clamp(s.railScale + RAIL_SCALE_STEP, RAIL_SCALE_MIN, RAIL_SCALE_MAX),
+            })
+          }
+          decDisabled={s.railScale <= RAIL_SCALE_MIN}
+          incDisabled={s.railScale >= RAIL_SCALE_MAX}
+        />
+      )}
       <div className="settings-row">
         <span className="settings-value">
           settle quiet chats

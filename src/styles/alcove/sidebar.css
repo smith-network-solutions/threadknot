@@ -49,7 +49,7 @@
   /* Rail layout: the project column becomes its own narrow card; the main card
      starts after it. --rail-w keeps driving the base insets. */
   :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .sidebar.layout-rail {
-    --rail-w: 62px;
+    --rail-w: calc(62px * var(--rail-scale));
     --alc-sb-card-left: var(--rail-w);
   }
 }
@@ -543,7 +543,7 @@
   background: rgba(84, 84, 84, 0.1);
 }
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-item {
-  height: 42px;
+  height: calc(42px * var(--rail-scale));
   border: 0;
   border-radius: 50%;
   background: none;
@@ -566,8 +566,8 @@
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-avatar,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-quick-face,
 :root[data-theme="alcove"]:not([data-skin-off~="cards"]) .rail-stash-face {
-  width: 32px;
-  height: 32px;
+  width: calc(32px * var(--rail-scale));
+  height: calc(32px * var(--rail-scale));
   border: 0;
   border-radius: 50%;
   background: var(--alc-hover);
