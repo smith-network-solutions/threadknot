@@ -777,11 +777,9 @@ function makeActions(
       const ws = await client.request("workspace.setImage", {
         workspaceId,
         image: image ?? null,
+        ...route(workspaceRoute(workspaceId)),
       });
-      dispatch({
-        type: "workspaces",
-        workspaces: getState().workspaces.map((w) => (w.id === ws.id ? ws : w)),
-      });
+      applyWorkspacePatch(ws);
     },
 
     async organizeChats(workspaces) {
