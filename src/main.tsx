@@ -8,6 +8,7 @@ import "./styles.css";
 // Alcove skin: every rule is scoped to :root[data-theme="alcove"], inert elsewhere.
 import "./styles/alcove/index.css";
 import { applyAppearance } from "./lib/appearance";
+import { installTooltips } from "./lib/tooltip";
 import { installKeyboardInset } from "./lib/viewport";
 
 // Apply the saved theme + zoom before the first paint to avoid a flash.
@@ -15,6 +16,9 @@ applyAppearance();
 
 // Track the on-screen keyboard for the life of the page (see --kb-inset).
 installKeyboardInset();
+
+// One styled tooltip for every title= in the app (see lib/tooltip.ts).
+installTooltips();
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("missing #root");

@@ -10295,6 +10295,52 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .usage-refresh:hover { color: var(--text); border-color: var(--line-2); }
 
+/* ---- hover tooltips (lib/tooltip.ts) -------------------------------------- */
+.tk-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 280px;
+  padding: 7px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-2) 97%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38), 0 2px 6px rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: pre-line;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px) scale(0.98);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.tk-tip.on {
+  opacity: 1;
+  transform: none;
+}
+.tk-tip-detail {
+  display: block;
+  margin-top: 1px;
+  color: var(--dim);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+:root[data-family="light"] .tk-tip {
+  box-shadow: 0 10px 28px rgba(35, 50, 90, 0.14), 0 2px 6px rgba(35, 50, 90, 0.07);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk-tip { transition: none; transform: none; }
+}
+
 /* ---- notification toasts + settings toggles ------------------------------- */
 .toast-stack {
   position: fixed;
