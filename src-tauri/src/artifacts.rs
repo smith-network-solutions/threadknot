@@ -162,6 +162,37 @@ pub struct Candidate {
     pub known: bool,
 }
 
+/// Keep only the candidates this thread's own turn names somewhere: its
+/// messages, tool commands, tool output, or edited paths.
+///
+/// The turn diff covers the whole working directory, so when another thread's
+/// turn ran in the same directory at the same time, its new files land in this
+/// diff too. Without this, a PDF one chat writes shows up in every other chat
+/// that happened to be busy in that folder.
+pub fn keep_own_files(candidates: Vec<Candidate>, activity: &str) -> Vec<Candidate> {
+    let activity = activity.replace('\\', "/").to_ascii_lowercase();
+    let mut basename_counts: HashMap<String, usize> = HashMap::new();
+    for c in &candidates {
+        if let Some(name) = Path::new(&c.rel).file_name().and_then(|name| name.to_str()) {
+            *basename_counts
+                .entry(name.to_ascii_lowercase())
+                .or_default() += 1;
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|c| {
+            let basename = Path::new(&c.rel)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&c.rel)
+                .to_ascii_lowercase();
+            let unique = basename_counts.get(&basename).copied().unwrap_or(0) == 1;
+            path_is_mentioned(&activity, &c.rel, unique)
+        })
+        .collect()
+}
+
 /// Reduce a turn-wide filesystem diff to files that plausibly represent a
 /// deliverable for the user. This is the conservative FALLBACK behind the
 /// `publish_artifact` MCP tool — when in doubt, drop the file: a missed
@@ -302,7 +333,7 @@ pub fn scan_deliverables(root: &Path) -> DeliverableSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{select_artifacts, Candidate};
+    use super::{keep_own_files, select_artifacts, Candidate};
 
     fn created(rel: &str) -> Candidate {
         Candidate {
@@ -326,6 +357,27 @@ mod tests {
             existed: true,
             known: true,
         }
+    }
+
+    #[test]
+    fn shared_folder_keeps_only_files_the_turn_names() {
+        let changed = vec![
+            created("billing/PharmRX_Statement.pdf"),
+            created("exports/calendar.pdf"),
+        ];
+        let kept = keep_own_files(
+            changed,
+            "python build_calendar.py --out exports\\calendar.pdf\nWrote exports/calendar.pdf",
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].rel, "exports/calendar.pdf");
+        // A unique basename is enough, as in prose elsewhere.
+        assert_eq!(
+            keep_own_files(vec![created("out/report.pdf")], "saved report.pdf").len(),
+            1
+        );
+        // Named nowhere in the turn: another thread's file.
+        assert!(keep_own_files(vec![created("out/report.pdf")], "updated the calendar").is_empty());
     }
 
     #[test]

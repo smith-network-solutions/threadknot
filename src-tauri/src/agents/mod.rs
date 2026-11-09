@@ -793,6 +793,12 @@ pub struct Hub {
     /// `publish_artifact` MCP tool this turn, keyed by thread. The turn-end
     /// diff skips these so a published file is not re-emitted as "detected".
     artifact_published: Mutex<HashMap<String, std::collections::HashSet<String>>>,
+    /// Working directory of each turn currently being watched for artifacts.
+    artifact_roots: Mutex<HashMap<String, PathBuf>>,
+    /// Threads whose current turn overlapped another thread's turn in the same
+    /// working directory. Their turn diff also holds the other thread's files,
+    /// so only files the turn itself names are kept.
+    artifact_shared: Mutex<std::collections::HashSet<String>>,
     /// Expo push dispatcher for paired mobile devices. Attached after
     /// construction (it needs the tokio runtime); absent in unit tests.
     push: OnceLock<Arc<crate::push::PushService>>,
@@ -860,6 +866,8 @@ impl Hub {
             sessions: Mutex::new(HashMap::new()),
             artifact_baselines: Mutex::new(HashMap::new()),
             artifact_published: Mutex::new(HashMap::new()),
+            artifact_roots: Mutex::new(HashMap::new()),
+            artifact_shared: Mutex::new(std::collections::HashSet::new()),
             push: OnceLock::new(),
         })
     }
@@ -1511,12 +1519,35 @@ impl Hub {
             .insert(thread_id.to_string(), baseline);
         // Fresh turn, fresh set of explicitly published paths.
         self.artifact_published.lock().unwrap().remove(thread_id);
+        self.note_artifact_root(thread_id, root);
+    }
+
+    /// Remember where this turn runs, and flag both sides when another thread's
+    /// turn is already running in the same directory.
+    fn note_artifact_root(&self, thread_id: &str, root: PathBuf) {
+        let root = std::fs::canonicalize(&root).unwrap_or(root);
+        let mut roots = self.artifact_roots.lock().unwrap();
+        let overlapping: Vec<String> = roots
+            .iter()
+            .filter(|(other, other_root)| other.as_str() != thread_id && **other_root == root)
+            .map(|(other, _)| other.clone())
+            .collect();
+        roots.insert(thread_id.to_string(), root);
+        drop(roots);
+        let mut shared = self.artifact_shared.lock().unwrap();
+        shared.remove(thread_id);
+        if !overlapping.is_empty() {
+            shared.insert(thread_id.to_string());
+            shared.extend(overlapping);
+        }
     }
 
     /// Diff the deliverable files against the turn's baseline and register any
     /// plausible deliverables as artifacts (emitting a card + refresh per file).
     /// Fallback behind `publish_artifact`; see `artifacts::select_artifacts`.
     pub(super) fn detect_artifacts(&self, thread_id: &str) {
+        self.artifact_roots.lock().unwrap().remove(thread_id);
+        let shared = self.artifact_shared.lock().unwrap().remove(thread_id);
         let Some(baseline) = self.artifact_baselines.lock().unwrap().remove(thread_id) else {
             return;
         };
@@ -1553,6 +1584,10 @@ impl Hub {
             })
             .collect();
         candidates.sort_by(|a, b| a.rel.cmp(&b.rel));
+        if shared {
+            candidates =
+                crate::artifacts::keep_own_files(candidates, &self.artifact_turn_activity(thread_id));
+        }
         let (user_text, assistant_text) = self.artifact_turn_text(thread_id);
         let selected =
             crate::artifacts::select_artifacts(candidates, &user_text, &assistant_text);
@@ -1645,6 +1680,37 @@ impl Hub {
             }
         }
         (user.join("\n"), assistant.join("\n"))
+    }
+
+    /// Everything this turn said or did, as text: messages, tool commands, tool
+    /// output and edited paths. Evidence for which files the turn wrote itself.
+    fn artifact_turn_activity(&self, thread_id: &str) -> String {
+        // Output can be huge; a path is printed near the start or the end.
+        fn clip(text: &str) -> String {
+            const KEEP: usize = 8_000;
+            let chars: Vec<char> = text.chars().collect();
+            if chars.len() <= KEEP * 2 {
+                return text.to_string();
+            }
+            let head: String = chars[..KEEP].iter().collect();
+            let tail: String = chars[chars.len() - KEEP..].iter().collect();
+            format!("{head}\n{tail}")
+        }
+        let mut parts = Vec::new();
+        let events = self.store.read_events(thread_id);
+        for persisted in events.iter().rev() {
+            match &persisted.event {
+                AgentEvent::TurnCompleted { .. } | AgentEvent::TurnAborted => break,
+                AgentEvent::UserMessage { text, .. } | AgentEvent::AssistantMessage { text } => {
+                    parts.push(text.clone())
+                }
+                AgentEvent::ToolStart { detail, .. } => parts.push(clip(detail)),
+                AgentEvent::ToolEnd { output: Some(output), .. } => parts.push(clip(output)),
+                AgentEvent::FileDiff { path, .. } => parts.push(path.clone()),
+                _ => {}
+            }
+        }
+        parts.join("\n")
     }
 
     /// Snapshot one produced deliverable, index it, and emit its chat card.
@@ -3987,6 +4053,60 @@ mod tests {
     /// A deliverable written during a turn becomes an artifact (chat card +
     /// index + durable snapshot); a source edit does not; a re-write updates
     /// the same record to "modified" rather than duplicating it.
+    #[test]
+    fn overlapping_turns_in_one_folder_keep_their_own_files() {
+        let (_root, store, project, settings) = test_store("artifacts-shared");
+        let mine = store
+            .create_thread(project.id.clone(), Agent::Claude, settings.clone(), None)
+            .unwrap();
+        let other = store
+            .create_thread(project.id.clone(), Agent::Claude, settings, None)
+            .unwrap();
+        let hub = Hub::new(Arc::clone(&store), 42800);
+        let ws = std::path::PathBuf::from(&project.path);
+        let start = |id: &str, text: &str| {
+            hub.emit(
+                id,
+                AgentEvent::UserMessage {
+                    text: text.into(),
+                    attachments: vec![],
+                    mid_turn: false,
+                    injected: false,
+                },
+            )
+        };
+
+        start(&other.id, "update the calendar");
+        start(&mine.id, "make the PharmRX statement");
+        std::fs::write(ws.join("PharmRX_Statement.pdf"), b"%PDF-1.4 statement").unwrap();
+        hub.emit(
+            &mine.id,
+            AgentEvent::ToolStart {
+                call_id: "c1".into(),
+                name: "Bash".into(),
+                detail: "python make_statement.py PharmRX_Statement.pdf".into(),
+            },
+        );
+        hub.emit(&mine.id, AgentEvent::TurnCompleted { usage: None });
+        hub.emit(
+            &other.id,
+            AgentEvent::AssistantMessage { text: "Calendar updated.".into() },
+        );
+        hub.emit(&other.id, AgentEvent::TurnCompleted { usage: None });
+
+        assert_eq!(store.list_artifacts_for_thread(&mine.id).len(), 1);
+        assert!(
+            store.list_artifacts_for_thread(&other.id).is_empty(),
+            "the other chat's PDF is not this chat's artifact"
+        );
+
+        // Alone in the folder again, an unnamed new PDF still counts as before.
+        start(&other.id, "export it");
+        std::fs::write(ws.join("calendar.pdf"), b"%PDF-1.4 calendar").unwrap();
+        hub.emit(&other.id, AgentEvent::TurnCompleted { usage: None });
+        assert_eq!(store.list_artifacts_for_thread(&other.id).len(), 1);
+    }
+
     #[test]
     fn detects_deliverable_artifacts_across_a_turn() {
         let (root, store, project, settings) = test_store("artifacts");
