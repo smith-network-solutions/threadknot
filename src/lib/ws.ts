@@ -1,4 +1,5 @@
 import type {
+  DictationLiveMessage,
   EventFrame,
   HermesStatusesFrame,
   RequestMap,
@@ -43,6 +44,7 @@ export class ThreadknotClient {
   onUsage: ((frame: UsageFrame) => void) | null = null;
   onHermesStatuses: ((frame: HermesStatusesFrame) => void) | null = null;
   onVoice: ((frame: VoiceFrame) => void) | null = null;
+  onDictation: ((frame: DictationLiveMessage) => void) | null = null;
   onStatus: ((state: ConnState) => void) | null = null;
   onOpen: ((isReconnect: boolean) => void) | null = null;
 
@@ -136,6 +138,8 @@ export class ThreadknotClient {
         this.onHermesStatuses?.(frame);
       } else if (frame.type === "voice.state") {
         this.onVoice?.(frame);
+      } else if (frame.type === "dictation.live") {
+        this.onDictation?.(frame);
       }
     };
 

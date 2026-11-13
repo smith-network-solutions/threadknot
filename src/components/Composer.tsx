@@ -1,15 +1,18 @@
 import type { ReactNode } from "react";
+import { flushSync } from "react-dom";
 import {
   Fragment,
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import type {
+  DictationLiveFrame,
   Access,
   Agent,
   AgentInfo,
@@ -48,6 +51,13 @@ import {
 import { COMPOSERPREFS_EVENT } from "../lib/appearance";
 import { useAlcove } from "../lib/useAlcove";
 import { highlightMarkdown } from "../lib/markdownHighlight";
+import {
+  applyVoiceText,
+  rebaseRegion,
+  shiftPosition,
+  subscribeDictationFrames,
+  type VoiceRegion,
+} from "../lib/liveDictation";
 import { markJustSent } from "../lib/justSent";
 import { formatReply, replyPreview, type ReplyTarget } from "../lib/reply";
 import { isImageAttachment, normalizedAttachmentMime } from "../lib/attachments";
@@ -613,8 +623,9 @@ function AgentModelPicker({
 }
 
 /**
- * Idle, opening the mic, capturing, or turning the clip into words. The last
- * two are split because only transcription is slow enough to need saying so.
+ * Idle, opening the mic, capturing, or finishing up. While capturing the words
+ * are already landing in the draft; "transcribing" is only the moment after
+ * stop, while the sentence that was still open is settled.
  */
 type MicState = "idle" | "starting" | "recording" | "transcribing";
 
@@ -660,7 +671,7 @@ function slashContextAt(
 }
 
 /** Matches the server's own cap; stop before it so the UI never hangs waiting. */
-const MAX_DICTATION_SECONDS = 120;
+const MAX_DICTATION_SECONDS = 600;
 
 function clock(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -859,10 +870,145 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   const fileRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<string | null>(null);
 
+  // ---- live dictation -------------------------------------------------------
+  // Words arrive over the socket while the user may be typing in the same
+  // box, so everything the frame handler reads has to be current at the moment
+  // a frame lands, not as of the last render: refs carry the truth, state only
+  // mirrors what has to be painted.
+  const textRef = useRef(text);
+  const keyRef = useRef(key);
+  keyRef.current = key;
+  /** The stretch of the draft the voice is still rewriting; null when idle. */
+  const regionRef = useRef<VoiceRegion | null>(null);
+  const [voiceRegion, setVoiceRegion] = useState<VoiceRegion | null>(null);
+  const voiceLayerRef = useRef<HTMLDivElement | null>(null);
+  /** The recording whose frames this composer accepts. Outlives recordingRef,
+   *  which is cleared the moment stop is pressed, because the last frames are
+   *  still on their way then. */
+  const liveIdRef = useRef<string | null>(null);
+  const startingRef = useRef(false);
+  const earlyFramesRef = useRef<DictationLiveFrame[]>([]);
+  const lastFinalRef = useRef(-1);
+  /** Where the user's own caret belongs once the next render has the new text. */
+  const pendingSelRef = useRef<[number, number] | null>(null);
+  const followVoiceRef = useRef(false);
+  const [micNote, setMicNote] = useState("");
+  const [submitAfterMic, setSubmitAfterMic] = useState(false);
+  const submitRef = useRef<() => void>(() => undefined);
+
+  function setRegion(next: VoiceRegion | null) {
+    regionRef.current = next;
+    setVoiceRegion(next);
+  }
+
+  /** Write spoken words over the voice region, keeping the user's caret on the
+   *  character it was on. `sync` paints before returning, which is what stops
+   *  a keystroke landing between the write and the paint from being computed
+   *  against text the textarea no longer shows (and erasing the words). */
+  function applySpoken(spoken: string, settle: boolean, sync = true) {
+    const region = regionRef.current;
+    if (!region) return;
+    const current = textRef.current;
+    const next = applyVoiceText(current, region, spoken, settle);
+    if (next.text === current) {
+      setRegion(next.region);
+      return;
+    }
+    const ta = taRef.current;
+    const sel: [number, number] | null =
+      pendingSelRef.current ?? (ta ? [ta.selectionStart, ta.selectionEnd] : null);
+    if (sel) {
+      pendingSelRef.current = [
+        shiftPosition(sel[0], region, next.inserted),
+        shiftPosition(sel[1], region, next.inserted),
+      ];
+    }
+    // Keep the newest words in view, but only when the voice is writing at the
+    // end and the user is not busy somewhere else in a long draft.
+    const voiceEnd = region.anchor + next.inserted;
+    const riding = !ta || document.activeElement !== ta || pendingSelRef.current?.[1] === voiceEnd;
+    followVoiceRef.current = riding && voiceEnd >= next.text.trimEnd().length;
+    const commit = () => {
+      textRef.current = next.text;
+      setText(next.text);
+      textDrafts.set(keyRef.current, next.text);
+      setRegion(next.region);
+    };
+    if (sync) flushSync(commit);
+    else commit();
+  }
+
+  function handleLiveFrame(frame: DictationLiveFrame) {
+    if (startingRef.current) {
+      // The id is not known until dictation.start answers, and the first
+      // frames can beat that answer here. Hold them; start replays them.
+      if (earlyFramesRef.current.length < 64) earlyFramesRef.current.push(frame);
+      return;
+    }
+    if (!liveIdRef.current || frame.recordingId !== liveIdRef.current) return;
+    if (frame.kind === "note") {
+      setMicNote(frame.text);
+      return;
+    }
+    // A guess that arrives after its sentence settled is stale by definition.
+    if (frame.segment <= lastFinalRef.current) return;
+    setMicNote("");
+    applySpoken(frame.text, frame.kind === "final");
+    if (frame.kind === "final") lastFinalRef.current = frame.segment;
+  }
+
+  /** Leave live mode. `dropGuess` removes a sentence that never settled. */
+  function endLive(dropGuess: boolean, sync = true) {
+    if (dropGuess && regionRef.current && regionRef.current.len > 0) {
+      applySpoken("", true, sync);
+    }
+    liveIdRef.current = null;
+    startingRef.current = false;
+    earlyFramesRef.current = [];
+    lastFinalRef.current = -1;
+    setRegion(null);
+    setMicNote("");
+  }
+
+  // handleLiveFrame reads nothing but refs and state setters, so the copy from
+  // the first render is as good as any later one.
+  useEffect(() => subscribeDictationFrames(handleLiveFrame), []);
+
+  // Put the user's caret back where it belongs after the voice rewrote the
+  // text: React resets a controlled textarea's caret when its value changes.
+  useLayoutEffect(() => {
+    const sel = pendingSelRef.current;
+    if (!sel) return;
+    pendingSelRef.current = null;
+    const ta = taRef.current;
+    if (!ta) return;
+    if (ta.selectionStart !== sel[0] || ta.selectionEnd !== sel[1]) {
+      ta.setSelectionRange(sel[0], sel[1]);
+    }
+  }, [text]);
+
+  // Enter while dictating: finish the sentence first, then send what is there.
   useEffect(() => {
-    setText(textDrafts.get(key) ?? "");
+    if (!submitAfterMic || mic !== "idle") return;
+    setSubmitAfterMic(false);
+    submitRef.current();
+  }, [submitAfterMic, mic]);
+
+  useEffect(() => {
+    const next = textDrafts.get(key) ?? "";
+    textRef.current = next;
+    setText(next);
     setAttachments(attachDrafts.get(key) ?? []);
     setAttachError(null);
+    // A different draft is in the box now; words still arriving belong to the
+    // one that was there, so the recording ends with it.
+    const id = recordingRef.current;
+    recordingRef.current = null;
+    if (id) void actions.cancelDictation(id).catch(() => undefined);
+    if (id || liveIdRef.current || startingRef.current) {
+      endLive(false, false);
+      setMic("idle");
+    }
   }, [key]);
 
   useEffect(() => {
@@ -882,11 +1028,23 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     // text, so the backdrop's own scroll event clamps to the old height.
     // Re-align once both have the same content.
     if (backdropRef.current) backdropRef.current.scrollTop = ta.scrollTop;
+    if (voiceLayerRef.current) voiceLayerRef.current.scrollTop = ta.scrollTop;
   }, []);
 
   useEffect(() => {
     resizeTextarea();
   }, [text, resizeTextarea]);
+
+  // After the box has its new height: bring the words just spoken into view.
+  useEffect(() => {
+    if (!followVoiceRef.current) return;
+    followVoiceRef.current = false;
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.scrollTop = ta.scrollHeight;
+    if (backdropRef.current) backdropRef.current.scrollTop = ta.scrollTop;
+    if (voiceLayerRef.current) voiceLayerRef.current.scrollTop = ta.scrollTop;
+  }, [text]);
 
   // The height follows the font and the padding as much as the text, and the
   // composer preferences move both without touching a keystroke, which would
@@ -939,7 +1097,8 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     return () => clearInterval(timer);
   }, [mic]);
 
-  // Escape throws the clip away instead of transcribing it.
+  // Escape stops listening and drops the sentence that had not settled yet.
+  // Everything already settled stays: it is in the draft, and the user can see it.
   useEffect(() => {
     if (mic !== "recording") return;
     function onKey(e: KeyboardEvent) {
@@ -962,6 +1121,8 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   );
 
   if (!settings) return null;
+
+  submitRef.current = () => void submit();
 
   // Waiting on the server either way, so the button can't be pressed again.
   const micBusy = mic === "starting" || mic === "transcribing";
@@ -1027,6 +1188,10 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   }, [state.feed, state.feedThreadId, thread]);
 
   function updateText(v: string) {
+    // Every edit that is not the voice's own goes through here, so this is
+    // where the voice region learns the text moved under it.
+    if (regionRef.current) setRegion(rebaseRegion(regionRef.current, textRef.current, v));
+    textRef.current = v;
     setText(v);
     textDrafts.set(key, v);
   }
@@ -1151,29 +1316,31 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     updateAttachments(attachments.filter((a) => a.localId !== localId));
   }
 
-  /** Drop transcribed words in at the cursor without fusing them onto a word. */
-  function insertDictated(spoken: string) {
-    const ta = taRef.current;
-    const start = ta?.selectionStart ?? text.length;
-    const end = ta?.selectionEnd ?? text.length;
-    const before = text.slice(0, start);
-    const lead = before && !/\s$/.test(before) ? " " : "";
-    updateText(`${before}${lead}${spoken}${text.slice(end)}`);
-    requestAnimationFrame(() => {
-      const cursor = start + lead.length + spoken.length;
-      taRef.current?.focus();
-      taRef.current?.setSelectionRange(cursor, cursor);
-    });
-  }
-
   async function startDictating() {
     setAttachError(null);
     setMic("starting");
+    startingRef.current = true;
+    earlyFramesRef.current = [];
+    lastFinalRef.current = -1;
     try {
-      recordingRef.current = await actions.startDictation();
+      const id = await actions.startDictation();
+      recordingRef.current = id;
+      liveIdRef.current = id;
+      // The words go in at the caret. A box that was never clicked reports its
+      // caret at 0, which is not a place anyone chose: append there instead.
+      const ta = taRef.current;
+      const length = textRef.current.length;
+      const focused = !!ta && document.activeElement === ta;
+      const at = ta && (focused || ta.selectionEnd > 0) ? Math.min(ta.selectionEnd, length) : length;
+      setRegion({ anchor: at, len: 0 });
+      startingRef.current = false;
       setMic("recording");
+      const early = earlyFramesRef.current;
+      earlyFramesRef.current = [];
+      early.forEach(handleLiveFrame);
     } catch (e) {
       recordingRef.current = null;
+      endLive(false);
       setMic("idle");
       setAttachError(e instanceof Error ? e.message : String(e));
     }
@@ -1185,12 +1352,21 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
     recordingRef.current = null;
     setMic("transcribing");
     try {
-      const spoken = await actions.stopDictation(id);
-      if (spoken) insertDictated(spoken);
-      else setAttachError("Didn't catch that — nothing was said.");
+      const heard = await actions.stopDictationLive(id);
+      // The answer and the last live frames travel separately, so settle any
+      // sentence whose final frame has not landed. A server older than live
+      // dictation sends no segments at all: its whole text is the one sentence.
+      const segments = heard.segments ?? (heard.text ? [heard.text] : []);
+      segments.forEach((spoken, n) => {
+        if (n <= lastFinalRef.current) return;
+        applySpoken(spoken, true);
+        lastFinalRef.current = n;
+      });
+      if (!heard.text) setAttachError("Didn't catch that. Nothing was said.");
     } catch (e) {
       setAttachError(e instanceof Error ? e.message : String(e));
     } finally {
+      endLive(true);
       setMic("idle");
     }
   }
@@ -1198,6 +1374,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   function cancelDictating() {
     const id = recordingRef.current;
     recordingRef.current = null;
+    endLive(true);
     setMic("idle");
     if (id) void actions.cancelDictation(id).catch(() => undefined);
   }
@@ -1229,6 +1406,13 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
   }
 
   async function submit() {
+    // Sending mid-dictation: settle the sentence in progress first, then send
+    // from the render that has it (see the submitAfterMic effect).
+    if (recordingRef.current) {
+      setSubmitAfterMic(true);
+      await stopDictating();
+      return;
+    }
     if (running && thread) {
       if (!canQueue) {
         setAttachError("Finish the message before sending it.");
@@ -1643,7 +1827,7 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
         )}
         <div
           ref={composerInputRef}
-          className={`composer-input${mic === "transcribing" ? " busy" : ""}`}
+          className={`composer-input${mic === "transcribing" || micNote ? " busy" : ""}`}
         >
           {slashOpen && (
             <div className="slash-pop" role="listbox" aria-label="Commands">
@@ -1703,10 +1887,12 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               </button>
             </div>
           )}
-          {mic === "transcribing" && (
+          {(mic === "transcribing" || micNote) && (
             <div className="dictation-busy" role="status">
               <span className="dictation-spinner" aria-hidden="true" />
-              <span>Transcribing…</span>
+              <span>
+                {micNote ? micNote.charAt(0).toUpperCase() + micNote.slice(1) : "Finishing…"}
+              </span>
             </div>
           )}
           <div className="composer-md">
@@ -1716,6 +1902,26 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                   this keeps the last empty line's height so the layers agree. */}
               {"\u200b"}
             </div>
+            {/* Live dictation. A third copy of the draft, laid out exactly like
+                the two around it and with invisible glyphs, whose only job is
+                to put two marks at the right characters: a tint under the
+                sentence still being heard, and the blue caret where the next
+                words will land. The textarea's own caret stays the user's. */}
+            {voiceRegion && (
+              <div
+                ref={voiceLayerRef}
+                className="composer-md-backdrop composer-voice-layer"
+                aria-hidden="true"
+              >
+                {text.slice(0, voiceRegion.anchor)}
+                <span className="voice-guess">
+                  {text.slice(voiceRegion.anchor, voiceRegion.anchor + voiceRegion.len)}
+                </span>
+                <span className="voice-caret" />
+                {text.slice(voiceRegion.anchor + voiceRegion.len)}
+                {"\u200b"}
+              </div>
+            )}
             <textarea
               ref={attachTextarea}
               rows={1}
@@ -1792,6 +1998,9 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
               }}
               onScroll={(e) => {
                 if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
+                if (voiceLayerRef.current) {
+                  voiceLayerRef.current.scrollTop = e.currentTarget.scrollTop;
+                }
               }}
             />
           </div>
@@ -1861,12 +2070,12 @@ export const Composer = memo(function Composer({ thread, quickMode, replyTo, onC
                 aria-label="Dictate"
                 title={
                   mic === "recording"
-                      ? "Stop and transcribe (Esc discards)"
+                      ? "Stop dictating (Esc also drops the sentence in progress)"
                       : mic === "transcribing"
-                        ? "Turning your words into text…"
+                        ? "Finishing the last sentence…"
                         : mic === "starting"
                           ? "Opening the microphone…"
-                          : "Dictate: click to record, click again to transcribe"
+                          : "Dictate: your words appear as you speak. Click again to stop"
                 }
                 onClick={() => (mic === "recording" ? void stopDictating() : void startDictating())}
               >

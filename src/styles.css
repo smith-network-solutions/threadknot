@@ -7643,6 +7643,39 @@ span.title-agent-mark { width: 16px; height: 16px; }
 }
 .composer-md textarea::-webkit-scrollbar { display: none; }
 
+/* Live dictation marks. The layer is another backdrop (same box, same wrap),
+   so its spans sit on the very characters they describe; its own glyphs are
+   invisible because the real backdrop underneath is the one being read.
+   Like the Markdown tints, nothing here may change a glyph's width. */
+.composer-voice-layer { color: transparent; }
+.voice-guess {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--voice-caret, #3b9eff) 16%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--voice-caret, #3b9eff) 45%, transparent);
+}
+/* The second caret: where the next spoken words will land. Zero width and out
+   of flow, so it marks a position without pushing a single character. */
+.voice-caret { position: relative; }
+.voice-caret::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 0.08em;
+  width: 2px;
+  height: 1.25em;
+  border-radius: 1px;
+  background: var(--voice-caret, #3b9eff);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--voice-caret, #3b9eff) 55%, transparent);
+  animation: voice-caret-blink 1.1s steps(1, end) infinite;
+}
+@keyframes voice-caret-blink {
+  0%, 60% { opacity: 1; }
+  61%, 100% { opacity: 0.25; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-caret::after { animation: none; }
+}
+
 /* Nothing below may change a glyph's width — no font-weight, italic face,
    font-size or font-family — or the caret drifts off the text it belongs to.
    Strong is a hairline stroke; emphasis and headings are colour. */

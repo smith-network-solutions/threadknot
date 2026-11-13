@@ -302,6 +302,18 @@ pub async fn run(state: ServerState) {
     // pushes its report, and the parent also asks. See `spawn_reconciler`.
     crate::dispatch::spawn_reconciler(state.clone());
 
+    // Load the speech model now if this machine dictates, so the first click
+    // on the mic types immediately instead of spending its first seconds
+    // loading. After the listeners are up and out of the way of startup.
+    if state.dictation.wants_warm_model() {
+        let voice = Arc::clone(&state.voice);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            crate::voice::session::warm_stt(&voice, &|_: &str| {}).await;
+            crate::voice::session::schedule_sidecar_reap(&voice);
+        });
+    }
+
     // Probe agent availability/models in the background so `hello` is fast.
     {
         let cache = Arc::clone(&state.agents_cache);
@@ -1874,6 +1886,7 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
     // Fan-out: local broadcasts and frames relayed from peer machines
     // (pre-serialized, origin-tagged), classified and queued under the policy
     // for their class.
+    let owner = principal.is_owner();
     let _fanout = TaskGuard(tokio::spawn({
         let out_tx = out_tx.clone();
         let viewing = Arc::clone(&viewing);
@@ -1883,6 +1896,13 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
                 let (text, class) = tokio::select! {
                     ev = events.recv() => match ev {
                         Ok(ev) => {
+                            // Dictated words go to the machine's owner and to
+                            // nobody else. Skipped here rather than at the
+                            // sender because this is the one place that knows
+                            // whose socket it is writing to.
+                            if !owner && matches!(ev, ServerMessage::DictationLive { .. }) {
+                                continue;
+                            }
                             let class = match &ev {
                                 // Persisted events (seq >= 0) always go out: they drive
                                 // status, attention badges and notifications for threads
@@ -1893,6 +1913,14 @@ async fn handle_socket(socket: WebSocket, state: ServerState, principal: Princip
                                     {
                                         continue;
                                     }
+                                    FrameClass::Delta
+                                }
+                                // A guess is replaced by the next one, so a
+                                // slow socket may drop it. The settled text
+                                // may not be dropped.
+                                ServerMessage::DictationLive { frame }
+                                    if frame.kind != "final" =>
+                                {
                                     FrameClass::Delta
                                 }
                                 _ => FrameClass::Persisted,
@@ -4620,15 +4648,19 @@ pub async fn handle_request(
                 !state.voice.session_active(),
                 "a voice conversation is using the microphone — end it first"
             );
-            Ok(json!({ "recordingId": state.dictation.start().await? }))
+            let id = state
+                .dictation
+                .start(Arc::clone(&state.voice), Arc::clone(hub))
+                .await?;
+            Ok(json!({ "recordingId": id }))
         }
         "dictation.stop" => {
             anyhow::ensure!(
                 principal.is_owner(),
                 "dictation records this machine's mic, so it only runs from the app on that machine"
             );
-            let text = state.dictation.stop(field(&p, "recordingId")?).await?;
-            Ok(json!({ "text": text }))
+            let heard = state.dictation.stop(field(&p, "recordingId")?).await?;
+            Ok(json!({ "text": heard.text, "segments": heard.segments }))
         }
         "dictation.cancel" => {
             anyhow::ensure!(

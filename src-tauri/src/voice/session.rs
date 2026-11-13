@@ -76,7 +76,14 @@ impl SttState {
     }
 }
 
-const SIDECAR_IDLE_REAP: Duration = Duration::from_secs(300);
+/// How long the speech model stays loaded after its last use.
+///
+/// Loading it takes several seconds, and for dictation those seconds are the
+/// whole experience: the user clicks, talks, and nothing appears until the
+/// load finishes. So it stays warm for half an hour of idleness rather than
+/// five minutes, which in practice means all day for someone who dictates and
+/// not at all for someone who does not.
+pub(crate) const SIDECAR_IDLE_REAP: Duration = Duration::from_secs(30 * 60);
 
 pub fn start(state: &crate::server::ServerState, thread_id: &str) -> Result<String> {
     let voice = &state.voice;
@@ -150,11 +157,7 @@ pub fn start(state: &crate::server::ServerState, thread_id: &str) -> Result<Stri
             voice.publish_idle(&hub);
         }
         // The sidecar stays warm for the next conversation, then reaps.
-        let voice2 = Arc::clone(&voice);
-        tokio::spawn(async move {
-            tokio::time::sleep(SIDECAR_IDLE_REAP).await;
-            voice2.reap_idle_sidecar(SIDECAR_IDLE_REAP).await;
-        });
+        schedule_sidecar_reap(&voice);
     });
     Ok(id)
 }
@@ -318,14 +321,33 @@ fn none_if_empty(s: &str) -> Option<&str> {
 }
 
 /// The ffmpeg mic capture: 16 kHz mono s16le on stdout, framed into
-/// FRAME_BYTES chunks on a channel.
-async fn spawn_mic(
+/// FRAME_BYTES chunks on a channel. Shared with live dictation.
+pub(crate) async fn spawn_mic(
     cancel: &CancellationToken,
 ) -> Result<(tokio::process::Child, mpsc::Receiver<Vec<u8>>)> {
-    let (format, device) = crate::dictation::capture_args().await?;
     let mut cmd = Command::new(crate::dictation::tool("ffmpeg")?);
-    cmd.args(["-hide_banner", "-loglevel", "error", "-f", format, "-i", &device])
-        .args(["-ac", "1", "-ar", &stt::SAMPLE_RATE.to_string(), "-f", "s16le", "pipe:1"])
+    cmd.args(["-hide_banner", "-loglevel", "error"]);
+    // Smoke-test seam: play an audio file as if it were being spoken into the
+    // mic, at real-time pace. It is the only way to exercise the whole
+    // capture, endpointing and transcription path on a machine with no
+    // microphone (CI, a headless box) or with repeatable input.
+    let file = std::env::var("THREADKNOT_MIC_FILE")
+        .ok()
+        .filter(|f| !f.trim().is_empty());
+    if let Some(file) = file {
+        cmd.args(["-re", "-i", file.trim()]);
+    } else {
+        let (format, device) = crate::dictation::capture_args().await?;
+        cmd.args(["-f", format]);
+        if format == "dshow" {
+            // DirectShow hands audio over in chunks of about half a second
+            // unless told otherwise, which is half a second of lag on every
+            // word and on barge-in. 50 ms keeps the stream close to live.
+            cmd.args(["-audio_buffer_size", "50"]);
+        }
+        cmd.args(["-i", &device]);
+    }
+    cmd.args(["-ac", "1", "-ar", &stt::SAMPLE_RATE.to_string(), "-f", "s16le", "pipe:1"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -365,34 +387,75 @@ async fn transcribe(
     publish: &impl Fn(&str, Option<&str>, Option<&str>, Option<VoiceError>, Option<f32>),
 ) -> Result<String> {
     stt::write_wav(wav, pcm)?;
+    transcribe_shared(voice, wav, &stt::TranscribeOpts::default(), &|detail: &str| {
+        publish("transcribing", None, Some(detail), None, None)
+    })
+    .await
+}
+
+/// Check back after the idle window and unload the model if nothing has used
+/// it since. Every use schedules one of these; a check that finds the model
+/// was used again in the meantime simply does nothing.
+pub(crate) fn schedule_sidecar_reap(voice: &Arc<Voice>) {
+    let voice = Arc::clone(voice);
+    tokio::spawn(async move {
+        // A little past the window, so the use that scheduled this check is
+        // itself old enough to count as idle when the check runs.
+        tokio::time::sleep(SIDECAR_IDLE_REAP + Duration::from_secs(5)).await;
+        voice.reap_idle_sidecar(SIDECAR_IDLE_REAP).await;
+    });
+}
+
+/// Make sure the sidecar is loaded (or known to be unavailable) before the
+/// first words need it. Returns whether the warm sidecar is what will answer;
+/// `false` means every clip goes through the slower whisper CLI.
+pub(crate) async fn warm_stt(voice: &Voice, note: &impl Fn(&str)) -> bool {
     let mut state = voice.stt.lock().await;
     state.last_used = Some(Instant::now());
-    if !state.fallback && state.sidecar.is_none() {
-        publish("transcribing", None, Some("loading the speech model…"), None, None);
-        match stt::Sidecar::spawn().await {
-            Ok(s) => state.sidecar = Some(s),
-            Err(e) => {
-                tracing::warn!("voice STT sidecar unavailable, using whisper CLI: {e:#}");
-                state.fallback = true;
-                publish(
-                    "transcribing",
-                    None,
-                    Some("faster-whisper unavailable — using the slower whisper CLI"),
-                    None,
-                    None,
-                );
-            }
+    ensure_sidecar(&mut state, note).await;
+    state.sidecar.is_some()
+}
+
+/// Spawn the sidecar if it is neither running nor already known not to work.
+async fn ensure_sidecar(state: &mut SttState, note: &impl Fn(&str)) {
+    if state.fallback || state.sidecar.is_some() {
+        return;
+    }
+    note("loading the speech model…");
+    match stt::Sidecar::spawn().await {
+        Ok(s) => {
+            tracing::info!("voice STT sidecar ready: {} on {}", s.model, s.device);
+            state.sidecar = Some(s);
+        }
+        Err(e) => {
+            tracing::warn!("voice STT sidecar unavailable, using whisper CLI: {e:#}");
+            state.fallback = true;
+            note("faster-whisper unavailable, using the slower whisper CLI");
         }
     }
+}
+
+/// Transcribe one WAV with the shared warm sidecar, falling back to the
+/// whisper CLI. Voice sessions and live dictation both come through here, so
+/// there is one model in memory and one place that decides how to recover.
+pub(crate) async fn transcribe_shared(
+    voice: &Voice,
+    wav: &std::path::Path,
+    opts: &stt::TranscribeOpts,
+    note: &impl Fn(&str),
+) -> Result<String> {
+    let mut state = voice.stt.lock().await;
+    state.last_used = Some(Instant::now());
+    ensure_sidecar(&mut state, note).await;
     if let Some(sidecar) = state.sidecar.as_mut() {
-        match sidecar.transcribe(wav).await {
+        match sidecar.transcribe(wav, opts).await {
             Ok(text) => return Ok(text),
             Err(e) => {
                 // A dead pipe gets one respawn; a transcription error passes up.
                 if e.to_string().contains("sidecar") {
                     state.sidecar = None;
                     if let Ok(mut s) = stt::Sidecar::spawn().await {
-                        let text = s.transcribe(wav).await;
+                        let text = s.transcribe(wav, opts).await;
                         state.sidecar = Some(s);
                         return text;
                     }
@@ -403,6 +466,7 @@ async fn transcribe(
             }
         }
     }
+    drop(state);
     stt::transcribe_cli(wav).await
 }
 

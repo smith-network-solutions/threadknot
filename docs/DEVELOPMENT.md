@@ -894,6 +894,52 @@ each one moves where this machine's tunnel terminates:
 | `THREADKNOT_RELAY_SNI` | the SNI presented (default: the same constant) | the relay routes on SNI, and it is **not** always the host being dialled — dialling a test box while still presenting the production SNI is what makes the connection land on the connector endpoint rather than on the data plane |
 | `THREADKNOT_CONTROL_URL` | the control-plane base URL used by `connector.enroll` | enroll against a local control plane |
 
+## Speech: dictation and voice sessions
+
+Both features record this machine's microphone with ffmpeg and transcribe
+locally through one warm **faster-whisper sidecar** (`scripts/voice_stt.py`,
+embedded in the binary). Dictation is live: `dictation/live.rs` streams the mic
+through the voice endpointer and pushes `dictation.live` frames, a changing
+guess while a sentence is spoken and the settled text when a pause closes it.
+
+**It adapts to the machine instead of assuming one.** At load the sidecar walks
+a ladder and takes the first rung that survives a real transcription:
+
+| rung | device | model | when it is used |
+| --- | --- | --- | --- |
+| 1 | NVIDIA GPU, float16 | `distil-large-v3` | CUDA works and about 2.5 GB of VRAM is free |
+| 2 | NVIDIA GPU, int8_float16 | `small.en` | a small card, or one already full of other work |
+| 3 | CPU, int8 | `small.en` (8+ cores) or `base.en` | no NVIDIA GPU, or its libraries are missing |
+| 4 | whisper CLI, per clip | `THREADKNOT_WHISPER_MODEL` or `base.en` | Python has no faster-whisper at all |
+
+AMD, Intel and Apple GPUs land on rung 3: CTranslate2 only accelerates on CUDA.
+On rungs 1 to 3 the words appear as they are spoken. On rung 4, and with the
+API provider, each sentence appears when its pause closes it.
+
+- **The model is kept loaded.** Loading takes several seconds, so it is loaded
+  at launch on a machine that has dictated before (`used` in `dictation.json`)
+  and unloaded after 30 idle minutes. A dictation that does start cold shows
+  "Loading the speech model", keeps everything said meanwhile, and types it
+  out the moment the load finishes.
+- **GPU on Windows/Linux needs the CUDA runtime wheels** in the same Python:
+  `pip install faster-whisper nvidia-cublas-cu12 nvidia-cudnn-cu12`. Without
+  them the sidecar falls to the CPU and logs one warning saying so (`RUST_LOG=info`).
+- **Which microphone:** Windows' own default recording device (the wave mapper's
+  preferred input), then a device named "microphone", then the first one ffmpeg
+  lists. PulseAudio's default on Linux, AVFoundation's on macOS.
+- A dictation that hears only digital silence reports a muted or wrong input
+  instead of "nothing was said".
+
+| env | effect |
+| --- | --- |
+| `THREADKNOT_MIC_DEVICE` | record this input instead of the default (the name ffmpeg lists) |
+| `THREADKNOT_VOICE_STT_MODEL` | pin one faster-whisper model for every rung |
+| `THREADKNOT_VOICE_STT_DEVICE=cpu` | never use the GPU (leave it to other work) |
+| `THREADKNOT_VOICE_STT_LANGUAGE` | force a language code, or `auto` to detect; default is English for `.en` and `distil-` models and detection otherwise |
+| `THREADKNOT_VOICE_PYTHON` | the Python that has faster-whisper, when it is not the first on PATH |
+| `THREADKNOT_WHISPER_MODEL` | model for the whisper CLI fallback only |
+| `THREADKNOT_MIC_FILE` | smoke tests: play this audio file as the microphone, at real-time pace, instead of opening a device |
+
 ## State on disk
 
 `~/.threadknot/`: `server.json` (`{port,token}` — delete to rotate token), `projects.json`

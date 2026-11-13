@@ -2541,8 +2541,13 @@ export interface RequestMap {
   "dictation.settings.save": { payload: DictationSettingsInput; data: DictationSettings };
   /** Records the mic on the machine serving this connection — never peer routed. */
   "dictation.start": { payload: Record<string, never>; data: { recordingId: string } };
-  /** Empty `text` means the clip held no speech. */
-  "dictation.stop": { payload: { recordingId: string }; data: { text: string } };
+  /** Empty `text` means nothing was said. `segments` is the same words by
+   *  sentence, for a client that has been applying `dictation.live` frames and
+   *  needs any it missed; absent on servers older than live dictation. */
+  "dictation.stop": {
+    payload: { recordingId: string };
+    data: { text: string; segments?: string[] };
+  };
   "dictation.cancel": { payload: { recordingId: string }; data: Record<string, never> };
   /** Voice Parlay — this machine's mic and speakers; never peer routed. */
   "voice.settings.get": { payload: Record<string, never>; data: VoiceOutputSettings };
@@ -2819,10 +2824,28 @@ export interface VoiceFrame {
   state: VoiceStateFrame;
 }
 
+/** One update to the text of a dictation in progress. */
+export interface DictationLiveFrame {
+  recordingId: string;
+  /** `partial`: a guess at the sentence still being spoken, replaced by the
+   *  next frame for the same segment. `final`: that sentence, settled (empty
+   *  when it held no speech). `note`: status for the badge; empty clears it. */
+  kind: "partial" | "final" | "note";
+  /** Counts sentences from 0. */
+  segment: number;
+  text: string;
+}
+
+export interface DictationLiveMessage {
+  type: "dictation.live";
+  frame: DictationLiveFrame;
+}
+
 export type ServerFrame =
   | EventFrame
   | StateChangedFrame
   | ResponseFrame
   | UsageFrame
   | HermesStatusesFrame
-  | VoiceFrame;
+  | VoiceFrame
+  | DictationLiveMessage;

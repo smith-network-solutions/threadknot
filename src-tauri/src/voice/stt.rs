@@ -1,12 +1,12 @@
 //! Speech-to-text for voice sessions: a warm faster-whisper sidecar, an
 //! energy-based utterance endpointer, and the whisper-CLI fallback.
 //!
-//! Dictation shells out to the `whisper` CLI per clip, paying a Python start
-//! and a full model load every time — fine for one dictated prompt, fatal for
-//! turn-taking. The sidecar (`scripts/voice_stt.py`, embedded at build time)
-//! loads the model once and transcribes over a JSON-lines pipe in well under a
-//! second on this machine's GPU. If Python or faster-whisper is missing, each
-//! utterance WAV falls back to dictation's CLI path instead.
+//! The `whisper` CLI pays a Python start and a full model load on every clip,
+//! which is fatal for turn-taking and for dictation that types as you talk. The
+//! sidecar (`scripts/voice_stt.py`, embedded at build time) loads the model
+//! once and transcribes over a JSON-lines pipe in well under a second on a GPU.
+//! Voice sessions and live dictation share the one warm process. If Python or
+//! faster-whisper is missing, each utterance WAV falls back to the CLI instead.
 
 use anyhow::{anyhow, Context, Result};
 use std::io::Write as _;
@@ -33,7 +33,21 @@ pub struct Sidecar {
     stdout: BufReader<tokio::process::ChildStdout>,
     /// "cuda" or "cpu", from the ready event — shown in session status.
     pub device: String,
+    /// The model the sidecar actually loaded (it differs by device).
+    pub model: String,
     next_id: u64,
+}
+
+/// Per-request knobs. The default is what a voice session wants: the full
+/// beam, no context.
+#[derive(Debug, Clone, Default)]
+pub struct TranscribeOpts {
+    /// Beam width. `None` leaves the sidecar's default (5). Live dictation
+    /// asks for 1 on its in-progress guesses, where speed beats polish.
+    pub beam: Option<u8>,
+    /// Words spoken just before this clip, so casing and punctuation carry
+    /// across a pause instead of every clip starting a new sentence.
+    pub prompt: Option<String>,
 }
 
 fn python_bin() -> Option<PathBuf> {
@@ -77,6 +91,7 @@ impl Sidecar {
             stdin,
             stdout,
             device: String::new(),
+            model: String::new(),
             next_id: 0,
         };
 
@@ -84,6 +99,12 @@ impl Sidecar {
         match ready {
             Ok(Ok(ev)) if ev["ev"] == "ready" => {
                 sidecar.device = ev["device"].as_str().unwrap_or("cpu").to_string();
+                sidecar.model = ev["model"].as_str().unwrap_or_default().to_string();
+                // The sidecar explains itself when a GPU exists but is not the
+                // one doing the work; the log is where that fix gets found.
+                if let Some(hint) = ev["hint"].as_str().filter(|h| !h.is_empty()) {
+                    tracing::warn!("voice STT: {hint}");
+                }
                 Ok(sidecar)
             }
             Ok(Ok(ev)) => Err(anyhow!(
@@ -115,14 +136,20 @@ impl Sidecar {
 
     /// Transcribe one utterance WAV. One request in flight at a time — there
     /// is one conversation.
-    pub async fn transcribe(&mut self, wav: &Path) -> Result<String> {
+    pub async fn transcribe(&mut self, wav: &Path, opts: &TranscribeOpts) -> Result<String> {
         self.next_id += 1;
         let id = format!("u{}", self.next_id);
-        let request = serde_json::json!({
+        let mut request = serde_json::json!({
             "op": "transcribe",
             "id": id,
             "path": wav.to_string_lossy(),
         });
+        if let Some(beam) = opts.beam {
+            request["beam"] = beam.into();
+        }
+        if let Some(prompt) = opts.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+            request["prompt"] = prompt.into();
+        }
         self.stdin
             .write_all(format!("{request}\n").as_bytes())
             .await
@@ -187,6 +214,8 @@ const MIN_THRESHOLD_DB: f32 = -45.0;
 pub struct Endpointer {
     /// Silence that closes an utterance (configurable; default 700 ms).
     end_silence_ms: u32,
+    /// Longest utterance before it is closed regardless of silence.
+    max_utterance_ms: u32,
     /// Extra threshold while the assistant is speaking, so playback bleed
     /// doesn't read as barge-in.
     extra_margin_db: f32,
@@ -214,6 +243,7 @@ impl Endpointer {
     pub fn new(end_silence_ms: u32) -> Self {
         Self {
             end_silence_ms: end_silence_ms.clamp(200, 5000),
+            max_utterance_ms: MAX_UTTERANCE_MS,
             extra_margin_db: 0.0,
             noise_floor_db: -60.0,
             speaking: false,
@@ -223,6 +253,34 @@ impl Endpointer {
             utterance: Vec::new(),
             level: 0.0,
         }
+    }
+
+    /// Close an utterance after `ms` even if the speaker never pauses. Live
+    /// dictation uses a short cap so one long breath still lands on screen in
+    /// pieces, and so each piece stays inside Whisper's 30 second window.
+    pub fn with_max_utterance(mut self, ms: u32) -> Self {
+        self.max_utterance_ms = ms.clamp(2_000, MAX_UTTERANCE_MS);
+        self
+    }
+
+    /// The utterance being spoken right now, preroll included. `None` between
+    /// utterances. Live dictation transcribes this while it is still growing.
+    pub fn pending(&self) -> Option<&[u8]> {
+        self.speaking.then_some(self.utterance.as_slice())
+    }
+
+    /// Close whatever is open without waiting for silence (the user pressed
+    /// stop mid-sentence). `None` when nothing worth transcribing was open.
+    pub fn take_pending(&mut self) -> Option<Vec<u8>> {
+        if !self.speaking {
+            self.reset();
+            return None;
+        }
+        let pcm = std::mem::take(&mut self.utterance);
+        let ms = (pcm.len() / FRAME_BYTES) as u32 * FRAME_MS;
+        let spoken = ms.saturating_sub(self.silence_ms);
+        self.reset();
+        (spoken >= MIN_UTTERANCE_MS).then_some(pcm)
     }
 
     /// While the assistant speaks, require more level to call it speech —
@@ -270,7 +328,7 @@ impl Endpointer {
             self.silence_ms += FRAME_MS;
         }
         let ms = (self.utterance.len() / FRAME_BYTES) as u32 * FRAME_MS;
-        if self.silence_ms >= self.end_silence_ms || ms >= MAX_UTTERANCE_MS {
+        if self.silence_ms >= self.end_silence_ms || ms >= self.max_utterance_ms {
             self.speaking = false;
             self.run_ms = 0;
             self.preroll.clear();
@@ -298,7 +356,7 @@ impl Endpointer {
 }
 
 /// Mean level of an s16le frame in dBFS.
-fn dbfs(frame: &[u8]) -> f32 {
+pub(crate) fn dbfs(frame: &[u8]) -> f32 {
     if frame.len() < 2 {
         return -90.0;
     }
@@ -446,6 +504,44 @@ mod tests {
             }
         }
         assert!(closed, "an endless monologue still closes at the cap");
+    }
+
+    #[test]
+    fn pending_exposes_the_open_utterance_and_take_closes_it() {
+        let mut e = Endpointer::new(700);
+        for _ in 0..30 {
+            e.push(&quiet());
+        }
+        assert!(e.pending().is_none(), "nothing is open before speech");
+        for _ in 0..40 {
+            e.push(&loud());
+        }
+        let open = e.pending().expect("speech opens an utterance").len();
+        assert!(open >= 32 * FRAME_BYTES);
+        let pcm = e.take_pending().expect("stop mid-sentence keeps the words");
+        assert_eq!(pcm.len(), open);
+        assert!(!e.is_speaking());
+        assert!(e.pending().is_none());
+        assert!(e.take_pending().is_none());
+    }
+
+    #[test]
+    fn a_short_cap_closes_a_long_breath_early() {
+        let mut e = Endpointer::new(700).with_max_utterance(3_000);
+        for _ in 0..30 {
+            e.push(&quiet());
+        }
+        let mut frames = 0;
+        let mut closed = false;
+        for _ in 0..400 {
+            frames += 1;
+            if let Endpoint::Utterance(_) = e.push(&loud()) {
+                closed = true;
+                break;
+            }
+        }
+        assert!(closed);
+        assert!(frames * FRAME_MS <= 3_300, "closed near the 3 s cap");
     }
 
     #[test]

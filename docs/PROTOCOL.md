@@ -142,9 +142,9 @@ Server → client:
 | `schedule.run` | `{ scheduleId }` | `{ threadId }` — fire immediately (does not move the plan); needs `Capability::Terminal` if the schedule dispatches |
 | `usage.get` | `{}` | `{ usage: ProviderUsage[] }` — cached snapshots (kicks a fetch if the cache is cold; results arrive via the `usage` broadcast) |
 | `usage.refresh` | `{}` | `{}` — force a re-fetch, bypassing the freshness floor; snapshot arrives via the `usage` broadcast |
-| `dictation.start` | `{}` | `{ recordingId }` — records the mic of the machine serving this socket; never peer routed, master token only |
-| `dictation.stop` | `{ recordingId }` | `{ text }` — stops and transcribes with the selected local/API provider; `""` means the clip held no speech |
-| `dictation.cancel` | `{ recordingId }` | `{}` — throw the clip away without transcribing it |
+| `dictation.start` | `{}` | `{ recordingId }`: opens the mic of the machine serving this socket and starts live dictation: from here the words arrive as `dictation.live` broadcasts while they are spoken; never peer routed, master token only |
+| `dictation.stop` | `{ recordingId }` | `{ text, segments }`: stops, settles the sentence that was open, and returns everything heard: `text` joined, `segments` the same words by sentence (index = segment number, `""` where one held no speech). A client that applied the live frames uses `segments` to apply any final it has not seen yet, since the broadcast and this response may arrive in either order; a client that ignored them just inserts `text`. `""` means nothing was said |
+| `dictation.cancel` | `{ recordingId }` | `{}`: stop listening and send nothing more; text already delivered as a `final` frame stays delivered |
 | `dictation.settings.get` | `{}` | Secret-free voice settings (`provider`, API base/model, `hasApiKey`, local/capture readiness); master only |
 | `dictation.settings.save` | `{ provider, baseUrl, model, apiKey? }` | Saves local or OpenAI-compatible API transcription settings; the write-only key is never returned; master only |
 | `voice.settings.get` | `{}` | Secret-free Voice Parlay settings (`hasApiKey`/`keyHint`, voice/model/format, tuning, conversation prefs, capture/playback/STT readiness); like all `voice.*` verbs: this machine's mic and speakers, never peer routed, master only |
@@ -163,6 +163,8 @@ Server → client:
 | `voice.interrupt` | `{ sessionId }` | `{}` — stop playback now and interrupt the agent turn (same path barge-in takes) |
 
 Voice session state rides its own broadcast, `{ "type": "voice.state", "state": VoiceStateFrame }` — deliberately not a thread event (machine-level UI state; must never enter a transcript). `VoiceStateFrame` = `{ sessionId?, threadId?, state, muted, lastUtterance?, detail?, error?: { code, message, recoverable }, micLevel?, since, revision }`; `state` is one of `idle | listening | transcribing | thinking | synthesizing | speaking | interrupted | error`, and `revision` orders frames so clients drop stale ones (the HermesStatuses pattern).
+
+Live dictation rides its own broadcast too, `{ "type": "dictation.live", "frame": DictationLiveFrame }`, written **only to the owner's sockets** (never a paired device or a peer: it is what someone said into this machine's microphone). `DictationLiveFrame` = `{ recordingId, kind, segment, text }`. `segment` counts sentences from 0. `kind` is `partial` (a guess at the sentence still being spoken; each one replaces the last for that segment, and a slow socket may drop them), `final` (that sentence settled, exactly one per segment, `""` when it held no speech; never dropped) or `note` (status text for the UI such as the speech model loading; `""` clears it). Partials are only sent when the warm faster-whisper sidecar is answering; with the whisper CLI fallback or the API provider a segment produces just its `final`.
 | `fs.listDir` | `{ path? }` | `{ path, parent, entries: [{name, path, isDir}] }` (dirs only; for the phone's folder picker; `path` omitted → home dir) |
 | `fs.mkdir` | `{ path }` | `{ path }` (canonical) — creates the directory and any missing parents; powers the picker's "new folder" button, locally or on a peer via `machineId` routing |
 | `term.list` | `{ projectId }` | `{ terms: TermInfo[] }` — persisted tabs for the project, each with a live `alive` flag |

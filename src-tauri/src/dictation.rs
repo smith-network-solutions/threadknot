@@ -5,36 +5,30 @@
 //! simply unavailable inside the desktop shell — a browser-side recorder would
 //! be dead in the app it's meant for. So Threadknot records the machine's own
 //! microphone with ffmpeg (already a runtime dependency for the browser
-//! recorder). The finished clip is transcribed either by a local Whisper
-//! install or by an explicitly configured OpenAI-compatible transcription API.
+//! recorder).
+//!
+//! Dictation is live: the mic streams into an utterance endpointer and the
+//! words are pushed to the composer while the user is still talking (see
+//! `live.rs`). Local transcription goes through the warm faster-whisper sidecar
+//! that voice sessions use, falling back to the per-clip `whisper` CLI where
+//! the sidecar cannot run. An explicitly configured OpenAI-compatible API is
+//! the other provider.
 //!
 //! There is one microphone, so there is one recording slot. Starting a second
 //! recording discards the first rather than fighting over the device.
+
+mod live;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, Command};
+use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
-/// Hard cap on a single clip. The client gives up on a request after 30s, and
-/// transcription time scales with clip length, so a runaway recording would
-/// return nothing usable anyway. Two minutes is far more than one prompt.
-const MAX_SECONDS: u32 = 120;
-
-/// Whisper wants 16 kHz mono; giving it exactly that skips a resample.
-const SAMPLE_RATE: &str = "16000";
-
-/// Below this mean volume the clip is silence — a dead mic, or the button
-/// pressed and released without speaking. Whisper hallucinates confident
-/// filler ("You", "Thanks for watching!") on silent input, so it never sees it.
-const SILENCE_DBFS: f32 = -50.0;
-
-/// Clips shorter than this can't contain a word worth transcribing.
-const MIN_MILLIS: u128 = 400;
+pub use live::Outcome;
 
 const DEFAULT_API_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_API_MODEL: &str = "gpt-transcribe";
@@ -51,13 +45,15 @@ const HALLUCINATIONS: &[&str] = &[
     "。",
 ];
 
-/// A recording in progress: the live ffmpeg plus where it is writing.
+/// A recording in progress: the task running the live loop and the two ways
+/// to end it.
 struct Active {
     id: String,
-    ffmpeg: Child,
-    dir: PathBuf,
-    wav: PathBuf,
-    started: std::time::Instant,
+    /// Stop: finish the sentence that is open, then return everything heard.
+    stop: CancellationToken,
+    /// Cancel: throw it all away and say nothing more.
+    cancel: CancellationToken,
+    task: tokio::task::JoinHandle<Result<Outcome>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +77,11 @@ struct DictationConfig {
     /// server.json and never included in settings/hello responses.
     #[serde(default)]
     api_key: String,
+    /// Set the first time dictation is used on this machine. It is what makes
+    /// preloading the speech model at launch worth its memory: someone who has
+    /// never dictated should not have a model loaded on their behalf.
+    #[serde(default)]
+    used: bool,
 }
 
 impl Default for DictationConfig {
@@ -90,6 +91,7 @@ impl Default for DictationConfig {
             base_url: default_api_base_url(),
             model: default_api_model(),
             api_key: String::new(),
+            used: false,
         }
     }
 }
@@ -169,7 +171,8 @@ pub(crate) async fn capture_args() -> Result<(&'static str, String)> {
 ///
 /// DirectShow has no notion of a default microphone: every capture has to name
 /// a real device, and the names are machine-specific. So ask ffmpeg what
-/// Windows can see and record the first microphone in the list.
+/// Windows can see, ask Windows which input it treats as the default, and
+/// record that one.
 #[cfg(target_os = "windows")]
 pub(crate) async fn capture_args() -> Result<(&'static str, String)> {
     let name = match mic_override() {
@@ -193,7 +196,7 @@ pub(crate) async fn capture_args() -> Result<(&'static str, String)> {
     ))
 }
 
-/// Ask ffmpeg which microphones DirectShow can see and take the first.
+/// Ask ffmpeg which microphones DirectShow can see and pick the right one.
 #[cfg(target_os = "windows")]
 async fn first_dshow_microphone() -> Result<String> {
     let mut cmd = Command::new(tool("ffmpeg")?);
@@ -219,9 +222,68 @@ async fn first_dshow_microphone() -> Result<String> {
     // Listing devices always exits non-zero, because there is no real input to
     // open, so the list it prints on stderr is the whole point of the call.
     let listing = String::from_utf8_lossy(&output.stderr);
-    pick_dshow_audio(&listing).ok_or_else(|| {
+    pick_dshow_audio(&listing, windows_default_input().as_deref()).ok_or_else(|| {
         anyhow!("Windows reported no microphone to record from. Plug one in, or set THREADKNOT_MIC_DEVICE to the device name ffmpeg lists.")
     })
+}
+
+/// The name of the recording device Windows itself treats as the default: the
+/// one picked in Sound settings, and the one every other app records from.
+///
+/// This is the classic wave mapper query. It needs no COM and no extra crate
+/// features, at the price of one quirk: the wave API truncates device names to
+/// 31 characters, so the result is a prefix of the name ffmpeg lists.
+#[cfg(target_os = "windows")]
+fn windows_default_input() -> Option<String> {
+    #[repr(C)]
+    struct WaveInCapsW {
+        mid: u16,
+        pid: u16,
+        driver_version: u32,
+        name: [u16; 32],
+        formats: u32,
+        channels: u16,
+        reserved: u16,
+    }
+    #[link(name = "winmm")]
+    extern "system" {
+        fn waveInMessage(device: isize, message: u32, param1: usize, param2: usize) -> u32;
+        fn waveInGetDevCapsW(device: usize, caps: *mut WaveInCapsW, size: u32) -> u32;
+    }
+    const WAVE_MAPPER: isize = -1;
+    const DRVM_MAPPER_PREFERRED_GET: u32 = 0x2015;
+
+    let mut id: u32 = u32::MAX;
+    let mut flags: u32 = 0;
+    // SAFETY: both out-parameters point at live u32s for the whole call, which
+    // is what DRVM_MAPPER_PREFERRED_GET writes through.
+    let rc = unsafe {
+        waveInMessage(
+            WAVE_MAPPER,
+            DRVM_MAPPER_PREFERRED_GET,
+            &mut id as *mut u32 as usize,
+            &mut flags as *mut u32 as usize,
+        )
+    };
+    if rc != 0 || id == u32::MAX {
+        return None;
+    }
+    // SAFETY: an all-zero WaveInCapsW is a valid value, and the size passed is
+    // the size of the buffer the pointer names.
+    let mut caps: WaveInCapsW = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        waveInGetDevCapsW(
+            id as usize,
+            &mut caps,
+            std::mem::size_of::<WaveInCapsW>() as u32,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let len = caps.name.iter().position(|&c| c == 0).unwrap_or(caps.name.len());
+    let name = String::from_utf16_lossy(&caps.name[..len]).trim().to_string();
+    (!name.is_empty()).then_some(name)
 }
 
 /// The best audio device in `ffmpeg -list_devices true -f dshow` output.
@@ -232,13 +294,19 @@ async fn first_dshow_microphone() -> Result<String> {
 /// line that follows a device wins when there is one, because friendly names
 /// are not unique and two identical ones make the capture ambiguous.
 ///
-/// Enumeration order is not preference order: machines routinely list a
-/// camera's audio input terminal or a virtual device ahead of the actual
-/// microphone, and recording those yields perfectly valid silence, which the
-/// silence gate then throws away - dictation "works" and hears nothing. So a
-/// device that calls itself a microphone beats whatever came first.
+/// Three rules, strongest first:
+///
+/// 1. The device Windows calls the default (`preferred`, a prefix of its name)
+///    wins. It is what the user chose and what every other app records from. A
+///    name is not evidence: an interface input can be called "Video Call L + R"
+///    while a muted podcast mic beside it is called "Microphone", and choosing
+///    by name records the muted one and hears nothing.
+/// 2. Without that, a device that calls itself a microphone beats whatever
+///    came first. Enumeration order is not preference order: machines list a
+///    camera's audio input terminal or a virtual device ahead of the real mic.
+/// 3. Otherwise the first audio device.
 #[cfg(any(target_os = "windows", test))]
-fn pick_dshow_audio(listing: &str) -> Option<String> {
+fn pick_dshow_audio(listing: &str, preferred: Option<&str>) -> Option<String> {
     let mut audio_section = false;
     // (friendly name, name to capture with) in enumeration order.
     let mut devices: Vec<(String, String)> = Vec::new();
@@ -277,9 +345,20 @@ fn pick_dshow_audio(listing: &str) -> Option<String> {
         }
     }
 
-    devices
-        .iter()
-        .find(|(friendly, _)| friendly.to_lowercase().contains("microphone"))
+    let preferred = preferred
+        .map(|p| p.trim().to_lowercase())
+        .filter(|p| !p.is_empty());
+    preferred
+        .and_then(|p| {
+            devices
+                .iter()
+                .find(|(friendly, _)| friendly.to_lowercase().starts_with(&p))
+        })
+        .or_else(|| {
+            devices
+                .iter()
+                .find(|(friendly, _)| friendly.to_lowercase().contains("microphone"))
+        })
         .or_else(|| devices.first())
         .map(|(_, capture)| capture.clone())
 }
@@ -336,6 +415,35 @@ impl Dictation {
             }
             Provider::Api => None,
         }
+    }
+
+    /// Should the speech model be loaded before anyone asks for it?
+    ///
+    /// Yes when this machine dictates locally and has done so before. The load
+    /// takes several seconds, and paid at the first click it lands exactly
+    /// when the user starts talking: they finish a sentence, nothing has
+    /// appeared, and live dictation looks broken.
+    pub fn wants_warm_model(&self) -> bool {
+        let config = self.config.lock().unwrap();
+        config.used && config.provider == Provider::Local && missing_capture_tool().is_none()
+    }
+
+    /// Remember that dictation is used here, for `wants_warm_model`.
+    fn mark_used(&self) {
+        let next = {
+            let config = self.config.lock().unwrap();
+            if config.used {
+                return;
+            }
+            let mut next = config.clone();
+            next.used = true;
+            next
+        };
+        if let Err(e) = self.flush(&next) {
+            tracing::warn!("could not record that dictation is in use: {e:#}");
+            return;
+        }
+        *self.config.lock().unwrap() = next;
     }
 
     /// `{ available, hint }` for hello. Paired clients never get to activate
@@ -424,108 +532,78 @@ impl Dictation {
         Ok(())
     }
 
-    /// Begin capturing. Returns the id `stop`/`cancel` expect.
-    pub async fn start(&self) -> Result<String> {
+    /// Begin capturing. Returns the id `stop`/`cancel` expect. From here on
+    /// the words arrive as `dictation.live` broadcasts while they are spoken.
+    pub async fn start(
+        &self,
+        voice: Arc<crate::voice::Voice>,
+        hub: Arc<crate::agents::Hub>,
+    ) -> Result<String> {
         if let Some(hint) = self.unavailable_reason() {
             return Err(anyhow!(hint));
         }
         // Whatever was running is stale the moment a new capture is asked for.
-        self.discard_active().await;
+        self.discard_active();
 
-        let (format, device) = capture_args().await?;
         let id = crate::protocol::new_id();
-        let dir = std::env::temp_dir().join(format!("threadknot-dictation-{id}"));
-        std::fs::create_dir_all(&dir).context("could not create the dictation scratch dir")?;
-        let wav = dir.join("clip.wav");
-
-        let mut cmd = Command::new(tool("ffmpeg")?);
-        cmd.args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            format,
-            "-i",
-            &device,
-            "-ac",
-            "1",
-            "-ar",
-            SAMPLE_RATE,
-            "-t",
-            &MAX_SECONDS.to_string(),
-        ])
-        .arg(&wav)
-        // ffmpeg reads stdin for keyboard commands; `stop` writes "q" there
-        // so the WAV header is finalized instead of truncated.
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-        crate::agents::no_console(&mut cmd);
-        let ffmpeg = cmd
-            .spawn()
-            .context("could not start ffmpeg to record the microphone")?;
+        let stop = CancellationToken::new();
+        let cancel = CancellationToken::new();
+        // Open the mic before answering, so "no microphone" is an error on the
+        // button and not a recording that silently hears nothing.
+        let (ffmpeg, mic) = crate::voice::session::spawn_mic(&cancel).await?;
+        self.mark_used();
+        let config = self.config.lock().unwrap().clone();
+        let task = tokio::spawn(live::run(
+            id.clone(),
+            voice,
+            hub,
+            config,
+            ffmpeg,
+            mic,
+            stop.clone(),
+            cancel.clone(),
+        ));
 
         *self.active.lock().unwrap() = Some(Active {
             id: id.clone(),
-            ffmpeg,
-            dir,
-            wav,
-            started: std::time::Instant::now(),
+            stop,
+            cancel,
+            task,
         });
         Ok(id)
     }
 
-    /// Stop capturing and transcribe. Empty text means nothing was said.
-    pub async fn stop(&self, id: &str) -> Result<String> {
-        let mut active = self
+    /// Stop capturing, finish the sentence that was open, and return all of
+    /// it. Empty text means nothing was said.
+    pub async fn stop(&self, id: &str) -> Result<Outcome> {
+        let active = self
             .take(id)
             .ok_or_else(|| anyhow!("that recording already stopped"))?;
-        let elapsed = active.started.elapsed().as_millis();
-        let stderr = close_ffmpeg(&mut active.ffmpeg).await;
-
-        let config = self.config.lock().unwrap().clone();
-        let result = async {
-            if elapsed < MIN_MILLIS {
-                return Ok(String::new());
-            }
-            if !active.wav.exists() {
-                return Err(anyhow!(
-                    "the microphone produced no audio{}",
-                    if stderr.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" — ffmpeg said: {stderr}")
-                    }
-                ));
-            }
-            if is_silent(&active.wav).await {
-                return Ok(String::new());
-            }
-            match config.provider {
-                Provider::Local => transcribe_local(&active.wav, &active.dir).await,
-                Provider::Api => transcribe_api(&active.wav, &config).await,
-            }
-        }
-        .await;
-
-        let _ = std::fs::remove_dir_all(&active.dir);
-        result
+        active.stop.cancel();
+        active
+            .task
+            .await
+            .map_err(|e| anyhow!("dictation stopped unexpectedly: {e}"))?
     }
 
-    /// Throw the clip away without transcribing it.
+    /// Throw the recording away without transcribing what is left of it.
     pub async fn cancel(&self, id: &str) {
-        if let Some(mut active) = self.take(id) {
-            let _ = active.ffmpeg.kill().await;
-            let _ = std::fs::remove_dir_all(&active.dir);
+        if let Some(active) = self.take(id) {
+            active.cancel.cancel();
         }
     }
 
-    /// Is a dictation clip being captured right now? Voice sessions refuse to
-    /// start while one is (and vice versa) — there is one microphone.
+    /// Is the microphone being captured right now? Voice sessions refuse to
+    /// start while it is (and vice versa): there is one microphone. A session
+    /// that ran into its time limit has already let go of the mic, so it does
+    /// not count even though nobody has collected its text yet.
     pub fn is_recording(&self) -> bool {
-        self.active.lock().unwrap().is_some()
+        self.active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|a| !a.task.is_finished())
+            .unwrap_or(false)
     }
 
     /// Remove the slot's recording if it is the one named.
@@ -537,59 +615,11 @@ impl Dictation {
         }
     }
 
-    async fn discard_active(&self) {
-        let previous = self.active.lock().unwrap().take();
-        if let Some(mut a) = previous {
-            let _ = a.ffmpeg.kill().await;
-            let _ = std::fs::remove_dir_all(&a.dir);
+    fn discard_active(&self) {
+        if let Some(a) = self.active.lock().unwrap().take() {
+            a.cancel.cancel();
         }
     }
-}
-
-/// Ask ffmpeg to finish the file, then wait briefly before killing it. Returns
-/// whatever it wrote to stderr, which is the only clue when capture failed.
-async fn close_ffmpeg(child: &mut Child) -> String {
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(b"q").await;
-        let _ = stdin.flush().await;
-    }
-    match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
-        Ok(_) => {}
-        Err(_) => {
-            let _ = child.kill().await;
-        }
-    }
-    let mut text = String::new();
-    if let Some(mut err) = child.stderr.take() {
-        use tokio::io::AsyncReadExt;
-        let _ = err.read_to_string(&mut text).await;
-    }
-    text.trim().to_string()
-}
-
-/// True when the clip carries no signal worth transcribing.
-pub(crate) async fn is_silent(wav: &Path) -> bool {
-    let Ok(bin) = tool("ffmpeg") else {
-        return false;
-    };
-    let mut cmd = Command::new(bin);
-    cmd.args(["-hide_banner", "-nostdin", "-i"])
-        .arg(wav)
-        .args(["-af", "volumedetect", "-f", "null", "-"])
-        .stdin(Stdio::null());
-    crate::agents::no_console(&mut cmd);
-    let output = cmd.output().await;
-    let Ok(output) = output else { return false };
-    let text = String::from_utf8_lossy(&output.stderr);
-    let Some(rest) = text.split("mean_volume:").nth(1) else {
-        // No reading at all: let Whisper decide rather than drop real audio.
-        return false;
-    };
-    rest.split_whitespace()
-        .next()
-        .and_then(|v| v.parse::<f32>().ok())
-        .map(|db| db < SILENCE_DBFS)
-        .unwrap_or(false)
 }
 
 /// Run Whisper over the clip and return what it heard.
@@ -729,7 +759,7 @@ mod tests {
     #[test]
     fn picks_the_first_microphone_from_tagged_listings() {
         assert_eq!(
-            pick_dshow_audio(TAGGED).as_deref(),
+            pick_dshow_audio(TAGGED, None).as_deref(),
             Some(r"@device_cm_{33D9A762}\wave_{B1F2C3}")
         );
     }
@@ -737,7 +767,7 @@ mod tests {
     #[test]
     fn picks_the_first_microphone_from_headed_listings() {
         assert_eq!(
-            pick_dshow_audio(HEADED).as_deref(),
+            pick_dshow_audio(HEADED, None).as_deref(),
             Some(r"@device_cm_{33D9A762}\wave_{B1F2C3}")
         );
     }
@@ -745,7 +775,7 @@ mod tests {
     #[test]
     fn falls_back_to_the_friendly_name_when_there_is_no_alternative() {
         let listing = "[dshow @ 1] \"Blue Yeti\" (audio)\n";
-        assert_eq!(pick_dshow_audio(listing).as_deref(), Some("Blue Yeti"));
+        assert_eq!(pick_dshow_audio(listing, None).as_deref(), Some("Blue Yeti"));
     }
 
     /// A real laptop's listing: a camera's audio input terminal and a virtual
@@ -768,8 +798,43 @@ mod tests {
     #[test]
     fn prefers_a_named_microphone_over_earlier_audio_devices() {
         assert_eq!(
-            pick_dshow_audio(MIC_LAST).as_deref(),
+            pick_dshow_audio(MIC_LAST, None).as_deref(),
             Some(r"@device_cm_{33D9A762}\wave_{C411E5E5}")
+        );
+    }
+
+    /// A real desk: the working input is an audio interface whose name says
+    /// nothing about microphones, and a muted USB podcast mic sits beside it.
+    /// Windows' default is the interface; choosing by name records silence.
+    const INTERFACE_DEFAULT: &str = r#"
+[in#0 @ 0000024d] "Video Call L + R (Focusrite USB Audio)" (audio)
+[in#0 @ 0000024d]   Alternative name "@device_cm_{33D9A762}\wave_{EEAF3DAF}"
+[in#0 @ 0000024d] "Microphone (PD200X Podcast Microphone)" (audio)
+[in#0 @ 0000024d]   Alternative name "@device_cm_{33D9A762}\wave_{15C15843}"
+"#;
+
+    #[test]
+    fn the_windows_default_input_beats_a_device_named_microphone() {
+        // The wave API truncates names to 31 characters, hence the prefix.
+        assert_eq!(
+            pick_dshow_audio(INTERFACE_DEFAULT, Some("Video Call L + R (Focusrite USB")).as_deref(),
+            Some(r"@device_cm_{33D9A762}\wave_{EEAF3DAF}")
+        );
+        assert_eq!(
+            pick_dshow_audio(INTERFACE_DEFAULT, Some("microphone (pd200x podcast micr")).as_deref(),
+            Some(r"@device_cm_{33D9A762}\wave_{15C15843}")
+        );
+    }
+
+    #[test]
+    fn an_unknown_default_falls_back_to_the_named_microphone() {
+        assert_eq!(
+            pick_dshow_audio(INTERFACE_DEFAULT, Some("Some Unplugged Headset")).as_deref(),
+            Some(r"@device_cm_{33D9A762}\wave_{15C15843}")
+        );
+        assert_eq!(
+            pick_dshow_audio(INTERFACE_DEFAULT, Some("  ")).as_deref(),
+            Some(r"@device_cm_{33D9A762}\wave_{15C15843}")
         );
     }
 
@@ -778,7 +843,7 @@ mod tests {
         let listing = "[dshow @ 1] \"Line In (High Definition Audio)\" (audio)\n\
                        [dshow @ 1] \"Stereo Mix (High Definition Audio)\" (audio)\n";
         assert_eq!(
-            pick_dshow_audio(listing).as_deref(),
+            pick_dshow_audio(listing, None).as_deref(),
             Some("Line In (High Definition Audio)")
         );
     }
@@ -787,7 +852,7 @@ mod tests {
     fn reports_nothing_when_the_machine_has_no_microphone() {
         let listing = "[dshow @ 1] \"Integrated Webcam\" (video)\n\
                        [dshow @ 1] Could not enumerate audio only devices (or none found).\n";
-        assert_eq!(pick_dshow_audio(listing), None);
+        assert_eq!(pick_dshow_audio(listing, None), None);
     }
 
     #[test]
@@ -823,6 +888,7 @@ mod tests {
                 base_url: "https://speech.example/v1".into(),
                 model: "whisper-1".into(),
                 api_key: "super-secret-key".into(),
+                used: false,
             }),
         };
         let public = dictation.settings();

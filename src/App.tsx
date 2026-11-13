@@ -49,6 +49,7 @@ import {
 import { HERMES_ENABLED_EVENT, isAgentVisible } from "./lib/agentVisibility";
 import { hermesGatewayId } from "./lib/hermesBinding";
 import { ThreadknotClient } from "./lib/ws";
+import { publishDictationFrame } from "./lib/liveDictation";
 import { bindTraceStore, traceDispatch } from "./lib/renderTrace";
 import { markUsed } from "./lib/recentUse";
 import {
@@ -1778,6 +1779,10 @@ function makeActions(
       return text;
     },
 
+    stopDictationLive(recordingId: string) {
+      return client.request("dictation.stop", { recordingId });
+    },
+
     async cancelDictation(recordingId: string) {
       await client.request("dictation.cancel", { recordingId });
     },
@@ -2534,6 +2539,9 @@ export default function App() {
     };
     client.onUsage = (frame) => dispatch({ type: "usage", usage: frame.usage });
     client.onVoice = (frame) => dispatch({ type: "voiceFrame", frame: frame.state });
+    // Not store state: these arrive several times a second and only the one
+    // composer that is recording cares, so they bypass the reducer entirely.
+    client.onDictation = (message) => publishDictationFrame(message.frame);
     client.onHermesStatuses = (frame) =>
       dispatch({ type: "hermesStatuses", revision: frame.revision, statuses: frame.statuses });
     client.onStateChanged = (frame) => {

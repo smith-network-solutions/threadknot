@@ -1720,6 +1720,28 @@ pub enum ServerMessage {
     /// status machinery. Same stale-frame `revision` idea as HermesStatuses.
     #[serde(rename = "voice.state")]
     VoiceState { state: VoiceStateFrame },
+    /// Live dictation: words for the composer while they are being spoken.
+    /// Like `voice.state` this is machine-level and never a thread event, and
+    /// it is only ever written to the owner's own sockets: what someone says
+    /// into this machine's microphone is not for a paired device or a peer.
+    #[serde(rename = "dictation.live")]
+    DictationLive { frame: DictationLiveFrame },
+}
+
+/// One update to the text of a dictation in progress.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DictationLiveFrame {
+    pub recording_id: String,
+    /// `partial`: a guess at the sentence still being spoken, replaced by the
+    /// next frame for the same segment. `final`: that sentence, settled (empty
+    /// when it held no speech). `note`: status for the badge, such as the
+    /// speech model loading; empty clears it.
+    pub kind: String,
+    /// Counts sentences from 0. Every partial for a segment is followed by
+    /// exactly one final for it.
+    pub segment: u32,
+    pub text: String,
 }
 
 /// One snapshot of the voice session for the animated UI.

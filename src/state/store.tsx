@@ -1767,6 +1767,9 @@ export interface ThreadknotActions {
   startDictation: () => Promise<string>;
   /** Stop and transcribe. Empty string means the clip held no speech. */
   stopDictation: (recordingId: string) => Promise<string>;
+  /** Stop a dictation whose words were arriving live. `segments` carries the
+   *  same text by sentence so frames that had not landed yet can be applied. */
+  stopDictationLive: (recordingId: string) => Promise<{ text: string; segments?: string[] }>;
   /** Drop the clip without transcribing it. */
   cancelDictation: (recordingId: string) => Promise<void>;
   getVoiceSettings: () => Promise<import("../lib/protocol").VoiceOutputSettings>;
