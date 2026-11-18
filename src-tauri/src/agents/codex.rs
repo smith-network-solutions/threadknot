@@ -181,9 +181,13 @@ fn spawn_codex(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     super::no_console(&mut cmd);
-    let mut child = cmd
-        .spawn()
-        .context("failed to spawn `codex app-server` — is codex installed and on PATH?")?;
+    let mut child = cmd.spawn().map_err(|e| {
+        super::spawn_failure(
+            e,
+            std::path::Path::new(cwd),
+            "failed to spawn `codex app-server`. Is codex installed and on PATH?",
+        )
+    })?;
     let rpc = Arc::new(Rpc {
         stdin: tokio::sync::Mutex::new(child.stdin.take().expect("codex stdin")),
         pending: Mutex::new(HashMap::new()),

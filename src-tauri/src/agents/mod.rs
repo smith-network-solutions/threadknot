@@ -96,6 +96,29 @@ pub fn resolve_bin(name: &str) -> Option<PathBuf> {
     which::which_in(name, Some(agent_path()), cwd).ok()
 }
 
+/// Explain a failed agent spawn in terms of the thing that actually broke.
+///
+/// `Command::spawn` reports a working directory that isn't there with the same
+/// `NotFound` it reports for a binary that isn't there, so every such failure
+/// used to read "is the CLI installed and on PATH?". A thread whose project
+/// folder had been renamed or deleted therefore sent people off to reinstall
+/// and re-login a CLI that was never broken. The folder is checked first
+/// because it is the half of the pair the person can see and fix.
+pub fn spawn_failure(err: std::io::Error, cwd: &std::path::Path, missing_cli: &str) -> anyhow::Error {
+    if !cwd.is_dir() {
+        let problem = if cwd.exists() {
+            "is a file, not a folder"
+        } else {
+            "no longer exists"
+        };
+        return anyhow::anyhow!(
+            "project folder `{}` {problem}. Point this thread at a folder that does, then send again.",
+            cwd.display()
+        );
+    }
+    anyhow::Error::new(err).context(missing_cli.to_string())
+}
+
 /// Stop Windows from popping a console window for each child process. A
 /// GUI-subsystem app shows a flashing empty `cmd`-like window for every console
 /// child (agent CLIs, curl) unless spawned with CREATE_NO_WINDOW. No-op elsewhere.
@@ -3050,6 +3073,38 @@ impl DriverCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn enoent() -> std::io::Error {
+        std::io::Error::from(std::io::ErrorKind::NotFound)
+    }
+
+    #[test]
+    fn spawn_failure_names_a_deleted_project_folder() {
+        let gone = std::env::temp_dir().join(format!("threadknot-gone-{}", uuid::Uuid::new_v4()));
+        let msg = spawn_failure(enoent(), &gone, "is the CLI installed?").to_string();
+        assert!(msg.contains(&gone.display().to_string()), "{msg}");
+        assert!(msg.contains("no longer exists"), "{msg}");
+        // The whole point: it must not send anyone off to reinstall a CLI.
+        assert!(!msg.contains("installed"), "{msg}");
+    }
+
+    #[test]
+    fn spawn_failure_names_a_project_folder_that_is_a_file() {
+        let file = std::env::temp_dir().join(format!("threadknot-file-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&file, b"not a folder").unwrap();
+        let msg = spawn_failure(enoent(), &file, "is the CLI installed?").to_string();
+        assert!(msg.contains("is a file, not a folder"), "{msg}");
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[test]
+    fn spawn_failure_keeps_the_install_hint_when_the_folder_is_fine() {
+        let dir = std::env::temp_dir().join(format!("threadknot-dir-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let msg = spawn_failure(enoent(), &dir, "is the CLI installed?").to_string();
+        assert_eq!(msg, "is the CLI installed?");
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     fn test_store(label: &str) -> (PathBuf, Arc<Store>, Project, ThreadSettings) {
         let root = std::env::temp_dir().join(format!("threadknot-{label}-{}", uuid::Uuid::new_v4()));

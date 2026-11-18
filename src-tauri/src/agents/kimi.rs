@@ -224,9 +224,13 @@ fn spawn_kimi(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     super::no_console(&mut cmd);
-    let mut child = cmd
-        .spawn()
-        .context("failed to spawn `kimi acp` — is Kimi Code installed?")?;
+    let mut child = cmd.spawn().map_err(|e| {
+        super::spawn_failure(
+            e,
+            std::path::Path::new(cwd),
+            "failed to spawn `kimi acp`. Is Kimi Code installed?",
+        )
+    })?;
 
     if let Some(stderr) = child.stderr.take() {
         tokio::spawn(async move {

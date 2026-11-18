@@ -836,7 +836,13 @@ fn spawn_claude(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .context("failed to spawn `claude` — is Claude Code installed and on PATH?")?;
+        .map_err(|e| {
+            super::spawn_failure(
+                e,
+                std::path::Path::new(&ctx.cwd),
+                "failed to spawn `claude`. Is Claude Code installed and on PATH?",
+            )
+        })?;
 
     let stdout = child.stdout.take().expect("claude stdout");
     let (tx, rx) = mpsc::unbounded_channel();
